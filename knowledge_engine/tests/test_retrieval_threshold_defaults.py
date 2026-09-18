@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from llama_index.core.schema import TextNode
 
-from knowledge_engine.storage.milvus_backend import MilvusBackend
+from knowledge_engine.storage.milvus.backend import MilvusBackend
 from shared.models import RuntimeRetrievalConfig
 
 

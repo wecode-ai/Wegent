@@ -28,7 +28,7 @@ from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
 )
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     BM25_FUNCTION_NAME,
     DENSE_VECTOR_FIELD,
@@ -42,7 +42,7 @@ from knowledge_engine.storage.milvus_native import (
     index_contract_description,
     index_contract_from_description,
 )
-from tests.contract.conftest import (
+from tests.contract.milvus.conftest import (
     CONTRACT_DIMENSION,
     DeterministicEmbedding,
     index_nodes,

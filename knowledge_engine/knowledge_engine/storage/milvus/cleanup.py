@@ -16,8 +16,8 @@ from __future__ import annotations
 from typing import Any, Callable, Dict
 
 from knowledge_engine.storage.errors import IndexMissingError
-from knowledge_engine.storage.milvus_native import build_scope_filter
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.native import build_scope_filter
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 
 class MilvusCleanup:

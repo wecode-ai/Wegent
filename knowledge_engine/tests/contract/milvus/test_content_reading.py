@@ -19,8 +19,8 @@ import pytest
 from llama_index.core.schema import TextNode
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
-from knowledge_engine.storage.milvus_backend import MilvusBackend
-from knowledge_engine.storage.milvus_rows import ITERATOR_BATCH_SIZE
+from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE
 
 from .conftest import MilvusContractEnv, drop_collection_with_contract, index_nodes
 

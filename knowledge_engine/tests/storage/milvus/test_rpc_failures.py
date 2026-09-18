@@ -20,12 +20,12 @@ from grpc._cython import cygrpc
 from pymilvus import MilvusException
 
 from knowledge_engine.storage.errors import StorageBackendError
-from knowledge_engine.storage.milvus_errors import (
+from knowledge_engine.storage.milvus.errors import (
     is_transient_rpc_failure,
     rpc_failure,
     rpc_status_code,
 )
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 TIMEOUT_SECONDS = 3.0
 

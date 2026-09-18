@@ -8,7 +8,7 @@ These cover ``MilvusDocumentStore``: client lifetimes, the RPC shape it sends,
 and the index-contract state machine. The contract lives in the collection it
 describes, so ``describe_collection`` is the only lookup involved. The row
 layout and the filter vocabulary it works with are tested in
-``test_milvus_native.py``.
+``test_native.py``.
 """
 
 import logging
@@ -20,7 +20,7 @@ from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
 )
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
@@ -32,7 +32,7 @@ from knowledge_engine.storage.milvus_native import (
     index_contract_description,
     index_contract_from_description,
 )
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 # Literal on purpose: this test pins the level a complete read sends, so reading
 # the constant from the module would let a wrong production value pass.
@@ -578,7 +578,7 @@ def test_a_lost_create_race_is_logged_apart_from_a_contract_mismatch(caplog):
     binding = _binding()
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
-    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus_store"):
+    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus.store"):
         store.ensure_index(
             _CollectionClient(create_raises=True, winner_contract=binding),
             binding.collection_name,
@@ -590,7 +590,7 @@ def test_a_lost_create_race_is_logged_apart_from_a_contract_mismatch(caplog):
     assert any("lost the create race" in message for message in races), races
 
     caplog.clear()
-    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus_store"):
+    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus.store"):
         with pytest.raises(IndexContractIncompatibleError):
             store.ensure_index(
                 _CollectionClient(

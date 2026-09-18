@@ -11,7 +11,7 @@ describe that reads a contract back. The contract has exactly one home - the
 description of the collection it describes, written when that collection is
 created and read back from it - so nothing outside the collection records what a
 collection contains. The bounded client lifecycle and the write and search RPCs
-live in ``milvus_store``; nothing here resolves retrieval text or calls an
+live in ``store``; nothing here resolves retrieval text or calls an
 embedding provider, so an adapter can be tested against real Milvus without a
 model.
 """

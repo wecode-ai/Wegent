@@ -19,8 +19,8 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from knowledge_engine.storage.errors import StorageBackendError
-from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.filters import compile_metadata_conditions
+from knowledge_engine.storage.milvus.native import (
     CHUNK_INDEX_KEY,
     CREATED_AT_KEY,
     DISPLAY_TEXT_FIELD,
@@ -31,7 +31,7 @@ from knowledge_engine.storage.milvus_native import (
     SOURCE_FILE_KEY,
     build_scope_filter,
 )
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ from llama_index.core.schema import TextNode
 from pymilvus import MilvusClient
 
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.milvus_backend import MilvusBackend
+from knowledge_engine.storage.milvus.backend import MilvusBackend
 
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536

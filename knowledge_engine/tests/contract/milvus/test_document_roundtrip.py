@@ -273,7 +273,7 @@ def test_a_failed_write_is_reported_and_its_retry_replaces_the_document(
     writes once. The document lock the indexing task holds around one write is
     the precondition that makes this retry the document's only writer.
     """
-    from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+    from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
@@ -813,7 +813,7 @@ def test_source_file_and_display_text_survive_the_round_trip(
     """
     from pymilvus import MilvusClient
 
-    from knowledge_engine.storage.milvus_native import (
+    from knowledge_engine.storage.milvus.native import (
         DISPLAY_TEXT_FIELD,
         METADATA_FIELD,
         RETRIEVAL_TEXT_FIELD,

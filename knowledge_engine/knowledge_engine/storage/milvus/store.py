@@ -7,7 +7,7 @@
 This module owns the talking part - one short-lived official client per bounded
 operation, the RPCs the adapters call, and reading and confirming the index
 contract a collection declares in its own description. The row layout, contract
-vocabulary, row identifiers and filters it works with live in ``milvus_native``.
+vocabulary, row identifiers and filters it works with live in ``native``.
 It never resolves retrieval text or calls an embedding provider, so the adapter
 above it can be tested against real Milvus without a model.
 """
@@ -28,8 +28,8 @@ from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
 )
-from knowledge_engine.storage.milvus_errors import rpc_failure
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.errors import rpc_failure
+from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,

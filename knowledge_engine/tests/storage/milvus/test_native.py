@@ -15,7 +15,7 @@ import pytest
 from pymilvus import DataType, FunctionType
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     BM25_FUNCTION_NAME,
     CONTRACT_DESCRIPTION_PREFIX,
@@ -204,7 +204,7 @@ def test_two_same_dimension_embedding_spaces_declare_different_contracts():
 
     Two same-dimension writers produce identical physical schemas, so the server
     cannot tell them apart; the contract each one writes into the collection
-    description is what the read-back after creation compares (``milvus_store``
+    description is what the read-back after creation compares (``store``
     owns that comparison).
     """
     first = build_collection_schema(

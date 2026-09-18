@@ -15,7 +15,7 @@ and no consistency level.
 import pytest
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     DENSE_VECTOR_FIELD,
     INDEX_TYPE,
@@ -24,7 +24,7 @@ from knowledge_engine.storage.milvus_native import (
     MilvusIndexBinding,
     index_contract_description,
 )
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 CONTRACT_DIMENSION = 4
 COLLECTION_NAME = "wegent_kb_1"

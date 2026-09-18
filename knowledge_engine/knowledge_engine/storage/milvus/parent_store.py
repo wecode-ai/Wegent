@@ -18,8 +18,8 @@ from typing import Any, Callable, Dict, List
 
 from llama_index.core.schema import BaseNode
 
-from knowledge_engine.storage.milvus_native import sanitize_filter_value
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.native import sanitize_filter_value
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 logger = logging.getLogger(__name__)
 

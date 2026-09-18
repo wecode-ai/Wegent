@@ -30,7 +30,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 from knowledge_engine.retrieval.filters import normalize_metadata_operator
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.native import (
     DOC_REF_KEY,
     ID_FIELD,
     KNOWLEDGE_ID_KEY,

@@ -31,8 +31,8 @@ from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
-from knowledge_engine.storage.milvus_backend import MilvusBackend
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.native import (
     INDEX_TYPE,
     METRIC_TYPE,
     SCHEMA_VERSION,
@@ -776,7 +776,7 @@ def test_keyword_of_a_dropped_index_reads_as_a_never_indexed_knowledge_base(
     contract is stored in the collection, so a collection that is gone leaves
     nothing to check: the knowledge base reads as unindexed. A collection that
     replaced the index under the same name is refused instead (covered in
-    ``test_milvus_index_failures``).
+    ``test_index_failures``).
     """
     knowledge_id = milvus_env.new_knowledge_id()
     backend = _index_text_document(

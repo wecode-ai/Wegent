@@ -19,15 +19,15 @@ from knowledge_engine.storage.errors import (
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
-from knowledge_engine.storage.milvus_backend import MilvusBackend
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     DISPLAY_TEXT_FIELD,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
 )
-from knowledge_engine.storage.milvus_rows import ITERATOR_BATCH_SIZE, MAX_READ_LIMIT
+from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE, MAX_READ_LIMIT
 from shared.models import RetrievalScope
 
 _CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")

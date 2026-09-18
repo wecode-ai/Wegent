@@ -51,10 +51,10 @@ from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     UnsupportedStorageCapabilityError,
 )
-from knowledge_engine.storage.milvus_cleanup import MilvusCleanup
-from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
-from knowledge_engine.storage.milvus_hybrid import resolve_hybrid_weights
-from knowledge_engine.storage.milvus_native import (
+from knowledge_engine.storage.milvus.cleanup import MilvusCleanup
+from knowledge_engine.storage.milvus.filters import compile_metadata_conditions
+from knowledge_engine.storage.milvus.hybrid import resolve_hybrid_weights
+from knowledge_engine.storage.milvus.native import (
     CHUNK_INDEX_KEY,
     CREATED_AT_KEY,
     DENSE_VECTOR_FIELD,
@@ -70,13 +70,13 @@ from knowledge_engine.storage.milvus_native import (
     build_scope_filter,
     node_row_id,
 )
-from knowledge_engine.storage.milvus_parent_store import MilvusParentStore
-from knowledge_engine.storage.milvus_rows import (
+from knowledge_engine.storage.milvus.parent_store import MilvusParentStore
+from knowledge_engine.storage.milvus.rows import (
     MAX_READ_LIMIT,
     MilvusRowReader,
     row_metadata,
 )
-from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
