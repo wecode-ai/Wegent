@@ -5202,7 +5202,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('workspace-issue-composer')).toHaveTextContent('创建 Issue')
   })
 
-  it('only offers direct creation in intake columns', async () => {
+  it('only offers direct Issue creation in the inbox column', async () => {
     const workbenchServices = services()
     render(
       <CloudTodoWorkspace
@@ -5222,14 +5222,16 @@ describe('CloudTodoWorkspace', () => {
       )
       expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).not.toHaveClass('p-2')
     }
+    const inboxAdd = screen.getByTestId('cloud-todo-column-empty-add-inbox')
+    expect(inboxAdd).toBeVisible()
+    expect(inboxAdd).toContainElement(inboxAdd.querySelector('svg'))
+    expect(inboxAdd).toHaveTextContent('创建第一个 Issue')
+    expect(screen.getByTestId('cloud-todo-column-dropzone-inbox')).toContainElement(inboxAdd)
+    expect(screen.queryByTestId('cloud-todo-column-empty-add-pending')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-dropzone-pending')).toHaveTextContent(
+      '目标和负责人明确后，从这里等待开始。'
+    )
     for (const state of ['inbox', 'pending']) {
-      const emptyAdd = screen.getByTestId(`cloud-todo-column-empty-add-${state}`)
-      expect(emptyAdd).toBeVisible()
-      expect(emptyAdd).toContainElement(emptyAdd.querySelector('svg'))
-      expect(emptyAdd).toHaveTextContent(
-        state === 'inbox' ? '创建第一个 Issue' : '创建 Issue 到待开始'
-      )
-      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).toContainElement(emptyAdd)
       expect(screen.queryByTestId(`cloud-todo-column-bottom-add-${state}`)).not.toBeInTheDocument()
     }
     for (const state of ['in_progress', 'in_review', 'completed']) {
