@@ -1077,7 +1077,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: '管理范围',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="smart-app-share-scope-public"]')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-scope-public"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
         text: '本地后续修改不会自动同步',
         timeoutMs: uiTimeoutMs,
@@ -1111,7 +1113,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="smart-app-share-scope-private"]')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-scope-private"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('clickWhenEnabled', '[data-testid="smart-app-share-save"]', {
         timeoutMs: uiTimeoutMs,
       })

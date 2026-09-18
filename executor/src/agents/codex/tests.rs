@@ -265,6 +265,63 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     }
 }
 
+#[tokio::test]
+async fn runtime_proxy_update_is_deferred_while_a_turn_is_active() {
+    let client = CodexAppServerClient::new("codex-active-proxy-update-test");
+    client.mark_thread_active("thread-1").await;
+
+    let changed = client
+        .configure_runtime_proxy(Some("http://127.0.0.1:7890"))
+        .await
+        .expect("active turns must not reject a runtime proxy update");
+
+    assert!(changed);
+    let state = client.state.lock().await;
+    assert_eq!(
+        state.runtime_proxy_env.get("ALL_PROXY").map(String::as_str),
+        Some("http://127.0.0.1:7890")
+    );
+    assert_eq!(state.active_threads.get("thread-1"), Some(&1));
+}
+
+#[test]
+fn environment_change_diagnostics_report_keys_without_values() {
+    let current = BTreeMap::from([
+        ("AUTH_TOKEN".to_owned(), "old-secret".to_owned()),
+        ("REMOVED_KEY".to_owned(), "removed-secret".to_owned()),
+    ]);
+    let requested = BTreeMap::from([
+        ("AUTH_TOKEN".to_owned(), "new-secret".to_owned()),
+        ("ADDED_KEY".to_owned(), "added-secret".to_owned()),
+    ]);
+    let active_threads = HashMap::from([("thread-2".to_owned(), 1), ("thread-1".to_owned(), 2)]);
+
+    let fields =
+        codex_environment_change_fields("turn_start", &current, &requested, &active_threads);
+    let fields = fields.into_iter().collect::<HashMap<_, _>>();
+
+    assert_eq!(fields["source"], "turn_start");
+    assert_eq!(fields["added_env_keys"], "ADDED_KEY");
+    assert_eq!(fields["removed_env_keys"], "REMOVED_KEY");
+    assert_eq!(fields["changed_env_keys"], "AUTH_TOKEN");
+    assert_eq!(fields["active_thread_ids"], "thread-1,thread-2");
+    assert_eq!(fields["active_thread_count"], "2");
+    assert_eq!(fields["active_turn_count"], "3");
+    assert!(!fields.values().any(|value| value.contains("secret")));
+    assert!(!codex_process_environment_requires_restart(
+        "turn_start",
+        &current,
+        &requested,
+        &active_threads,
+    ));
+    assert!(codex_process_environment_requires_restart(
+        "turn_start",
+        &current,
+        &requested,
+        &HashMap::new(),
+    ));
+}
+
 #[test]
 fn shared_notification_lag_is_recoverable() {
     let notification =

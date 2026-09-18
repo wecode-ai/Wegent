@@ -336,7 +336,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="runtime-task-close-cancel-button"]')
+  await control.command('press', 'body', { key: 'Escape' })
   const closeCancelledSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     !closeCancelledSnapshot.testIds.includes('runtime-task-close-confirm-overlay'),

@@ -21,7 +21,7 @@ export function SidebarWorklistsScroll({
     <ScrollArea.Root
       type="auto"
       data-testid="sidebar-worklists-scroll-area"
-      className="relative mb-2 mt-0.5 min-h-0 flex-1"
+      className="relative -mr-1.5 mb-2 mt-0.5 min-h-0 flex-1 pr-1.5"
     >
       <ScrollArea.Viewport
         ref={viewportRef}
