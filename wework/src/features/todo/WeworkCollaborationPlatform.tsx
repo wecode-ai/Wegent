@@ -1718,7 +1718,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           ) : null
         }
         renderProject={({ project, workspace }) => {
-          const projectApi = project.project_store === 'local' ? localProjectApi : api
+          const projectApi = project.project_store === 'local' ? platformApi : api
           if (!projectApi) return null
           const localDeliveryApi = props.services.projectSpaceApis?.local
           const runtimePort =

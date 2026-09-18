@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/collaboration'
@@ -37,6 +37,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     }) => {
       const renderCount = useRef(0)
       const [projectIds, setProjectIds] = useState('')
+      const [resourceNames, setResourceNames] = useState('')
       const [snapshotStatuses, setSnapshotStatuses] = useState('')
       renderCount.current += 1
       const loadSnapshot = useCallback(() => {
@@ -57,6 +58,23 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           .then(projects => setProjectIds(projects.map(project => String(project.id)).join(',')))
           .catch(() => setProjectIds('error'))
       }, [api])
+      const createAgent = () => {
+        const projectId = host.location.projectId
+        if (!projectId) return
+        void api.agents
+          .create(projectId, {
+            name: 'Review Agent',
+            runtime: 'wegent',
+            wegentTeamId: 91,
+          })
+          .catch(() => undefined)
+      }
+      const loadResources = () => {
+        void api.resources
+          ?.list()
+          .then(resources => setResourceNames(resources.agents.map(agent => agent.name).join(',')))
+          .catch(() => setResourceNames('error'))
+      }
       return createElement(
         'div',
         {
@@ -74,20 +92,51 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             type: 'button',
           },
           'Reload snapshot'
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': `collaboration-app-create-agent-${host.location.projectId}`,
+            onClick: createAgent,
+            type: 'button',
+          },
+          'Create Agent'
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': `collaboration-app-load-resources-${host.location.projectId}`,
+            onClick: loadResources,
+            type: 'button',
+          },
+          'Load resources'
+        ),
+        createElement(
+          'span',
+          {
+            'data-testid': `collaboration-app-resource-names-${host.location.projectId}`,
+          },
+          resourceNames
         )
       )
     },
     CollaborationPlatformApp: ({
       host,
       navigationApis,
+      renderProject,
     }: {
       host: {
         location: CollaborationPlatformLocation
         navigate(next: CollaborationPlatformLocation): void
       }
       navigationApis?: SharedWorkspaceApi[]
-    }) =>
-      createElement(
+      renderProject?(props: {
+        project: Record<string, unknown>
+        workspace: Record<string, unknown>
+      }): ReactNode
+    }) => {
+      const [showLocalProject, setShowLocalProject] = useState(false)
+      return createElement(
         'div',
         {
           'data-testid': 'collaboration-platform-root',
@@ -115,6 +164,15 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           },
           'Open workspace'
         ),
+        createElement(
+          'button',
+          {
+            'data-testid': 'collaboration-platform-render-local-project',
+            onClick: () => setShowLocalProject(true),
+            type: 'button',
+          },
+          'Render local project'
+        ),
         ...['project-a', 'project-b', 'project-missing'].map(projectId =>
           createElement(
             'button',
@@ -134,8 +192,24 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             },
             projectId
           )
-        )
-      ),
+        ),
+        showLocalProject
+          ? renderProject?.({
+              project: {
+                id: 'local-project',
+                name: 'Local project',
+                project_store: 'local',
+                workspace_id: 'wework-local-workspace',
+              },
+              workspace: {
+                id: 'wework-local-workspace',
+                location: 'local',
+                name: 'Local workspace',
+              },
+            })
+          : null
+      )
+    },
   }
 })
 
@@ -246,6 +320,102 @@ describe('Wework collaboration workspace API', () => {
       'data-navigation-source-count',
       '2'
     )
+  })
+
+  it('uses the combined platform API inside local project details', async () => {
+    const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
+      id: 'LA-1',
+      projectId: 'local-project',
+      status: 'active',
+      version: 1,
+      ...input,
+    }))
+    const localDetailServices = {
+      ...createLocalDetailServices(),
+      projectChatAgentApi: {
+        list: vi.fn(async () => []),
+        create: createLocalAgent,
+        update: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const listCloudResources = vi.fn(async () => ({
+      agents: [
+        {
+          name: 'Review Agent',
+          status: 'available',
+          team_id: 91,
+        },
+      ],
+      execution_environments: [],
+    }))
+    const getAgent = vi.fn(async () => ({
+      teamId: 91,
+      botId: 92,
+      name: 'review-agent',
+      displayName: 'Review Agent',
+      namespace: 'default',
+      runtime: 'Codex' as const,
+      shellName: 'Codex',
+      model: { name: 'gpt-5.6-sol', type: 'public' as const, namespace: 'default' },
+      systemPrompt: 'Review carefully.',
+      skills: [],
+      mcpServers: {},
+    }))
+
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            workspaces: {},
+            projects: {},
+            agents: { create: vi.fn() },
+            resources: { list: listCloudResources },
+          },
+          projectSpaceApis: {
+            local: createLocalDeliveryApi(),
+          },
+          projectSpaceDetailServices: {
+            local: localDetailServices,
+          },
+          agentResourceApi: { getAgent },
+        } as never,
+      })
+    )
+
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-render-local-project').click()
+    })
+    await act(async () => {
+      screen.getByTestId('collaboration-app-create-agent-local-project').click()
+    })
+
+    await waitFor(() => expect(createLocalAgent).toHaveBeenCalledOnce())
+    expect(getAgent).toHaveBeenCalledWith(91)
+    expect(createLocalAgent).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        runtime: 'codex',
+        wegentTeamId: 91,
+        model: 'gpt-5.6-sol',
+        systemPrompt: 'Review carefully.',
+      })
+    )
+
+    await act(async () => {
+      screen.getByTestId('collaboration-app-load-resources-local-project').click()
+    })
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('collaboration-app-resource-names-local-project')
+      ).toHaveTextContent('Review Agent')
+    )
+    expect(listCloudResources).toHaveBeenCalledOnce()
   })
 
   it('does not restore the system My Tasks project inside collaboration', async () => {
