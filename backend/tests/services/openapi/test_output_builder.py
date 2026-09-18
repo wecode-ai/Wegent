@@ -79,6 +79,40 @@ def test_sanitize_mcp_tool_output_omits_media_base64_payload_with_mime_hint():
     assert output["data"] == "<image/jpeg payload omitted: 4096 bytes>"
 
 
+def test_sanitize_mcp_tool_output_omits_audio_base64_payload_with_mime_hint():
+    payload = base64.b64encode(b"\x00" * 2048).decode()
+
+    output = sanitize_mcp_tool_output(
+        {"type": "audio", "mimeType": "audio/mpeg", "data": payload}
+    )
+
+    assert output["data"] == "<audio/mpeg payload omitted: 2048 bytes>"
+
+
+def test_sanitize_mcp_tool_output_omits_video_base64_payload_with_mime_hint():
+    payload = base64.b64encode(b"\x00" * 2048).decode()
+
+    output = sanitize_mcp_tool_output(
+        {"type": "video", "mimeType": "video/mp4", "data": payload}
+    )
+
+    assert output["data"] == "<video/mp4 payload omitted: 2048 bytes>"
+
+
+def test_sanitize_mcp_tool_output_omits_audio_and_video_data_url_payloads():
+    payload = base64.b64encode(b"\x00" * 1024).decode()
+
+    output = sanitize_mcp_tool_output(
+        {
+            "audio_url": f"data:audio/mpeg;base64,{payload}",
+            "video_url": f"data:video/mp4;base64,{payload}",
+        }
+    )
+
+    assert output["audio_url"] == "<audio/mpeg payload omitted: 1024 bytes>"
+    assert output["video_url"] == "<video/mp4 payload omitted: 1024 bytes>"
+
+
 def test_sanitize_mcp_tool_output_keeps_long_text():
     text = "The image looks fine. " * 300
 
