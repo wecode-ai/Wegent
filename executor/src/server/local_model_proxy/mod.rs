@@ -2228,7 +2228,7 @@ pub(super) fn finish_stream_utf8(pending_utf8: &[u8]) -> Result<(), std::io::Err
 }
 
 fn normalize_responses_event(event: &str) -> String {
-    if !event.contains("response.completed") {
+    if !event.contains("response.completed") && !event.contains("response.failed") {
         return event.to_owned();
     }
     event
@@ -2241,7 +2241,12 @@ fn normalize_responses_event(event: &str) -> String {
             let Ok(mut value) = serde_json::from_str::<Value>(data) else {
                 return line.to_owned();
             };
+            let completed = value.get("type").and_then(Value::as_str) == Some("response.completed");
             normalize_completed_usage(&mut value);
+            let overload_error_normalized = normalize_retryable_overload_error(&mut value);
+            if !completed && !overload_error_normalized {
+                return line.to_owned();
+            }
             format!(
                 "data: {}",
                 serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
@@ -2302,6 +2307,31 @@ fn normalize_completed_usage(value: &mut Value) {
     };
     ensure_usage_detail(usage, "input_tokens_details", "cached_tokens");
     ensure_usage_detail(usage, "output_tokens_details", "reasoning_tokens");
+}
+
+fn normalize_retryable_overload_error(value: &mut Value) -> bool {
+    if value.get("type").and_then(Value::as_str) != Some("response.failed") {
+        return false;
+    }
+    let Some(error) = value
+        .pointer_mut("/response/error")
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    let retryable = error
+        .get("code")
+        .and_then(Value::as_str)
+        .is_some_and(|code| matches!(code, "server_is_overloaded" | "slow_down"));
+    if retryable {
+        // Codex treats these codes as terminal, while other response failures
+        // use its bounded stream retry loop.
+        error.insert(
+            "code".to_owned(),
+            Value::String("server_overloaded_retryable".to_owned()),
+        );
+    }
+    retryable
 }
 
 fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field: &str) {
@@ -3174,6 +3204,63 @@ mod tests {
     fn leaves_non_completed_events_unchanged() {
         let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
         assert_eq!(normalize_responses_event(event), event);
+    }
+
+    #[test]
+    fn makes_structured_model_overload_failures_retryable() {
+        for code in ["server_is_overloaded", "slow_down"] {
+            let event = format!(
+                "event: response.failed\ndata: {}",
+                json!({
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": {
+                            "code": code,
+                            "message": "Selected model is at capacity. Please try a different model."
+                        }
+                    }
+                })
+            );
+
+            let normalized = normalize_responses_event(&event);
+            let value = responses_event_values(&normalized)
+                .into_iter()
+                .next()
+                .expect("normalized failure event");
+
+            assert_eq!(
+                value
+                    .pointer("/response/error/code")
+                    .and_then(Value::as_str),
+                Some("server_overloaded_retryable")
+            );
+            assert_eq!(
+                value
+                    .pointer("/response/error/message")
+                    .and_then(Value::as_str),
+                Some("Selected model is at capacity. Please try a different model.")
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_non_retryable_responses_failures() {
+        let event = format!(
+            "event: response.failed\ndata: {}",
+            json!({
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {
+                        "code": "context_length_exceeded",
+                        "message": "Input is too long."
+                    }
+                }
+            })
+        );
+
+        assert_eq!(normalize_responses_event(&event), event);
     }
 
     #[test]
