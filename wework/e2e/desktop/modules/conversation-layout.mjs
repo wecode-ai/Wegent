@@ -958,8 +958,6 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   assert.ok(projectMenuTestId, 'The worktree status fixture project identity was not found')
   const projectId = projectMenuTestId.slice('project-menu-'.length)
 
-  await createCheckpointTaskFixture(control, composerSelector)
-  await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
