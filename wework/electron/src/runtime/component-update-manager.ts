@@ -770,6 +770,13 @@ export class ComponentUpdateManager {
   }
 }
 
+// Electron's net.fetch reports network failures as `net::ERR_*` messages instead of Node's error
+// codes and `fetch failed` text, so both shapes have to read as transient. `net::ERR_ABORTED` means
+// the caller cancelled the request, which the download loop already excludes from retries.
+const CHROMIUM_NETWORK_FAILURE = /\bnet::ERR_(?!ABORTED\b)[A-Z_]+\b/
+const TRANSIENT_FETCH_MESSAGE =
+  /\b(?:fetch failed|failed to fetch|network error|socket hang up|terminated)\b/i
+
 function isTransientDownloadError(error: unknown): boolean {
   let current = error
   const visited = new Set<unknown>()
@@ -788,7 +795,10 @@ function isTransientDownloadError(error: unknown): boolean {
       ) {
         return true
       }
-      if (/\b(?:fetch failed|network error|socket hang up|terminated)\b/i.test(current.message)) {
+      if (
+        TRANSIENT_FETCH_MESSAGE.test(current.message) ||
+        CHROMIUM_NETWORK_FAILURE.test(current.message)
+      ) {
         return true
       }
       current = current.cause
