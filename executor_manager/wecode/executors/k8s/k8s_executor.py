@@ -11,7 +11,6 @@ Uses unified ExecutionRequest from shared.models.execution.
 import asyncio
 import json
 import os
-import socket
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -55,7 +54,6 @@ from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_EXECUTOR_VALUE,
     LABEL_POOL_PROFILE,
     LABEL_POOL_STATE,
-    LABEL_RELEASE_INSTANCE,
     LABEL_TASK_ID,
     LABEL_WARM_POOL,
     POOL_PROFILE_EXECUTOR_STANDARD,
@@ -2075,12 +2073,6 @@ class K8sExecutor(Executor):
             result["reason"] = "warmpool_template_not_configured"
             return result
 
-        release_instance = self._resolve_own_release_instance()
-        if not release_instance:
-            result["status"] = "skipped"
-            result["reason"] = "release_instance_not_resolved"
-            return result
-
         from executor_manager.wecode.executors.warmpool import WarmPoolClient
 
         api_client = _get_api_client()
@@ -2111,15 +2103,6 @@ class K8sExecutor(Executor):
 
             if not name:
                 result["skipped"].append({"name": name, "reason": "no_name"})
-                continue
-            if not self._belongs_to_current_release(metadata, release_instance):
-                result["skipped"].append(
-                    {
-                        "name": name,
-                        "reason": "other_or_unlabeled_release",
-                        "template": template_name,
-                    }
-                )
                 continue
             if template_name == WARMPOOL_TEMPLATE_NAME:
                 result["skipped"].append({"name": name, "reason": "current_template"})
@@ -2180,51 +2163,6 @@ class K8sExecutor(Executor):
             result["failed_count"],
         )
         return result
-
-    def _resolve_own_release_instance(self) -> str:
-        """Return this executor-manager Pod's Helm release instance label.
-
-        Warm pools from online and simulation can share a namespace. Cleanup is
-        destructive, so it must stop when this release cannot be identified.
-        """
-        cached_instance = getattr(self, "_warmpool_release_instance", "")
-        if cached_instance:
-            return cached_instance
-
-        pod_name = os.getenv("POD_NAME") or socket.gethostname()
-        if not pod_name:
-            return ""
-
-        core_v1 = self._get_core_v1_api()
-        if core_v1 is None:
-            return ""
-
-        try:
-            pod = core_v1.read_namespaced_pod(
-                name=pod_name,
-                namespace=K8S_NAMESPACE,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Unable to resolve executor-manager release instance: %s",
-                exc,
-            )
-            return ""
-
-        labels = getattr(getattr(pod, "metadata", None), "labels", None) or {}
-        instance = labels.get(LABEL_RELEASE_INSTANCE, "")
-        if instance:
-            self._warmpool_release_instance = instance
-        return instance
-
-    @staticmethod
-    def _belongs_to_current_release(
-        metadata: Dict[str, Any],
-        release_instance: str,
-    ) -> bool:
-        """Return whether a warm pool CR is explicitly owned by this release."""
-        labels = metadata.get("labels") or {}
-        return labels.get(LABEL_RELEASE_INSTANCE) == release_instance
 
     def _get_old_executor_claim_targets(
         self,
@@ -2365,33 +2303,9 @@ class K8sExecutor(Executor):
             pods = core_v1.list_namespaced_pod(
                 namespace=namespace, label_selector=label_selector
             )
-            pod_items = list(pods.items)
-
-            if not pod_items:
-                try:
-                    named_pod = core_v1.read_namespaced_pod(
-                        name=executor_name,
-                        namespace=namespace,
-                    )
-                except ApiException as exc:
-                    if exc.status != HTTPStatus.NOT_FOUND:
-                        logger.error(
-                            "Kubernetes API error reading executor Pod '%s': %s",
-                            executor_name,
-                            exc,
-                        )
-                        return {
-                            "status": "failed",
-                            "error_msg": f"Kubernetes API error: {exc}",
-                            "pods": [],
-                        }
-                else:
-                    labels = getattr(named_pod.metadata, "labels", None) or {}
-                    if labels.get(LABEL_EXECUTOR) == LABEL_EXECUTOR_VALUE:
-                        pod_items.append(named_pod)
 
             pod_list = []
-            for pod in pod_items:
+            for pod in pods.items:
                 pod_info = {
                     "name": pod.metadata.name,
                     "ip": pod.status.pod_ip,
