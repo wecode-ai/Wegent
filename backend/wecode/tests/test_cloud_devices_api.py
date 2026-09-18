@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks
 
 from wecode.api import cloud_devices
 from wecode.schemas.cloud_device import CreateCloudDeviceRequest
@@ -216,37 +216,28 @@ async def test_create_cloud_device_keeps_missing_git_identity_non_blocking(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("token_error", "expected_status", "expected_detail"),
+    "token_error",
     [
-        (
-            GitTokenNotConfiguredError(),
-            400,
-            "A valid Git token is required",
-        ),
-        (
-            GitTokenRejectedError("git.intra.weibo.com"),
-            400,
-            "is invalid or expired",
-        ),
-        (
-            GitTokenSourceUnavailableError(),
-            503,
-            "temporarily unavailable",
-        ),
-        (
-            GitTokenValidationUnavailableError("git.intra.weibo.com"),
-            503,
-            "temporarily unavailable",
-        ),
+        GitTokenNotConfiguredError(),
+        GitTokenRejectedError("git.intra.weibo.com"),
+        GitTokenSourceUnavailableError(),
+        GitTokenValidationUnavailableError("git.intra.weibo.com"),
     ],
 )
-async def test_create_cloud_device_blocks_unusable_git_credentials_before_side_effects(
+async def test_create_cloud_device_proceeds_without_usable_git_credentials(
     monkeypatch,
+    caplog,
     token_error,
-    expected_status,
-    expected_detail,
 ):
-    """Credential failures should not create an API key or Nevis sandbox."""
+    """No credential failure may block device creation.
+
+    A user who never configured a token, whose token was revoked, or whose
+    credential service is unreachable still gets a device -- it just has no Git
+    identity to commit with. Gating creation on this reported all four as a
+    device-service outage (a 503 rendered as "cloud device service is not
+    configured"), which left those users with no way forward: the device they
+    deleted to retry was gone and the retry could not succeed.
+    """
     provider = _FakeCloudDeviceProvider()
     create_api_key = MagicMock(return_value=("key-id", "device-api-key"))
     monkeypatch.setattr(cloud_devices, "cloud_device_provider", provider)
@@ -264,8 +255,8 @@ async def test_create_cloud_device_blocks_unusable_git_credentials_before_side_e
         raise_token_error,
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        await cloud_devices.create_cloud_device(
+    with caplog.at_level(logging.WARNING):
+        response = await cloud_devices.create_cloud_device(
             request=_FakeRequest(),
             background_tasks=BackgroundTasks(),
             body=CreateCloudDeviceRequest(),
@@ -273,10 +264,12 @@ async def test_create_cloud_device_blocks_unusable_git_credentials_before_side_e
             current_user=SimpleNamespace(id=7, user_name="alice"),
         )
 
-    assert exc_info.value.status_code == expected_status
-    assert expected_detail in exc_info.value.detail
-    create_api_key.assert_not_called()
-    assert provider.create_device_kwargs is None
+    assert response.device_id == "device-1"
+    create_api_key.assert_called_once()
+    assert provider.create_device_kwargs["git_tokens"] == []
+    # The reason still reaches the log, so the missing identity stays diagnosable.
+    assert "Creating without Git credentials" in caplog.text
+    assert type(token_error).__name__ in caplog.text
 
 
 @pytest.mark.asyncio

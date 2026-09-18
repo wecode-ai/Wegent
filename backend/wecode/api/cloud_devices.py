@@ -105,62 +105,48 @@ def _get_bearer_token(request: Request) -> str:
 
 
 async def _get_current_user_git_tokens(user_name: str) -> list[dict[str, Any]]:
-    """Fetch and validate the Git tokens required by cloud-device creation."""
+    """Fetch the user's Git accounts for the cloud device, tolerating their absence.
+
+    Git credentials configure the commit identity inside a device; they are not a
+    precondition for having one. Resolving them fails for reasons that say nothing
+    about whether a device can be built -- the user never configured a token, the
+    stored one was revoked, the credential service is down -- and treating any of
+    those as fatal denies a cloud device to someone who did nothing wrong. Every
+    failure degrades to "no Git identity"; the reason is logged, not returned.
+    """
     try:
         git_tokens = await run_in_threadpool(
             get_user_gitinfo.get_validated_real_git_tokens,
             user_name,
         )
-        git_accounts = build_cloud_device_git_accounts(git_tokens)
-        identity_warning_domains = [
-            account["domain"]
-            for account in git_accounts
-            if not account["identity_name"] or not account["identity_email"]
-        ]
-        if identity_warning_domains:
-            logger.warning(
-                "[CloudDevice] Git commit identity is incomplete: "
-                "user_name=%s, domains=%s",
-                user_name,
-                ",".join(identity_warning_domains),
-            )
-        return git_accounts
-    except GitTokenNotConfiguredError as error:
-        logger.warning(
-            "[CloudDevice] Git token is not configured: user_name=%s",
-            user_name,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A valid Git token is required to create a cloud device",
-        ) from error
-    except GitTokenRejectedError as error:
-        logger.warning(
-            "[CloudDevice] Git token was rejected: user_name=%s, domain=%s",
-            user_name,
-            error.domain,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Git token for {error.domain} is invalid or expired; "
-                "update the token before creating a cloud device"
-            ),
-        ) from error
     except (
+        GitTokenNotConfiguredError,
+        GitTokenRejectedError,
         GitTokenSourceUnavailableError,
         GitTokenValidationUnavailableError,
     ) as error:
         logger.warning(
-            "[CloudDevice] Git token validation unavailable: user_name=%s, "
+            "[CloudDevice] Creating without Git credentials: user_name=%s, "
             "error_type=%s",
             user_name,
             type(error).__name__,
         )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Git token validation is temporarily unavailable; try again later",
-        ) from error
+        return []
+
+    git_accounts = build_cloud_device_git_accounts(git_tokens)
+    identity_warning_domains = [
+        account["domain"]
+        for account in git_accounts
+        if not account["identity_name"] or not account["identity_email"]
+    ]
+    if identity_warning_domains:
+        logger.warning(
+            "[CloudDevice] Git commit identity is incomplete: "
+            "user_name=%s, domains=%s",
+            user_name,
+            ",".join(identity_warning_domains),
+        )
+    return git_accounts
 
 
 def _resolve_target_user_id(
@@ -267,7 +253,8 @@ async def create_cloud_device(
         # Get backend URL for executor to connect
         backend_url = _get_backend_url(request)
 
-        # Validate Git credentials before creating any cloud-device resources.
+        # Resolve Git credentials for the device. A user without usable ones still
+        # gets a working device; it just cannot push.
         git_tokens = await _get_current_user_git_tokens(current_user.user_name)
 
         # Get user's API key for executor authentication
