@@ -70,10 +70,13 @@ mod tests {
         .unwrap();
         assert!(config.selects_rust(&Method::GET, "/api/quota"));
         assert!(config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
-        assert!(config.selects_rust(&Method::GET, "/api/grey/status"));
-        assert!(config.selects_rust(&Method::GET, "/api/aigc-video/media/playback"));
-        assert!(config.selects_rust(&Method::GET, "/api/cloud-devices/config"));
-        assert!(config.selects_rust(
+        // The four intra cutovers below are not active yet: their `[[routes]]`
+        // entries in `config/routes.toml` stay commented out, so Python keeps
+        // serving them.
+        assert!(!config.selects_rust(&Method::GET, "/api/grey/status"));
+        assert!(!config.selects_rust(&Method::GET, "/api/aigc-video/media/playback"));
+        assert!(!config.selects_rust(&Method::GET, "/api/cloud-devices/config"));
+        assert!(!config.selects_rust(
             &Method::GET,
             "/api/wecode/external-knowledge/provider/knowledge-bases"
         ));
