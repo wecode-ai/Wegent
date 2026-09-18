@@ -826,14 +826,14 @@ async function verifyDeviceRestart(context) {
       { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     const requestsBeforeRestart = scenarioRequestCount(context.control, WORKTREE_RESTART_SCENARIO)
-    const restart = await context.cloudEnvironment.restartCloudExecutor()
+    const restart = await context.cloudEnvironment.restartCloudExecutor({ abrupt: true })
     assert.equal(
       restart.runtimeInstanceId,
       restart.previousInstanceId,
       'The same Executor home did not preserve its stable runtime identity'
     )
 
-    const reconciledLog = await waitForCondition(
+    await waitForCondition(
       async () => {
         const log = await readFile(context.cloudEnvironment.remoteExecutorLogPath, 'utf8')
         const appended = log.slice(restart.logOffset)

@@ -9,7 +9,7 @@ interface ProcessLifecycle {
     stats: string[],
     processGroupId: number
   ) => boolean | null
-  stopProcessGroup: (child: ChildProcess) => Promise<void>
+  stopProcessGroup: (child: ChildProcess, signal?: NodeJS.Signals) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
 }
 
@@ -173,6 +173,26 @@ describe('desktop process lifecycle', () => {
     } finally {
       kill.mockRestore()
     }
+  })
+
+  test('abrupt termination prevents graceful shutdown handlers from running', async () => {
+    const { stopProcessGroup } = await loadProcessLifecycle()
+    const parent = spawn(
+      process.execPath,
+      [
+        '-e',
+        "process.on('SIGTERM', () => process.exit(99)); console.log(process.pid); setInterval(() => {}, 1000)",
+      ],
+      { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    ownedProcessGroups.add(parent.pid!)
+    await readChildPid(parent)
+
+    await stopProcessGroup(parent, 'SIGKILL')
+
+    expect(parent.signalCode).toBe('SIGKILL')
+    expect(parent.exitCode).toBeNull()
+    ownedProcessGroups.delete(parent.pid!)
   })
 
   test('stops descendants that inherit an owned process group', async () => {

@@ -984,12 +984,12 @@ class RealCloudEnvironment {
     )
   }
 
-  async restartCloudExecutor() {
+  async restartCloudExecutor({ abrupt = false } = {}) {
     assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
     const previousDevice = await this.device(CLOUD_DEVICE_ID)
     const previousInstanceId = previousDevice?.runtime_instance_id
     const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
-    await stopProcessGroup(this.remoteExecutor)
+    await stopProcessGroup(this.remoteExecutor, abrupt ? 'SIGKILL' : 'SIGTERM')
     await this.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', this.remoteExecutorLogPath)
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,

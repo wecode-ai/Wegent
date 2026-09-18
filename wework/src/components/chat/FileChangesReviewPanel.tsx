@@ -194,9 +194,7 @@ export function FileChangesReviewPanel({
       inputEvents.forEach(type => container.removeEventListener(type, stopNavigation))
       container.removeEventListener('keydown', onKeyDown)
       container.removeEventListener('scrollend', onScrollEnd)
-      if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current)
-      navigationFrameRef.current = null
-      navigatingRef.current = false
+      stopNavigation()
     }
   }, [loading, error, sections.length])
 

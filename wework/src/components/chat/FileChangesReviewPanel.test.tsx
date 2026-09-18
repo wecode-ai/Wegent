@@ -15,6 +15,7 @@ vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 beforeEach(() => {
   document.documentElement.dataset.theme = 'light'
   Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.scrollTo = vi.fn()
 })
 
 function getRenderedDiffText() {
@@ -171,6 +172,36 @@ describe('FileChangesReviewPanel', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  test.each(['refresh', 'unmount'])('stops an active file jump on %s', async action => {
+    const { rerender, unmount } = render(
+      <FileChangesReviewPanel loading={false} diff={twoFileDiff} />
+    )
+    const container = screen.getByTestId('file-changes-review-diff-lines')
+    const tree = screen.getByTestId('pierre-file-tree')
+    await waitFor(() =>
+      expect(tree.shadowRoot?.querySelector('button[aria-label="beta.ts"]')).toBeTruthy()
+    )
+    fireEvent.click(tree.shadowRoot?.querySelector('button[aria-label="beta.ts"]') as HTMLElement)
+    await waitFor(() =>
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    )
+    container.scrollTop = 120
+    container.scrollLeft = 30
+    const stopScroll = vi.fn()
+    container.scrollTo = stopScroll
+
+    if (action === 'refresh') {
+      rerender(<FileChangesReviewPanel loading diff={twoFileDiff} />)
+    } else {
+      unmount()
+    }
+
+    expect(stopScroll).toHaveBeenCalledWith({ top: 120, left: 30, behavior: 'instant' })
   })
 
   test('uses the application dark theme for review diffs', async () => {
