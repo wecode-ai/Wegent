@@ -695,6 +695,14 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         : true,
     is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
+    assignee_group_id:
+      typeof (record.metadata.collaboration_group as { id?: unknown } | null)?.id === 'string'
+        ? (record.metadata.collaboration_group as { id: string }).id
+        : null,
+    assignee_group_name:
+      typeof (record.metadata.collaboration_group as { name?: unknown } | null)?.name === 'string'
+        ? (record.metadata.collaboration_group as { name: string }).name
+        : null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
     execution_state: record.execution_state ?? null,

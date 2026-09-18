@@ -17,7 +17,7 @@ import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 export interface DesktopSidebarAccountSettingsOptions {
   autoOpenAddCloudDeviceDialog?: boolean
-  settingsPage?: 'about' | 'connections'
+  settingsPage?: 'about' | 'connections' | 'execution-environments'
 }
 
 interface DesktopSidebarAccountProps {

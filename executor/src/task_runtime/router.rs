@@ -45,6 +45,10 @@ impl TaskRuntime {
             .map(|projects| projects.into_iter().map(mask_project).collect())
     }
 
+    pub(crate) fn sync_local_code_projects(&self) -> Result<(), TaskRuntimeError> {
+        crate::runtime_work::sync_local_collaboration_projects(&self.local_store)
+    }
+
     pub fn create_project(&self, input: ProjectCreate) -> Result<LoopItem, TaskRuntimeError> {
         self.local_store.create_project(input).map(mask_project)
     }

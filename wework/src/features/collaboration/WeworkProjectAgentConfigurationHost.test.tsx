@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import {
   createWeworkProjectAgentConfigurationHost,
   weworkProjectAgentConfigurationHost,
@@ -393,5 +394,64 @@ describe('weworkProjectAgentConfigurationHost', () => {
       )
     )
     expect(onSaved).toHaveBeenCalledWith({ name: 'Reviewer', teamId: 52 })
+  })
+
+  it('reuses the project Agent editor and persists selected plugins for a local Agent', async () => {
+    const onCreated = vi.fn(async () => undefined)
+    const create = vi.fn(async () => ({ id: 'local-agent-1' }))
+    const localAgentApi = {
+      list: vi.fn(async () => []),
+      create,
+      update: vi.fn(),
+      archive: vi.fn(),
+    }
+    const modelApi = {
+      listModels: vi.fn(async () => ({ data: [] })),
+    }
+    const plugin = {
+      id: 'review-tools@personal',
+      pluginName: 'review-tools',
+      marketplaceId: 'personal',
+      displayName: 'Review Tools',
+    }
+    const pluginApi = {
+      listPlugins: vi.fn(async () => [plugin]),
+    }
+    const host = createWeworkProjectAgentConfigurationHost(
+      undefined,
+      localAgentApi as never,
+      modelApi as never,
+      pluginApi
+    )
+
+    render(
+      host.renderLocalAgentCreator!({
+        onClose: vi.fn(),
+        onCreated,
+      })
+    )
+
+    await waitFor(() => expect(screen.getByText('Review Tools')).toBeInTheDocument())
+    expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
+
+    fireEvent.change(screen.getByTestId('cloud-project-chat-agent-name'), {
+      target: { value: '本地评审智能体' },
+    })
+    fireEvent.click(screen.getByTestId(`cloud-project-chat-agent-plugin-${plugin.id}`))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        DEFAULT_WORK_ITEM_PROJECT_ID,
+        expect.objectContaining({
+          name: '本地评审智能体',
+          runtime: 'codex',
+          executionEnvironment: 'local',
+          executionDeviceId: 'local-device',
+          plugins: [plugin],
+        })
+      )
+    )
+    expect(onCreated).toHaveBeenCalledOnce()
   })
 })

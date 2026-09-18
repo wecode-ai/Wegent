@@ -2,7 +2,7 @@ import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/collaboration'
-import type { DeliveryApi } from '@/api/deliveries'
+import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
@@ -20,6 +20,7 @@ import {
   WeworkCollaborationPlatform,
   WeworkSharedProject,
 } from './WeworkCollaborationPlatform'
+import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 
 vi.mock('@wegent/collaboration', async importOriginal => {
   const actual = await importOriginal<typeof import('@wegent/collaboration')>()
@@ -95,7 +96,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         createElement(
           'span',
           { 'data-testid': 'collaboration-platform-location' },
-          host.location.projectId ?? 'workspace'
+          host.location.rootView ?? host.location.projectId ?? 'workspace'
         ),
         createElement(
           'button',
@@ -113,6 +114,27 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             type: 'button',
           },
           'Open workspace'
+        ),
+        ...(['agents', 'teams', 'devices'] as const).map(destination =>
+          createElement(
+            'button',
+            {
+              'data-testid': `collaboration-platform-open-${destination}`,
+              key: destination,
+              onClick: () =>
+                host.navigate({
+                  platformView: 'spaces',
+                  rootView: destination,
+                  workspaceId: null,
+                  workspaceView: 'home',
+                  projectId: null,
+                  projectView: 'board',
+                  issueId: null,
+                }),
+              type: 'button',
+            },
+            destination
+          )
         ),
         ...['project-a', 'project-b', 'project-missing'].map(projectId =>
           createElement(
@@ -146,6 +168,14 @@ function createLocalDeliveryApi() {
   return {
     listCloudProjects: vi.fn().mockResolvedValue({
       items: [
+        {
+          id: DEFAULT_WORK_ITEM_PROJECT_ID,
+          project_key: 'WORK',
+          name: 'My Tasks',
+          project_store: 'local',
+          metadata: { system_kind: 'default_work_items' },
+          collaboration_groups: [],
+        },
         {
           id: 'local-project',
           name: 'Local project',
@@ -246,6 +276,37 @@ describe('Wework collaboration workspace API', () => {
       '2'
     )
   })
+
+  it.each(['agents', 'teams', 'devices'] as const)(
+    'opens the internal %s destination from collaboration navigation',
+    destination => {
+      render(
+        createElement(WeworkCollaborationPlatform, {
+          user: {
+            id: 1,
+            user_name: 'admin',
+            email: 'admin@example.com',
+          } as never,
+          localProjects: [],
+          services: {
+            sharedWorkspaceApi: {
+              workspaces: {},
+              projects: {},
+            },
+            projectSpaceApis: {
+              local: createLocalDeliveryApi(),
+            },
+          } as never,
+        })
+      )
+
+      act(() => {
+        screen.getByTestId(`collaboration-platform-open-${destination}`).click()
+      })
+
+      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(destination)
+    }
+  )
 
   it('does not restore the system My Tasks project inside collaboration', async () => {
     const getProject = vi.fn()
@@ -1239,6 +1300,24 @@ describe('Wework collaboration workspace API', () => {
     expect(releases[1]).toHaveBeenCalledOnce()
   })
 
+  it('places listed, newly created and updated local projects in the single local space', async () => {
+    const delivery = {
+      ...createLocalDeliveryApi(),
+      createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
+      updateCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'Renamed' }),
+    }
+    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null)!
+    const projects = await api.projects.list()
+    expect(projects).toHaveLength(1)
+    expect(projects.every(project => project.workspace_id === 'wework-local-workspace')).toBe(true)
+    expect(await api.projects.create({ name: 'New local' })).toMatchObject({
+      workspace_id: 'wework-local-workspace',
+    })
+    expect(await api.projects.update('new-local', { name: 'Renamed', version: 1 })).toMatchObject({
+      workspace_id: 'wework-local-workspace',
+    })
+  })
+
   it('exposes local project execution environments through the shared project contract', async () => {
     const api = createLocalWorkspaceApi(
       createLocalDeliveryApi(),
@@ -1379,6 +1458,93 @@ describe('Wework collaboration workspace API', () => {
       api?.workspaces?.listCollaborationGroups('wework-local-workspace')
     ).resolves.toEqual([])
     expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
+  })
+
+  it('exposes locally persisted Agents through the collaboration resource catalog', async () => {
+    const localAgent = {
+      id: 'LA-local',
+      name: '本地代码助手',
+      capabilityDescription: '处理本地代码',
+      systemPrompt: 'Work locally.',
+      runtime: 'codex',
+      status: 'active',
+      executionDeviceId: 'local-device',
+    }
+    const detailServices = {
+      ...createLocalDetailServices(),
+      projectChatAgentApi: {
+        list: vi.fn().mockResolvedValue([localAgent]),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
+
+    await expect(api?.resources?.list()).resolves.toMatchObject({
+      agents: [
+        {
+          id: 'LA-local',
+          name: '本地代码助手',
+          owner_type: 'workspace',
+          owner_id: 'wework-local-workspace',
+          owner_name: '本地空间',
+          location: 'local',
+          status: 'available',
+          execution_environment_ids: ['device:local-device'],
+        },
+      ],
+    })
+    expect(detailServices.projectChatAgentApi?.list).toHaveBeenCalledWith(
+      DEFAULT_WORK_ITEM_PROJECT_ID
+    )
+  })
+
+  it('keeps local Agent resources local when cloud resource loading fails', async () => {
+    const detailServices = {
+      ...createLocalDetailServices(),
+      projectChatAgentApi: {
+        list: vi.fn().mockResolvedValue([
+          {
+            id: 'LA-local',
+            name: '本地代码助手',
+            capabilityDescription: '处理本地代码',
+            systemPrompt: 'Work locally.',
+            runtime: 'codex',
+            status: 'active',
+            executionDeviceId: 'local-device',
+          },
+        ]),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createWeworkPlatformApi(
+      {
+        workspaces: {},
+        projects: {},
+        resources: {
+          list: vi.fn().mockRejectedValue(new Error('Cloud unavailable')),
+        },
+      } as unknown as SharedWorkspaceApi,
+      createLocalDeliveryApi(),
+      1,
+      'admin',
+      null,
+      detailServices
+    )
+
+    await expect(api?.resources?.list()).resolves.toMatchObject({
+      agents: [{ id: 'LA-local', location: 'local' }],
+    })
+  })
+
+  it('routes device resource actions to the matching settings destination', () => {
+    expect(resolveDeviceResourceSettingsOptions('device:local', 'local')).toEqual({
+      settingsPage: 'execution-environments',
+    })
+    expect(resolveDeviceResourceSettingsOptions('device:cloud', 'cloud')).toEqual({
+      settingsPage: 'connections',
+      autoOpenAddCloudDeviceDialog: false,
+    })
+    expect(resolveDeviceResourceSettingsOptions(undefined, 'local')).toEqual({
+      settingsPage: 'execution-environments',
+    })
   })
 
   it('keeps local project resource setup on the local API after creation', async () => {

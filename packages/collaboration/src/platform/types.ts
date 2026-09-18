@@ -2,12 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ReactNode } from "react";
+
 import type { CollaborationView } from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
 export type CollaborationPlatformRootView =
   | "home"
+  | "agents"
+  | "teams"
+  | "devices"
   | "my-work"
   | "inbox"
   | "runs";
@@ -33,6 +38,9 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  renderIssueComposer?(
+    props: import("./IssueHomeComposer").IssueHomeTaskComposerProps,
+  ): ReactNode;
   location: CollaborationPlatformLocation;
   capabilities: {
     automation: boolean;
@@ -42,7 +50,18 @@ export interface CollaborationPlatformHostAdapter {
     sidebarPresentation?: "full" | "context";
   };
   navigate(location: CollaborationPlatformLocation): void;
-  manageResource?(kind: "agents" | "environments", resourceId?: string): void;
+  manageResource?(
+    kind: "agents" | "environments",
+    resourceId?: string,
+    source?: "local" | "cloud",
+  ): void;
+  renderDeviceCreator?(input: {
+    source: "local" | "cloud";
+    workspaceId?: string;
+    hasCloudDevice: boolean;
+    onClose(): void;
+    onCreated(deviceId?: number): Promise<void>;
+  }): ReactNode;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;
   workspaceOwnerOptions?: Array<{

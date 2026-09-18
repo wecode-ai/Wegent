@@ -16,6 +16,8 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod code_projects;
+
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
     ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
@@ -104,7 +106,7 @@ impl LocalTaskStore {
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
                     metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id
+                    assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
              WHERE resource_type = 'project' AND deleted_at IS NULL
              ORDER BY updated_at DESC",
@@ -378,7 +380,7 @@ impl LocalTaskStore {
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
                     metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id
+                    assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
              WHERE resource_type = 'task' AND cloud_project_id = ?1
                AND deleted_at IS NULL
@@ -573,6 +575,17 @@ impl LocalTaskStore {
         let priority = input.priority.clone().or_else(|| current.priority.clone());
         let parent_id = input.parent_id.unwrap_or(current.parent_id);
         let mut metadata = current.metadata;
+        if let Some(group_id) = &input.assignee_group_id {
+            metadata["collaboration_group"] = if let Some(group_id) = group_id {
+                let project = get_item_from(&transaction, project_id, "project")?
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?;
+                project.metadata.get("collaboration_groups").and_then(Value::as_array)
+                    .and_then(|groups| groups.iter().find(|group| group.get("id").and_then(Value::as_str) == Some(group_id)))
+                    .cloned().ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))?
+            } else { Value::Null };
+        } else if input.assignee_user_id.flatten().is_some() || input.assignee_agent_id.as_ref().and_then(|id| id.as_ref()).is_some() {
+            metadata["collaboration_group"] = Value::Null;
+        }
         if let Some(tags) = input.tags {
             metadata["tags"] = json!(tags);
         }
@@ -582,10 +595,15 @@ impl LocalTaskStore {
         let assignee_agent_id = match input.assignee_agent_id.as_ref() {
             Some(Some(agent_id)) => Some(agent_id.as_str()),
             Some(None) => None,
+            None if input.assignee_user_id.flatten().is_some() || input.assignee_group_id.as_ref().and_then(|id| id.as_ref()).is_some() => None,
             None => current.assignee_agent_id.as_deref(),
         };
-        let assignee_changed = input.assignee_agent_id.is_some()
-            && assignee_agent_id != current.assignee_agent_id.as_deref();
+        let assignee_user_id = if assignee_agent_id.is_some() || input.assignee_group_id.as_ref().and_then(|id| id.as_ref()).is_some() {
+            None
+        } else {
+            input.assignee_user_id.unwrap_or(current.assignee_user_id)
+        };
+        let assignee_changed = assignee_agent_id != current.assignee_agent_id.as_deref();
         let now = now();
         let completed_at = if status.as_deref() == Some("completed") {
             current.completed_at.or_else(|| Some(now.clone()))
@@ -596,7 +614,8 @@ impl LocalTaskStore {
             "UPDATE loop_items
              SET title = ?1, description = ?2, status = ?3, priority = ?4,
                  parent_id = ?5, metadata = ?6, completed_at = ?7,
-                 assignee_agent_id = ?8, version = version + 1, updated_at = ?9
+                 assignee_agent_id = ?8, version = version + 1, updated_at = ?9,
+                 assignee_user_id = ?12
              WHERE id = ?10 AND version = ?11",
             params![
                 title,
@@ -610,6 +629,7 @@ impl LocalTaskStore {
                 now,
                 task_id,
                 input.version,
+                assignee_user_id,
             ],
         )?;
         if changed != 1 {
@@ -685,7 +705,7 @@ impl LocalTaskStore {
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
                     metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id
+                    assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
              WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1 AND deleted_at IS NULL
              ORDER BY created_at ASC",
@@ -2061,7 +2081,7 @@ impl LocalTaskStore {
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
                     metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id
+                    assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
              WHERE resource_type = 'task' AND cloud_project_id = ?1 AND status = ?2
                AND ((?3 IS NULL AND (parent_id IS NULL OR parent_id = '')) OR parent_id = ?3)
@@ -3285,7 +3305,7 @@ fn get_item_from(
                     public_id, project_key, name, title, description, sequence_number,
                     next_item_number, status, priority, sort_order, current_delivery_id,
                     metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id
+                    assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
              WHERE id = ?1 AND resource_type = ?2 AND deleted_at IS NULL",
             params![id, resource_type],
@@ -3322,6 +3342,7 @@ fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
         updated_at: row.get(19)?,
         completed_at: row.get(20)?,
         assignee_agent_id: row.get(21)?,
+        assignee_user_id: row.get(23)?,
         execution_id: None,
         execution_state: None,
     })
@@ -3568,6 +3589,7 @@ fn descriptor_loop_item(
         updated_at: String::new(),
         completed_at: None,
         assignee_agent_id: None,
+        assignee_user_id: None,
         execution_id: None,
         execution_state: None,
     }
@@ -4736,6 +4758,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5045,6 +5069,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5141,6 +5167,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5223,6 +5251,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5282,6 +5312,8 @@ mod tests {
                 &project.id,
                 &second.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: second.version,
                     title: None,
                     description: None,
@@ -5330,6 +5362,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5396,6 +5430,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5526,6 +5562,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -5734,6 +5772,8 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        assignee_group_id: None,
+                        assignee_user_id: None,
                         version: task.version,
                         title: None,
                         description: None,
@@ -5833,6 +5873,8 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        assignee_group_id: None,
+                        assignee_user_id: None,
                         version: task.version,
                         title: None,
                         description: None,
@@ -5908,6 +5950,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -6105,6 +6149,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -6664,6 +6710,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: task.version,
                     title: None,
                     description: None,
@@ -7143,6 +7191,8 @@ mod tests {
                 &project.id,
                 &parent.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: parent.version,
                     parent_id: Some(Some(child.id)),
                     ..TaskUpdate::default()
@@ -7468,6 +7518,8 @@ mod tests {
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 &item_id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: initial.version,
                     status: Some("in_progress".to_owned()),
                     ..TaskUpdate::default()
@@ -7481,6 +7533,8 @@ mod tests {
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 &item_id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: status_only.version,
                     description: Some("Runtime description\n\nExtra Issue context".to_owned()),
                     ..TaskUpdate::default()
@@ -7494,6 +7548,8 @@ mod tests {
                 DEFAULT_WORK_ITEM_PROJECT_ID,
                 &item_id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: enriched.version,
                     description: Some("Runtime description".to_owned()),
                     ..TaskUpdate::default()
@@ -7852,6 +7908,8 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
                     version: current.version,
                     workflow: Some(Some(workflow)),
                     ..TaskUpdate::default()

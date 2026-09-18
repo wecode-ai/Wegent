@@ -457,6 +457,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
   locale,
   commands,
   canManage: canManageOverride,
+  initialCreateOpen = false,
+  onCreateOpenChange,
 }: {
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
@@ -466,6 +468,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
   locale: "zh-CN" | "en";
   commands: WorkspaceResourceCommands;
   canManage?: boolean;
+  initialCreateOpen?: boolean;
+  onCreateOpenChange?(open: boolean): void;
 }) {
   const messages = copy[locale];
   const [name, setName] = useState("");
@@ -488,7 +492,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   const [createEnvironmentTagInput, setCreateEnvironmentTagInput] =
     useState("");
   const [createMentionOpen, setCreateMentionOpen] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(initialCreateOpen);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -535,6 +539,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
   ];
   const selectedGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
+
+  useEffect(() => {
+    onCreateOpenChange?.(formOpen);
+  }, [formOpen, onCreateOpenChange]);
 
   useEffect(() => {
     if (!selectedGroup) return;

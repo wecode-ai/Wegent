@@ -253,6 +253,13 @@ const sharedMessages: Record<
 > = {
   "zh-CN": {
     "common.actions": "操作",
+    "issue_creation.owner": "负责人",
+    "issue_creation.user": "成员",
+    "issue_creation.agent": "智能体",
+    "issue_creation.group": "小队",
+    "issue_creation.unassigned": "未分配",
+    "issue_creation.search_members": "搜索成员、智能体或小队",
+    "issue_creation.invalid_reference": "引用不属于当前项目或已失效，请删除后重新 @ 或 # 选择。",
     "common.add": "添加",
     "common.cancel": "取消",
     "common.close": "关闭",
@@ -676,6 +683,13 @@ const sharedMessages: Record<
   },
   en: {
     "common.actions": "Actions",
+    "issue_creation.owner": "Assignee",
+    "issue_creation.user": "People",
+    "issue_creation.agent": "Agents",
+    "issue_creation.group": "Teams",
+    "issue_creation.unassigned": "Unassigned",
+    "issue_creation.search_members": "Search people, agents or teams",
+    "issue_creation.invalid_reference": "A reference is unavailable in this project. Remove it and select it again with @ or #.",
     "common.add": "Add",
     "common.cancel": "Cancel",
     "common.close": "Close",

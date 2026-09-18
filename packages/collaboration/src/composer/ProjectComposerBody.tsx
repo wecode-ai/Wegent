@@ -28,11 +28,13 @@ import {
   ProjectChatComposerSurface,
   PROJECT_CHAT_EDITOR_CLASS,
   PROJECT_CHAT_TOOLBAR_CLASS,
+  DOCUMENT_EDITOR_CLASS,
 } from './ProjectChatComposerSurface'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
+  presentation?: 'chat' | 'document'
   value: string
   onChange(value: string): void
   onSubmit(value: string, options?: ComposerSubmitOptions): void
@@ -81,6 +83,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
   function ProjectComposerBody(
     {
       value,
+      presentation = 'chat',
       onChange,
       onSubmit,
       onBlur,
@@ -121,7 +124,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
     ref
   ) {
     const editorRef = useRef<ComposerInputHandle>(null)
-    const textareaRef = useAutoResizeTextarea(value, 112)
+    const textareaRef = useAutoResizeTextarea(value, presentation === 'document' ? null : 112)
     const [hasText, setHasText] = useState(Boolean(value.trim()))
     const [isDraggingFiles, setDraggingFiles] = useState(false)
     const [transferError, setTransferError] = useState<string | null>(null)
@@ -193,6 +196,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       <>
         <ComposerErrorBanner error={transferError} />
         <ProjectChatComposerSurface
+          presentation={presentation}
           workBar={workBar}
           canCollapseInShortPane={canCollapse}
           collapseWhenIdle={collapseWhenIdle}
@@ -278,7 +282,8 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
             nativeEmptyCaret,
             rows: 2,
             onPasteFiles: onFileSelect,
-            className: PROJECT_CHAT_EDITOR_CLASS,
+            className:
+              presentation === 'document' ? DOCUMENT_EDITOR_CLASS : PROJECT_CHAT_EDITOR_CLASS,
             sendKey,
             followUpBehavior,
             isStreaming,
@@ -299,7 +304,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
               return true
             },
           })}
-          {renderToolbar({ canSend, className: PROJECT_CHAT_TOOLBAR_CLASS, onSubmit: submit })}
+          {renderToolbar({
+            canSend,
+            className: presentation === 'document' ? 'pt-3' : PROJECT_CHAT_TOOLBAR_CLASS,
+            onSubmit: submit,
+          })}
         </ProjectChatComposerSurface>
       </>
     )
