@@ -614,9 +614,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     f"[{self._channel_type.value}Handler] User-selected team not found "
                     f"or inactive: id={selection.team_id}, clearing selection"
                 )
-                await team_selection_manager.clear_selection(
-                    user_id, self._channel_id
-                )
+                await team_selection_manager.clear_selection(user_id, self._channel_id)
 
         # Fall back to default team
         return self._get_default_team(db, user_id)
@@ -2189,9 +2187,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 team_name = f"{display} (用户选择)"
             else:
                 # Selected team no longer exists, clear it
-                await team_selection_manager.clear_selection(
-                    user.id, self._channel_id
-                )
+                await team_selection_manager.clear_selection(user.id, self._channel_id)
                 team = self._get_default_team(db, user.id)
                 if team:
                     team_json = team.json or {}
@@ -2517,9 +2513,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             # Support "default" to revert to system default
             if argument == "default":
-                await team_selection_manager.clear_selection(
-                    user.id, self._channel_id
-                )
+                await team_selection_manager.clear_selection(user.id, self._channel_id)
                 await self._delete_conversation_task_id(
                     message_context.conversation_id, user.id
                 )
