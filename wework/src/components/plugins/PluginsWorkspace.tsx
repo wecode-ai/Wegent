@@ -28,6 +28,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
+import { ensurePython } from '@/desktop/executionEnvironments'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { ensureLocalExecutorStarted, getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import {
@@ -2010,8 +2011,11 @@ export function PluginsWorkspace({
     // Always re-prepare before connector auth + install. The confirm dialog opens
     // immediately with the list-row item; a fast confirm must not skip connector
     // detail that prepareMarketplaceInstallItem is still loading.
-    const request = prepareMarketplaceInstallItem(item)
-      .then(async preparedItem => {
+    const pythonReady = window.weworkElectronExecutionEnvironments
+      ? ensurePython()
+      : Promise.resolve(null)
+    const request = Promise.all([prepareMarketplaceInstallItem(item), pythonReady])
+      .then(async ([preparedItem]) => {
         await ensureMarketplaceConnectors(preparedItem)
         return preparedItem
       })

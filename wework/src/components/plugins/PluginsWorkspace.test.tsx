@@ -32,6 +32,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   request: vi.fn(),
 }))
 const desktopHostMock = vi.hoisted(() => vi.fn())
+const ensurePythonMock = vi.hoisted(() => vi.fn())
 
 function mockKnownExecutorDevice(deviceId: string): void {
   localExecutorMocks.knownDeviceId = deviceId
@@ -1550,6 +1551,13 @@ describe('PluginsWorkspace', () => {
     delete window.__WEWORK_RUNTIME_CONFIG__
     telemetryMocks.track.mockClear()
     desktopHostMock.mockReset()
+    ensurePythonMock.mockReset().mockResolvedValue({ state: 'installed' })
+    window.weworkElectronExecutionEnvironments = {
+      list: vi.fn().mockResolvedValue([]),
+      ensurePython: ensurePythonMock,
+      chooseNodeExecutable: vi.fn().mockResolvedValue(null),
+      useBuiltinNode: vi.fn().mockResolvedValue(undefined),
+    }
     localExecutorMocks.ensureStarted.mockReset()
     mockKnownExecutorDevice('current-device')
     vi.mocked(requestLocalExecutor).mockReset()
@@ -3050,6 +3058,13 @@ describe('PluginsWorkspace', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/marketplace/101/install?device_id=current-device',
       expect.objectContaining({ method: 'POST' })
+    )
+    const installRequestIndex = vi
+      .mocked(fetch)
+      .mock.calls.findIndex(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+    expect(ensurePythonMock).toHaveBeenCalledOnce()
+    expect(ensurePythonMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(fetch).mock.invocationCallOrder[installRequestIndex]
     )
     expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', { source: 'cloud' })
   })
