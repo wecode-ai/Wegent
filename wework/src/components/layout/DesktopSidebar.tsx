@@ -25,6 +25,7 @@ import {
   Search,
   SquareTerminal,
   Sparkles,
+  Target,
   X,
 } from 'lucide-react'
 import {
@@ -1889,19 +1890,21 @@ function RuntimeTaskRow({
                     }
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <span className="relative flex h-4 w-4 items-center justify-center">
+                    {hasActiveGoal ? (
+                      <span
+                        data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
+                        className="relative flex h-5 w-5 items-center justify-center text-primary"
+                        aria-hidden="true"
+                      >
+                        <CompositedSpinner icon={Loader2} className="absolute inset-0 h-5 w-5" />
+                        <Target className="h-3.5 w-3.5" />
+                      </span>
+                    ) : (
                       <CompositedSpinner
                         icon={Loader2}
                         className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
                       />
-                      {hasActiveGoal ? (
-                        <span
-                          data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
-                          aria-hidden="true"
-                          className="absolute h-1.5 w-1.5 rounded-full bg-primary"
-                        />
-                      ) : null}
-                    </span>
+                    )}
                   </span>
                 ) : priorityReason === 'waiting' ? (
                   <span
