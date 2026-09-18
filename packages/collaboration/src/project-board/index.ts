@@ -5,3 +5,5 @@
 export * from "./ProjectBoardBody";
 export * from "./useProjectBoardState";
 export * from "./useStandardCloudBoardController";
+
+export * from "./ProjectBoardGroupPicker";

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./tailwind-preset": "./tailwind-preset.js",
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
@@ -36,7 +37,395 @@
       "types": "./src/platform/index.ts",
       "import": "./src/platform/index.ts"
     },
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./markdown": {
+      "types": "./src/markdown/index.ts",
+      "import": "./src/markdown/index.ts"
+    },
+    "./markdown/safeAnimationFrame": {
+      "types": "./src/markdown/safeAnimationFrame.ts",
+      "import": "./src/markdown/safeAnimationFrame.ts"
+    },
+    "./markdown/MarkdownDiagramPreview": {
+      "types": "./src/markdown/MarkdownDiagramPreview.tsx",
+      "import": "./src/markdown/MarkdownDiagramPreview.tsx"
+    },
+    "./markdown/codex-directives": {
+      "types": "./src/markdown/codex-directives.ts",
+      "import": "./src/markdown/codex-directives.ts"
+    },
+    "./markdown/MarkdownCodeBlock": {
+      "types": "./src/markdown/MarkdownCodeBlock.tsx",
+      "import": "./src/markdown/MarkdownCodeBlock.tsx"
+    },
+    "./markdown/useEscapeKey": {
+      "types": "./src/markdown/useEscapeKey.ts",
+      "import": "./src/markdown/useEscapeKey.ts"
+    },
+    "./markdown/diagramImageExport": {
+      "types": "./src/markdown/diagramImageExport.ts",
+      "import": "./src/markdown/diagramImageExport.ts"
+    },
+    "./markdown/ComposerLinkChip": {
+      "types": "./src/markdown/ComposerLinkChip.tsx",
+      "import": "./src/markdown/ComposerLinkChip.tsx"
+    },
+    "./markdown/link-preview": {
+      "types": "./src/markdown/link-preview.ts",
+      "import": "./src/markdown/link-preview.ts"
+    },
+    "./markdown/assistantMarkdownWindowing": {
+      "types": "./src/markdown/assistantMarkdownWindowing.ts",
+      "import": "./src/markdown/assistantMarkdownWindowing.ts"
+    },
+    "./markdown/Button": {
+      "types": "./src/markdown/Button.tsx",
+      "import": "./src/markdown/Button.tsx"
+    },
+    "./markdown/DiagramImageActions": {
+      "types": "./src/markdown/DiagramImageActions.tsx",
+      "import": "./src/markdown/DiagramImageActions.tsx"
+    },
+    "./markdown/useBufferedStreamingText": {
+      "types": "./src/markdown/useBufferedStreamingText.ts",
+      "import": "./src/markdown/useBufferedStreamingText.ts"
+    },
+    "./markdown/assistantMarkdownLinks": {
+      "types": "./src/markdown/assistantMarkdownLinks.ts",
+      "import": "./src/markdown/assistantMarkdownLinks.ts"
+    },
+    "./theme": {
+      "types": "./src/theme/index.ts",
+      "import": "./src/theme/index.ts"
+    },
+    "./theme/color": {
+      "types": "./src/theme/color.ts",
+      "import": "./src/theme/color.ts"
+    },
+    "./theme/typography": {
+      "types": "./src/theme/typography.ts",
+      "import": "./src/theme/typography.ts"
+    },
+    "./controls": {
+      "types": "./src/controls/index.ts",
+      "import": "./src/controls/index.ts"
+    },
+    "./controls/platform": {
+      "types": "./src/controls/platform.ts",
+      "import": "./src/controls/platform.ts"
+    },
+    "./controls/model-selector-types": {
+      "types": "./src/controls/model-selector-types.ts",
+      "import": "./src/controls/model-selector-types.ts"
+    },
+    "./controls/model-selector-layout": {
+      "types": "./src/controls/model-selector-layout.ts",
+      "import": "./src/controls/model-selector-layout.ts"
+    },
+    "./controls/model-ui": {
+      "types": "./src/controls/model-ui.ts",
+      "import": "./src/controls/model-ui.ts"
+    },
+    "./controls/ModelSelector": {
+      "types": "./src/controls/ModelSelector.tsx",
+      "import": "./src/controls/ModelSelector.tsx"
+    },
+    "./conversation": {
+      "types": "./src/conversation/index.ts",
+      "import": "./src/conversation/index.ts"
+    },
+    "./conversation/bottomOriginScroll": {
+      "types": "./src/conversation/bottomOriginScroll.ts",
+      "import": "./src/conversation/bottomOriginScroll.ts"
+    },
+    "./conversation/codexReferences": {
+      "types": "./src/conversation/codexReferences.ts",
+      "import": "./src/conversation/codexReferences.ts"
+    },
+    "./conversation/parseUnifiedDiff": {
+      "types": "./src/conversation/parseUnifiedDiff.ts",
+      "import": "./src/conversation/parseUnifiedDiff.ts"
+    },
+    "./conversation/blocks/toolBlockActivity": {
+      "types": "./src/conversation/blocks/toolBlockActivity.ts",
+      "import": "./src/conversation/blocks/toolBlockActivity.ts"
+    },
+    "./conversation/blocks/webSearchActivity": {
+      "types": "./src/conversation/blocks/webSearchActivity.ts",
+      "import": "./src/conversation/blocks/webSearchActivity.ts"
+    },
+    "./conversation/blocks/fileEditDurations": {
+      "types": "./src/conversation/blocks/fileEditDurations.ts",
+      "import": "./src/conversation/blocks/fileEditDurations.ts"
+    },
+    "./conversation/blocks/processingDuration": {
+      "types": "./src/conversation/blocks/processingDuration.ts",
+      "import": "./src/conversation/blocks/processingDuration.ts"
+    },
+    "./conversation/blocks/processingExpansionState": {
+      "types": "./src/conversation/blocks/processingExpansionState.ts",
+      "import": "./src/conversation/blocks/processingExpansionState.ts"
+    },
+    "./conversation/blocks/toolBlockKinds": {
+      "types": "./src/conversation/blocks/toolBlockKinds.ts",
+      "import": "./src/conversation/blocks/toolBlockKinds.ts"
+    },
+    "./conversation/blocks/subagentPresentation": {
+      "types": "./src/conversation/blocks/subagentPresentation.ts",
+      "import": "./src/conversation/blocks/subagentPresentation.ts"
+    },
+    "./conversation/messagePretextLayout": {
+      "types": "./src/conversation/messagePretextLayout.ts",
+      "import": "./src/conversation/messagePretextLayout.ts"
+    },
+    "./conversation/useBottomOriginVirtualizer": {
+      "types": "./src/conversation/useBottomOriginVirtualizer.ts",
+      "import": "./src/conversation/useBottomOriginVirtualizer.ts"
+    },
+    "./conversation/conversationViewportCache": {
+      "types": "./src/conversation/conversationViewportCache.ts",
+      "import": "./src/conversation/conversationViewportCache.ts"
+    },
+    "./conversation/assistantMessagePresentation": {
+      "types": "./src/conversation/assistantMessagePresentation.ts",
+      "import": "./src/conversation/assistantMessagePresentation.ts"
+    },
+    "./composer/composerMarkdownSerializer": {
+      "types": "./src/composer/composerMarkdownSerializer.ts",
+      "import": "./src/composer/composerMarkdownSerializer.ts"
+    },
+    "./composer/composerProseMirrorModel": {
+      "types": "./src/composer/composerProseMirrorModel.ts",
+      "import": "./src/composer/composerProseMirrorModel.ts"
+    },
+    "./composer/composerDiagnostics": {
+      "types": "./src/composer/composerDiagnostics.ts",
+      "import": "./src/composer/composerDiagnostics.ts"
+    },
+    "./composer/composerLinks": {
+      "types": "./src/composer/composerLinks.ts",
+      "import": "./src/composer/composerLinks.ts"
+    },
+    "./composer/composerSkillIconPaths": {
+      "types": "./src/composer/composerSkillIconPaths.ts",
+      "import": "./src/composer/composerSkillIconPaths.ts"
+    },
+    "./composer/composerMentions": {
+      "types": "./src/composer/composerMentions.ts",
+      "import": "./src/composer/composerMentions.ts"
+    },
+    "./composer": {
+      "types": "./src/composer/index.ts",
+      "import": "./src/composer/index.ts"
+    },
+    "./conversation/streamingScrollFollow": {
+      "types": "./src/conversation/streamingScrollFollow.ts",
+      "import": "./src/conversation/streamingScrollFollow.ts"
+    },
+    "./conversation/conversationLayout": {
+      "types": "./src/conversation/conversationLayout.ts",
+      "import": "./src/conversation/conversationLayout.ts"
+    },
+    "./composer/useAnchoredPortalMenu": {
+      "types": "./src/composer/useAnchoredPortalMenu.ts",
+      "import": "./src/composer/useAnchoredPortalMenu.ts"
+    },
+    "./composer/useOutsideClick": {
+      "types": "./src/composer/useOutsideClick.ts",
+      "import": "./src/composer/useOutsideClick.ts"
+    },
+    "./composer/attachmentFiles": {
+      "types": "./src/composer/attachmentFiles.ts",
+      "import": "./src/composer/attachmentFiles.ts"
+    },
+    "./controls/runtimeModelSelection": {
+      "types": "./src/controls/runtimeModelSelection.ts",
+      "import": "./src/controls/runtimeModelSelection.ts"
+    },
+    "./execution/runtimeUserMessage": {
+      "types": "./src/execution/runtimeUserMessage.ts",
+      "import": "./src/execution/runtimeUserMessage.ts"
+    },
+    "./execution/taskAiExecution": {
+      "types": "./src/execution/taskAiExecution.ts",
+      "import": "./src/execution/taskAiExecution.ts"
+    },
+    "./controls/project-work-bar-utils": {
+      "types": "./src/controls/project-work-bar-utils.ts",
+      "import": "./src/controls/project-work-bar-utils.ts"
+    },
+    "./controls/ProjectFolderIcon": {
+      "types": "./src/controls/ProjectFolderIcon.tsx",
+      "import": "./src/controls/ProjectFolderIcon.tsx"
+    },
+    "./controls/ProjectWorkBar": {
+      "types": "./src/controls/ProjectWorkBar.tsx",
+      "import": "./src/controls/ProjectWorkBar.tsx"
+    },
+    "./conversation/ConversationQueuePanel": {
+      "types": "./src/conversation/ConversationQueuePanel.tsx",
+      "import": "./src/conversation/ConversationQueuePanel.tsx"
+    },
+    "./execution/taskCardReply": {
+      "types": "./src/execution/taskCardReply.ts",
+      "import": "./src/execution/taskCardReply.ts"
+    },
+    "./execution/taskReplyQueue": {
+      "types": "./src/execution/taskReplyQueue.ts",
+      "import": "./src/execution/taskReplyQueue.ts"
+    },
+    "./execution/useTaskReplyQueue": {
+      "types": "./src/execution/useTaskReplyQueue.ts",
+      "import": "./src/execution/useTaskReplyQueue.ts"
+    },
+    "./issue-detail/useIssueActivityScroll": {
+      "types": "./src/issue-detail/useIssueActivityScroll.ts",
+      "import": "./src/issue-detail/useIssueActivityScroll.ts"
+    },
+    "./execution/retryRuntimeConversation": {
+      "types": "./src/execution/retryRuntimeConversation.ts",
+      "import": "./src/execution/retryRuntimeConversation.ts"
+    },
+    "./execution/runtimeConversationQueue": {
+      "types": "./src/execution/runtimeConversationQueue.ts",
+      "import": "./src/execution/runtimeConversationQueue.ts"
+    },
+    "./execution/runtimeGuidanceMessages": {
+      "types": "./src/execution/runtimeGuidanceMessages.ts",
+      "import": "./src/execution/runtimeGuidanceMessages.ts"
+    },
+    "./composer/useAutoResizeTextarea": {
+      "types": "./src/composer/useAutoResizeTextarea.ts",
+      "import": "./src/composer/useAutoResizeTextarea.ts"
+    },
+    "./composer/composerAutocomplete": {
+      "types": "./src/composer/composerAutocomplete.ts",
+      "import": "./src/composer/composerAutocomplete.ts"
+    },
+    "./composer/SlashCommandMenu": {
+      "types": "./src/composer/SlashCommandMenu.tsx",
+      "import": "./src/composer/SlashCommandMenu.tsx"
+    },
+    "./composer/SlashModelMenu": {
+      "types": "./src/composer/SlashModelMenu.tsx",
+      "import": "./src/composer/SlashModelMenu.tsx"
+    },
+    "./composer/ComposerMentionMenu": {
+      "types": "./src/composer/ComposerMentionMenu.tsx",
+      "import": "./src/composer/ComposerMentionMenu.tsx"
+    },
+    "./composer/workspaceMentionTypes": {
+      "types": "./src/composer/workspaceMentionTypes.ts",
+      "import": "./src/composer/workspaceMentionTypes.ts"
+    },
+    "./composer/useWorkspaceMentionSearch": {
+      "types": "./src/composer/useWorkspaceMentionSearch.ts",
+      "import": "./src/composer/useWorkspaceMentionSearch.ts"
+    },
+    "./composer/useComposerCatalog": {
+      "types": "./src/composer/useComposerCatalog.ts",
+      "import": "./src/composer/useComposerCatalog.ts"
+    },
+    "./composer/composerCatalogCommands": {
+      "types": "./src/composer/composerCatalogCommands.ts",
+      "import": "./src/composer/composerCatalogCommands.ts"
+    },
+    "./controls/model-selector-utils": {
+      "types": "./src/controls/model-selector-utils.ts",
+      "import": "./src/controls/model-selector-utils.ts"
+    },
+    "./composer/composerMentionRows": {
+      "types": "./src/composer/composerMentionRows.ts",
+      "import": "./src/composer/composerMentionRows.ts"
+    },
+    "./composer/composerMentionCandidates": {
+      "types": "./src/composer/composerMentionCandidates.ts",
+      "import": "./src/composer/composerMentionCandidates.ts"
+    },
+    "./composer/useComposerMentionCandidates": {
+      "types": "./src/composer/useComposerMentionCandidates.ts",
+      "import": "./src/composer/useComposerMentionCandidates.ts"
+    },
+    "./composer/ComposerAutocompleteInput": {
+      "types": "./src/composer/ComposerAutocompleteInput.tsx",
+      "import": "./src/composer/ComposerAutocompleteInput.tsx"
+    },
+    "./composer/composerAutocompleteInputTypes": {
+      "types": "./src/composer/composerAutocompleteInputTypes.ts",
+      "import": "./src/composer/composerAutocompleteInputTypes.ts"
+    },
+    "./composer/ComposerPluginIcon": {
+      "types": "./src/composer/ComposerPluginIcon.tsx",
+      "import": "./src/composer/ComposerPluginIcon.tsx"
+    },
+    "./composer/ContextUsageIndicator": {
+      "types": "./src/composer/ContextUsageIndicator.tsx",
+      "import": "./src/composer/ContextUsageIndicator.tsx"
+    },
+    "./composer/QuickPhraseMenu": {
+      "types": "./src/composer/QuickPhraseMenu.tsx",
+      "import": "./src/composer/QuickPhraseMenu.tsx"
+    },
+    "./composer/QuickPhrasesEditor": {
+      "types": "./src/composer/QuickPhrasesEditor.tsx",
+      "import": "./src/composer/QuickPhrasesEditor.tsx"
+    },
+    "./composer/applyQuickPhrase": {
+      "types": "./src/composer/applyQuickPhrase.ts",
+      "import": "./src/composer/applyQuickPhrase.ts"
+    },
+    "./composer/PluginPickerMenu": {
+      "types": "./src/composer/PluginPickerMenu.tsx",
+      "import": "./src/composer/PluginPickerMenu.tsx"
+    },
+    "./composer/insertComposerReference": {
+      "types": "./src/composer/insertComposerReference.ts",
+      "import": "./src/composer/insertComposerReference.ts"
+    },
+    "./composer/pluginUsage": {
+      "types": "./src/composer/pluginUsage.ts",
+      "import": "./src/composer/pluginUsage.ts"
+    },
+    "./composer/composerPluginSort": {
+      "types": "./src/composer/composerPluginSort.ts",
+      "import": "./src/composer/composerPluginSort.ts"
+    },
+    "./composer/PluginTrialTemplateStrip": {
+      "types": "./src/composer/PluginTrialTemplateStrip.tsx",
+      "import": "./src/composer/PluginTrialTemplateStrip.tsx"
+    },
+    "./composer/PluginTrialSelectionContext": {
+      "types": "./src/composer/PluginTrialSelectionContext.ts",
+      "import": "./src/composer/PluginTrialSelectionContext.ts"
+    },
+    "./composer/createComposerCatalogStore": {
+      "types": "./src/composer/createComposerCatalogStore.ts",
+      "import": "./src/composer/createComposerCatalogStore.ts"
+    },
+    "./composer/pluginAssetReader": {
+      "types": "./src/composer/pluginAssetReader.ts",
+      "import": "./src/composer/pluginAssetReader.ts"
+    },
+    "./issue-detail/useIssueExecutionCancellation": {
+      "types": "./src/issue-detail/useIssueExecutionCancellation.ts",
+      "import": "./src/issue-detail/useIssueExecutionCancellation.ts"
+    },
+    "./issue-detail/IssueActivityTools": {
+      "types": "./src/issue-detail/IssueActivityTools.tsx",
+      "import": "./src/issue-detail/IssueActivityTools.tsx"
+    },
+    "./issue-detail/activityApproval": {
+      "types": "./src/issue-detail/activityApproval.ts",
+      "import": "./src/issue-detail/activityApproval.ts"
+    },
+    "./project-board/projectBoardDnd": {
+      "types": "./src/project-board/projectBoardDnd.ts",
+      "import": "./src/project-board/projectBoardDnd.ts"
+    },
+    "./project-board/ProjectBoardDragOverlay": {
+      "types": "./src/project-board/ProjectBoardDragOverlay.tsx",
+      "import": "./src/project-board/ProjectBoardDragOverlay.tsx"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
@@ -51,11 +440,38 @@
     "react-dom": ">=19"
   },
   "devDependencies": {
+    "@types/hast": "^3.0.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "typescript": "~6.0.2",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "@types/mdast": "^4.0.4"
+  },
+  "dependencies": {
+    "@file-viewer/preset-engineering": "2.1.26",
+    "@file-viewer/react": "2.1.26",
+    "@radix-ui/react-popover": "^1.1.16",
+    "@radix-ui/react-scroll-area": "^1.2.11",
+    "@radix-ui/react-slot": "^1.2.5",
+    "@wegent/chat-core": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "highlight.js": "11.11.1",
+    "streamdown": "2.5.0",
+    "tailwind-merge": "^3.6.0",
+    "@chenglou/pretext": "0.0.8",
+    "@tanstack/react-virtual": "3.14.2",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.10",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-tables": "^1.8.5",
+    "prosemirror-view": "^1.42.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
   }
 }

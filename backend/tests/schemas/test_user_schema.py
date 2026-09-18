@@ -5,7 +5,10 @@
 import json
 from datetime import datetime, timezone
 
-from app.schemas.user import UserInDB
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.user import UserInDB, UserPreferences
 
 
 def test_user_preferences_accept_runtime_model_selection():
@@ -68,3 +71,39 @@ def test_user_preferences_accept_employee_id():
 
     assert user.preferences is not None
     assert user.preferences.employee_id == "10086"
+
+
+def test_composer_preferences_preserve_modes_attachments_and_explicit_empty() -> None:
+    phrases = [
+        {"id": "plan", "title": " Plan ", "content": " Review ", "mode": "plan"},
+        {
+            "id": "stash-file",
+            "title": "File",
+            "content": "",
+            "mode": "normal",
+            "attachmentPaths": ["/tmp/a.png"],
+            "createdAt": 123,
+        },
+    ]
+    preferences = UserPreferences(composer_quick_phrases=phrases)
+    restored = UserPreferences.model_validate_json(preferences.model_dump_json())
+    assert restored.composer_quick_phrases[0].content == "Review"
+    assert restored.composer_quick_phrases[1].attachmentPaths == ["/tmp/a.png"]
+    assert UserPreferences(composer_quick_phrases=[]).model_dump(
+        exclude_unset=True
+    ) == {"composer_quick_phrases": []}
+
+
+@pytest.mark.parametrize(
+    "change", [{"mode": "unknown"}, {"content": " "}, {"title": " "}]
+)
+def test_composer_preferences_reject_invalid_phrases(change: dict) -> None:
+    phrase = {
+        "id": "summary",
+        "title": "Summary",
+        "content": "Summarize",
+        "mode": "normal",
+        **change,
+    }
+    with pytest.raises(ValidationError):
+        UserPreferences(composer_quick_phrases=[phrase])

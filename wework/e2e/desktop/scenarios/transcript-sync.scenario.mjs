@@ -130,6 +130,17 @@ function seedCloudCredential(electronUserDataDirectory, apiBaseUrl) {
   )
 }
 
+async function sendTranscriptPrompt(control, prompt, timeoutMs) {
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
+  // A restored editor can mount before its model selection is ready to submit.
+  await control.command(
+    'waitFor',
+    '[data-testid="desktop-workbench-main"] [data-testid="send-message-button"]',
+    { enabled: true, timeoutMs }
+  )
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+}
+
 async function waitFor(predicate, timeoutMs, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -433,8 +444,7 @@ export function createDesktopScenario({
       await createSingleRootLocalProject(control, workspacePath, 'transcript-sync')
       await writeFile(join(workspacePath, 'transcript-sync-restore-marker.txt'), 'snapshot\n')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FIRST_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, FIRST_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -464,8 +474,7 @@ export function createDesktopScenario({
         join(workspacePath, 'transcript-sync-restore-marker.txt'),
         `${RESTORED_WORKSPACE_MARKER}\n`
       )
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: SECOND_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, SECOND_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -573,8 +582,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'transcript-sync-03-device-b-restored-history.png', 'body')
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: RESTORED_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, RESTORED_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: RESTORED_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -614,8 +622,7 @@ export function createDesktopScenario({
         value.includes('/api/wework-transcripts')
       ).length
       await control.command('click', '[data-testid="settings-back-button"]')
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: THIRD_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, THIRD_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: THIRD_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -694,8 +701,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', deviceCRestoredTaskRowSelector)
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: REMOTE_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, REMOTE_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: REMOTE_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -798,8 +804,7 @@ export function createDesktopScenario({
       const beforeNewChatIds = new Set(transcripts.keys())
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: NEW_CHAT_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, NEW_CHAT_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: NEW_CHAT_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -830,8 +835,7 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: OTHER_PROJECT_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, OTHER_PROJECT_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: OTHER_PROJECT_COMPLETION,
         timeoutMs: uiTimeoutMs,

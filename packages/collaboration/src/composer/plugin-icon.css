@@ -1,0 +1,23 @@
+/* Composer icon slot: transparent by default; soft pad only when needed. */
+.plugin-icon-slot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border) / 0.35);
+  background-color: transparent;
+}
+
+[data-theme='dark'] .plugin-icon-slot--contrast-pad {
+  background-color: rgb(255 255 255 / 0.14);
+  border-color: rgb(255 255 255 / 0.18);
+}
+
+.plugin-icon-slot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+

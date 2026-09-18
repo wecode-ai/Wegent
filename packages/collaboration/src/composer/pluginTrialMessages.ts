@@ -1,0 +1,48 @@
+import type { CollaborationLocale } from '../i18n'
+export const pluginTrialMessages: Record<CollaborationLocale, Readonly<Record<string, string>>> = {
+  'zh-CN': {
+    'workbench.plugin_trial_review_current_changes': '当前改动',
+    'workbench.plugin_trial_review_branch': '分支对比',
+    'workbench.plugin_trial_review_commit': '单次提交',
+    'workbench.plugin_trial_ai_error': 'AI 暂时无法完善任务，请重试',
+    'workbench.plugin_trial_apply_task': '填入任务：{{task}}',
+    'workbench.plugin_trial_examples_accessible_label': '插件常用任务',
+    'workbench.plugin_trial_examples_title': '{{plugin}} 可以这样用',
+    'workbench.plugin_trial_examples_fallback_title': '这个插件可以这样用',
+    'workbench.plugin_trial_examples_hint': '选择一个常用任务，填入后仍可修改',
+    'common.close': '关闭',
+    'workbench.plugin_trial_ai_result': 'AI 整理的任务',
+    'workbench.plugin_trial_ai_empty_recommendation': '让 AI 推荐一个适合当前目标的任务',
+    'workbench.retry': '重试',
+    'workbench.plugin_trial_examples_footer': '点击只会填入输入框，不会自动发送',
+    'workbench.plugin_trial_hide_other_tasks': '收起其他任务',
+    'workbench.plugin_trial_view_other_tasks': '查看其他常用任务',
+    'workbench.plugin_trial_ai_other_task_with_context': '结合当前对话推荐其他任务',
+    'workbench.plugin_trial_ai_other_task': 'AI 推荐其他任务',
+    'workbench.plugin_trial_ai_refining': 'AI 正在整理任务…',
+  },
+  en: {
+    'workbench.plugin_trial_review_current_changes': 'Current changes',
+    'workbench.plugin_trial_review_branch': 'Compare branch',
+    'workbench.plugin_trial_review_commit': 'Single commit',
+    'workbench.plugin_trial_ai_error': 'AI could not refine the task. Try again.',
+    'workbench.plugin_trial_apply_task': 'Add task: {{task}}',
+    'workbench.plugin_trial_examples_accessible_label': 'Common plugin tasks',
+    'workbench.plugin_trial_examples_title': 'Ways to use {{plugin}}',
+    'workbench.plugin_trial_examples_fallback_title': 'Ways to use this plugin',
+    'workbench.plugin_trial_examples_hint':
+      'Choose a common task. You can edit it after it is added.',
+    'common.close': 'Close',
+    'workbench.plugin_trial_ai_result': 'AI-prepared task',
+    'workbench.plugin_trial_ai_empty_recommendation': 'Let AI suggest a task for your current goal',
+    'workbench.retry': 'Retry',
+    'workbench.plugin_trial_examples_footer':
+      'Clicking only adds text to the composer. Nothing is sent automatically.',
+    'workbench.plugin_trial_hide_other_tasks': 'Hide other tasks',
+    'workbench.plugin_trial_view_other_tasks': 'View other common tasks',
+    'workbench.plugin_trial_ai_other_task_with_context':
+      'Use this conversation to suggest another task',
+    'workbench.plugin_trial_ai_other_task': 'Ask AI for another task',
+    'workbench.plugin_trial_ai_refining': 'AI is preparing your task…',
+  },
+}

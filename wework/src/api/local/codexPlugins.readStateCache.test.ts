@@ -3151,4 +3151,43 @@ describe('local codex plugin readState cache', () => {
       { name: 'notion', featured: false },
     ])
   })
+  test('routes desktop app and skill catalogs through the shared decoders', async () => {
+    mocks.requestLocalExecutor.mockImplementation(async (method, payload) => {
+      expect(method).toBe('codex.app_server_request')
+      if (payload.method === 'app/list')
+        return { data: [{ id: 'app', name: 'App', isAccessible: false }], nextCursor: null }
+      if (payload.method === 'skills/list')
+        return {
+          data: [
+            {
+              skills: [
+                {
+                  name: 'pdf',
+                  path: '/task/pdf',
+                  scope: 'repo',
+                  interface: { shortDescription: 'Read documents' },
+                },
+              ],
+            },
+          ],
+        }
+      throw new Error('Unexpected catalog method')
+    })
+    const api = createLocalCodexPluginApi()
+    expect(await api.listApps({ includeInaccessible: true })).toEqual([
+      expect.objectContaining({ id: 'app', isAccessible: false, source: 'codex-app' }),
+    ])
+    expect(await api.listSkills({ cwds: ['/task'], forceReload: true })).toEqual([
+      expect.objectContaining({
+        name: 'pdf',
+        description: 'Read documents',
+        source: 'codex',
+        scope: 'repo',
+      }),
+    ])
+    expect(mocks.requestLocalExecutor).toHaveBeenLastCalledWith('codex.app_server_request', {
+      method: 'skills/list',
+      params: { cwds: ['/task'], forceReload: true },
+    })
+  })
 })

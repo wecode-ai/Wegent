@@ -1367,6 +1367,7 @@ class ProjectChatService:
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .order_by(ProjectChatMessage.id.desc())
+            .with_for_update()
             .first()
         )
 

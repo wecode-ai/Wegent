@@ -7,7 +7,7 @@ use std::{env, future::Future, path::PathBuf, pin::Pin};
 use serde_json::Value;
 
 mod agno;
-mod backend_url;
+pub(crate) mod backend_url;
 mod cargo_cache;
 mod claude_code;
 mod claude_options;

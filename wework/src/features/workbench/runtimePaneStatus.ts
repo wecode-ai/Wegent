@@ -1,3 +1,4 @@
+import { isRuntimeQueueBusyError } from '@wegent/collaboration/execution/runtimeConversationQueue'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import i18n from '@/i18n'
@@ -25,11 +26,7 @@ export interface RuntimePaneStatus {
 }
 
 export function isRuntimeTaskBusyError(error: string | null): boolean {
-  const normalizedError = error?.trim().toLowerCase()
-  return (
-    normalizedError?.includes('runtime task is already running') === true ||
-    normalizedError === i18n.t('workbench.runtime_task_running_message').trim().toLowerCase()
-  )
+  return isRuntimeQueueBusyError(error, i18n.t('workbench.runtime_task_running_message'))
 }
 
 export function deriveRuntimePaneStatus({
