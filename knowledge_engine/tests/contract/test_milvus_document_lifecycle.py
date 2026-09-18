@@ -414,7 +414,7 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
         milvus_env,
         knowledge_id=knowledge_id,
         document_id=914,
-        text=_hierarchical_text(marker="orphanmarker", key="iota"),
+        text=_hierarchical_text(marker="orphanmarker", key="iota", paragraphs=10),
         splitter_config=HIERARCHICAL_SPLITTER,
     )
     document = backend.get_document(knowledge_id, "914", user_id=CONTRACT_USER_ID)
@@ -424,9 +424,27 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
         {chunk["metadata"]["parent_node_id"] for chunk in stored_chunks}
     )
     assert parent_node_ids and all(parent_node_ids)
+    marker_children = [
+        chunk for chunk in stored_chunks if "orphanmarker" in chunk["content"]
+    ]
+    assert marker_children, "the child that carries the marker is stored"
+    marker_parent_id = marker_children[0]["metadata"]["parent_node_id"]
+    parent_bodies = backend.get_parent_nodes(
+        knowledge_id, [marker_parent_id], user_id=CONTRACT_USER_ID
+    )
+    assert marker_parent_id in parent_bodies, "the marker parent is stored"
+    # A child that already carried its whole parent body could not tell the two
+    # apart, so the sample only proves the fallback while that body stays longer
+    # than the child hit.
+    assert len(parent_bodies[marker_parent_id]["content"]) > len(
+        marker_children[0]["content"]
+    )
 
     # The sidecar of that document is gone while its chunks stay stored.
-    backend.delete_parent_nodes(knowledge_id, "914", user_id=CONTRACT_USER_ID)
+    deleted_parent_nodes = backend.delete_parent_nodes(
+        knowledge_id, "914", user_id=CONTRACT_USER_ID
+    )
+    assert deleted_parent_nodes == len(parent_node_ids)
     await_parent_removal(
         backend,
         knowledge_id=knowledge_id,
@@ -445,10 +463,12 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
     )
     assert records, "the child stays readable when its parent is missing"
     assert _doc_refs(records) == {"914"}
+    # The answer is one stored child body, and it is not the parent body this
+    # child used to be expanded to, so the missing parent was not invented back.
     assert records[0]["content"] in child_texts
-    # The parent body of this document spans several children, so carrying a
-    # later paragraph would mean the expansion invented a parent body.
-    assert "iota paragraph 1" not in records[0]["content"]
+    returned_parent_id = records[0]["metadata"]["parent_node_id"]
+    assert returned_parent_id in parent_bodies
+    assert records[0]["content"] != parent_bodies[returned_parent_id]["content"]
 
 
 def test_delete_removes_one_document_with_its_parents(
