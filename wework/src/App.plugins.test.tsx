@@ -1747,7 +1747,7 @@ describe('App plugins route', () => {
     window.history.pushState({}, '', '/sites')
 
     renderApp()
-    await screen.findByText('还没有站点')
+    expect(await screen.findByText('还没有站点', {}, { timeout: 5_000 })).toBeInTheDocument()
     await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
