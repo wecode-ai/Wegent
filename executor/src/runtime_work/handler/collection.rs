@@ -836,7 +836,9 @@ impl RuntimeWorkRpcHandler {
         }
         self.store.update_task(&local_task_id, |link| {
             apply_local_execution_state(link, true, None);
-            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
+            let started_at = now_ms();
+            link.updated_at = started_at.max(link.updated_at.saturating_add(1));
+            link.recency_at = started_at.max(link.recency_at.saturating_add(1));
             link.completed_at = None;
         });
         if let Some(link) = self.local_task_link(&local_task_id) {
