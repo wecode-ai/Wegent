@@ -40,6 +40,7 @@ import {
 import {
   verifyAnthropicEmptyResponseRecovery,
   verifyFollowUpSendRejectionNotice,
+  verifyModelServiceConnectionError,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -758,6 +759,8 @@ async function verifyCloudCheckpoint({
       await verifyRetryFailureRestoration(control, composerSelector)
       setPhase('cloud-rate-limit')
       await verifyRateLimitRecovery({ composerSelector, control })
+      setPhase('cloud-model-service-connection-error')
+      await verifyModelServiceConnectionError({ composerSelector, control })
       setPhase('cloud-reconnect')
       await verifyReconnectRecovery({ composerSelector, control })
       setPhase('cloud-anthropic-empty')

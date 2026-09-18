@@ -15,6 +15,12 @@ sidebar_position: 10
   to open **Settings → Proxy**, save the local proxy, and restart Codex when prompted.
 - For task or terminal failures, check whether the device is online, busy, or requires an update.
 
+### Unable to connect to the model service
+
+When the local model proxy cannot send a request to the model service, the conversation shows **Unable to connect to the model service** and includes the complete failed endpoint directly in the error card. `Failed to send a request` means that the client did not receive a usable HTTP response. Check the current network, VPN, proxy, and DNS settings. For an internal endpoint, also confirm that the device is connected to the corporate network or VPN.
+
+Expand **Error details** to inspect the original service error. Only a 502 response that contains connection-failure details is reported as a model service connection error; a regular 502 response from a service that was reached is still reported as a request timeout.
+
 ### A new task is missing from the sidebar
 
 For development diagnostics, run the following command in the Wework Web Inspector console, then reproduce the issue:

@@ -124,6 +124,7 @@ import {
 
 import {
   verifyFollowUpSendRejectionNotice,
+  verifyModelServiceConnectionError,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -3380,6 +3381,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'rate-limit-recovery'
       await verifyRateLimitRecovery({ composerSelector, control })
+
+      phase = 'model-service-connection-error'
+      await verifyModelServiceConnectionError({ composerSelector, control })
 
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })

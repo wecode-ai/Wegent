@@ -152,6 +152,8 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MODEL_SERVICE_CONNECTION_ERROR,
+  MODEL_SERVICE_CONNECTION_PROMPT,
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -813,6 +815,7 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'model_service_connection_error',
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
@@ -4465,6 +4468,19 @@ class DesktopE2EServer {
         responseCreated(responseId),
         assistantMessage(RATE_LIMIT_COMPLETION_TEXT),
         responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'model_service_connection_error') {
+      this.recordScenarioRequest('model_service_connection_error', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(MODEL_SERVICE_CONNECTION_PROMPT),
+        'The real Codex request did not contain the model-service connection prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, MODEL_SERVICE_CONNECTION_ERROR, 'other'),
       ])
       return
     }

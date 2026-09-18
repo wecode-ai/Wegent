@@ -1247,29 +1247,33 @@ describe('App plugins route', () => {
 
   test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
-    workbenchProviderMocks.autoReady = false
-    window.history.pushState({}, '', '/')
+    try {
+      workbenchProviderMocks.autoReady = false
+      window.history.pushState({}, '', '/')
 
-    renderApp()
-    await act(async () => {
-      for (let index = 0; index < 10; index += 1) {
-        await Promise.resolve()
-      }
-    })
-    expect(screen.getByTestId('app-shell')).toBeInTheDocument()
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      renderApp()
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) {
+          await Promise.resolve()
+        }
+      })
+      expect(screen.getByTestId('app-shell')).toBeInTheDocument()
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
-    await act(async () => {
-      vi.advanceTimersByTime(10_000)
-    })
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      await act(async () => {
+        vi.advanceTimersByTime(10_000)
+      })
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
-    await act(async () => {
-      window.history.pushState({}, '', '/todo')
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    })
-    expect(window.location.pathname).toBe('/todo')
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      await act(async () => {
+        window.history.pushState({}, '', '/todo')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      expect(window.location.pathname).toBe('/todo')
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {
