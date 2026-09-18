@@ -23,8 +23,8 @@ from .conftest import MilvusContractEnv, index_nodes
 pytestmark = pytest.mark.milvus
 
 
-def _nodes(count: int, *, category: str | None = None) -> list[TextNode]:
-    metadata = {"category": category} if category is not None else {}
+def _nodes(count: int, *, heading_path: str | None = None) -> list[TextNode]:
+    metadata = {"heading_path": heading_path} if heading_path is not None else {}
     return [
         TextNode(text=f"chunk {index} content", metadata=dict(metadata))
         for index in range(count)
@@ -41,13 +41,13 @@ def test_chunk_listing_keeps_a_match_behind_the_read_limit(
         backend,
         knowledge_id=knowledge_id,
         doc_ref="8101",
-        nodes=_nodes(250, category="filler"),
+        nodes=_nodes(250, heading_path="filler"),
     )
     index_nodes(
         backend,
         knowledge_id=knowledge_id,
         doc_ref="8102",
-        nodes=_nodes(20, category="target"),
+        nodes=_nodes(20, heading_path="target"),
     )
 
     chunks = backend.get_all_chunks(
@@ -55,32 +55,34 @@ def test_chunk_listing_keeps_a_match_behind_the_read_limit(
         max_chunks=20,
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "target"}],
+            "conditions": [
+                {"key": "heading_path", "operator": "eq", "value": "target"}
+            ],
         },
     )
 
     assert len(chunks) == 20
     assert {chunk["doc_ref"] for chunk in chunks} == {"8102"}
-    assert all(chunk["metadata"]["category"] == "target" for chunk in chunks)
+    assert all(chunk["metadata"]["heading_path"] == "target" for chunk in chunks)
 
 
-def test_chunk_listing_applies_a_text_condition_before_the_read_limit(
+def test_chunk_listing_applies_a_condition_before_the_read_limit(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """The reading path reuses the compiled substring contract."""
+    """The reading path compiles the shared condition into the database read."""
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     index_nodes(
         backend,
         knowledge_id=knowledge_id,
         doc_ref="8201",
-        nodes=_nodes(60, category="filler"),
+        nodes=_nodes(60, heading_path="filler"),
     )
     index_nodes(
         backend,
         knowledge_id=knowledge_id,
         doc_ref="8202",
-        nodes=_nodes(5, category="release-2026-candidate"),
+        nodes=_nodes(5, heading_path="target"),
     )
 
     chunks = backend.get_all_chunks(
@@ -89,7 +91,7 @@ def test_chunk_listing_applies_a_text_condition_before_the_read_limit(
         metadata_condition={
             "operator": "and",
             "conditions": [
-                {"key": "category", "operator": "contains", "value": "2026"}
+                {"key": "heading_path", "operator": "in", "value": ["target"]}
             ],
         },
     )
@@ -120,7 +122,7 @@ def test_chunk_listing_keeps_the_partial_result_semantics(
         max_chunks=5,
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "chunk_index", "operator": "gte", "value": 25}],
+            "conditions": [{"key": "chunk_index", "operator": "in", "value": [25, 29]}],
         },
     )
 
@@ -130,7 +132,7 @@ def test_chunk_listing_keeps_the_partial_result_semantics(
     ], "repeating the same read over static data must not drift"
     assert [chunk["chunk_id"] for chunk in exactly_the_cap] == list(range(30))
     assert len(above_the_cap) == 30
-    assert [chunk["chunk_id"] for chunk in numeric_condition] == [25, 26, 27, 28, 29]
+    assert [chunk["chunk_id"] for chunk in numeric_condition] == [25, 29]
 
 
 def test_chunk_listing_still_accepts_a_doc_ref_condition(

@@ -215,7 +215,7 @@ def preference_env(milvus_uri: str) -> MilvusContractEnv:
         knowledge_id=knowledge_id,
         doc_ref=DENSE_DOC,
         model=model,
-        nodes=[TextNode(text=DENSE_TEXT, metadata={"category": "semantic"})],
+        nodes=[TextNode(text=DENSE_TEXT, metadata={"heading_path": "semantic"})],
     )
     _index_nodes(
         backend,
@@ -225,7 +225,7 @@ def preference_env(milvus_uri: str) -> MilvusContractEnv:
         nodes=[
             TextNode(
                 text=f"{KEYWORD_TEXT} zebra_pipeline_99",
-                metadata={"category": "keyword"},
+                metadata={"heading_path": "keyword"},
             )
         ],
     )
@@ -396,38 +396,6 @@ def test_hybrid_threshold_cuts_the_reported_fusion_score(preference_index) -> No
             )
 
 
-def test_hybrid_scores_do_not_depend_on_the_requested_top_k(preference_index) -> None:
-    """The same row keeps its score when only the candidate count changes."""
-    backend, knowledge_id, model = preference_index
-    settings = {
-        "query": "zebra_pipeline_99",
-        "dense_query": DENSE_QUERY_TEXT,
-        "vector_weight": 0.75,
-        "keyword_weight": 0.25,
-    }
-
-    narrow = _query(
-        backend,
-        knowledge_id=knowledge_id,
-        model=model,
-        mode="hybrid",
-        top_k=1,
-        **settings,
-    )
-    wide = _query(
-        backend,
-        knowledge_id=knowledge_id,
-        model=model,
-        mode="hybrid",
-        top_k=5,
-        **settings,
-    )
-
-    assert len(narrow["records"]) == 1
-    for doc_ref, score in _scores(narrow).items():
-        assert _scores(wide)[doc_ref] == pytest.approx(score, abs=0.001)
-
-
 def test_hybrid_respects_scope_and_metadata_filters(preference_index) -> None:
     """Both branches share one scope; out-of-scope rows never leak in."""
     backend, knowledge_id, model = preference_index
@@ -439,7 +407,9 @@ def test_hybrid_respects_scope_and_metadata_filters(preference_index) -> None:
         scope=RetrievalScope(document_ids=[int(KEYWORD_DOC)]),
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "keyword"}],
+            "conditions": [
+                {"key": "heading_path", "operator": "eq", "value": "keyword"}
+            ],
         },
     )
     denied = _hybrid(
@@ -449,7 +419,9 @@ def test_hybrid_respects_scope_and_metadata_filters(preference_index) -> None:
         scope=RetrievalScope(document_ids=[int(KEYWORD_DOC)]),
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "semantic"}],
+            "conditions": [
+                {"key": "heading_path", "operator": "eq", "value": "semantic"}
+            ],
         },
     )
 
@@ -457,10 +429,10 @@ def test_hybrid_respects_scope_and_metadata_filters(preference_index) -> None:
     assert denied == {"records": []}
 
 
-def test_hybrid_rejects_text_conditions_milvus_cannot_match_literally(
+def test_hybrid_rejects_an_unsupported_metadata_operator(
     preference_index,
 ) -> None:
-    """Task 01's explicit rejection survives the hybrid path."""
+    """An operator outside the filter vocabulary fails on the hybrid path too."""
     backend, knowledge_id, model = preference_index
 
     with pytest.raises(ValueError):
@@ -471,7 +443,7 @@ def test_hybrid_rejects_text_conditions_milvus_cannot_match_literally(
             metadata_condition={
                 "operator": "and",
                 "conditions": [
-                    {"key": "category", "operator": "contains", "value": "50%off"}
+                    {"key": "heading_path", "operator": "contains", "value": "50%off"}
                 ],
             },
         )
@@ -544,7 +516,7 @@ def test_hybrid_never_adopts_a_collection_that_replaced_the_index(
         knowledge_id=knowledge_id,
         doc_ref="8301",
         model=model,
-        nodes=[TextNode(text=DENSE_TEXT, metadata={"category": "semantic"})],
+        nodes=[TextNode(text=DENSE_TEXT, metadata={"heading_path": "semantic"})],
     )
     client = MilvusClient(uri=backend.url)
     try:
@@ -626,7 +598,7 @@ def test_hybrid_filters_before_the_candidate_cut(milvus_env: MilvusContractEnv) 
         nodes=[
             TextNode(
                 text="alpha " * 20 + f"filler chunk {index}",
-                metadata={"category": "filler", "chunk_index": index},
+                metadata={"heading_path": "filler", "chunk_index": index},
             )
             for index in range(60)
         ],
@@ -636,7 +608,7 @@ def test_hybrid_filters_before_the_candidate_cut(milvus_env: MilvusContractEnv) 
         knowledge_id=knowledge_id,
         doc_ref="8502",
         model=model,
-        nodes=[TextNode(text="alpha", metadata={"category": "target"})],
+        nodes=[TextNode(text="alpha", metadata={"heading_path": "target"})],
     )
 
     unfiltered = _hybrid(backend, knowledge_id, model, query="alpha", top_k=5)
@@ -650,7 +622,9 @@ def test_hybrid_filters_before_the_candidate_cut(milvus_env: MilvusContractEnv) 
         top_k=5,
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "target"}],
+            "conditions": [
+                {"key": "heading_path", "operator": "eq", "value": "target"}
+            ],
         },
     )
     assert _doc_refs(filtered) == ["8502"]

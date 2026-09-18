@@ -183,6 +183,80 @@ def test_keyword_capability_check_follows_the_stored_analyzer():
         store.verify_keyword_binding("wegent_kb_1", _binding(analyzer=""))
 
 
+class _HybridSearchClient:
+    """Records the hybrid request the store sends to the server."""
+
+    def __init__(self, *, exists: bool = True) -> None:
+        self.exists = exists
+        self.hybrid_requests: list[dict] = []
+
+    def has_collection(self, collection_name: str, **kwargs) -> bool:
+        return self.exists
+
+    def hybrid_search(self, **kwargs):
+        self.hybrid_requests.append(kwargs)
+        return [
+            [
+                {
+                    "entity": {"id": "row-1", "display_text": "融合分数"},
+                    "distance": 0.42,
+                }
+            ]
+        ]
+
+
+def test_hybrid_search_sends_both_branches_and_the_native_ranker():
+    """One native hybrid call carries both branches, one filter and the weights."""
+    client = _HybridSearchClient()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    hits = store.hybrid_search(
+        client,
+        "wegent_kb_1",
+        dense_query_vector=[1.0, 0.0],
+        sparse_query_text="中文 标识符",
+        filter_expr='metadata["knowledge_id"] == "1"',
+        limit=5,
+        vector_weight=0.7,
+        keyword_weight=0.3,
+    )
+
+    [request] = client.hybrid_requests
+    dense_branch, sparse_branch = request["reqs"]
+    assert dense_branch.data == [[1.0, 0.0]]
+    assert dense_branch.anns_field == DENSE_VECTOR_FIELD
+    assert dense_branch.param == {"metric_type": METRIC_TYPE, "params": {}}
+    assert sparse_branch.data == ["中文 标识符"]
+    assert sparse_branch.anns_field == SPARSE_VECTOR_FIELD
+    assert sparse_branch.param == {"metric_type": "BM25", "params": {}}
+    # Both branches carry the same scope, so neither can widen the other.
+    assert dense_branch.expr == sparse_branch.expr == 'metadata["knowledge_id"] == "1"'
+    assert request["ranker"].dict()["params"]["weights"] == [0.7, 0.3]
+    assert request["limit"] == 5
+    assert request["timeout"] == store.rpc_timeout
+    # The fused score is reported as the server returned it.
+    assert hits == [{"id": "row-1", "display_text": "融合分数", "__score__": 0.42}]
+
+
+def test_hybrid_search_on_a_missing_collection_returns_nothing():
+    client = _HybridSearchClient(exists=False)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    hits = store.hybrid_search(
+        client,
+        "wegent_kb_1",
+        dense_query_vector=[1.0, 0.0],
+        sparse_query_text="q",
+        filter_expr="",
+        limit=5,
+        vector_weight=0.7,
+        keyword_weight=0.3,
+    )
+
+    assert hits == []
+    assert client.hybrid_requests == []
+
+
 class _IndexParams:
     """Stands in for the SDK index-param builder."""
 

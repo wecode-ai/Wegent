@@ -178,11 +178,15 @@ def test_keyword_hits_chinese_english_and_code_identifiers(
         text=(
             "知识库检索系统支持中文分词与向量召回。\n"
             "The retrieval pipeline scores candidates with BM25 in Milvus.\n"
-            "调用 get_user_by_id 可以按用户标识获取资料。"
+            "调用 get_user_by_id 可以按用户标识获取资料。\n"
+            "当前版本 Qwen3-Embedding 0.6B 于 2026 年发布，"
+            "配置项 max_batch_size=32。"
         ),
     )
 
-    for query in ("中文分词", "BM25", "get_user_by_id"):
+    # Chinese words, English words, digits, underscores and code identifiers
+    # all recall the chunk through the server-side analyzer.
+    for query in ("中文分词", "BM25", "2026", "get_user_by_id", "max_batch_size"):
         result = _keyword_query(backend, knowledge_id=knowledge_id, query=query)
 
         assert result["records"], f"expected real keyword hits for {query!r}"
@@ -197,28 +201,27 @@ def test_keyword_hits_chinese_english_and_code_identifiers(
     )
     assert unrelated == {"records": []}
 
-    # The reported score is the fixed s/(1+s) mapping of the raw BM25 score,
-    # and the existing threshold field filters on that mapped value. Whether the
-    # product default threshold is useful for keyword hits is what task 07
-    # evaluates; this only records that the mapping and the cut both apply.
+    # The reported score is the raw BM25 score Milvus returned, and the
+    # existing threshold field filters on that same value: the boundary keeps
+    # the hit and a score above it cuts it.
     observed = max(
         record["score"]
         for record in _keyword_query(
             backend, knowledge_id=knowledge_id, query="中文分词"
         )["records"]
     )
-    assert 0.0 < observed < 1.0
+    assert observed > 0.0
     assert _keyword_query(
         backend,
         knowledge_id=knowledge_id,
         query="中文分词",
-        score_threshold=observed / 2,
+        score_threshold=observed,
     )["records"]
     assert _keyword_query(
         backend,
         knowledge_id=knowledge_id,
         query="中文分词",
-        score_threshold=min(observed + 0.1, 0.99),
+        score_threshold=observed + 1.0,
     ) == {"records": []}
 
 
@@ -238,7 +241,7 @@ def test_keyword_returns_display_text_while_matching_retrieval_text(
                 metadata={
                     "retrieval_text": "内部检索提示词 get_internal_token_by_id",
                     "display_text": "展示正文：面向用户的完整回答",
-                    "category": "docs",
+                    "heading_path": "docs",
                 },
             )
         ],
@@ -421,6 +424,48 @@ def test_a_fixed_collection_keeps_every_read_inside_scope(
         _drop_shared_index(milvus_env, collection_name)
 
 
+def test_a_shared_collection_refuses_an_incompatible_dataset(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """The collection contract is one for every dataset it holds.
+
+    A second dataset that would need another embedding space must fail before
+    anything is written or removed, and the dataset already stored must stay
+    readable.
+    """
+    collection_name = f"wegent_shared_{uuid.uuid4().hex[:8]}"
+    backend = MilvusBackend(
+        {
+            "url": milvus_env.uri,
+            "indexStrategy": {"mode": "fixed", "fixedName": collection_name},
+            "ext": {"timeout": 30.0},
+        }
+    )
+    first_kb, second_kb = "7701", "7702"
+    try:
+        _index_text_document(
+            milvus_env,
+            knowledge_id=first_kb,
+            document_id=7701,
+            text="共用集合中的第一份数据集文档，主题是嵌入空间契约。",
+            backend=backend,
+        )
+
+        with pytest.raises(IndexContractIncompatibleError):
+            backend.index_with_metadata(
+                nodes=[TextNode(text="第二个数据集声明另一个嵌入空间。")],
+                chunk_metadata=_chunk_metadata(second_kb, "7702"),
+                embed_model=DeterministicEmbedding(DIMENSION, model_name="other-model"),
+            )
+
+        assert _doc_refs(
+            _keyword_query(backend, knowledge_id=first_kb, query="嵌入空间契约")
+        ) == {"7701"}, "the incompatible write must not disturb the stored dataset"
+        assert backend.get_all_chunks(second_kb) == [], "nothing was written"
+    finally:
+        _drop_shared_index(milvus_env, collection_name)
+
+
 def test_metadata_filter_is_applied_before_the_top_k_cut(
     milvus_env: MilvusContractEnv,
 ) -> None:
@@ -430,7 +475,7 @@ def test_metadata_filter_is_applied_before_the_top_k_cut(
     filler = [
         TextNode(
             text="alpha " * 20 + f"filler chunk {index}",
-            metadata={"category": "filler", "chunk_index": index},
+            metadata={"heading_path": "filler", "chunk_index": index},
         )
         for index in range(20)
     ]
@@ -444,7 +489,7 @@ def test_metadata_filter_is_applied_before_the_top_k_cut(
         backend,
         knowledge_id=knowledge_id,
         doc_ref="7402",
-        nodes=[TextNode(text="alpha", metadata={"category": "target"})],
+        nodes=[TextNode(text="alpha", metadata={"heading_path": "target"})],
     )
 
     unfiltered = _keyword_query(
@@ -462,29 +507,29 @@ def test_metadata_filter_is_applied_before_the_top_k_cut(
         top_k=5,
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "target"}],
+            "conditions": [
+                {"key": "heading_path", "operator": "eq", "value": "target"}
+            ],
         },
     )
     assert _doc_refs(filtered) == {"7402"}
 
 
-def test_metadata_conditions_keep_their_documented_semantics(
+def test_metadata_conditions_keep_the_supported_contract(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """AND/OR, numeric lists, escaping and missing fields behave as recorded."""
+    """The whitelist, flat AND, eq/in and the ``==`` alias on real Milvus."""
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     rows = {
         "7501": {
-            "category": "tech",
-            "year": 2024,
-            "note": 'a"b\\c',
-            "tags": ["alpha", "beta"],
-            "codes": [2026, 7],
-            "flags": [True],
+            "file_name": "tech.md",
+            "page_number": 2024,
+            "heading_path": 'a"b\\c',
+            "chunk_strategy": "flat",
         },
-        "7502": {"category": "db", "year": 2023, "codes": [2025], "flags": [False]},
-        "7503": {"year": 2025, "note": "release2026"},
+        "7502": {"file_name": "db.md", "page_number": 2023},
+        "7503": {"page_number": 2025, "file_type": "md"},
     }
     for doc_ref, metadata in rows.items():
         _index_nodes(
@@ -513,152 +558,91 @@ def test_metadata_conditions_keep_their_documented_semantics(
         {
             "operator": "and",
             "conditions": [
-                {"key": "category", "operator": "eq", "value": "tech"},
-                {"key": "year", "operator": "gte", "value": 2024},
+                {"key": "file_name", "operator": "eq", "value": "tech.md"},
+                {"key": "page_number", "operator": "eq", "value": 2024},
             ],
         }
     ) == {"7501"}
     assert matching(
         {
-            "operator": "or",
+            "operator": "and",
             "conditions": [
-                {"key": "category", "operator": "eq", "value": "db"},
-                {"key": "category", "operator": "eq", "value": "tech"},
+                {"key": "page_number", "operator": "in", "value": [2023, 2024]}
             ],
         }
     ) == {"7501", "7502"}
     assert matching(
         {
             "operator": "and",
-            "conditions": [{"key": "year", "operator": "in", "value": [2023, 2024]}],
+            "conditions": [{"key": "file_name", "operator": "==", "value": "tech.md"}],
         }
-    ) == {"7501", "7502"}
+    ) == {"7501"}, "== is the documented alias of eq"
     assert matching(
         {
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "nin", "value": ["tech"]}],
+            "conditions": [
+                {"key": "heading_path", "operator": "eq", "value": 'a"b\\c'}
+            ],
         }
-    ) == {"7502", "7503"}, "a missing key satisfies not-in, as in ES"
+    ) == {"7501"}, "quotes and backslashes survive the expression"
     assert matching(
         {
             "operator": "and",
-            "conditions": [{"key": "note", "operator": "eq", "value": 'a"b\\c'}],
+            "conditions": [{"key": "file_type", "operator": "eq", "value": "md"}],
         }
-    ) == {"7501"}
+    ) == {"7503"}, "a condition on a key only one row has still matches"
     assert (
         matching(
             {
                 "operator": "and",
                 "conditions": [
-                    {"key": "category", "operator": "eq", "value": "missing"}
+                    {"key": "file_name", "operator": "eq", "value": "missing.md"}
                 ],
             }
         )
         == set()
     ), "a missing key never equals a value"
-    assert matching(
+
+    rejected = [
+        # Only a flat and is supported.
         {
-            "operator": "and",
-            "conditions": [{"key": "tags", "operator": "contains", "value": "alpha"}],
-        }
-    ) == {"7501"}, "contains matches a JSON array element"
-    assert matching(
+            "operator": "or",
+            "conditions": [{"key": "file_name", "operator": "eq", "value": "tech.md"}],
+        },
+        # Nested conditions are not part of the vocabulary.
         {
             "operator": "and",
             "conditions": [
-                {"key": "category", "operator": "text_match", "value": "tec"}
-            ],
-        }
-    ) == {"7501"}, "text_match is a case-sensitive substring on Milvus 2.5.4"
-    # Array membership keeps the value type: the number 2026 matches the number
-    # element, the string "2026" does not, and a neighbouring number does not.
-    assert matching(
-        {
-            "operator": "and",
-            "conditions": [{"key": "codes", "operator": "contains", "value": 2026}],
-        }
-    ) == {"7501"}, "contains matches a numeric JSON array element"
-    assert (
-        matching(
-            {
-                "operator": "and",
-                "conditions": [
-                    {"key": "codes", "operator": "contains", "value": "2026"}
-                ],
-            }
-        )
-        == set()
-    ), "a string value never matches a numeric element"
-    assert matching(
-        {
-            "operator": "and",
-            "conditions": [{"key": "codes", "operator": "contains", "value": 2025}],
-        }
-    ) == {"7502"}, "a different number is not a match"
-    assert matching(
-        {
-            "operator": "and",
-            "conditions": [{"key": "flags", "operator": "contains", "value": True}],
-        }
-    ) == {"7501"}, "contains matches a boolean JSON array element"
-    assert matching(
-        {
-            "operator": "and",
-            "conditions": [{"key": "flags", "operator": "contains", "value": False}],
-        }
-    ) == {"7502"}, "the opposite boolean is not a match"
-    # The typed element match must not drop the substring path: a numeric value
-    # still matches text that contains it, and only that text.
-    assert matching(
-        {
-            "operator": "and",
-            "conditions": [{"key": "note", "operator": "contains", "value": 2026}],
-        }
-    ) == {"7503"}, "a numeric value still matches as a substring"
-    assert (
-        matching(
-            {
-                "operator": "and",
-                "conditions": [{"key": "note", "operator": "contains", "value": 2027}],
-            }
-        )
-        == set()
-    ), "a different number is not a substring match"
-
-    # Milvus cannot escape its like wildcards, so a literal pattern containing
-    # one fails instead of silently widening the condition.
-    for wildcard_value in ("50%off", "get_user_by_id"):
-        with pytest.raises(ValueError):
-            matching(
                 {
                     "operator": "and",
                     "conditions": [
-                        {
-                            "key": "category",
-                            "operator": "contains",
-                            "value": wildcard_value,
-                        }
+                        {"key": "file_name", "operator": "eq", "value": "tech.md"}
                     ],
                 }
-            )
-
-    with pytest.raises(ValueError):
-        _keyword_query(
-            backend,
-            knowledge_id=knowledge_id,
-            query="shared keyword",
-            metadata_condition={
-                "operator": "and",
-                "conditions": [
-                    {
-                        "operator": "or",
-                        "conditions": [
-                            {"key": "category", "operator": "eq", "value": "tech"}
-                        ],
-                    }
-                ],
-            },
-        )
+            ],
+        },
+        # Operators outside eq/in are not compiled at all.
+        {
+            "operator": "and",
+            "conditions": [{"key": "page_number", "operator": "gte", "value": 2024}],
+        },
+        {
+            "operator": "and",
+            "conditions": [
+                {"key": "heading_path", "operator": "contains", "value": "a"}
+            ],
+        },
+        # A key ingestion never writes cannot be filtered on.
+        {
+            "operator": "and",
+            "conditions": [{"key": "category", "operator": "eq", "value": "tech"}],
+        },
+        # The condition shape itself has to be the supported one.
+        {"doc_ref": "7501"},
+    ]
+    for condition in rejected:
+        with pytest.raises(ValueError):
+            matching(condition)
 
 
 def test_keyword_on_a_legacy_dense_only_index_fails_loudly(

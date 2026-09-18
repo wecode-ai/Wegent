@@ -33,19 +33,12 @@ from shared.models import RetrievalScope
 
 _CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")
 _JSON_CLAUSE = re.compile(
-    r'^metadata\["(?P<key>.+?)"\] (?P<operator>==|!=|in|not in|>=|<=|>|<) '
-    r"(?P<value>.+)$"
-)
-_JSON_MEMBERSHIP_CLAUSE = re.compile(
-    r'^json_contains\(metadata\["(?P<key>.+?)"\], (?P<value>.+)\)$'
-)
-_JSON_SUBSTRING_CLAUSE = re.compile(
-    r'^metadata\["(?P<key>.+?)"\] like "%(?P<value>.*)%"$'
+    r'^metadata\["(?P<key>.+?)"\] (?P<operator>==|in) (?P<value>.+)$'
 )
 
 
-def _split_expression(expression: str, operator: str) -> list[str]:
-    """Split one boolean expression on its top level ``operator``."""
+def _split_conjuncts(expression: str) -> list[str]:
+    """Split one boolean expression on its top level ``and``."""
     parts: list[str] = []
     current = ""
     depth = 0
@@ -58,7 +51,7 @@ def _split_expression(expression: str, operator: str) -> list[str]:
             depth -= 1
         if depth == 0 and current:
             match = _CLAUSE_SEPARATOR.match(expression, index)
-            if match and match.group(1) == operator:
+            if match and match.group(1) == "and":
                 parts.append(current)
                 current = ""
                 index = match.end()
@@ -84,30 +77,6 @@ def _parse_literal(raw_literal: str) -> Any:
         return float(text)
     except ValueError:
         return text
-
-
-def _compare(actual: Any, operator: str, expected: Any) -> bool:
-    if operator == "==":
-        return actual == expected
-    if operator == "!=":
-        return actual != expected
-    if operator == "in":
-        return actual in expected
-    if operator == "not in":
-        return actual not in expected
-    if not _is_number(actual) or not _is_number(expected):
-        return False
-    comparisons = {
-        ">": lambda left, right: left > right,
-        ">=": lambda left, right: left >= right,
-        "<": lambda left, right: left < right,
-        "<=": lambda left, right: left <= right,
-    }
-    return comparisons[operator](actual, expected)
-
-
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _enclosing_group(expression: str) -> Optional[str]:
@@ -171,6 +140,7 @@ class FakeStore:
         binding=None,
         has_contract=True,
         sparse_hits=None,
+        hybrid_hits=None,
     ):
         self.collection_exists = collection_exists
         self.rows = list(rows or [])
@@ -187,6 +157,8 @@ class FakeStore:
         self.searches: list[dict] = []
         self.sparse_searches: list[dict] = []
         self.sparse_hits: list[dict] = list(sparse_hits or [])
+        self.hybrid_searches: list[dict] = []
+        self.hybrid_hits: list[dict] = list(hybrid_hits or [])
         self.clients_created = 0
         self.clients_closed = 0
 
@@ -322,6 +294,32 @@ class FakeStore:
         )
         return self.sparse_hits[:limit]
 
+    def hybrid_search(
+        self,
+        client,
+        collection_name,
+        *,
+        dense_query_vector,
+        sparse_query_text,
+        filter_expr,
+        limit,
+        vector_weight,
+        keyword_weight,
+        output_fields=None,
+    ):
+        self.hybrid_searches.append(
+            {
+                "dense_vector": list(dense_query_vector),
+                "query_text": sparse_query_text,
+                "filter": filter_expr,
+                "limit": limit,
+                "vector_weight": vector_weight,
+                "keyword_weight": keyword_weight,
+                "fields": output_fields,
+            }
+        )
+        return self.hybrid_hits[:limit]
+
     @classmethod
     def _filter_matches(cls, row: Dict[str, Any], filter_expr: str) -> bool:
         """Evaluate a filter with the semantics the compiled clauses promise.
@@ -334,42 +332,29 @@ class FakeStore:
 
     @classmethod
     def _expression_matches(cls, row: Dict[str, Any], expression: str) -> bool:
-        """Evaluate one boolean expression, innermost groups first."""
+        """Evaluate one boolean expression, the outermost group first."""
         expression = expression.strip()
-        conjuncts = _split_expression(expression, "and")
+        conjuncts = _split_conjuncts(expression)
         if len(conjuncts) > 1:
             return all(cls._expression_matches(row, part) for part in conjuncts)
         inner = _enclosing_group(expression)
         if inner is not None:
-            alternates = _split_expression(inner, "or")
-            if len(alternates) > 1:
-                return any(cls._expression_matches(row, part) for part in alternates)
             return cls._expression_matches(row, inner)
         return cls._clause_matches(row, expression)
 
     @classmethod
     def _clause_matches(cls, row: Dict[str, Any], clause: str) -> bool:
-        membership = _JSON_MEMBERSHIP_CLAUSE.match(clause)
-        if membership:
-            return cls._metadata_value(row, membership.group("key")) == _parse_literal(
-                membership.group("value")
-            )
-        substring = _JSON_SUBSTRING_CLAUSE.match(clause)
-        if substring:
-            return substring.group("value") in str(
-                cls._metadata_value(row, substring.group("key")) or ""
-            )
         comparison = _JSON_CLAUSE.match(clause)
         if not comparison:
             raise AssertionError(
                 f"the fake store cannot evaluate the clause {clause!r}"
             )
         # Every clause the compiler emits addresses the row's metadata column.
-        return _compare(
-            cls._metadata_value(row, comparison.group("key")),
-            comparison.group("operator"),
-            _parse_literal(comparison.group("value")),
-        )
+        actual = cls._metadata_value(row, comparison.group("key"))
+        expected = _parse_literal(comparison.group("value"))
+        if comparison.group("operator") == "==":
+            return actual == expected
+        return actual in expected
 
     @staticmethod
     def _metadata_value(row: Dict[str, Any], key: str) -> Any:
@@ -1163,7 +1148,7 @@ def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
 
     assert store.contract_reads == 1
     assert [name for name, *_ in store.calls].count("read_contract") == 1
-    assert store.searches or store.sparse_searches
+    assert store.searches or store.sparse_searches or store.hybrid_searches
 
 
 def _exploding_search(*args, **kwargs):
@@ -1287,6 +1272,7 @@ def test_a_failing_retrieve_still_releases_its_client(retrieval_mode):
     store = _hybrid_store()
     store.search = _exploding_search
     store.sparse_search = _exploding_search
+    store.hybrid_search = _exploding_search
     backend._store = store
 
     with pytest.raises(StorageBackendError):
@@ -1328,9 +1314,9 @@ def _hybrid_hit(row_id, doc_ref, *, display, score):
 def _hybrid_store():
     """One candidate only the dense branch prefers and one only BM25 prefers."""
     return FakeStore(
-        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)],
-        sparse_hits=[
-            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5)
+        hybrid_hits=[
+            _hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75),
+            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5),
         ],
     )
 
@@ -1373,10 +1359,11 @@ def test_keyword_retrieve_uses_planned_sparse_query_without_embedding():
     assert store.sparse_searches[0]["query_text"] == "get_user_by_id"
     assert 'metadata["knowledge_id"] == "1"' in store.sparse_searches[0]["filter"]
     assert [record["content"] for record in result["records"]] == ["展示正文"]
-    assert result["records"][0]["score"] == pytest.approx(0.75)
+    # The reported score is the raw BM25 score the server returned.
+    assert result["records"][0]["score"] == pytest.approx(3.0)
 
 
-def test_keyword_retrieve_applies_the_existing_threshold_to_the_mapped_score():
+def test_keyword_retrieve_applies_the_threshold_to_the_native_bm25_score():
     backend = _backend()
     store = FakeStore(
         sparse_hits=[
@@ -1408,6 +1395,7 @@ def test_keyword_retrieve_applies_the_existing_threshold_to_the_mapped_score():
     )
 
     assert [record["content"] for record in result["records"]] == ["relevant"]
+    assert result["records"][0]["score"] == pytest.approx(3.0)
 
 
 def test_keyword_retrieve_keeps_scope_and_metadata_filters():
@@ -1423,14 +1411,14 @@ def test_keyword_retrieve_keeps_scope_and_metadata_filters():
         scope=RetrievalScope(document_ids=[7, 8]),
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "tech"}],
+            "conditions": [{"key": "file_name", "operator": "eq", "value": "tech"}],
         },
     )
 
     expression = store.sparse_searches[0]["filter"]
     assert 'metadata["knowledge_id"] == "1"' in expression
     assert 'metadata["doc_ref"] in ["7", "8"]' in expression
-    assert 'metadata["category"] == "tech"' in expression
+    assert 'metadata["file_name"] == "tech"' in expression
 
 
 def test_keyword_retrieve_of_a_missing_index_returns_empty_without_embedding():
@@ -1474,8 +1462,8 @@ def test_keyword_retrieve_rejects_a_contract_without_an_analyzer():
         )
 
 
-def test_hybrid_retrieve_fuses_both_branches_with_the_default_weights():
-    """Hybrid queries both routes over one filter and fuses their raw scores."""
+def test_hybrid_retrieve_runs_one_native_search_with_the_default_weights():
+    """Hybrid is Milvus's own: one call carries both branches and the weights."""
     backend = _backend()
     store = _hybrid_store()
     backend._store = store
@@ -1491,31 +1479,32 @@ def test_hybrid_retrieve_fuses_both_branches_with_the_default_weights():
         },
     )
 
-    dense_request = store.searches[0]
-    keyword_request = store.sparse_searches[0]
-    assert dense_request["limit"] == 5
-    assert keyword_request["limit"] == 5
-    assert dense_request["filter"] == keyword_request["filter"]
-    assert 'metadata["knowledge_id"] == "1"' in dense_request["filter"]
-    assert "published" not in dense_request["filter"]
+    [request] = store.hybrid_searches
+    assert request["limit"] == 5
+    assert request["query_text"] == "深度学习模型训练 zebra_pipeline_99"
+    assert request["dense_vector"] == [1.0, 0.0]
+    assert (request["vector_weight"], request["keyword_weight"]) == (0.7, 0.3)
+    assert 'metadata["knowledge_id"] == "1"' in request["filter"]
+    assert "published" not in request["filter"]
+    # The branches are the server's business now, so neither is run here.
+    assert store.searches == []
+    assert store.sparse_searches == []
     assert [record["content"] for record in result["records"]] == [
         "dense 偏好",
         "keyword 偏好",
     ]
-    # Default 0.7/0.3 of the fixed mappings: dense (1+0.75)/2, keyword 0.5/1.5.
-    assert result["records"][0]["score"] == pytest.approx(0.7 * 0.875)
-    assert result["records"][1]["score"] == pytest.approx(0.3 * (0.5 / 1.5))
     assert result["records"][0]["title"] == "document-42.txt"
     assert result["records"][0]["metadata"]["doc_ref"] == "42"
 
 
-def test_hybrid_retrieve_sums_both_shares_for_a_row_both_routes_recall():
-    """A row recalled by both routes reports the sum, not the larger share."""
+def test_hybrid_retrieve_reports_the_score_the_ranker_returned():
+    """The fused score is the server's: it is reported, never recomputed."""
     backend = _backend()
-    shared_row = _hybrid_hit("shared-row", "42", display="两路都命中", score=0.75)
     store = FakeStore(
-        rows=[shared_row],
-        sparse_hits=[dict(shared_row, **{"__score__": 1.0})],
+        hybrid_hits=[
+            _hybrid_hit("shared-row", "42", display="两路都命中", score=0.83),
+            _hybrid_hit("weak-row", "43", display="两路都偏弱", score=0.12),
+        ]
     )
     backend._store = store
 
@@ -1526,34 +1515,33 @@ def test_hybrid_retrieve_sums_both_shares_for_a_row_both_routes_recall():
         retrieval_setting={
             "retrieval_mode": "hybrid",
             "top_k": 5,
-            "score_threshold": 0.0,
-            "vector_weight": 0.5,
-            "keyword_weight": 0.5,
+            "score_threshold": 0.2,
         },
     )
 
-    # Dense (1 + 0.75) / 2 = 0.875 and keyword 1.0 / 2.0 = 0.5, summed.
     assert [record["content"] for record in result["records"]] == ["两路都命中"]
-    assert result["records"][0]["score"] == pytest.approx(0.5 * 0.875 + 0.5 * 0.5)
+    assert result["records"][0]["score"] == pytest.approx(0.83)
 
 
 @pytest.mark.parametrize(
-    ("vector_weight", "keyword_weight", "dense_share", "keyword_share"),
+    ("configured", "expected"),
     [
-        (0.9, 0.1, 0.9, 0.1),
-        (0.1, 0.9, 0.1, 0.9),
-        (3.0, 1.0, 0.75, 0.25),
+        ({"vector_weight": 0.9, "keyword_weight": 0.1}, (0.9, 0.1)),
+        ({"vector_weight": 3.0, "keyword_weight": 1.0}, (0.75, 0.25)),
+        ({"keyword_weight": 0.3}, (0.7, 0.3)),
+        ({"vector_weight": 0.5}, (0.5, 0.5)),
+        ({}, (0.7, 0.3)),
     ],
 )
-def test_hybrid_retrieve_weights_the_two_contributions(
-    vector_weight, keyword_weight, dense_share, keyword_share
+def test_hybrid_retrieve_passes_the_resolved_weights_to_the_ranker(
+    configured, expected
 ):
-    """Each route contributes exactly its normalized share of the fusion."""
+    """The configured shares are what the native ranker receives."""
     backend = _backend()
     store = _hybrid_store()
     backend._store = store
 
-    result = backend.retrieve(
+    backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
@@ -1561,34 +1549,22 @@ def test_hybrid_retrieve_weights_the_two_contributions(
             "retrieval_mode": "hybrid",
             "top_k": 5,
             "score_threshold": 0.0,
-            "vector_weight": vector_weight,
-            "keyword_weight": keyword_weight,
+            **configured,
         },
     )
 
-    scores = {record["content"]: record["score"] for record in result["records"]}
-    assert scores["dense 偏好"] == pytest.approx(dense_share * 0.875)
-    assert scores["keyword 偏好"] == pytest.approx(keyword_share * (0.5 / 1.5))
-    if vector_weight > keyword_weight:
-        assert [record["content"] for record in result["records"]] == [
-            "dense 偏好",
-            "keyword 偏好",
-        ]
-    else:
-        assert [record["content"] for record in result["records"]] == [
-            "keyword 偏好",
-            "dense 偏好",
-        ]
+    [request] = store.hybrid_searches
+    assert (request["vector_weight"], request["keyword_weight"]) == expected
 
 
-def test_hybrid_threshold_cuts_the_reported_fusion_score():
+def test_hybrid_threshold_cuts_the_native_score():
     """The threshold compares exactly the score the caller receives."""
     backend = _backend()
     store = FakeStore(
-        sparse_hits=[
-            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5)
-        ],
-        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)],
+        hybrid_hits=[
+            _hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75),
+            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5),
+        ]
     )
     backend._store = store
     settings = {
@@ -1602,30 +1578,27 @@ def test_hybrid_threshold_cuts_the_reported_fusion_score():
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.05},
+        retrieval_setting={**settings, "score_threshold": 0.4},
     )
     between = backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.3},
+        retrieval_setting={**settings, "score_threshold": 0.6},
     )
     below_both = backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.7},
+        retrieval_setting={**settings, "score_threshold": 0.8},
     )
 
-    # Reported fusion scores: dense 0.7 * (1 + 0.75) / 2 = 0.6125, keyword
-    # 0.3 * 0.5 / 1.5 = 0.1. The cut is that same score, so 0.05 keeps both,
-    # 0.3 keeps the dense row only and 0.7 keeps neither.
     assert [record["content"] for record in above_both["records"]] == [
         "dense 偏好",
         "keyword 偏好",
     ]
     assert [record["content"] for record in between["records"]] == ["dense 偏好"]
-    assert between["records"][0]["score"] == pytest.approx(0.7 * 0.875)
+    assert between["records"][0]["score"] == pytest.approx(0.75)
     assert below_both == {"records": []}
 
 
@@ -1633,13 +1606,9 @@ def test_hybrid_threshold_keeps_a_score_equal_to_the_cut():
     """The boundary is inclusive, exactly like the other retrieval modes."""
     backend = _backend()
     store = FakeStore(
-        sparse_hits=[
-            _hybrid_hit("keyword-row", "43", display="keyword 偏好", score=0.5)
-        ],
-        rows=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)],
+        hybrid_hits=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)]
     )
     backend._store = store
-    fusion_score = 0.7 * 0.875
 
     result = backend.retrieve(
         knowledge_id="1",
@@ -1650,45 +1619,12 @@ def test_hybrid_threshold_keeps_a_score_equal_to_the_cut():
             "top_k": 5,
             "vector_weight": 0.7,
             "keyword_weight": 0.3,
-            "score_threshold": fusion_score,
+            "score_threshold": 0.75,
         },
     )
 
     assert [record["content"] for record in result["records"]] == ["dense 偏好"]
-    assert result["records"][0]["score"] == pytest.approx(fusion_score)
-
-
-@pytest.mark.parametrize(
-    ("configured", "dense_share", "keyword_share"),
-    [
-        ({"keyword_weight": 0.3}, 0.7, 0.3),
-        ({"vector_weight": 0.5}, 0.5, 0.5),
-        ({"keyword_weight": 0.1}, 0.9, 0.1),
-    ],
-)
-def test_hybrid_retrieve_completes_a_single_configured_weight(
-    configured, dense_share, keyword_share
-):
-    """A lone weight keeps its share and the partner takes the remainder."""
-    backend = _backend()
-    store = _hybrid_store()
-    backend._store = store
-
-    result = backend.retrieve(
-        knowledge_id="1",
-        query="q",
-        embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={
-            "retrieval_mode": "hybrid",
-            "top_k": 5,
-            "score_threshold": 0.0,
-            **configured,
-        },
-    )
-
-    scores = {record["content"]: record["score"] for record in result["records"]}
-    assert scores["dense 偏好"] == pytest.approx(dense_share * 0.875)
-    assert scores["keyword 偏好"] == pytest.approx(keyword_share * (0.5 / 1.5))
+    assert result["records"][0]["score"] == pytest.approx(0.75)
 
 
 def test_hybrid_retrieve_with_full_vector_weight_skips_the_keyword_branch():
@@ -1712,6 +1648,7 @@ def test_hybrid_retrieve_with_full_vector_weight_skips_the_keyword_branch():
         },
     )
 
+    assert store.hybrid_searches == []
     assert store.searches, "the dense branch must still run"
     assert store.sparse_searches == []
     assert [record["content"] for record in result["records"]] == ["dense 偏好"]
@@ -1741,11 +1678,12 @@ def test_hybrid_retrieve_with_full_keyword_weight_never_embeds():
         },
     )
 
+    assert store.hybrid_searches == []
     assert store.searches == []
     assert store.sparse_searches, "the keyword branch must run"
-    # The keyword endpoint reports the keyword mode's fixed s/(1+s) mapping.
+    # The keyword endpoint reports the keyword mode's raw BM25 score.
     assert result["records"][0]["content"] == "keyword 偏好"
-    assert result["records"][0]["score"] == pytest.approx(0.75)
+    assert result["records"][0]["score"] == pytest.approx(3.0)
 
 
 @pytest.mark.parametrize(
@@ -1778,10 +1716,11 @@ def test_hybrid_retrieve_rejects_invalid_weights(weights, message):
         )
 
     assert message in str(error.value)
+    assert backend._store.hybrid_searches == []
 
 
 def test_hybrid_retrieve_keeps_scope_and_metadata_filters():
-    """Both branches share the same scope and metadata predicate."""
+    """The one hybrid request carries the whole scope and the predicate."""
     backend = _backend()
     store = _hybrid_store()
     backend._store = store
@@ -1794,15 +1733,14 @@ def test_hybrid_retrieve_keeps_scope_and_metadata_filters():
         scope=RetrievalScope(document_ids=[7, 8]),
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "tech"}],
+            "conditions": [{"key": "file_name", "operator": "eq", "value": "tech"}],
         },
     )
 
-    expression = store.searches[0]["filter"]
-    assert store.searches[0]["filter"] == store.sparse_searches[0]["filter"]
+    expression = store.hybrid_searches[0]["filter"]
     assert 'metadata["knowledge_id"] == "1"' in expression
     assert 'metadata["doc_ref"] in ["7", "8"]' in expression
-    assert 'metadata["category"] == "tech"' in expression
+    assert 'metadata["file_name"] == "tech"' in expression
 
 
 def test_reads_reject_a_contract_from_an_older_schema():
@@ -1838,7 +1776,8 @@ def test_retrieve_applies_document_scope_natively():
 
 def test_retrieve_rejects_doc_ref_metadata_condition():
     backend = _backend()
-    backend._store = FakeStore(rows=[])
+    store = FakeStore(rows=[])
+    backend._store = store
 
     with pytest.raises(ValueError):
         backend.retrieve(
@@ -1852,9 +1791,12 @@ def test_retrieve_rejects_doc_ref_metadata_condition():
             },
         )
 
+    # Document scope belongs to RetrievalScope, so nothing was queried.
+    assert store.searches == []
 
-def test_retrieve_compiles_supported_metadata_conditions():
-    """A condition on a chunk field is a condition on its metadata path."""
+
+def test_retrieve_compiles_a_flat_and_of_the_supported_operators():
+    """Equality and membership compile against the row's metadata column."""
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
@@ -1865,22 +1807,44 @@ def test_retrieve_compiles_supported_metadata_conditions():
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
         retrieval_setting={"score_threshold": 0.0},
         metadata_condition={
-            "operator": "or",
+            "operator": "and",
             "conditions": [
                 {"key": "source_file", "operator": "eq", "value": "a.txt"},
-                {"key": "chunk_index", "operator": "gte", "value": 3},
+                {"key": "file_name", "operator": "in", "value": ["a", "b"]},
             ],
         },
     )
 
     expression = store.searches[0]["filter"]
     assert (
-        '(metadata["source_file"] == "a.txt" or metadata["chunk_index"] >= 3)'
-        in expression
+        '(metadata["source_file"] == "a.txt" and '
+        'metadata["file_name"] in ["a", "b"])' in expression
     )
 
 
-def test_retrieve_filters_user_metadata_through_the_native_json_column():
+def test_retrieve_keeps_an_implicit_and_condition_inside_the_scope():
+    """A condition without an operator is a flat and with one member."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "conditions": [{"key": "page_number", "operator": "eq", "value": 3}],
+        },
+    )
+
+    expression = store.searches[0]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["page_number"] == 3' in expression
+
+
+def test_retrieve_keeps_the_double_equals_input_compatibility():
+    """``==`` is the documented alias of ``eq``, not a second operator."""
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
@@ -1892,22 +1856,59 @@ def test_retrieve_filters_user_metadata_through_the_native_json_column():
         retrieval_setting={"score_threshold": 0.0},
         metadata_condition={
             "operator": "and",
+            "conditions": [{"key": "filename", "operator": "==", "value": "a.txt"}],
+        },
+    )
+
+    assert 'metadata["filename"] == "a.txt"' in store.searches[0]["filter"]
+
+
+def test_retrieve_compiles_each_whitelisted_key():
+    """Every key the whitelist promises compiles into its metadata path."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+    keys = [
+        "source",
+        "filename",
+        "file_path",
+        "file_name",
+        "file_type",
+        "file_size",
+        "creation_date",
+        "last_modified_date",
+        "page_label",
+        "page_number",
+        "sheet_name",
+        "source_file",
+        "created_at",
+        "chunk_index",
+        "heading_path",
+        "chunk_strategy",
+        "format_enhancement",
+        "parser_subtype",
+        "node_role",
+    ]
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
             "conditions": [
-                {"key": "category", "operator": "eq", "value": "x"},
-                {"key": "year", "operator": "gte", "value": 2024},
-                {"key": "archived", "operator": "eq", "value": False},
+                {"key": key, "operator": "eq", "value": "v"} for key in keys
             ],
         },
     )
 
     expression = store.searches[0]["filter"]
-    assert 'metadata["category"] == "x"' in expression
-    assert 'metadata["year"] >= 2024' in expression
-    assert 'metadata["archived"] == false' in expression
+    for key in keys:
+        assert f'metadata["{key}"] == "v"' in expression
 
 
-def test_retrieve_accepts_numeric_lists_without_scalar_validation():
-    """A list value on a numeric field is a list comparison, not a scalar."""
+def test_retrieve_encodes_a_number_and_a_boolean_by_their_type():
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
@@ -1920,15 +1921,15 @@ def test_retrieve_accepts_numeric_lists_without_scalar_validation():
         metadata_condition={
             "operator": "and",
             "conditions": [
+                {"key": "chunk_index", "operator": "eq", "value": 3},
                 {"key": "chunk_index", "operator": "in", "value": [0, 1]},
-                {"key": "chunk_index", "operator": "nin", "value": [7]},
             ],
         },
     )
 
     expression = store.searches[0]["filter"]
+    assert 'metadata["chunk_index"] == 3' in expression
     assert 'metadata["chunk_index"] in [0, 1]' in expression
-    assert 'metadata["chunk_index"] not in [7]' in expression
 
 
 def test_retrieve_escapes_quotes_and_backslashes_in_metadata_conditions():
@@ -1943,95 +1944,24 @@ def test_retrieve_escapes_quotes_and_backslashes_in_metadata_conditions():
         retrieval_setting={"score_threshold": 0.0},
         metadata_condition={
             "operator": "and",
-            "conditions": [
-                {"key": "category", "operator": "eq", "value": 'a"b\\c'},
-            ],
+            "conditions": [{"key": "filename", "operator": "eq", "value": 'a"b\\c'}],
         },
     )
 
-    assert 'metadata["category"] == "a\\"b\\\\c"' in store.searches[0]["filter"]
-
-
-def test_retrieve_compiles_text_conditions_against_json_and_arrays():
-    backend = _backend()
-    store = FakeStore(rows=[])
-    backend._store = store
-
-    backend.retrieve(
-        knowledge_id="1",
-        query="q",
-        embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={"score_threshold": 0.0},
-        metadata_condition={
-            "operator": "or",
-            "conditions": [
-                {"key": "tags", "operator": "contains", "value": "alpha"},
-                {"key": "source_file", "operator": "text_match", "value": "doc"},
-            ],
-        },
-    )
-
-    expression = store.searches[0]["filter"]
-    assert (
-        '(json_contains(metadata["tags"], "alpha") '
-        'or metadata["tags"] like "%alpha%")' in expression
-    )
-    # A chunk field keeps only the substring match it had as a typed column.
-    assert 'metadata["source_file"] like "%doc%"' in expression
-    assert 'json_contains(metadata["source_file"]' not in expression
+    assert 'metadata["filename"] == "a\\"b\\\\c"' in store.searches[0]["filter"]
 
 
 @pytest.mark.parametrize(
-    ("value", "membership", "substring"),
-    [
-        (
-            "alpha",
-            'json_contains(metadata["tags"], "alpha")',
-            'metadata["tags"] like "%alpha%"',
-        ),
-        (
-            2026,
-            'json_contains(metadata["tags"], 2026)',
-            'metadata["tags"] like "%2026%"',
-        ),
-        (
-            True,
-            'json_contains(metadata["tags"], true)',
-            'metadata["tags"] like "%true%"',
-        ),
-    ],
+    "operator",
+    ["ne", "nin", "gt", "gte", "lt", "lte", "contains", "text_match", "!="],
 )
-def test_retrieve_keeps_json_array_membership_typed_and_the_substring_path(
-    value, membership, substring
-):
-    """A JSON condition keeps both the typed element match and the substring."""
+def test_retrieve_rejects_every_unsupported_operator(operator):
+    """An operator outside the contract fails instead of matching nothing."""
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
 
-    backend.retrieve(
-        knowledge_id="1",
-        query="q",
-        embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={"score_threshold": 0.0},
-        metadata_condition={
-            "operator": "and",
-            "conditions": [{"key": "tags", "operator": "contains", "value": value}],
-        },
-    )
-
-    expression = store.searches[0]["filter"]
-    assert membership in expression
-    assert substring in expression
-
-
-@pytest.mark.parametrize("value", ["50%off", "get_user_by_id"])
-def test_retrieve_rejects_text_conditions_milvus_cannot_match_literally(value):
-    """A literal LIKE wildcard has no escaped form, so the condition fails."""
-    backend = _backend()
-    backend._store = FakeStore(rows=[])
-
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not supported"):
         backend.retrieve(
             knowledge_id="1",
             query="q",
@@ -2040,25 +1970,44 @@ def test_retrieve_rejects_text_conditions_milvus_cannot_match_literally(value):
             metadata_condition={
                 "operator": "and",
                 "conditions": [
-                    {"key": "category", "operator": "contains", "value": value}
+                    {"key": "source_file", "operator": operator, "value": "a.txt"}
                 ],
             },
         )
 
+    assert store.searches == []
 
-@pytest.mark.parametrize("operator", ["contains", "text_match"])
-def test_retrieve_rejects_text_conditions_on_a_numeric_chunk_key(operator):
-    """A number has no substring, so the condition fails instead of matching none.
 
-    ``chunk_index`` is compared as the number the row layout stored. The server
-    used to refuse ``like`` on that column; compiling it into
-    ``metadata["chunk_index"] like ...`` would answer with an empty result
-    instead, which hides a caller's mistake.
-    """
+def test_retrieve_rejects_the_or_combination():
+    """Only a flat and is supported, so an or fails before it is compiled."""
     backend = _backend()
-    backend._store = FakeStore(rows=[])
+    store = FakeStore(rows=[])
+    backend._store = store
 
-    with pytest.raises(ValueError, match="is numeric"):
+    with pytest.raises(ValueError, match="'or' is not supported"):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={
+                "operator": "or",
+                "conditions": [
+                    {"key": "source_file", "operator": "eq", "value": "a.txt"}
+                ],
+            },
+        )
+
+    assert store.searches == []
+
+
+def test_retrieve_rejects_a_key_outside_the_whitelist():
+    """A key ingestion never writes can only match nothing, so it fails."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError, match="not filterable"):
         backend.retrieve(
             knowledge_id="1",
             query="q",
@@ -2066,11 +2015,11 @@ def test_retrieve_rejects_text_conditions_on_a_numeric_chunk_key(operator):
             retrieval_setting={"score_threshold": 0.0},
             metadata_condition={
                 "operator": "and",
-                "conditions": [
-                    {"key": "chunk_index", "operator": operator, "value": 0}
-                ],
+                "conditions": [{"key": "published", "operator": "eq", "value": True}],
             },
         )
+
+    assert store.searches == []
 
 
 def test_retrieve_rejects_nested_metadata_conditions():
@@ -2087,16 +2036,36 @@ def test_retrieve_rejects_nested_metadata_conditions():
                 "operator": "and",
                 "conditions": [
                     {
-                        "operator": "or",
-                        "conditions": [{"key": "category", "operator": "eq"}],
+                        "operator": "and",
+                        "conditions": [
+                            {"key": "file_name", "operator": "eq", "value": "a"}
+                        ],
                     }
                 ],
             },
         )
 
 
-def test_retrieve_rejects_non_scalar_values_outside_in_nin():
-    """A list value is only meaningful for in/nin; anything else fails."""
+def test_retrieve_rejects_a_condition_object_without_a_conditions_list():
+    """A bare metadata mapping carries no supported condition, so it fails."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError, match="conditions"):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={"doc_ref": "doc_123"},
+        )
+
+    assert store.searches == []
+
+
+def test_retrieve_rejects_a_list_value_outside_in():
+    """A list value is only meaningful for in; anything else fails."""
     backend = _backend()
     backend._store = FakeStore(rows=[])
 
@@ -2109,13 +2078,35 @@ def test_retrieve_rejects_non_scalar_values_outside_in_nin():
             metadata_condition={
                 "operator": "and",
                 "conditions": [
-                    {"key": "category", "operator": "eq", "value": ["a", "b"]},
+                    {"key": "file_name", "operator": "eq", "value": ["a", "b"]}
                 ],
             },
         )
 
 
-def test_retrieve_skips_null_value_conditions_like_elasticsearch():
+@pytest.mark.parametrize("key", ["id", "knowledge_id"])
+def test_retrieve_rejects_an_internal_field_as_a_metadata_condition(key):
+    """The row identity and the knowledge scope belong to the adapter."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": key, "operator": "eq", "value": "x"}],
+            },
+        )
+
+    assert store.searches == []
+
+
+def test_retrieve_skips_a_condition_without_a_constraint():
     """A condition with no value carries no constraint in the shared contract."""
     backend = _backend()
     store = FakeStore(rows=[])
@@ -2128,49 +2119,86 @@ def test_retrieve_skips_null_value_conditions_like_elasticsearch():
         retrieval_setting={"score_threshold": 0.0},
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": None}],
+            "conditions": [{"key": "filename", "operator": "eq", "value": None}],
         },
     )
 
-    assert 'metadata["category"]' not in store.searches[0]["filter"]
+    assert 'metadata["filename"]' not in store.searches[0]["filter"]
 
 
-def test_retrieve_rejects_the_internal_row_identity_as_a_metadata_condition():
-    """The primary key belongs to the write path, not to a query condition."""
+def test_retrieve_answers_empty_for_a_scope_that_names_no_document():
+    """An empty document scope matches nothing; it never widens to the KB."""
     backend = _backend()
-    backend._store = FakeStore(rows=[])
+    store = FakeStore(rows=[_stored_row("42")])
+    backend._store = store
+    empty_scope = RetrievalScope.model_construct(document_ids=[])
 
-    with pytest.raises(ValueError):
-        backend.retrieve(
-            knowledge_id="1",
-            query="q",
-            embed_model=FakeEmbedModel([[1.0, 0.0]]),
-            retrieval_setting={"score_threshold": 0.0},
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "id", "operator": "eq", "value": "x"}],
-            },
-        )
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=ExplodingEmbedModel(),
+        retrieval_setting={"score_threshold": 0.0},
+        scope=empty_scope,
+    )
+
+    assert result == {"records": []}
+    assert store.searches == []
+    assert store.sparse_searches == []
+    assert store.hybrid_searches == []
+    assert store.queries == []
 
 
-def test_retrieve_treats_published_as_an_ordinary_metadata_key():
-    """The publish flag is gone, so nothing reserves that key any more."""
-    backend = _backend()
-    store = FakeStore(rows=[])
+@pytest.mark.parametrize(
+    ("strategy", "kwargs"),
+    [
+        ({"mode": "fixed", "fixedName": "shared_index"}, {}),
+        ({"mode": "rolling", "rollingStep": 10}, {}),
+        ({"mode": "per_dataset"}, {}),
+        ({"mode": "per_user"}, {"user_id": 7}),
+    ],
+)
+@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
+def test_every_strategy_keeps_retrieval_inside_its_knowledge_base(
+    strategy, kwargs, retrieval_mode
+):
+    """Every collection strategy scopes every mode by the knowledge base."""
+    backend = MilvusBackend(
+        {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"prefix": "test", **strategy},
+            "ext": {},
+        }
+    )
+    store = FakeStore(rows=[_stored_row("42")], hybrid_hits=[_stored_row("42")])
+    store.sparse_hits = [_stored_row("42")]
     backend._store = store
 
-    backend.retrieve(
+    result = backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={"score_threshold": 0.0},
-        metadata_condition={
-            "operator": "and",
-            "conditions": [{"key": "published", "operator": "eq", "value": True}],
+        retrieval_setting={
+            "retrieval_mode": retrieval_mode,
+            "top_k": 5,
+            "score_threshold": 0.0,
         },
+        scope=RetrievalScope(document_ids=[9]),
+        **kwargs,
     )
 
-    assert 'metadata["published"] == true' in store.searches[0]["filter"]
+    request = (
+        store.searches[0]
+        if retrieval_mode == "vector"
+        else (
+            store.sparse_searches[0]
+            if retrieval_mode == "keyword"
+            else store.hybrid_searches[0]
+        )
+    )
+    expression = request["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["doc_ref"] in ["9"]' in expression
+    assert result["records"], "the scoped request must still answer its own rows"
 
 
 def test_delete_missing_document_is_idempotent_and_creates_nothing():
@@ -2343,8 +2371,8 @@ def test_get_all_chunks_keeps_a_match_behind_the_read_limit():
     """The metadata condition narrows the read, not the truncated page."""
     backend = _backend()
     store = FakeStore(
-        rows=_chunk_rows("42", range(5), metadata={"tag": "other"})
-        + _chunk_rows("42", [99], metadata={"tag": "keep"})
+        rows=_chunk_rows("42", range(5), metadata={"node_role": "chunk"})
+        + _chunk_rows("42", [99], metadata={"node_role": "qa_pair"})
     )
     backend._store = store
 
@@ -2353,20 +2381,20 @@ def test_get_all_chunks_keeps_a_match_behind_the_read_limit():
         max_chunks=2,
         metadata_condition={
             "operator": "and",
-            "conditions": [{"key": "tag", "operator": "eq", "value": "keep"}],
+            "conditions": [{"key": "node_role", "operator": "eq", "value": "qa_pair"}],
         },
     )
 
     assert [chunk["chunk_id"] for chunk in chunks] == [99]
     # The condition reaches the database, so the limit applies to matches.
-    assert 'metadata["tag"] == "keep"' in store.queries[-1]["filter"]
+    assert 'metadata["node_role"] == "qa_pair"' in store.queries[-1]["filter"]
 
 
-def test_get_all_chunks_compiles_the_shared_condition_contract():
-    """Text and numeric conditions both narrow the database read."""
+def test_get_all_chunks_compiles_the_supported_condition_contract():
+    """The read path narrows with the same whitelist the retrieval path uses."""
     backend = _backend()
     store = FakeStore(
-        rows=_chunk_rows("42", range(6), metadata={"tag": "release-2026"})
+        rows=_chunk_rows("42", range(6), metadata={"chunk_strategy": "parent_child"})
     )
     backend._store = store
 
@@ -2376,8 +2404,12 @@ def test_get_all_chunks_compiles_the_shared_condition_contract():
         metadata_condition={
             "operator": "and",
             "conditions": [
-                {"key": "tag", "operator": "contains", "value": "2026"},
-                {"key": "chunk_index", "operator": "gte", "value": 3},
+                {
+                    "key": "chunk_strategy",
+                    "operator": "eq",
+                    "value": "parent_child",
+                },
+                {"key": "chunk_index", "operator": "in", "value": [3, 4, 5]},
             ],
         },
     )

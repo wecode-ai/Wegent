@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Sequence
 
 import grpc
-from pymilvus import MilvusClient
+from pymilvus import AnnSearchRequest, MilvusClient, WeightedRanker
 from pymilvus.exceptions import MilvusException
 
 from knowledge_engine.storage.errors import (
@@ -453,6 +453,55 @@ class MilvusDocumentStore:
             limit=limit,
             output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
             search_params={"metric_type": SPARSE_METRIC_TYPE, "params": {}},
+            consistency_level=READ_CONSISTENCY_LEVEL,
+            timeout=self.rpc_timeout,
+        )
+        return self._hits_from_results(results)
+
+    def hybrid_search(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        *,
+        dense_query_vector: Sequence[float],
+        sparse_query_text: str,
+        filter_expr: str,
+        limit: int,
+        vector_weight: float,
+        keyword_weight: float,
+        output_fields: Sequence[str] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Run one native hybrid search: both branches and the server ranker.
+
+        Both branches carry the same filter, so the scope is applied inside the
+        server before either branch is cut. ``WeightedRanker`` fuses the two
+        branches with the shares the caller resolved, and the score it returns
+        is the score this call reports: nothing here normalizes or remaps it.
+        """
+        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
+            return []
+        requests = [
+            AnnSearchRequest(
+                data=[list(dense_query_vector)],
+                anns_field=DENSE_VECTOR_FIELD,
+                param={"metric_type": METRIC_TYPE, "params": {}},
+                limit=limit,
+                expr=filter_expr,
+            ),
+            AnnSearchRequest(
+                data=[sparse_query_text],
+                anns_field=SPARSE_VECTOR_FIELD,
+                param={"metric_type": SPARSE_METRIC_TYPE, "params": {}},
+                limit=limit,
+                expr=filter_expr,
+            ),
+        ]
+        results = client.hybrid_search(
+            collection_name=collection_name,
+            reqs=requests,
+            ranker=WeightedRanker(vector_weight, keyword_weight),
+            limit=limit,
+            output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
             consistency_level=READ_CONSISTENCY_LEVEL,
             timeout=self.rpc_timeout,
         )

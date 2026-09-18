@@ -78,23 +78,13 @@ METADATA_FIELD = "metadata"
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
 
-# The metadata keys every stored chunk carries, written with the fixed type a
-# condition on them is compared against. Row identity is deliberately absent:
-# the write path owns it, so a query condition can never pin or fake it.
+# The metadata keys every stored chunk carries. Row identity is deliberately
+# absent: the write path owns it, so a query condition can never pin or fake it.
 KNOWLEDGE_ID_KEY = "knowledge_id"
 DOC_REF_KEY = "doc_ref"
 SOURCE_FILE_KEY = "source_file"
 CHUNK_INDEX_KEY = "chunk_index"
 CREATED_AT_KEY = "created_at"
-
-CHUNK_METADATA_KEYS: List[str] = [
-    KNOWLEDGE_ID_KEY,
-    DOC_REF_KEY,
-    SOURCE_FILE_KEY,
-    CHUNK_INDEX_KEY,
-    CREATED_AT_KEY,
-]
-NUMERIC_CHUNK_KEYS = frozenset({CHUNK_INDEX_KEY})
 
 # Columns one read asks for by default: the row's identity, the two texts the
 # retrieval paths answer with, and the metadata column that holds the rest.

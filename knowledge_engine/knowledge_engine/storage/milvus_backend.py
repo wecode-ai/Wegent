@@ -13,17 +13,19 @@ resources.
 Three retrieval modes are served from one physical collection: ``vector`` uses
 the stored dense vectors with their raw COSINE score, ``keyword`` uses the
 server-side BM25 sparse field built over the analyzed retrieval text so it
-never asks the embedding provider for a query vector, and ``hybrid`` fuses
-both routes with the configured vector/keyword weights. Every mode applies the
-same knowledge base, document and metadata filter inside the database before
-the ``top_k`` cut. The embedding space contract makes a same-dimension model
-swap an explicit failure rather than a silent quality regression.
+never asks the embedding provider for a query vector, and ``hybrid`` runs both
+routes as one native hybrid search whose weighted ranker takes the configured
+shares. Every mode reports the score Milvus returned for the candidate and
+applies the same knowledge base, document and metadata filter inside the
+database before the ``top_k`` cut. The embedding space contract makes a
+same-dimension model swap an explicit failure rather than a silent quality
+regression.
 """
 
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Sequence
+from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
 from llama_index.core.schema import BaseNode
 from pymilvus import MilvusClient
@@ -52,11 +54,7 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus_cleanup import MilvusCleanup
 from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
-from knowledge_engine.storage.milvus_hybrid import (
-    fuse_hybrid_hits,
-    keyword_relevance_score,
-    resolve_hybrid_weights,
-)
+from knowledge_engine.storage.milvus_hybrid import resolve_hybrid_weights
 from knowledge_engine.storage.milvus_native import (
     CHUNK_INDEX_KEY,
     CREATED_AT_KEY,
@@ -104,6 +102,10 @@ class _RetrievalRequest:
     score_threshold: float
     vector_weight: Optional[float]
     keyword_weight: Optional[float]
+    # A scope that names no document matches nothing. It is resolved before any
+    # storage call, so an empty scope can never fall through to the whole
+    # knowledge base.
+    empty_scope: bool
 
 
 class MilvusBackend(BaseStorageBackend):
@@ -426,17 +428,15 @@ class MilvusBackend(BaseStorageBackend):
     ) -> Dict:
         """Retrieve stored chunks in scope for one retrieval mode.
 
-        ``vector`` returns raw COSINE similarity: the score is the database
-        similarity for this candidate with no candidate-set re-normalization.
-        ``keyword`` runs server-side BM25 over the analyzed retrieval text and
-        maps the raw BM25 score onto the shared relevance scale with the fixed
-        ``s / (1 + s)`` mapping. ``hybrid`` fuses both branches with the
-        normalized vector/keyword weights. Every mode applies the same
-        knowledge base, document and metadata filters inside the database
-        before ``top_k``, and compares the resulting score with ``>=`` against
-        ``score_threshold``. The score each mode reports is the score the
-        threshold compares, so a caller can reason about a returned record
-        from its score alone.
+        Each mode reports the score Milvus returned for the candidate and never
+        recomputes it: ``vector`` is raw COSINE similarity, ``keyword`` is the
+        server-side BM25 score of the analyzed retrieval text, and ``hybrid``
+        is what the server-side ranker produced for the configured weights.
+        The threshold compares that same score with ``>=``, so a caller can
+        reason about a returned record from its score alone. Every mode applies
+        the same knowledge base, document and metadata filters inside the
+        database before ``top_k``, and a scope that names no document answers
+        empty instead of widening to the knowledge base.
         """
         request = self._resolve_request(
             knowledge_id,
@@ -447,6 +447,8 @@ class MilvusBackend(BaseStorageBackend):
             metadata_condition=metadata_condition,
             index_kwargs=kwargs,
         )
+        if request.empty_scope:
+            return {"records": []}
 
         # One request owns exactly one client: the contract read and the
         # answering branch share it, and the context manager still closes it
@@ -481,20 +483,33 @@ class MilvusBackend(BaseStorageBackend):
             if retrieval_mode == "hybrid"
             else (None, None)
         )
+        # The condition is validated even for an empty scope, so an
+        # unsupported request fails for its own reason.
+        extra_conditions = compile_metadata_conditions(metadata_condition)
+        doc_refs = self._scope_doc_refs(scope)
+        empty_scope = doc_refs == []
+        # A scope that names no document is answered before any storage call,
+        # so it never has to compile into a filter at all.
+        filter_expr = (
+            ""
+            if empty_scope
+            else build_scope_filter(
+                knowledge_id=knowledge_id,
+                doc_refs=doc_refs,
+                extra_conditions=extra_conditions,
+            )
+        )
         return _RetrievalRequest(
             collection_name=self.get_index_name(knowledge_id, **index_kwargs),
             retrieval_mode=retrieval_mode,
             embed_model=embed_model,
             resolved_queries=resolve_search_queries(query, retrieval_setting),
-            filter_expr=build_scope_filter(
-                knowledge_id=knowledge_id,
-                doc_refs=self._scope_doc_refs(scope),
-                extra_conditions=compile_metadata_conditions(metadata_condition),
-            ),
+            filter_expr=filter_expr,
             top_k=int(retrieval_setting.get("top_k") or DEFAULT_TOP_K),
             score_threshold=self._resolve_score_threshold(retrieval_setting),
             vector_weight=vector_weight,
             keyword_weight=keyword_weight,
+            empty_scope=empty_scope,
         )
 
     def _dispatch(
@@ -628,12 +643,13 @@ class MilvusBackend(BaseStorageBackend):
         vector_weight: float,
         keyword_weight: float,
     ) -> Dict:
-        """Fuse the dense and keyword routes over one shared scope.
+        """Run the dense and sparse routes as one server-side hybrid search.
 
         Both routes are requested with the same knowledge base, document,
         metadata and scope filter, so hybrid never widens what the caller may
-        read. ``milvus_hybrid`` owns the scoring contract and why the fusion is
-        computed here instead of by the server-side ranker.
+        read, and the weighted ranker fuses them with the configured shares.
+        The fused score is Milvus's own: it is reported as it comes back and
+        the threshold compares that same value.
         """
         query_vector = prepare_query_vector(embed_model, dense_query)
         self._require_bound_index(
@@ -643,49 +659,17 @@ class MilvusBackend(BaseStorageBackend):
             dimension=len(query_vector),
             embedding_space=compute_embedding_space(embed_model),
         )
-        dense_hits = self._store.search(
+        hits = self._store.hybrid_search(
             client,
             collection_name,
-            query_vector=query_vector,
+            dense_query_vector=query_vector,
+            sparse_query_text=sparse_query,
             filter_expr=filter_expr,
             limit=top_k,
-        )
-        keyword_hits = self._store.sparse_search(
-            client,
-            collection_name,
-            query_text=sparse_query,
-            filter_expr=filter_expr,
-            limit=top_k,
-        )
-
-        return self._fuse_hybrid_hits(
-            dense_hits=dense_hits,
-            keyword_hits=keyword_hits,
             vector_weight=vector_weight,
             keyword_weight=keyword_weight,
-            score_threshold=score_threshold,
-            top_k=top_k,
         )
-
-    def _fuse_hybrid_hits(
-        self,
-        *,
-        dense_hits: Sequence[Dict[str, Any]],
-        keyword_hits: Sequence[Dict[str, Any]],
-        vector_weight: float,
-        keyword_weight: float,
-        score_threshold: float,
-        top_k: int,
-    ) -> Dict:
-        """Fuse both routes and cut the fusion on the existing threshold field."""
-        hits, scores = fuse_hybrid_hits(
-            dense_hits=dense_hits,
-            keyword_hits=keyword_hits,
-            vector_weight=vector_weight,
-            keyword_weight=keyword_weight,
-            top_k=top_k,
-        )
-        return self._process_hits(hits, score_threshold, score_lookup=scores)
+        return self._process_hits(hits, score_threshold)
 
     def _keyword_retrieve(
         self,
@@ -701,7 +685,8 @@ class MilvusBackend(BaseStorageBackend):
         """Answer a keyword query from the BM25 index alone.
 
         The embedding provider is not consulted: the retrieval text was
-        analyzed and indexed by the server when the document was written.
+        analyzed and indexed by the server when the document was written. The
+        reported score is the raw BM25 score the server returned.
         """
         self._require_live_collection(client, collection_name)
         self._store.verify_keyword_binding(collection_name, binding)
@@ -713,9 +698,7 @@ class MilvusBackend(BaseStorageBackend):
             limit=top_k,
         )
 
-        return self._process_hits(
-            hits, score_threshold, score_mapper=keyword_relevance_score
-        )
+        return self._process_hits(hits, score_threshold)
 
     @staticmethod
     def _resolve_score_threshold(retrieval_setting: Dict[str, Any]) -> float:
@@ -726,23 +709,25 @@ class MilvusBackend(BaseStorageBackend):
 
     @staticmethod
     def _scope_doc_refs(scope: Optional[RetrievalScope]) -> Optional[List[str]]:
-        if not scope or not scope.document_ids:
+        """Resolve the document scope; a scope with no document names none."""
+        if scope is None:
             return None
-        return [str(document_id) for document_id in scope.document_ids]
+        return [str(document_id) for document_id in (scope.document_ids or [])]
 
     def _process_hits(
         self,
         hits: Sequence[Dict[str, Any]],
         score_threshold: float,
-        *,
-        score_mapper: Optional[Callable[[float], float]] = None,
-        score_lookup: Optional[Dict[Any, float]] = None,
     ) -> Dict:
+        """Shape the server's hits into records, cutting on the score it sent.
+
+        The score is the one Milvus returned for the candidate - COSINE
+        similarity, BM25 or the ranker's fusion - and it is compared with the
+        threshold and reported unchanged, so the gate and the record agree.
+        """
         records = []
         for hit in hits:
-            score = self._hit_score(
-                hit, score_mapper=score_mapper, score_lookup=score_lookup
-            )
+            score = float(hit.get("__score__", 0.0))
             if score < score_threshold:
                 continue
             metadata = row_metadata(hit)
@@ -757,19 +742,6 @@ class MilvusBackend(BaseStorageBackend):
                 }
             )
         return {"records": records}
-
-    @staticmethod
-    def _hit_score(
-        hit: Dict[str, Any],
-        *,
-        score_mapper: Optional[Callable[[float], float]],
-        score_lookup: Optional[Dict[Any, float]],
-    ) -> float:
-        """Resolve one hit's reported score from the lookup, mapper or raw value."""
-        if score_lookup is not None:
-            return float(score_lookup.get(hit.get(ID_FIELD), 0.0))
-        raw_score = float(hit.get("__score__", 0.0))
-        return score_mapper(raw_score) if score_mapper else raw_score
 
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """Delete one document; a missing document is an idempotent no-op."""
