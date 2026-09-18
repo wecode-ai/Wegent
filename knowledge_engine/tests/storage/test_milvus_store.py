@@ -193,15 +193,15 @@ class _DeleteClient:
         self.flushes: list[dict[str, Any]] = []
         self.lookups: list[str] = []
 
-    def has_collection(self, collection_name: str, **kwargs) -> bool:
+    def has_collection(self, collection_name: str, **kwargs: Any) -> bool:
         self.lookups.append(collection_name)
         return True
 
-    def delete(self, **kwargs) -> dict[str, Any]:
+    def delete(self, **kwargs: Any) -> dict[str, Any]:
         self.deletes.append(kwargs)
         return self.answer
 
-    def flush(self, *args, **kwargs) -> None:
+    def flush(self, *args: Any, **kwargs: Any) -> None:
         self.flushes.append(kwargs)
 
 
@@ -248,11 +248,11 @@ class _SparseSearchClient:
         self.lookups: list[str] = []
         self.searches: list[dict[str, Any]] = []
 
-    def has_collection(self, collection_name: str, **kwargs) -> bool:
+    def has_collection(self, collection_name: str, **kwargs: Any) -> bool:
         self.lookups.append(collection_name)
         return True
 
-    def search(self, **kwargs) -> list[list[dict[str, Any]]]:
+    def search(self, **kwargs: Any) -> list[list[dict[str, Any]]]:
         self.searches.append(kwargs)
         return [
             [
@@ -306,11 +306,11 @@ class _HybridSearchClient:
         self.lookups: list[str] = []
         self.hybrid_requests: list[dict[str, Any]] = []
 
-    def has_collection(self, collection_name: str, **kwargs) -> bool:
+    def has_collection(self, collection_name: str, **kwargs: Any) -> bool:
         self.lookups.append(collection_name)
         return True
 
-    def hybrid_search(self, **kwargs) -> list[list[dict[str, Any]]]:
+    def hybrid_search(self, **kwargs: Any) -> list[list[dict[str, Any]]]:
         self.hybrid_requests.append(kwargs)
         return [
             [

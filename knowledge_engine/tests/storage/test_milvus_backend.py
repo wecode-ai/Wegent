@@ -310,7 +310,7 @@ class FakeStore:
         # The real store reports the delete RPC's own count.
         return len(matching)
 
-    def drop_collection(self, collection_name: str, **kwargs) -> None:
+    def drop_collection(self, collection_name: str, **kwargs: Any) -> None:
         self.dropped_collections.append(collection_name)
         self.collection_exists = False
 
@@ -1241,7 +1241,7 @@ def test_retrieve_missing_index_does_not_call_the_embedding_provider():
 
 
 @pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
-def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode) -> None:
+def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode: str) -> None:
     """One request reads the contract once and reuses what it read.
 
     The contract lives in the collection's own description, so the request that
