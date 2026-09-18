@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrieverConfig,
@@ -452,9 +454,9 @@ class TestRetrieveForChatShell:
 
     def test_internal_retrieve_returns_a_safe_prompt_for_a_missing_index(
         self,
-        test_client,
-        monkeypatch,
-    ):
+        test_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """The local execution path also fails loudly and without the target.
 
         The local path has no response protocol of its own, so it adds no new
@@ -1224,7 +1226,7 @@ def _kb_record(retrieval_config: dict) -> SimpleNamespace:
     )
 
 
-def _build_local_query_config(kb: SimpleNamespace):
+def _build_local_query_config(kb: SimpleNamespace) -> RemoteKnowledgeBaseQueryConfig:
     from app.services.rag.retrieval_service import RetrievalService
 
     service = RetrievalService()

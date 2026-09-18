@@ -145,7 +145,10 @@ def test_dense_and_sparse_search_bound_the_rpc():
         limit=5,
     )
 
-    assert client.timeout_of("search") == TIMEOUT_SECONDS
+    search_timeouts = [
+        kwargs.get("timeout") for name, kwargs in client.calls if name == "search"
+    ]
+    assert search_timeouts == [TIMEOUT_SECONDS, TIMEOUT_SECONDS]
 
 
 def test_write_and_delete_bound_their_rpcs():

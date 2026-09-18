@@ -234,10 +234,10 @@ class MilvusDocumentStore:
         an index without the keyword capability must not answer keyword queries
         with an empty result set.
         """
-        if not binding.analyzer:
+        if binding.analyzer != ANALYZER_TYPE:
             raise IndexContractIncompatibleError(
                 collection_name,
-                "the bound index was created without a keyword analyzer",
+                "the bound index was not created with this keyword analyzer",
                 details={"analyzer": binding.analyzer},
             )
 

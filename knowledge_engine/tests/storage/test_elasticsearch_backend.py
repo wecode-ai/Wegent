@@ -74,7 +74,9 @@ class TestHybridAlphaResolution:
 
 class TestRetrieveSearchHints:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
-    def test_an_absent_threshold_uses_the_engine_default(self, mock_client_class):
+    def test_an_absent_threshold_uses_the_engine_default(
+        self, mock_client_class: MagicMock
+    ) -> None:
         """An absent score_threshold falls back to 0.7 on the ES read path."""
         from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 
@@ -104,7 +106,9 @@ class TestRetrieveSearchHints:
         assert [record["score"] for record in result["records"]] == [0.81]
 
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
-    def test_an_explicit_zero_threshold_is_not_replaced(self, mock_client_class):
+    def test_an_explicit_zero_threshold_is_not_replaced(
+        self, mock_client_class: MagicMock
+    ) -> None:
         """An explicitly configured zero keeps every candidate."""
         from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 

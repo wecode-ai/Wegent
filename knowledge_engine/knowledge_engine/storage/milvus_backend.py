@@ -695,10 +695,16 @@ class MilvusBackend(BaseStorageBackend):
 
     @staticmethod
     def _scope_doc_refs(scope: Optional[RetrievalScope]) -> Optional[List[str]]:
-        """Resolve the document scope; a scope with no document names none."""
-        if scope is None:
+        """Resolve the document scope; no named document is no restriction.
+
+        ``document_ids`` defaults to ``None`` and the protocol refuses an empty
+        list, so an absent value means the caller named no document - the same
+        reading the other engines give it - while an explicitly empty scope is
+        the one the scope validation in the runtime rejects.
+        """
+        if scope is None or scope.document_ids is None:
             return None
-        return [str(document_id) for document_id in (scope.document_ids or [])]
+        return [str(document_id) for document_id in scope.document_ids]
 
     def _process_hits(
         self,

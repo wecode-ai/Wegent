@@ -2290,6 +2290,26 @@ def test_retrieve_answers_empty_for_a_scope_that_names_no_document():
     assert store.queries == []
 
 
+def test_retrieve_answers_a_scope_without_document_ids_from_the_knowledge_base():
+    """A scope that names no document ID restricts nothing, as ES and Qdrant do."""
+    backend = _backend()
+    store = FakeStore(rows=[_stored_row("42")])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0, "retrieval_mode": "vector"},
+        scope=RetrievalScope(),
+    )
+
+    assert store.searches, "the knowledge base stays readable"
+    expression = store.searches[0]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert "doc_ref" not in expression
+
+
 @pytest.mark.parametrize(
     ("strategy", "kwargs"),
     [

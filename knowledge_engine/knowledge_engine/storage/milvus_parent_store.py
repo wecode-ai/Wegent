@@ -182,9 +182,9 @@ class MilvusParentStore:
         doc_ref: str,
     ) -> int:
         """Delete the document's parent rows; the caller settled existence."""
-        client.delete(
-            collection_name=collection_name,
-            filter=self.scope_filter(knowledge_id, doc_ref),
-            timeout=store.rpc_timeout,
+        return store.delete_rows(
+            client,
+            collection_name,
+            self.scope_filter(knowledge_id, doc_ref),
+            flush=False,
         )
-        return 0

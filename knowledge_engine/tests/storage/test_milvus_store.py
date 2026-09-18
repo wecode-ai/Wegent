@@ -298,6 +298,9 @@ def test_keyword_capability_check_follows_the_stored_analyzer():
     with pytest.raises(IndexContractIncompatibleError):
         store.verify_keyword_binding("wegent_kb_1", _binding(analyzer=""))
 
+    with pytest.raises(IndexContractIncompatibleError):
+        store.verify_keyword_binding("wegent_kb_1", _binding(analyzer="standard"))
+
 
 class _HybridSearchClient:
     """Records the hybrid request the store sends to the server."""

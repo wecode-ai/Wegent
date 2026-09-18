@@ -329,13 +329,23 @@ async function readDocumentChunks(
   token: string,
   documentId: number
 ): Promise<string> {
-  const response = await request.get(
-    `${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${documentId}/chunks?page=1&page_size=50`,
-    { headers: authHeaders(token) }
-  )
-  await expectOk(response)
-  const body = (await response.json()) as { items: Array<{ content?: string }> }
-  return JSON.stringify(body.items ?? [])
+  const pageSize = 50
+  const items: Array<{ content?: string }> = []
+  for (let page = 1; ; page += 1) {
+    const response = await request.get(
+      `${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${documentId}/chunks?page=${page}&page_size=${pageSize}`,
+      { headers: authHeaders(token) }
+    )
+    await expectOk(response)
+    const body = (await response.json()) as {
+      items?: Array<{ content?: string }>
+    }
+    const pageItems = body.items ?? []
+    items.push(...pageItems)
+    // The last page is the short one, so every chunk of the document is read.
+    if (pageItems.length < pageSize) break
+  }
+  return JSON.stringify(items)
 }
 
 export async function createFolder(

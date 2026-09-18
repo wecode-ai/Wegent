@@ -124,6 +124,10 @@ def await_document_visibility(
     becomes readable. It never becomes a silent skip: a document that is still
     missing when the deadline passes fails with the time it waited, because a
     write that never lands is not the window the spec accepts.
+
+    ``expected_chunks`` is matched exactly, so a snapshot of a longer previous
+    version does not satisfy a wait meant for the shorter rewrite that
+    replaced it.
     """
     started = time.monotonic()
     deadline = started + timeout
@@ -137,7 +141,7 @@ def await_document_visibility(
             document = None
         if document is not None:
             visible_chunks = int(document.get("chunk_count") or 0)
-            if expected_chunks is None or visible_chunks >= expected_chunks:
+            if expected_chunks is None or visible_chunks == expected_chunks:
                 return document
         if time.monotonic() >= deadline:
             waited = time.monotonic() - started
