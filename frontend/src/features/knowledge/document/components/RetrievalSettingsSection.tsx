@@ -16,7 +16,6 @@ import { useRetrievers } from '../hooks/useRetrievers'
 import { useEmbeddingModels } from '../hooks/useEmbeddingModels'
 import { useRetrievalMethods } from '../hooks/useRetrievalMethods'
 import type { RetrievalConfigDraft } from '@/types/knowledge'
-import { DEFAULT_SCORE_THRESHOLD } from './retrievalConfig'
 import Link from 'next/link'
 
 interface RetrievalSettingsSectionProps {
@@ -50,9 +49,7 @@ export function RetrievalSettingsSection({
   const { methods: retrievalMethods, loading: loadingMethods } = useRetrievalMethods()
 
   const [topK, setTopK] = useState(config.top_k ?? 5)
-  const [scoreThreshold, setScoreThreshold] = useState(
-    config.score_threshold ?? DEFAULT_SCORE_THRESHOLD
-  )
+  const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.5)
   const [vectorWeight, setVectorWeight] = useState(config.hybrid_weights?.vector_weight ?? 0.7)
 
   // Use ref to store the latest config to avoid stale closure issues in useEffect
@@ -67,7 +64,7 @@ export function RetrievalSettingsSection({
   }, [config.top_k])
 
   useEffect(() => {
-    setScoreThreshold(config.score_threshold ?? DEFAULT_SCORE_THRESHOLD)
+    setScoreThreshold(config.score_threshold ?? 0.5)
   }, [config.score_threshold])
 
   useEffect(() => {

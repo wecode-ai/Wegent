@@ -11,7 +11,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shared.models import (
-    DEFAULT_SCORE_THRESHOLD,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrieverConfig,
@@ -1260,10 +1259,10 @@ def _build_local_query_config(kb: SimpleNamespace):
 def test_local_retrieval_path_defaults_an_absent_threshold() -> None:
     config = _build_local_query_config(_kb_record({}))
 
-    assert config.retrieval_config.score_threshold == DEFAULT_SCORE_THRESHOLD
+    assert config.retrieval_config.score_threshold == 0.5
 
 
-def test_local_retrieval_path_keeps_an_explicit_threshold() -> None:
-    config = _build_local_query_config(_kb_record({"score_threshold": 0.7}))
+def test_local_retrieval_path_keeps_an_explicit_zero_threshold() -> None:
+    config = _build_local_query_config(_kb_record({"score_threshold": 0}))
 
-    assert config.retrieval_config.score_threshold == 0.7
+    assert config.retrieval_config.score_threshold == 0

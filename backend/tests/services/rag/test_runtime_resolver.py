@@ -5,7 +5,6 @@ import pytest
 
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
-    DEFAULT_SCORE_THRESHOLD,
     RemoteKnowledgeBaseQueryConfig,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -758,19 +757,19 @@ def _build_query_configs(resolver: RagRuntimeResolver, kb: SimpleNamespace):
         )
 
 
-def test_query_configs_default_an_absent_threshold_to_the_shared_constant() -> None:
+def test_query_configs_default_an_absent_threshold_to_the_resolver_default() -> None:
     resolver = RagRuntimeResolver()
 
     configs = _build_query_configs(resolver, _kb_record_with_retrieval_config({}))
 
-    assert configs[0].retrieval_config.score_threshold == DEFAULT_SCORE_THRESHOLD
+    assert configs[0].retrieval_config.score_threshold == 0.5
 
 
-def test_query_configs_keep_an_explicit_threshold() -> None:
+def test_query_configs_keep_an_explicit_zero_threshold() -> None:
     resolver = RagRuntimeResolver()
 
     configs = _build_query_configs(
-        resolver, _kb_record_with_retrieval_config({"score_threshold": 0.7})
+        resolver, _kb_record_with_retrieval_config({"score_threshold": 0})
     )
 
-    assert configs[0].retrieval_config.score_threshold == 0.7
+    assert configs[0].retrieval_config.score_threshold == 0

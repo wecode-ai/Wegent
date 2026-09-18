@@ -22,7 +22,6 @@ from pydantic import (
 from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
-from shared.models import DEFAULT_SCORE_THRESHOLD
 
 
 # API Format Enum for OpenAI-compatible models
@@ -1047,10 +1046,7 @@ class RetrievalConfig(BaseModel):
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
-        DEFAULT_SCORE_THRESHOLD,
-        ge=0.0,
-        le=1.0,
-        description="Minimum score threshold",
+        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"

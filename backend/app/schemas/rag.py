@@ -8,11 +8,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.kind import EmbeddingModelRef, RetrieverRef
-from shared.models import (
-    DEFAULT_SCORE_THRESHOLD,
-    MAX_SEARCH_QUERY_LENGTH,
-    SearchHints,
-)
+from shared.models import MAX_SEARCH_QUERY_LENGTH, SearchHints
 from shared.models.splitter_config import (  # noqa: F401
     FlatChunkConfig,
     HierarchicalChunkConfig,
@@ -81,7 +77,7 @@ class RetrieveRequest(BaseModel):
     )
     top_k: int = Field(5, ge=1, le=100)
     score_threshold: float = Field(
-        DEFAULT_SCORE_THRESHOLD,
+        0.7,
         ge=0.0,
         le=1.0,
         description="Minimum similarity score (renamed from similarity_threshold)",

@@ -868,8 +868,31 @@ def test_retrieve_returns_raw_cosine_scores_above_threshold():
     assert 'metadata["knowledge_id"] == "1"' in store.searches[0]["filter"]
 
 
-def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
-    """An absent score_threshold means "do not cut" on the Milvus read path."""
+def test_retrieve_without_a_threshold_uses_the_engine_default():
+    """An absent score_threshold falls back to 0.7 on the Milvus read path."""
+    backend = _backend()
+    store = FakeStore(
+        rows=[
+            _stored_row("42", 0, id="a", display_text="display", **{"__score__": 0.81}),
+            _stored_row(
+                "42", 1, id="b", display_text="display low", **{"__score__": 0.11}
+            ),
+        ]
+    )
+    backend._store = store
+
+    result = backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"top_k": 5},
+    )
+
+    assert [record["score"] for record in result["records"]] == [0.81]
+
+
+def test_retrieve_keeps_low_scoring_hits_when_zero_is_explicit():
+    """An explicitly configured zero is not replaced by the engine default."""
     backend = _backend()
     store = FakeStore(
         rows=[
@@ -885,7 +908,7 @@ def test_retrieve_without_a_threshold_keeps_low_scoring_hits():
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={"top_k": 5},
+        retrieval_setting={"top_k": 5, "score_threshold": 0.0},
     )
 
     assert [record["score"] for record in result["records"]] == [0.42, 0.11]

@@ -8,7 +8,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { apiClient } from '@/apis/client'
 import { retrieverApis } from '@/apis/retrievers'
 import { RetrievalTestDialog } from '@/features/knowledge/document/components/RetrievalTestDialog'
-import { DEFAULT_SCORE_THRESHOLD } from '@/features/knowledge/document/components/retrievalConfig'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -83,13 +82,19 @@ describe('RetrievalTestDialog threshold prefill', () => {
     jest.clearAllMocks()
   })
 
-  it('sends the same "do not cut" default as the real retrieval path', async () => {
+  it('sends the frontend baseline when the knowledge base configures no threshold', async () => {
     const request = await searchWithThreshold(makeKnowledgeBase())
 
-    expect(request.score_threshold).toBe(DEFAULT_SCORE_THRESHOLD)
+    expect(request.score_threshold).toBe(0.5)
   })
 
-  it('keeps a threshold the knowledge base configures explicitly', async () => {
+  it('keeps a zero threshold the knowledge base configures explicitly', async () => {
+    const request = await searchWithThreshold(makeKnowledgeBase(0))
+
+    expect(request.score_threshold).toBe(0)
+  })
+
+  it('keeps a non-zero threshold the knowledge base configures explicitly', async () => {
     const request = await searchWithThreshold(makeKnowledgeBase(0.7))
 
     expect(request.score_threshold).toBe(0.7)

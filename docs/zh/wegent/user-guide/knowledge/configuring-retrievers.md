@@ -118,7 +118,7 @@ Content-Type: application/json
 |------|------|--------|
 | `retrieval_mode` | 检索模式 | `vector` |
 | `top_k` | 返回结果数量 | 5 |
-| `score_threshold` | 相关性阈值 | 0 |
+| `score_threshold` | 相关性阈值 | 0.5 |
 
 **使用场景**：概念匹配、理解性问题、语义搜索
 
@@ -143,7 +143,7 @@ Content-Type: application/json
 | `vector_weight` | 向量权重 | 0.7 |
 | `keyword_weight` | 关键词权重 | 0.3 |
 | `top_k` | 返回结果数量 | 5 |
-| `score_threshold` | 相关性阈值 | 0 |
+| `score_threshold` | 相关性阈值 | 0.5 |
 
 **权重推荐**：
 - **概念性查询** (0.8/0.2)：理解、解释

@@ -117,7 +117,7 @@ async def test_query_executor_normalizes_explicit_none_values_to_defaults() -> N
         embed_model=executor.embed_model,
         retrieval_setting={
             "top_k": 20,
-            "score_threshold": 0.0,
+            "score_threshold": 0.7,
             "retrieval_mode": "vector",
         },
         scope=None,

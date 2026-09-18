@@ -37,7 +37,7 @@ from knowledge_engine.retrieval.filters import (
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from shared.models import DEFAULT_SCORE_THRESHOLD, RetrievalScope
+from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
@@ -192,9 +192,7 @@ class QdrantBackend(BaseStorageBackend):
         collection_name = self.get_index_name(knowledge_id, **kwargs)
         # Increased default top_k from 5 to 20 for better RAG coverage
         top_k = retrieval_setting.get("top_k", 20)
-        score_threshold = retrieval_setting.get(
-            "score_threshold", DEFAULT_SCORE_THRESHOLD
-        )
+        score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
         # Validate retrieval mode - Qdrant only supports vector search

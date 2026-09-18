@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""One source for the "未配置" score threshold: absent means "do not cut".
+"""Each layer keeps its own default for an unconfigured score threshold.
 
-The threshold is a rule about a score scale and the scale belongs to the
-engine, so the only default that is correct on both engines is zero. These
-tests pin both halves of the decision: every layer resolves an absent
-threshold to the shared constant, and an explicitly passed threshold still
+A threshold is a rule about a score scale, and the scale belongs to the
+engine, so the layers intentionally disagree: the shared runtime config and
+the engine fallbacks use ``0.7`` while the knowledge base schemas and the
+frontend prefill use ``0.5``. These tests pin the engine-side half of that
+decision and prove an explicitly passed threshold, including ``0``, still
 reaches the engine unchanged.
 """
 
@@ -17,21 +18,28 @@ import pytest
 from llama_index.core.schema import TextNode
 
 from knowledge_engine.storage.milvus_backend import MilvusBackend
-from shared.models import DEFAULT_SCORE_THRESHOLD, RuntimeRetrievalConfig
+from shared.models import RuntimeRetrievalConfig
 
 
-def test_public_model_default_is_the_shared_zero_constant() -> None:
-    assert DEFAULT_SCORE_THRESHOLD == 0.0
-    assert RuntimeRetrievalConfig(top_k=20).score_threshold == DEFAULT_SCORE_THRESHOLD
+def test_public_model_keeps_the_engine_default() -> None:
+    assert RuntimeRetrievalConfig(top_k=20).score_threshold == 0.7
+    assert RuntimeRetrievalConfig(top_k=20, score_threshold=0.5).score_threshold == 0.5
 
 
-def test_milvus_engine_fallback_reads_the_same_constant() -> None:
-    assert MilvusBackend._resolve_score_threshold({}) == DEFAULT_SCORE_THRESHOLD
-    assert MilvusBackend._resolve_score_threshold({"score_threshold": 0.7}) == 0.7
+def test_shared_models_do_not_export_a_cross_layer_default() -> None:
+    import shared.models as shared_models
+
+    assert not hasattr(shared_models, "DEFAULT_SCORE_THRESHOLD")
+
+
+def test_milvus_engine_fallback_keeps_its_own_default() -> None:
+    assert MilvusBackend._resolve_score_threshold({}) == 0.7
+    assert MilvusBackend._resolve_score_threshold({"score_threshold": 0.5}) == 0.5
+    assert MilvusBackend._resolve_score_threshold({"score_threshold": 0}) == 0.0
 
 
 @pytest.mark.asyncio
-async def test_executor_resolves_an_absent_threshold_to_the_shared_constant() -> None:
+async def test_executor_resolves_an_absent_threshold_to_its_own_default() -> None:
     from knowledge_engine.query import QueryExecutor
 
     storage_backend = MagicMock()
@@ -45,11 +53,12 @@ async def test_executor_resolves_an_absent_threshold_to_the_shared_constant() ->
     )
 
     retrieval_setting = storage_backend.retrieve.call_args.kwargs["retrieval_setting"]
-    assert retrieval_setting["score_threshold"] == DEFAULT_SCORE_THRESHOLD
+    assert retrieval_setting["score_threshold"] == 0.7
 
 
 @pytest.mark.asyncio
-async def test_executor_keeps_an_explicit_threshold_untouched() -> None:
+@pytest.mark.parametrize("threshold", [0.0, 0.5, 0.7])
+async def test_executor_keeps_an_explicit_threshold_untouched(threshold: float) -> None:
     from knowledge_engine.query import QueryExecutor
 
     storage_backend = MagicMock()
@@ -59,11 +68,11 @@ async def test_executor_keeps_an_explicit_threshold_untouched() -> None:
     await executor.execute(
         knowledge_id="1",
         query="release checklist",
-        retrieval_config={"top_k": 20, "score_threshold": 0.7},
+        retrieval_config={"top_k": 20, "score_threshold": threshold},
     )
 
     retrieval_setting = storage_backend.retrieve.call_args.kwargs["retrieval_setting"]
-    assert retrieval_setting["score_threshold"] == 0.7
+    assert retrieval_setting["score_threshold"] == threshold
 
 
 def _retrieve_from_qdrant(retrieval_setting: dict):
@@ -91,15 +100,15 @@ def _retrieve_from_qdrant(retrieval_setting: dict):
     )
 
 
-def test_qdrant_engine_fallback_does_not_cut_a_low_score() -> None:
+def test_qdrant_engine_fallback_cuts_with_its_own_default() -> None:
     result = _retrieve_from_qdrant({"top_k": 20, "retrieval_mode": "vector"})
 
-    assert [record["score"] for record in result["records"]] == [0.2]
+    assert result["records"] == []
 
 
-def test_qdrant_engine_fallback_still_cuts_with_an_explicit_threshold() -> None:
+def test_qdrant_engine_keeps_a_low_score_when_zero_is_explicit() -> None:
     result = _retrieve_from_qdrant(
-        {"top_k": 20, "score_threshold": 0.7, "retrieval_mode": "vector"}
+        {"top_k": 20, "score_threshold": 0, "retrieval_mode": "vector"}
     )
 
-    assert result["records"] == []
+    assert [record["score"] for record in result["records"]] == [0.2]

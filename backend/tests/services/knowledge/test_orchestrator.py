@@ -24,7 +24,6 @@ from app.services.knowledge.orchestrator import (
     _build_filename,
     _normalize_file_extension,
 )
-from shared.models import DEFAULT_SCORE_THRESHOLD
 
 
 class TestFileExtensionHelpers:
@@ -184,7 +183,7 @@ class TestKnowledgeOrchestrator:
     def test_build_complete_retrieval_config_defaults_an_absent_threshold(
         self, orchestrator
     ):
-        """An absent threshold is persisted as the shared "do not cut" value."""
+        """An absent threshold is persisted as the knowledge base default."""
         result = orchestrator._build_complete_retrieval_config(
             base_config={"retrieval_mode": "vector", "top_k": 5},
             retriever_name="retriever-1",
@@ -193,7 +192,7 @@ class TestKnowledgeOrchestrator:
             embedding_model_namespace="default",
         )
 
-        assert result["score_threshold"] == DEFAULT_SCORE_THRESHOLD
+        assert result["score_threshold"] == 0.5
 
     def test_build_complete_retrieval_config_keeps_an_explicit_threshold(
         self, orchestrator
@@ -355,7 +354,7 @@ class TestKnowledgeOrchestrator:
             },
             "retrieval_mode": "vector",
             "top_k": 5,
-            "score_threshold": DEFAULT_SCORE_THRESHOLD,
+            "score_threshold": 0.5,
         }
         mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
         mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
@@ -517,7 +516,7 @@ class TestKnowledgeOrchestrator:
             },
             "retrieval_mode": "vector",
             "top_k": 5,
-            "score_threshold": DEFAULT_SCORE_THRESHOLD,
+            "score_threshold": 0.5,
         }
 
     def test_resolve_retrieval_config_returns_none_when_defaults_unavailable(
@@ -587,7 +586,7 @@ class TestKnowledgeOrchestrator:
             },
             "retrieval_mode": "vector",
             "top_k": 5,
-            "score_threshold": DEFAULT_SCORE_THRESHOLD,
+            "score_threshold": 0.5,
         }
         mock_get_retriever.assert_not_called()
         mock_get_embedding.assert_not_called()

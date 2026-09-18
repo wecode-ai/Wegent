@@ -81,11 +81,14 @@ from knowledge_engine.storage.milvus_rows import (
     row_metadata,
 )
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
-from shared.models import DEFAULT_SCORE_THRESHOLD, RetrievalScope
+from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 20
+# This engine's own fallback for an absent threshold; each layer keeps its own
+# default instead of sharing one, so this is not a cross-layer source.
+DEFAULT_SCORE_THRESHOLD = 0.7
 DEFAULT_TIMEOUT_SECONDS = 10.0
 
 

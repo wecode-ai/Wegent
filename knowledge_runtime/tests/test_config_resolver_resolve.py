@@ -319,7 +319,7 @@ class TestResolveQueryConfig:
             )
 
         assert result.retrieval_config.top_k == 20
-        assert result.retrieval_config.score_threshold == 0.0
+        assert result.retrieval_config.score_threshold == 0.7
         assert result.retrieval_config.retrieval_mode == "vector"
         assert result.retrieval_config.vector_weight is None
         assert result.retrieval_config.keyword_weight is None

@@ -478,7 +478,7 @@ KnowledgeBase is used to manage document knowledge bases, retrieval configuratio
 | `spec.retrievalConfig.embedding_config.model_namespace` | string  | No       | Namespace where the embedding model is defined, defaults to `default`                            |
 | `spec.retrievalConfig.retrieval_mode`                   | string  | No       | Retrieval mode: `vector`, `keyword`, or `hybrid`                                                 |
 | `spec.retrievalConfig.top_k`                            | integer | No       | Number of results to return                                                                      |
-| `spec.retrievalConfig.score_threshold`                  | number  | No       | Minimum relevance threshold; defaults to `0` (no cut)                                            |
+| `spec.retrievalConfig.score_threshold`                  | number  | No       | Minimum relevance threshold                                                                      |
 | `spec.retrievalConfig.hybrid_weights`                   | object  | No       | Hybrid retrieval weights                                                                         |
 
 `retriever_name` and `embedding_config.model_name` are required only when `spec.retrievalConfig` exists. By default, the backend automatically fills in a missing retriever and embedding model during creation; if the create request explicitly uses no-RAG mode, or if no usable defaults are available, it does not write `retrievalConfig`. The create request field `rag_config_mode` expresses creation intent only and is not persisted as a KnowledgeBase YAML field. The persisted stable states are either a complete `retrievalConfig` or no `retrievalConfig`.
