@@ -25,7 +25,6 @@ import {
   Search,
   SquareTerminal,
   Sparkles,
-  Target,
   X,
 } from 'lucide-react'
 import {
@@ -1968,11 +1967,14 @@ function RuntimeTaskRow({
                     {hasActiveGoal ? (
                       <span
                         data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
-                        className="relative flex h-5 w-5 items-center justify-center text-primary"
+                        className="relative flex h-4 w-4 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))]"
                         aria-hidden="true"
                       >
-                        <CompositedSpinner icon={Loader2} className="absolute inset-0 h-5 w-5" />
-                        <Target className="h-3.5 w-3.5" />
+                        <CompositedSpinner icon={Loader2} className="absolute inset-0 h-4 w-4" />
+                        <span
+                          data-testid={`runtime-local-task-goal-center-${task.taskId}`}
+                          className="h-1 w-1 rounded-full bg-current"
+                        />
                       </span>
                     ) : (
                       <CompositedSpinner
