@@ -169,6 +169,76 @@ def test_build_response_output_omits_mcp_binary_output_when_requested():
     assert output[0].output[1]["data"] == "<image/jpeg payload omitted: 2048 bytes>"
 
 
+def _mcp_image_messages_chain_subtask(subtask_id: int, payload: str) -> Subtask:
+    return _assistant_subtask(
+        subtask_id=subtask_id,
+        result={
+            "messages_chain": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_mcp_chain",
+                            "type": "function",
+                            "function": {
+                                "name": "example-media-tool",
+                                "arguments": '{"url":"https://cdn.example.com/photo.jpg"}',
+                            },
+                        }
+                    ],
+                }
+            ],
+            "blocks": [
+                {
+                    "id": "call_mcp_chain",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_chain",
+                    "tool_name": "example-media-tool",
+                    "tool_input": {"url": "https://cdn.example.com/photo.jpg"},
+                    "tool_output": json.dumps(
+                        [
+                            {"type": "text", "text": "fetched"},
+                            {
+                                "type": "image",
+                                "mimeType": "image/jpeg",
+                                "data": payload,
+                            },
+                        ]
+                    ),
+                    "tool_protocol": "mcp_call",
+                    "server_label": "example-media-server",
+                    "status": "done",
+                }
+            ],
+        },
+    )
+
+
+def test_build_response_output_keeps_messages_chain_binary_output_by_default():
+    payload = base64.b64encode(b"\x00" * 2048).decode()
+
+    output = build_response_output([_mcp_image_messages_chain_subtask(116, payload)])
+
+    assert len(output) == 1
+    assert output[0].type == "mcp_call"
+    assert output[0].output[1]["data"] == payload
+
+
+def test_build_response_output_omits_messages_chain_binary_output_when_requested():
+    payload = base64.b64encode(b"\x00" * 2048).decode()
+
+    output = build_response_output(
+        [_mcp_image_messages_chain_subtask(117, payload)],
+        omit_mcp_binary_output=True,
+    )
+
+    assert len(output) == 1
+    assert output[0].type == "mcp_call"
+    assert payload not in json.dumps(output[0].output)
+    assert output[0].output[1]["data"] == "<image/jpeg payload omitted: 2048 bytes>"
+
+
 def test_build_response_output_from_messages_chain_infers_shell_call():
     subtask = _assistant_subtask(
         subtask_id=101,
