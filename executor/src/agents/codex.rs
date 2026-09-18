@@ -2406,22 +2406,24 @@ async fn read_shared_turn_notifications(
             notification_turn_id.as_deref(),
         ) {
             if notification_turn_id != active_turn_id {
-                log_executor_event(
-                    "codex stale turn notification dropped",
-                    &[
-                        ("thread_id", thread_id.to_owned()),
-                        ("active_turn_id", active_turn_id.to_owned()),
-                        ("notification_turn_id", notification_turn_id.to_owned()),
-                        (
-                            "method",
-                            message
-                                .get("method")
-                                .and_then(Value::as_str)
-                                .unwrap_or("<none>")
-                                .to_owned(),
-                        ),
-                    ],
-                );
+                if crate::runtime_work::codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "codex stale turn notification dropped",
+                        &[
+                            ("thread_id", thread_id.to_owned()),
+                            ("active_turn_id", active_turn_id.to_owned()),
+                            ("notification_turn_id", notification_turn_id.to_owned()),
+                            (
+                                "method",
+                                message
+                                    .get("method")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("<none>")
+                                    .to_owned(),
+                            ),
+                        ],
+                    );
+                }
                 continue;
             }
         }
