@@ -17,6 +17,12 @@ use wegent_executor::app::cli::CliArgs;
 /// force-kill the tree.
 const RUNTIME_SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
 
+/// How long the app sidecar lifecycle watchdog waits for the shutdown it
+/// requests before exiting the process unconditionally. Nothing is left to ask
+/// again once the desktop app is gone, so the exit stays bounded.
+#[cfg(unix)]
+const WATCHDOG_EXIT_GRACE: Duration = Duration::from_secs(3);
+
 #[cfg(any(target_os = "macos", test))]
 const OPEN_FILES_SOFT_LIMIT: libc::rlim_t = 65_536;
 
@@ -90,7 +96,6 @@ fn raise_open_files_soft_limit() {}
 
 fn main() {
     raise_open_files_soft_limit();
-    install_termination_signal_diagnostics();
     if wegent_executor::plugin_workspace_cli::is_plugin_workspace_command() {
         if let Err(error) = runtime().block_on(wegent_executor::plugin_workspace_cli::run()) {
             eprintln!("plugin workspace command failed: {error}");
@@ -200,8 +205,15 @@ fn install_app_sidecar_lifecycle_watchdog() {
             }
             break;
         }
+        // The owner is gone: request the same shutdown an owner disconnect
+        // performs, so the agent processes this executor drove are stopped by
+        // their owner. Nothing is left to request it again, so exit anyway if
+        // the request cannot complete.
         unsafe {
             libc::killpg(libc::getpgrp(), libc::SIGTERM);
+        }
+        thread::sleep(WATCHDOG_EXIT_GRACE);
+        unsafe {
             libc::_exit(0);
         }
     });
@@ -209,82 +221,6 @@ fn install_app_sidecar_lifecycle_watchdog() {
 
 #[cfg(not(unix))]
 fn install_app_sidecar_lifecycle_watchdog() {}
-
-#[cfg(target_os = "macos")]
-fn install_termination_signal_diagnostics() {
-    unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = termination_signal_handler as *const () as usize;
-        action.sa_flags = libc::SA_SIGINFO;
-        libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn install_termination_signal_diagnostics() {}
-
-#[cfg(target_os = "macos")]
-extern "C" fn termination_signal_handler(
-    signal: libc::c_int,
-    info: *mut libc::siginfo_t,
-    _context: *mut libc::c_void,
-) {
-    let sender_pid = if info.is_null() {
-        0
-    } else {
-        unsafe { (*info).si_pid() }
-    };
-    let process_id = unsafe { libc::getpid() };
-    let mut line = [0_u8; 128];
-    let mut length = 0;
-    append_signal_text(
-        &mut line,
-        &mut length,
-        b"wegent-executor received SIGTERM sender_pid=",
-    );
-    append_signal_number(&mut line, &mut length, sender_pid);
-    append_signal_text(&mut line, &mut length, b" process_id=");
-    append_signal_number(&mut line, &mut length, process_id);
-    append_signal_text(&mut line, &mut length, b"\n");
-
-    unsafe {
-        libc::write(
-            libc::STDERR_FILENO,
-            line.as_ptr().cast::<libc::c_void>(),
-            length,
-        );
-        libc::signal(signal, libc::SIG_DFL);
-        libc::kill(process_id, signal);
-        libc::_exit(128 + signal);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn append_signal_text(buffer: &mut [u8], length: &mut usize, value: &[u8]) {
-    let available = buffer.len().saturating_sub(*length);
-    let copy_length = available.min(value.len());
-    buffer[*length..*length + copy_length].copy_from_slice(&value[..copy_length]);
-    *length += copy_length;
-}
-
-#[cfg(target_os = "macos")]
-fn append_signal_number(buffer: &mut [u8], length: &mut usize, value: libc::pid_t) {
-    let mut remaining = value.max(0) as u32;
-    let mut digits = [0_u8; 10];
-    let mut digit_count = 0;
-    loop {
-        digits[digit_count] = b'0' + (remaining % 10) as u8;
-        digit_count += 1;
-        remaining /= 10;
-        if remaining == 0 {
-            break;
-        }
-    }
-    for digit in digits[..digit_count].iter().rev() {
-        append_signal_text(buffer, length, &[*digit]);
-    }
-}
 
 #[cfg(test)]
 mod tests {
