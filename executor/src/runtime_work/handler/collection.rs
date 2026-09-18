@@ -285,7 +285,6 @@ impl RuntimeWorkRpcHandler {
         }
 
         let mut visible_links = Vec::with_capacity(input_count);
-        let mut kept_non_codex = 0_usize;
         let mut kept_chat = 0_usize;
         let mut kept_project = 0_usize;
         let mut filtered_projectless = 0_usize;
@@ -314,26 +313,6 @@ impl RuntimeWorkRpcHandler {
                 visible_links.push(link);
                 continue;
             }
-            if !is_codex_runtime(&link.runtime) {
-                kept_non_codex += 1;
-                log_runtime_project_filter_item(
-                    &link,
-                    RuntimeProjectFilterLog {
-                        action: "keep",
-                        reason: "non_codex_runtime",
-                        workspace_kind: infer_workspace_kind(&link.workspace_path),
-                        group_path: None,
-                        matched_by: None,
-                        project_workspace_path: None,
-                        project_name: None,
-                        thread_hint: None,
-                        project_count,
-                    },
-                );
-                visible_links.push(link);
-                continue;
-            }
-
             let workspace_kind = infer_workspace_kind(&link.workspace_path);
             if workspace_kind == "chat" {
                 kept_chat += 1;
@@ -468,7 +447,6 @@ impl RuntimeWorkRpcHandler {
                     project_index.has_project_state().to_string(),
                 ),
                 ("project_roots", project_roots),
-                ("kept_non_codex", kept_non_codex.to_string()),
                 ("kept_chat", kept_chat.to_string()),
                 ("kept_project", kept_project.to_string()),
                 ("filtered_projectless", filtered_projectless.to_string()),
