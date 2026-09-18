@@ -1,3 +1,4 @@
+import { decodeRuntimeSkills } from '@wegent/chat-core/runtime-composer-api'
 import type {
   DeviceCommandResponse,
   LocalDeviceSkill,
@@ -49,17 +50,6 @@ function getStringArrayOutput(response: DeviceCommandResponse): string[] {
   return response.stdout.filter((item): item is string => typeof item === 'string')
 }
 
-function getSkillArrayOutput(response: DeviceCommandResponse): LocalDeviceSkill[] {
-  const stdout =
-    typeof response.stdout === 'string' ? parseJsonOutput(response.stdout) : response.stdout
-  if (!Array.isArray(stdout)) return []
-  const skills = stdout.filter(
-    (item): item is LocalDeviceSkill =>
-      typeof item === 'object' && item !== null && 'name' in item && 'path' in item
-  )
-  return sortSkillsByName(dedupeSkillsByName(skills))
-}
-
 function getObjectOutput<T extends object>(response: DeviceCommandResponse): T | null {
   const stdout =
     typeof response.stdout === 'string' ? parseJsonOutput(response.stdout) : response.stdout
@@ -73,30 +63,6 @@ function parseJsonOutput(output: string): unknown {
   } catch {
     return output
   }
-}
-
-function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
-  const deduped = new Map<string, LocalDeviceSkill>()
-  skills.forEach(skill => {
-    const key = skill.name.trim().toLowerCase()
-    if (!key) return
-    const current = deduped.get(key)
-    deduped.set(key, current ? preferSkill(current, skill) : skill)
-  })
-  return Array.from(deduped.values())
-}
-
-function preferSkill(left: LocalDeviceSkill, right: LocalDeviceSkill): LocalDeviceSkill {
-  const leftRank = left.source_priority ?? 99
-  const rightRank = right.source_priority ?? 99
-  if (leftRank !== rightRank) return leftRank < rightRank ? left : right
-  return (left.mtime ?? 0) >= (right.mtime ?? 0) ? left : right
-}
-
-function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
-  return [...skills].sort((left, right) =>
-    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
-  )
 }
 
 export function createDeviceApi(client: HttpClient) {
@@ -194,7 +160,7 @@ export function createDeviceApi(client: HttpClient) {
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list skills')
       }
-      return getSkillArrayOutput(response)
+      return decodeRuntimeSkills(response.stdout)
     },
 
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {

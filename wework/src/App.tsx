@@ -87,7 +87,7 @@ import {
   dispatchStepFontSizeShortcut,
   dispatchResetFontSizeShortcut,
   dispatchBuiltinShortcutCommand,
-  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
   isBuiltinShortcutCommand,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -118,9 +118,11 @@ import {
 } from '@/features/workspace-tabs/workspaceTabs'
 import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
+import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { track, useTelemetryEnabled } from '@/telemetry/client'
-import { telemetryDomainForFeature, telemetryFeatureForLocation } from '@/telemetry/routes'
+import { track } from '@/telemetry/client'
+import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -135,6 +137,7 @@ import {
   subscribeDshExtensions,
 } from '@/features/dsh-runtime/dshExtensions'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
 import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
@@ -198,14 +201,20 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
-  if (!match) return null
-  const app = resolveDshApp(match[1])
+  const tabUrl = new URL(tab.contentRoute, window.location.origin)
+  const tabPath = stripAppBasePath(tabUrl.pathname)
+  const appId = tabPath.match(/^\/app\/([^/]+)/)?.[1]
+  if (!appId) return null
+  const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {
-    const src = app.urlSource === 'cloud-web' ? wegentUrl : app.url
+    const appPrefix = `/app/${appId}`
+    const requestedCloudPath = tabPath.slice(appPrefix.length)
+    const cloudPath = requestedCloudPath || app.cloudPath || ''
+    const destination = `${cloudPath}${tabUrl.search}`
+    const src = app.urlSource === 'cloud-web' ? resolveCloudAppUrl(wegentUrl, destination) : app.url
     return src ? { appKey: app.id, src, title: app.label } : null
   }
-  const harnessApp = resolveRunningHarnessApp(match[1])
+  const harnessApp = resolveRunningHarnessApp(appId)
   return harnessApp
     ? {
         appKey: harnessApp.key,
@@ -214,6 +223,24 @@ function workspaceTabIframe(
         title: harnessApp.title,
       }
     : null
+}
+
+function resolveCloudAppUrl(
+  wegentUrl: string | null | undefined,
+  destination: string | undefined
+): string | null {
+  if (!wegentUrl) return null
+  if (!destination) return wegentUrl
+
+  const url = new URL(wegentUrl)
+  if (url.pathname.endsWith('/login/oidc')) {
+    url.searchParams.set('redirect', destination)
+    return url.toString()
+  }
+  const requested = new URL(destination, 'https://wework.invalid')
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}${requested.pathname}`
+  url.search = requested.search
+  return url.toString()
 }
 
 function workspaceTabDshApp(
@@ -268,7 +295,6 @@ interface WorkspaceTabSurfaceProps {
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
-  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -282,7 +308,6 @@ export function WorkspaceTabSurface({
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
-  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -445,7 +470,6 @@ export function WorkspaceTabSurface({
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
-              prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncCoreDshModels={
                 tab.fixed &&
@@ -509,7 +533,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
@@ -571,16 +594,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }, [])
 
   const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
-  const telemetryDomain = telemetryDomainForFeature(telemetryFeature)
+  const smartAppRoute = resolveTelemetryRoute(path, search)
 
   useEffect(() => {
-    track(
-      'feature_opened',
-      telemetryDomain
-        ? { domain: telemetryDomain, feature: telemetryFeature }
-        : { feature: telemetryFeature }
-    )
-  }, [path, telemetryDomain, telemetryEnabled, telemetryFeature])
+    if (smartAppRoute) return
+    track('feature_opened', { feature: telemetryFeature })
+  }, [path, smartAppRoute, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
@@ -657,9 +676,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
     tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
   )
-  const composerPrewarmTabId = workspaceTabs.tabs.find(
-    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
-  )?.id
   const cloudWebUrl = cloudConnection.webUrl
     ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
     : cloudConnection.webUrl
@@ -674,7 +690,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           active={tab.id === workspaceTabs.activeTabId}
           lifecycleStore={lifecycleStore}
           nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          prewarmComposerApps={tab.id === composerPrewarmTabId}
           smartAppsEnabled={experimentalFeatures.enabled}
           services={services}
           cloudWebUrl={cloudWebUrl}
@@ -697,10 +712,12 @@ export default function App() {
       {content}
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
-      <DshSlotSurface
-        className="pointer-events-none fixed inset-0 z-system-popover"
-        slot={WEWORK_DSH_SLOTS.shellOverlay}
-      />
+      <div className="pointer-events-none fixed inset-0 z-system-popover">
+        <DshContributionSlotSurface
+          attachedClassName="contents"
+          slot={WEWORK_DSH_SLOTS.shellOverlay}
+        />
+      </div>
     </>
   )
 }
@@ -718,6 +735,7 @@ function MainApp() {
           <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
+              <TelemetryAgent />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>
@@ -788,7 +806,7 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '工作空间'),
+      board: t('workbench.workspace_tab_board', '协作 (Beta)'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: Object.fromEntries(
@@ -1013,8 +1031,9 @@ function AppShell() {
       if (!command) return
       const executable = isBuiltinShortcutCommand(command) || isDshCommandEnabled(command)
       if (!executable) return
-      if (isEditableShortcutTarget(event.target)) return
+      if (shouldIgnoreWorkbenchShortcut(event)) return
       event.preventDefault()
+      event.stopPropagation()
       executeShortcutCommand(command, 'keybinding')
     }
 
@@ -1032,14 +1051,15 @@ function AppShell() {
     }
 
     const unsubscribeExtensions = subscribeDshExtensions(applyKeybindings)
-    window.addEventListener('keydown', handleKeyDown)
+    // Run registered commands before ProseMirror suppresses native formatting keys.
+    window.addEventListener('keydown', handleKeyDown, true)
     window.addEventListener('mouseup', handleMouseUp)
     window.addEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     void loadKeybindings()
 
     return () => {
       disposed = true
-      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
       unsubscribeExtensions()

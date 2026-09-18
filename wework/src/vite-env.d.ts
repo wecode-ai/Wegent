@@ -9,4 +9,5 @@ interface ImportMetaEnv {
   readonly VITE_WEWORK_SENTRY_DSN?: string
   readonly VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE?: string
   readonly VITE_WEWORK_TELEMETRY_ENVIRONMENT?: string
+  readonly VITE_WEWORK_TELEMETRY_DISTRIBUTION?: string
 }

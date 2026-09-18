@@ -11,11 +11,44 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::{
+    agents::request_backend_url,
+    config::device::ConnectionConfig,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     runner::{AgentEngine, EventSink, ExecutionOutcome},
 };
 
 use super::*;
+
+const CLOUD_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
+const CLOUD_MODEL_NAMESPACE_OPTION: &str = "weworkCloudModelNamespace";
+const CLOUD_MODEL_RESOURCE_USER_ID_OPTION: &str = "weworkCloudModelResourceUserId";
+const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION: &str = "weworkCloudModelUpstreamApiFormat";
+const CLOUD_MODEL_GATEWAY_PATH: &str = "runtime-work/llm-responses-proxy";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackendSessionCredentials {
+    backend_url: String,
+    session_token: String,
+}
+
+impl TryFrom<&ConnectionConfig> for BackendSessionCredentials {
+    type Error = String;
+
+    fn try_from(connection: &ConnectionConfig) -> Result<Self, Self::Error> {
+        let backend_url = connection.backend_url.trim();
+        if backend_url.is_empty() {
+            return Err("Claude Code cloud model backend URL is required".to_owned());
+        }
+        let session_token = connection.auth_token.trim();
+        if session_token.is_empty() {
+            return Err("Claude Code cloud model backend token is required".to_owned());
+        }
+        Ok(Self {
+            backend_url: backend_url.to_owned(),
+            session_token: session_token.to_owned(),
+        })
+    }
+}
 
 #[derive(Clone)]
 struct ClaudeRuntimeEventSink {
@@ -187,8 +220,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: String,
         request: ExecutionRequest,
+        force_start: bool,
     ) -> Result<(), AppIpcError> {
-        self.spawn_turn(SpawnTurnRequest {
+        let turn = SpawnTurnRequest {
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
@@ -197,16 +231,50 @@ impl RuntimeWorkRpcHandler {
             fork_thread_path: None,
             resume_thread_id: None,
             initial_thread_goal: None,
-        })
-        .await
+        };
+        if force_start {
+            self.spawn_forced_turn(turn).await
+        } else {
+            self.spawn_turn(turn).await
+        }
     }
 
     pub(super) fn start_claude_turn(
         &self,
         local_task_id: String,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
     ) {
+        let backend_connection = match self.backend_connection_snapshot() {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
+        let backend_credentials = match backend_connection
+            .as_ref()
+            .map(BackendSessionCredentials::try_from)
+            .transpose()
+        {
+            Ok(credentials) => credentials,
+            Err(message) => {
+                self.fail_local_task_execution_start(
+                    &local_task_id,
+                    &AppIpcError::new("invalid_model_configuration", message),
+                );
+                return;
+            }
+        };
+        if let Err(message) =
+            prepare_claude_cloud_model_route(&mut request, backend_credentials.as_ref())
+        {
+            self.fail_local_task_execution_start(
+                &local_task_id,
+                &AppIpcError::new("invalid_model_configuration", message),
+            );
+            return;
+        }
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id = match self.start_local_task_execution(
@@ -280,6 +348,11 @@ impl RuntimeWorkRpcHandler {
                 ) => outcome,
             };
 
+            if let Some(session) = crate::agent_session::saved_executor_session(&request) {
+                handler.store.update_task(&local_task_id, |link| {
+                    link.runtime_handle["executorSession"] = session;
+                });
+            }
             match &outcome {
                 ExecutionOutcome::Completed { content } => {
                     let blocks = transcript
@@ -334,7 +407,7 @@ impl RuntimeWorkRpcHandler {
                         &local_task_id,
                         &request,
                         "",
-                        Vec::new(),
+                        transcript.lock().expect("Claude transcript lock").blocks(),
                         "failed",
                         Some(message),
                     );
@@ -346,7 +419,7 @@ impl RuntimeWorkRpcHandler {
                         &local_task_id,
                         &request,
                         "",
-                        Vec::new(),
+                        transcript.lock().expect("Claude transcript lock").blocks(),
                         "cancelled",
                         Some(message),
                     );
@@ -392,6 +465,7 @@ impl RuntimeWorkRpcHandler {
                 "data": data,
                 "deviceId": self.device_id,
                 "runtime": "claude_code",
+                "eventSeq": next_runtime_event_sequence(),
             },
         });
         if let Some(client_user_message_id) = request
@@ -552,205 +626,155 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
         "api_key".to_owned(),
         Value::String(local_model_proxy::API_KEY.to_owned()),
     );
+    apply_claude_proxy_environment(
+        model_config,
+        &format!("{loopback}/v1/harness-router/{token}"),
+    );
     (request, Some(token))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::sync::broadcast::error::TryRecvError;
-
-    fn block_created_event(id: &str) -> EventEnvelope {
-        EventEnvelope {
-            event_type: "response.block.created".to_owned(),
-            task_id: "task-1".to_owned(),
-            subtask_id: "turn-1".to_owned(),
-            data: json!({
-                "block": {
-                    "id": id,
-                    "type": "text",
-                },
-            }),
-            message_id: None,
-            executor_name: None,
-            executor_namespace: None,
-            validation_id: None,
-        }
+fn apply_claude_proxy_environment(model_config: &mut serde_json::Map<String, Value>, url: &str) {
+    let env = model_config
+        .entry("env".to_owned())
+        .or_insert_with(|| Value::Object(Default::default()));
+    if !env.is_object() {
+        *env = Value::Object(Default::default());
     }
-
-    fn isolated_handler() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
-        let directory = tempfile::tempdir().expect("temporary runtime work directory");
-        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
-        (directory, handler)
-    }
-
-    #[test]
-    fn claude_transcript_merges_streamed_block_updates() {
-        let mut transcript = ClaudeTurnTranscript::default();
-        transcript.record(&EventEnvelope {
-            event_type: "response.block.created".to_owned(),
-            task_id: "task-1".to_owned(),
-            subtask_id: "turn-1".to_owned(),
-            data: json!({
-                "block": {
-                    "id": "block-1",
-                    "type": "tool",
-                    "status": "running",
-                },
-            }),
-            message_id: None,
-            executor_name: None,
-            executor_namespace: None,
-            validation_id: None,
-        });
-        transcript.record(&EventEnvelope {
-            event_type: "response.block.updated".to_owned(),
-            task_id: "task-1".to_owned(),
-            subtask_id: "turn-1".to_owned(),
-            data: json!({
-                "block_id": "block-1",
-                "updates": {
-                    "status": "completed",
-                    "output": "done",
-                },
-            }),
-            message_id: None,
-            executor_name: None,
-            executor_namespace: None,
-            validation_id: None,
-        });
-
-        assert_eq!(
-            transcript.blocks(),
-            vec![json!({
-                "id": "block-1",
-                "type": "tool",
-                "status": "completed",
-                "output": "done",
-            })]
-        );
-    }
-
-    #[tokio::test]
-    async fn claude_event_sink_drops_events_after_cancellation_starts() {
-        let directory = tempfile::tempdir().expect("temporary runtime work directory");
-        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(4);
-        let mut handler =
-            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
-        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
-        let (cancel_tx, _cancel_rx) = oneshot::channel();
-        let (_stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id = handler
-            .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-            .expect("local execution should start");
-        let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
-        let sink = ClaudeRuntimeEventSink {
-            handler: handler.clone(),
-            local_task_id: "task-1".to_owned(),
-            execution_id,
-            request: ExecutionRequest {
-                task_id: "task-1".to_owned(),
-                subtask_id: "turn-1".to_owned(),
-                ..ExecutionRequest::default()
-            },
-            transcript: Arc::clone(&transcript),
-        };
-
-        sink.send(block_created_event("before-cancel"))
-            .await
-            .expect("active event should be accepted");
-        event_rx
-            .recv()
-            .await
-            .expect("active event should be emitted");
-
-        {
-            let mut active = handler
-                .active_local_executions
-                .lock()
-                .expect("active local execution map lock");
-            let control = active.get_mut("task-1").expect("active Claude turn");
-            control.stop_requested = true;
-        }
-        sink.send(block_created_event("after-cancel"))
-            .await
-            .expect("late event should be ignored without failing the runtime");
-
-        assert!(matches!(event_rx.try_recv(), Err(TryRecvError::Empty)));
-        assert_eq!(
-            transcript
-                .lock()
-                .expect("Claude transcript lock")
-                .blocks()
-                .iter()
-                .map(|block| block["id"].as_str())
-                .collect::<Vec<_>>(),
-            vec![Some("before-cancel")]
-        );
-    }
-
-    #[test]
-    fn claude_goal_uses_native_print_mode_command_and_persists_state() {
-        let (_directory, handler) = isolated_handler();
-        let link = RuntimeTaskLink::new_pending_with_runtime(
-            "claude-task-1".to_owned(),
-            "/tmp/project".to_owned(),
-            "Goal task".to_owned(),
-            "claude_code",
-        );
-        handler.upsert_local_task(link);
-        let mut request = ExecutionRequest {
-            prompt: Value::String("original visible message".to_owned()),
-            ..ExecutionRequest::default()
-        };
-
-        handler.prepare_claude_goal(
-            "claude-task-1",
-            &mut request,
-            &json!({
-                "initialGoal": {
-                    "objective": "all focused tests pass",
-                    "status": "active",
-                },
-            }),
-        );
-
-        assert_eq!(request.prompt, json!("/goal all focused tests pass"));
-        assert!(is_claude_goal_invocation(&request));
-        let stored = handler
-            .local_task_link("claude-task-1")
-            .expect("stored Claude task");
-        assert_eq!(stored.goal_status.as_deref(), Some("active"));
-        assert_eq!(
-            stored.runtime_handle["goal"]["objective"],
-            "all focused tests pass"
-        );
-    }
-
-    #[test]
-    fn claude_goal_status_update_preserves_objective() {
-        let (_directory, handler) = isolated_handler();
-        let mut link = RuntimeTaskLink::new_pending_with_runtime(
-            "claude-task-1".to_owned(),
-            "/tmp/project".to_owned(),
-            "Goal task".to_owned(),
-            "claude_code",
-        );
-        link.runtime_handle["goal"] = claude_goal_value(
-            "claude-task-1",
-            &json!({"status": "active"}),
-            Some("finish the migration".to_owned()),
-        );
-        handler.upsert_local_task(link.clone());
-
-        let updated = handler.set_claude_goal(&link, &json!({"status": "paused"}));
-
-        assert_eq!(updated["objective"], "finish the migration");
-        assert_eq!(updated["status"], "paused");
-        let stored = handler
-            .local_task_link("claude-task-1")
-            .expect("stored Claude task");
-        assert_eq!(stored.goal_status.as_deref(), Some("paused"));
+    let env = env
+        .as_object_mut()
+        .expect("Claude model environment should be an object");
+    for (key, value) in [
+        ("ANTHROPIC_API_KEY", local_model_proxy::API_KEY),
+        ("ANTHROPIC_AUTH_TOKEN", local_model_proxy::API_KEY),
+        ("ANTHROPIC_BASE_URL", url),
+        ("CLAUDE_CODE_USE_BEDROCK", "0"),
+        ("CLAUDE_CODE_USE_FOUNDRY", "0"),
+        ("CLAUDE_CODE_USE_VERTEX", "0"),
+    ] {
+        env.insert(key.to_owned(), Value::String(value.to_owned()));
     }
 }
+
+fn prepare_claude_cloud_model_route(
+    request: &mut ExecutionRequest,
+    backend_credentials: Option<&BackendSessionCredentials>,
+) -> Result<(), String> {
+    let Some(selection) = request
+        .extra
+        .get("modelSelection")
+        .or_else(|| request.extra.get("model_selection"))
+        .filter(|value| value.is_object())
+    else {
+        return Ok(());
+    };
+    let model_type = string_field(selection, "modelType")
+        .or_else(|| string_field(selection, "model_type"))
+        .unwrap_or_default();
+    if !CLOUD_MODEL_TYPES.contains(&model_type.as_str()) {
+        return Ok(());
+    }
+
+    let model_name = string_field(selection, "modelName")
+        .or_else(|| string_field(selection, "model_name"))
+        .or_else(|| string_field(selection, "model"))
+        .ok_or_else(|| "Claude Code cloud model name is required".to_owned())?;
+    let options = selection
+        .get("options")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Claude Code cloud model options are required".to_owned())?;
+    let namespace = options
+        .get(CLOUD_MODEL_NAMESPACE_OPTION)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "Claude Code cloud model namespace is required".to_owned())?;
+    let resource_user_id = options
+        .get(CLOUD_MODEL_RESOURCE_USER_ID_OPTION)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Claude Code cloud model resource user ID is required".to_owned())?;
+    let resource_user_id = resource_user_id
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value >= 0)
+        .map(|value| value.to_string())
+        .ok_or_else(|| {
+            "Claude Code cloud model resource user ID must be a non-negative integer".to_owned()
+        })?;
+    let upstream_api_format = options
+        .get(CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let backend_url = backend_credentials
+        .map(|credentials| credentials.backend_url.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| request_backend_url(request))
+        .ok_or_else(|| "Claude Code cloud model backend URL is required".to_owned())?;
+    let auth_token = backend_credentials
+        .map(|credentials| credentials.session_token.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "Claude Code cloud model backend token is required".to_owned())?;
+
+    let model_config = request
+        .model_config
+        .as_object_mut()
+        .ok_or_else(|| "Claude Code model configuration must be an object".to_owned())?;
+    for (key, value) in [
+        ("model", Value::String("openai".to_owned())),
+        ("model_id", Value::String(model_name)),
+        ("api_format", Value::String("responses".to_owned())),
+        ("protocol", Value::String("openai-responses".to_owned())),
+        ("upstream_api_format", Value::String(upstream_api_format)),
+        (
+            "base_url",
+            Value::String(cloud_model_gateway_base_url(&backend_url)),
+        ),
+        ("api_key", Value::String(auth_token)),
+    ] {
+        model_config.insert(key.to_owned(), value);
+    }
+    let default_headers = model_config
+        .entry("default_headers".to_owned())
+        .or_insert_with(|| Value::Object(Default::default()));
+    if !default_headers.is_object() {
+        *default_headers = Value::Object(Default::default());
+    }
+    let default_headers = default_headers
+        .as_object_mut()
+        .expect("Claude model default headers should be an object");
+    for (key, value) in [
+        ("X-Wegent-Model-Type", model_type),
+        ("X-Wegent-Model-Namespace", namespace),
+        ("X-Wegent-Model-User-Id", resource_user_id),
+        (
+            "X-Wegent-Upstream-Header-wecode-executor",
+            "claudecode".to_owned(),
+        ),
+        (
+            "X-Wegent-Upstream-Header-wecode-source",
+            "wegent-agent".to_owned(),
+        ),
+    ] {
+        default_headers.insert(key.to_owned(), Value::String(value));
+    }
+    Ok(())
+}
+
+fn cloud_model_gateway_base_url(backend_url: &str) -> String {
+    let base_url = backend_url.trim().trim_end_matches('/');
+    if base_url.ends_with("/api") {
+        format!("{base_url}/{CLOUD_MODEL_GATEWAY_PATH}")
+    } else {
+        format!("{base_url}/api/{CLOUD_MODEL_GATEWAY_PATH}")
+    }
+}
+
+#[cfg(test)]
+mod tests;

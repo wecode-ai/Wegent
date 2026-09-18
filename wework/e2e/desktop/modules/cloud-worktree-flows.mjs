@@ -184,11 +184,15 @@ async function launchTask(
   const requestCount = scenarioRequestCount(context.control, scenario)
   context.control.setScenario(scenario)
   await sendPrompt(context.control, context.composerSelector, prompt)
-  if (mode === 'git_worktree') {
-    await context.control.command('waitFor', '[data-testid="worktree-creation-status"]', {
+  // Submission progress is transient, and queued tasks defer worktree creation.
+  await context.control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    {
+      text: prompt,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-  }
+    }
+  )
   const rowTestId = await waitForNewTaskRow(
     context.control,
     knownRows,
@@ -580,7 +584,7 @@ async function verifyFilePanel(control, task, markerName, markerText) {
     text: join(task.workspacePath, markerName),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
     text: markerText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

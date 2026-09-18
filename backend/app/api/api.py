@@ -31,6 +31,7 @@ from app.api.endpoints import (
     knowledge_video_upload,
     local_executor,
     loop_item_executions,
+    mcp_identity,
     mcp_providers,
     oauth_clients,
     oauth_provider,
@@ -67,6 +68,7 @@ from app.api.endpoints import (
     wiki,
     wizard,
     work_queue,
+    workspaces,
 )
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
@@ -165,6 +167,15 @@ api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(
     cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(
+    cloud_projects.router, prefix="/v1/projects", tags=["projects"]
+)
+api_router.include_router(
+    workspaces.router, prefix="/v1/workspaces", tags=["workspaces"]
+)
+api_router.include_router(
+    workspaces.resources_router, prefix="/v1/resources", tags=["resources"]
 )
 api_router.include_router(
     project_automations.router,
@@ -381,6 +392,7 @@ api_router.include_router(
     system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
+api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",

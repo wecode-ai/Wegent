@@ -100,6 +100,68 @@ class TestTelegramChannelHandler:
         handler.set_bot(new_bot)
         assert handler._bot == new_bot
 
+    def test_apply_team_model_restriction_drops_disallowed_model(self, handler):
+        """A model the selected agent does not allow must not be forced onto it."""
+        team = SimpleNamespace(id=100)
+        db = MagicMock()
+
+        with patch(
+            "app.services.channels.handler.allowed_model_names_for_team",
+            return_value={"allowed-model"},
+        ):
+            assert handler._apply_team_model_restriction(
+                db=db,
+                user_id=1,
+                team=team,
+                model_name="openai-gpt-5.1(overseas)",
+                model_type="public",
+            ) == (None, None)
+            assert handler._apply_team_model_restriction(
+                db=db,
+                user_id=1,
+                team=team,
+                model_name="allowed-model",
+                model_type="public",
+            ) == ("allowed-model", "public")
+
+    def test_apply_team_model_restriction_keeps_override_without_whitelist(
+        self, handler
+    ):
+        """Agents without a model restriction keep the selected override."""
+        with patch(
+            "app.services.channels.handler.allowed_model_names_for_team",
+            return_value=None,
+        ):
+            assert handler._apply_team_model_restriction(
+                db=MagicMock(),
+                user_id=1,
+                team=SimpleNamespace(id=100),
+                model_name="openai-gpt-5.1(overseas)",
+            ) == ("openai-gpt-5.1(overseas)", None)
+
+    def test_apply_team_model_restriction_logs_user_and_agent(self, handler):
+        """Dropped overrides must be traceable by user and agent."""
+        team = SimpleNamespace(id=100, name="restricted-agent", namespace="rcdp")
+
+        with (
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value={"allowed-model"},
+            ),
+            patch.object(handler.logger, "warning") as warning_mock,
+        ):
+            handler._apply_team_model_restriction(
+                db=MagicMock(),
+                user_id=42,
+                team=team,
+                model_name="openai-gpt-5.1(overseas)",
+            )
+
+        logged = warning_mock.call_args.args[0]
+        assert "user_id=42" in logged
+        assert "model=openai-gpt-5.1(overseas)" in logged
+        assert "team_id=100" in logged
+
     def test_default_team_id(self, handler):
         """Test getting default team ID."""
         assert handler.default_team_id == 100
@@ -470,6 +532,81 @@ class TestTelegramChannelHandler:
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
+    async def test_create_and_process_chat_ignores_agent_restricted_model(
+        self, handler
+    ):
+        """An IM model override the agent restricts must not reach the task."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        creation_result = _creation_result()
+        db = MagicMock()
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch(
+                "app.services.channels.handler.SessionLocal",
+                return_value=db,
+            ),
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=("openai-gpt-5.1(overseas)", "public")),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=team),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value={"allowed-model"},
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation_result),
+            ) as create_task_mock,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger_mock,
+        ):
+            result = await handler._create_and_process_chat(user, message_context)
+
+        assert result is None
+        params = create_task_mock.await_args.kwargs["params"]
+        assert params.model_id is None
+        assert params.force_override_bot_model is False
+        assert (
+            trigger_mock.await_args.kwargs["payload"].force_override_bot_model is None
+        )
+
+    @pytest.mark.asyncio
     async def test_create_and_process_chat_keeps_device_streaming_emitter_open(
         self, handler
     ):
@@ -687,6 +824,75 @@ class TestTelegramChannelHandler:
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
+    async def test_create_and_process_cloud_task_rejects_non_claude_model(
+        self, handler
+    ):
+        """Cloud executor (Claude Code) must reject a non-Claude override model."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        db = MagicMock()
+
+        with (
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=("openai-gpt-5.1(overseas)", None)),
+            ),
+            patch.object(
+                handler,
+                "_is_claude_compatible_override",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(),
+            ) as create_task_mock,
+        ):
+            result = await handler._create_and_process_cloud_task(
+                db=db,
+                user=user,
+                team=team,
+                message_context=message_context,
+            )
+
+        assert result is not None
+        assert "不支持云端执行模式" in result
+        create_task_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_is_claude_compatible_override_matches_model_list(self, handler):
+        """The override compatibility check follows the model list provider."""
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {"name": "openai-gpt", "displayName": "GPT", "provider": "openai"},
+            {"name": "wecode-claude-x", "displayName": "ClaudeX", "provider": "claude"},
+        ]
+        with patch(
+            "app.services.model_aggregation_service.model_aggregation_service"
+            ".list_available_models",
+            return_value=models,
+        ):
+            assert (
+                await handler._is_claude_compatible_override(db, user, "openai-gpt")
+                is False
+            )
+            assert (
+                await handler._is_claude_compatible_override(db, user, "GPT") is False
+            )
+            assert (
+                await handler._is_claude_compatible_override(
+                    db, user, "wecode-claude-x"
+                )
+                is True
+            )
+            assert (
+                await handler._is_claude_compatible_override(db, user, "unknown-model")
+                is None
+            )
+
+    @pytest.mark.asyncio
     async def test_broadcast_user_message_to_web_includes_display_metadata(
         self, handler
     ):
@@ -871,3 +1077,246 @@ class TestTelegramChannelHandler:
 
         send_reply.assert_awaited_once()
         assert "当前任务仍在执行" in send_reply.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_model_command_hides_models_blocked_by_agent(self, handler):
+        """The /models list must only offer models the current agent allows."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {
+                "name": "allowed-model",
+                "displayName": "Allowed",
+                "provider": "openai",
+                "type": "public",
+            },
+            {
+                "name": "openai-gpt-5.1(overseas)",
+                "displayName": "GPT 5.1",
+                "provider": "openai",
+                "type": "public",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=models,
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=SimpleNamespace(id=100)),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value={"allowed-model"},
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager"
+                ".get_selection",
+                new=AsyncMock(
+                    return_value=DeviceSelection(device_type=DeviceType.CHAT)
+                ),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                db=db,
+                user=user,
+                argument=None,
+                message_context=message_context,
+            )
+
+        reply = send_reply.await_args.args[1]
+        assert "Allowed" in reply
+        assert "GPT 5.1" not in reply
+        assert "当前智能体限制了可用模型" in reply
+
+    @pytest.mark.asyncio
+    async def test_model_command_rejects_model_blocked_by_agent(self, handler):
+        """Selecting a model the current agent restricts must be rejected."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {
+                "name": "openai-gpt-5.1(overseas)",
+                "displayName": "GPT 5.1",
+                "provider": "openai",
+                "type": "public",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=models,
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=SimpleNamespace(id=100)),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value={"allowed-model"},
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager"
+                ".get_selection",
+                new=AsyncMock(
+                    return_value=DeviceSelection(device_type=DeviceType.CHAT)
+                ),
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.set_selection",
+                new=AsyncMock(),
+            ) as set_selection,
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                db=db,
+                user=user,
+                argument="1",
+                message_context=message_context,
+            )
+
+        set_selection.assert_not_called()
+        reply = send_reply.await_args.args[1]
+        assert "不在当前智能体的可用模型范围内" in reply
+
+    @pytest.mark.parametrize(
+        ("device_type", "mode_label"),
+        [
+            (DeviceType.LOCAL, "设备模式"),
+            (DeviceType.CLOUD, "云端执行模式"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_model_command_hides_non_claude_models_for_claude_code_modes(
+        self, handler, device_type, mode_label
+    ):
+        """Device and cloud execution both run Claude Code, so hide other models."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {
+                "name": "wecode-claude-x",
+                "displayName": "ClaudeX",
+                "provider": "claude",
+                "type": "public",
+            },
+            {
+                "name": "openai-gpt-5.1(overseas)",
+                "displayName": "GPT 5.1",
+                "provider": "openai",
+                "type": "public",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=models,
+            ),
+            patch.object(
+                handler,
+                "_get_task_mode_team",
+                return_value=SimpleNamespace(id=100),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value=None,
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager"
+                ".get_selection",
+                new=AsyncMock(return_value=DeviceSelection(device_type=device_type)),
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                db=db,
+                user=user,
+                argument=None,
+                message_context=message_context,
+            )
+
+        reply = send_reply.await_args.args[1]
+        assert "ClaudeX" in reply
+        assert "GPT 5.1" not in reply
+        assert f"{mode_label}仅支持 Claude 模型" in reply
+
+    @pytest.mark.asyncio
+    async def test_model_command_rejects_non_claude_model_in_cloud_mode(self, handler):
+        """Cloud mode must reject a non-Claude selection instead of failing later."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {
+                "name": "openai-gpt-5.1(overseas)",
+                "displayName": "GPT 5.1",
+                "provider": "openai",
+                "type": "public",
+            },
+            {
+                "name": "wecode-claude-x",
+                "displayName": "ClaudeX",
+                "provider": "claude",
+                "type": "public",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.model_aggregation_service.model_aggregation_service"
+                ".list_available_models",
+                return_value=models,
+            ),
+            patch.object(
+                handler,
+                "_get_task_mode_team",
+                return_value=SimpleNamespace(id=100),
+            ),
+            patch(
+                "app.services.channels.handler.allowed_model_names_for_team",
+                return_value=None,
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager"
+                ".get_selection",
+                new=AsyncMock(
+                    return_value=DeviceSelection(device_type=DeviceType.CLOUD)
+                ),
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.set_selection",
+                new=AsyncMock(),
+            ) as set_selection,
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                db=db,
+                user=user,
+                argument="1",
+                message_context=message_context,
+            )
+
+        set_selection.assert_not_called()
+        reply = send_reply.await_args.args[1]
+        assert "不支持云端执行模式" in reply

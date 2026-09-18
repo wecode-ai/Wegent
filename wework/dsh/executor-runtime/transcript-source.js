@@ -2,6 +2,7 @@ export class TranscriptSource {
   constructor(options = {}) {
     this.onError = options.onError ?? (() => {})
     this.readTurn = options.readTurn
+    this.summarizeTurn = options.summarizeTurn
     this.turns = new Map()
     this.listeners = new Set()
   }
@@ -20,11 +21,18 @@ export class TranscriptSource {
     return () => this.listeners.delete(listener)
   }
 
-  read(turn) {
+  read(turn, options = {}) {
     if (typeof this.readTurn !== 'function') {
       throw new Error('Transcript source does not support persisted turn reads')
     }
-    return this.readTurn(structuredClone(turn))
+    return this.readTurn(structuredClone(turn), structuredClone(options))
+  }
+
+  summarize(turn) {
+    if (typeof this.summarizeTurn !== 'function') {
+      throw new Error('Transcript source does not support turn summaries')
+    }
+    return this.summarizeTurn(structuredClone(turn))
   }
 
   notify(listener, turn) {

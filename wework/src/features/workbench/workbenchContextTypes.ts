@@ -35,6 +35,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeName,
   RuntimeSendRequest,
+  RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
@@ -56,6 +57,7 @@ import type {
   UnifiedModel,
   UnifiedSkill,
   User,
+  UserPreferences,
 } from '@/types/api'
 import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -133,6 +135,9 @@ export interface CreateProjectRuntimeTaskOptions {
    * selection, for embedded project-space composers. */
   deviceWorkspaceId?: number | null
   taskRequest?: RuntimeTaskCreateRequest | null
+  /** Override the globally selected project execution strategy. Pass null to
+   * bind the task to the selected project's main workspace. */
+  workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
@@ -173,6 +178,7 @@ export interface CreateProjectRuntimeTaskOptions {
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  onQueued?: (response: RuntimeSendResponse) => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }
@@ -216,7 +222,7 @@ export interface WorkbenchContextValue {
     trialPluginApp?: LocalDeviceApp
     hasConversationContext?: boolean
     dismissTrialGuide?: () => void
-    applyTrialTemplate?: (template: PluginPathComponent) => void
+    showTrialGuide?: (title: string, app: LocalDeviceApp) => void
     selectedSkills: SkillRef[]
     attachmentStateByScope: Readonly<Record<string, MultiAttachmentUploadState>>
     attachments: Attachment[]
@@ -266,6 +272,7 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
+  updateUserPreferences: (patch: UserPreferences) => Promise<UserPreferences>
   setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
@@ -477,7 +484,10 @@ export type WorkbenchPaneState = Pick<
   | 'error'
 >
 
-export type WorkbenchPaneContextValue = Omit<WorkbenchContextValue, 'state' | 'cloudWorkStatus'> & {
+export type WorkbenchPaneContextValue = Omit<
+  WorkbenchContextValue,
+  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
+> & {
   state: WorkbenchPaneState
 }
 
@@ -491,7 +501,6 @@ export interface WorkbenchProviderProps {
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean
-  prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean

@@ -568,6 +568,7 @@ describe('ProjectWorkBar', () => {
   })
 
   test('keeps project changing and project clearing as separate desktop actions', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -578,7 +579,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="current_workspace"
-        onSelectProject={vi.fn()}
+        onSelectProject={onSelectProject}
         onSelectStandaloneDevice={onSelectStandaloneDevice}
         onExecutionModeChange={vi.fn()}
       />
@@ -592,7 +593,8 @@ describe('ProjectWorkBar', () => {
 
     await userEvent.click(screen.getByTestId('clear-project-button'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('does not offer clearing when the selected project is required', async () => {
@@ -676,6 +678,34 @@ describe('ProjectWorkBar', () => {
     })
   })
 
+  test('keeps constrained desktop project options inside the popover surface', async () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const menu = screen.getByTestId('project-work-menu')
+    expect(menu).toHaveClass('overflow-hidden', 'bg-popover')
+    expect(menu.firstElementChild).toHaveClass('flex', 'min-h-0', 'flex-1', 'flex-col')
+    expect(screen.getByTestId('project-options-list')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+  })
+
   test('resolves the selected workspace within the current project before showing remote state', () => {
     const localDevice: DeviceInfo = {
       ...device,
@@ -737,7 +767,8 @@ describe('ProjectWorkBar', () => {
     expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
   })
 
-  test('selects the local device when choosing no project', async () => {
+  test('clears the project when choosing no project', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
     const localDevice: DeviceInfo = {
       ...device,
@@ -767,7 +798,7 @@ describe('ProjectWorkBar', () => {
         currentStandaloneDeviceId="remote-device"
         selectedDeviceWorkspaceId={null}
         executionMode="current_workspace"
-        onSelectProject={vi.fn()}
+        onSelectProject={onSelectProject}
         onSelectStandaloneDevice={onSelectStandaloneDevice}
         onSelectProjectWorkspace={vi.fn()}
         onExecutionModeChange={vi.fn()}
@@ -777,7 +808,8 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('selects a single-workspace project directly', async () => {

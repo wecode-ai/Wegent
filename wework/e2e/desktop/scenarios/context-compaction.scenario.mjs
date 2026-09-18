@@ -74,6 +74,34 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
+export function currentSessionContext(body) {
+  const texts = (body?.input ?? []).flatMap(item =>
+    Array.isArray(item.content) ? item.content.map(part => part.text ?? '') : [item.content ?? '']
+  )
+  const contexts = texts.flatMap(text =>
+    Array.from(
+      text.matchAll(/<wework\.session\.current>([\s\S]*?)<\/wework\.session\.current>/gu),
+      match => match[1]
+    )
+  )
+  assert.ok(contexts.length > 0, 'The model request did not receive current session context')
+  const content = contexts.at(-1)
+  const jsonStart = content.indexOf('\n')
+  assert.ok(jsonStart >= 0, 'The current session context is missing its JSON payload')
+  const context = JSON.parse(content.slice(jsonStart).trim())
+  assert.match(context.conversation_id, /^conv_/)
+  assert.match(context.response_id, /^resp_/)
+  const conversation = JSON.parse(Buffer.from(context.conversation_id.slice(5), 'base64url'))
+  const response = JSON.parse(Buffer.from(context.response_id.slice(5), 'base64url'))
+  assert.deepEqual(response.slice(0, 2), conversation)
+  assert.equal(response.length, 3)
+  assert.ok(response[2])
+  assert.equal(context.execution.type, 'wework')
+  assert.equal(context.execution.device_id, conversation[0])
+  assert.ok(context.model_name)
+  return context
+}
+
 async function createLocalProject(control, workspacePath, timeoutMs, workbenchReadyTimeoutMs) {
   await control.command('waitFor', '[data-testid="project-work-button"]', {
     timeoutMs: workbenchReadyTimeoutMs,
@@ -134,6 +162,8 @@ export function createDesktopScenario({
   let active = false
   let compactionRequests = 0
   let followUpSawCompactedContext = false
+  let initialRequest
+  let followUpRequest
   let resolveCompactionStarted
   let releaseCompaction
   const compactionStarted = new Promise(resolve => {
@@ -185,6 +215,7 @@ export function createDesktopScenario({
       }
 
       if (serialized.includes(FOLLOW_UP_PROMPT)) {
+        followUpRequest = body
         followUpSawCompactedContext = serialized.includes(COMPACTION_SUMMARY)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -198,6 +229,7 @@ export function createDesktopScenario({
       }
 
       if (!serialized.includes(INITIAL_PROMPT)) return false
+      initialRequest = body
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
         sse([
@@ -223,6 +255,8 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
+      const initialSession = currentSessionContext(initialRequest)
+      assert.equal(initialSession.api_conversation_supported, false)
       await captureScreenshot(control, 'context-compaction-01-ready.png', 'body')
 
       await control.command('click', '[data-testid="context-usage-button"]')
@@ -278,6 +312,9 @@ export function createDesktopScenario({
         true,
         'The follow-up model request did not contain the compacted context summary'
       )
+      const followUpSession = currentSessionContext(followUpRequest)
+      assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
+      assert.notEqual(followUpSession.response_id, initialSession.response_id)
       await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
     },
 

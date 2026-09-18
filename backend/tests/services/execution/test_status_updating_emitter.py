@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from shared.models import EventType, ExecutionEvent
+from tests.services.chat.storage.test_session_blocks import FakeCache, FakeRedisClient
 
 
 @pytest.mark.asyncio
@@ -525,6 +526,60 @@ async def test_direct_block_updates_are_persisted_before_done():
         ]
     )
     handle_done.assert_awaited_once_with(done)
+
+
+@pytest.mark.asyncio
+async def test_websocket_chain_appends_direct_block_content_delta_once():
+    from app.services.chat.storage.session import SessionManager
+    from app.services.execution.emitters import WebSocketResultEmitter
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    session_manager = SessionManager()
+    redis_client = FakeRedisClient()
+    session_manager._cache = FakeCache(redis_client)
+    await session_manager.add_block(
+        202,
+        {
+            "id": "commentary-1",
+            "type": "thinking",
+            "content": "start",
+            "status": "streaming",
+        },
+    )
+
+    websocket = WebSocketResultEmitter(task_id=101, subtask_id=202)
+    emitter = StatusUpdatingEmitter(
+        wrapped=websocket,
+        task_id=101,
+        subtask_id=202,
+    )
+    event = ExecutionEvent(
+        type=EventType.BLOCK_UPDATED.value,
+        task_id=101,
+        subtask_id=202,
+        data={
+            "block_id": "commentary-1",
+            "updates": {"content_delta": "-delta"},
+        },
+    )
+
+    with (
+        patch("app.services.chat.storage.session_manager", session_manager),
+        patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+            return_value=AsyncMock(),
+        ),
+        patch.object(
+            emitter,
+            "_touch_task_streaming_activity",
+            new=AsyncMock(),
+        ),
+    ):
+        await emitter.emit(event)
+
+    blocks = await session_manager.get_blocks(202)
+    assert blocks[0]["content"] == "start-delta"
+    assert "content_delta" not in blocks[0]
 
 
 @pytest.mark.asyncio

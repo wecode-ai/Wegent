@@ -36,6 +36,8 @@ export function slimPluginComponentsForCache(
     })),
     connectors: (source.connectors ?? []).map(connector => ({
       slug: connector.slug,
+      displayName: connector.displayName ?? null,
+      authorizationGroup: connector.authorizationGroup ?? null,
       authPolicy: connector.authPolicy,
       localAuth: connector.localAuth ?? null,
       ...(connector.accountAuth ? { accountAuth: connector.accountAuth } : {}),

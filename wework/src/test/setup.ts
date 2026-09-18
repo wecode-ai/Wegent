@@ -245,7 +245,7 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.pluginsAction, []],
     [WEWORK_DSH_SLOTS.boardCardStatus, []],
     [WEWORK_DSH_SLOTS.composerAction, []],
-    [WEWORK_DSH_SLOTS.environmentSection, []],
+    [WEWORK_DSH_SLOTS.conversationSummary, []],
     [
       WEWORK_DSH_SLOTS.home,
       [

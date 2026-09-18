@@ -1,5 +1,8 @@
+import collaborationPreset from '@wegent/collaboration/tailwind-preset'
+
 /** @type {import('tailwindcss').Config} */
 export default {
+  presets: [collaborationPreset],
   darkMode: 'class',
   content: [
     './index.html',
@@ -7,7 +10,8 @@ export default {
     './dsh/*/client.js',
     './dsh/*/src/**/*.{ts,tsx}',
     './wecode/**/*.{ts,tsx}',
-    './node_modules/streamdown/dist/*.js',
+    '../packages/collaboration/src/**/*.{ts,tsx}',
+    '../packages/collaboration/node_modules/streamdown/dist/*.js',
   ],
   theme: {
     fontSize: {
@@ -22,11 +26,11 @@ export default {
       'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
       'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
       'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
-      chat: ['var(--text-chat)', { lineHeight: 'calc(1em + 8px)' }],
-      code: ['var(--text-code)', { lineHeight: '1.8' }],
-      'code-sm': ['var(--text-code-sm)', { lineHeight: '1.8' }],
     },
     extend: {
+      fontFamily: {
+        mono: ['var(--font-code)'],
+      },
       backgroundColor: {
         base: 'rgb(var(--color-bg-base) / <alpha-value>)',
       },
@@ -61,14 +65,6 @@ export default {
       },
       borderRadius: {
         DEFAULT: 'var(--radius)',
-      },
-      zIndex: {
-        chrome: 'var(--z-chrome)',
-        popover: 'var(--z-popover)',
-        modal: 'var(--z-modal)',
-        critical: 'var(--z-critical)',
-        system: 'var(--z-system)',
-        'system-popover': 'var(--z-system-popover)',
       },
     },
   },

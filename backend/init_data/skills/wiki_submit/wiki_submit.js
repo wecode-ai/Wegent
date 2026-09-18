@@ -10,6 +10,7 @@ const fs = require('fs')
 const path = require('path')
 const https = require('https')
 const http = require('http')
+const { spawnSync } = require('child_process')
 const { validateMermaidMarkdown } = require('./mermaid_validation')
 
 /**
@@ -122,6 +123,85 @@ function getAuthToken(argValue) {
 
   // Finally use argument value
   return argValue
+}
+
+/**
+ * Resolve the checkout and commit that supplied a reported commit.
+ *
+ * The count is part of the source snapshot used by the next run's change-ratio
+ * decision. Matching the commit keeps it paired with the source it describes instead
+ * of accidentally recording a scratch directory. The caller supplies the checkout
+ * explicitly because a writer may stage Markdown under ``/tmp`` before it completes
+ * the generation.
+ *
+ * @param {string|null} reportedCommit Commit passed to ``complete``.
+ * @param {string|null} repositoryDir Checkout that produced ``reportedCommit``.
+ * @returns {{ repositoryRoot: string, commit: string }} Verified checkout and commit.
+ * @throws {Error} When the checkout cannot be verified at the reported commit.
+ */
+function verifiedRepositoryForCommit(reportedCommit, repositoryDir) {
+  const gitOptions = { encoding: 'utf8', maxBuffer: 1024 * 1024 }
+  const directory = String(repositoryDir || '').trim()
+  const reported = String(reportedCommit || '').trim()
+  if (!directory || !reported) {
+    throw new Error('--repo-dir and --head-commit are required to record the documented checkout')
+  }
+
+  const root = spawnSync('git', ['-C', directory, 'rev-parse', '--show-toplevel'], gitOptions)
+  if (root.status !== 0) {
+    throw new Error('--repo-dir must name the Git checkout that was documented')
+  }
+  const repositoryRoot = String(root.stdout || '').trim()
+  if (!repositoryRoot) {
+    throw new Error('--repo-dir did not resolve to a Git checkout')
+  }
+
+  const head = spawnSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], gitOptions)
+  const checkoutCommit = String(head.stdout || '').trim()
+  const resolvedReported = spawnSync(
+    'git',
+    ['-C', repositoryRoot, 'rev-parse', '--verify', `${reported}^{commit}`],
+    gitOptions
+  )
+  const expectedCommit = String(resolvedReported.stdout || '').trim()
+  if (head.status !== 0 || resolvedReported.status !== 0 || !checkoutCommit || !expectedCommit) {
+    throw new Error('--head-commit could not be resolved in --repo-dir')
+  }
+  if (checkoutCommit !== expectedCommit) {
+    throw new Error('--head-commit does not match the HEAD of --repo-dir')
+  }
+
+  return { repositoryRoot, commit: expectedCommit }
+}
+
+/**
+ * Count paths in a documented commit's Git tree.
+ *
+ * This deliberately reads the commit tree rather than the checkout index, so staged
+ * or uncommitted changes cannot make source-snapshot metadata describe a different
+ * repository state. Callers should validate the checkout and commit first.
+ *
+ * @param {string} repositoryRoot Verified Git checkout root.
+ * @param {string} commit Verified commit in ``repositoryRoot``.
+ * @returns {number} Tracked path count.
+ * @throws {Error} When Git cannot read the commit tree.
+ */
+function trackedFileCountForCommit(repositoryRoot, commit) {
+  const files = spawnSync('git', ['-C', repositoryRoot, 'ls-tree', '-r', '-z', '--name-only', commit], {
+    encoding: null,
+    maxBuffer: 16 * 1024 * 1024,
+  })
+  if (files.status !== 0 || !Buffer.isBuffer(files.stdout)) {
+    throw new Error('could not count files from the documented commit')
+  }
+
+  let count = 0
+  for (const byte of files.stdout) {
+    if (byte === 0) {
+      count += 1
+    }
+  }
+  return count
 }
 
 /**
@@ -731,14 +811,41 @@ async function cmdReviewStatus(args) {
  * @returns {Promise<number>}
  */
 async function cmdComplete(args) {
+  if (!args.generationId) {
+    console.error('Error: --generation-id is required.')
+    process.exit(1)
+  }
+  if (!args.headCommit) {
+    console.error('Error: --head-commit is required for complete command')
+    return 1
+  }
+  if (!args.repoDir) {
+    console.error('Error: --repo-dir is required for complete command')
+    return 1
+  }
+
+  let documentedSource
+  try {
+    documentedSource = verifiedRepositoryForCommit(args.headCommit, args.repoDir)
+  } catch (error) {
+    console.error(`Error: ${error.message}`)
+    return 1
+  }
+
+  let trackedFileCount = null
+  try {
+    trackedFileCount = trackedFileCountForCommit(
+      documentedSource.repositoryRoot,
+      documentedSource.commit
+    )
+  } catch (error) {
+    console.warn(`Warning: ${error.message}; publishing without tracked file count.`)
+  }
+
   const endpoint = getWikiEndpoint(args.endpoint)
   const token = getAuthToken(args.token)
   if (!token) {
     console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
-    process.exit(1)
-  }
-  if (!args.generationId) {
-    console.error('Error: --generation-id is required.')
     process.exit(1)
   }
   const generationId = parseInt(args.generationId, 10)
@@ -746,11 +853,12 @@ async function cmdComplete(args) {
   const summary = {
     status: 'COMPLETED',
     structure_order: args.structureOrder || [],
+    head_commit: args.headCommit,
+  }
+  if (trackedFileCount !== null) {
+    summary.tracked_file_count = trackedFileCount
   }
 
-  if (args.headCommit) {
-    summary.head_commit = args.headCommit
-  }
   if (args.model) {
     summary.model = args.model
   }
@@ -849,6 +957,7 @@ function parseArgs(argv) {
     tokensUsed: null,
     errorMessage: null,
     headCommit: null,
+    repoDir: null,
     reviewPhase: null,
     reviewStatus: null,
     handoffFile: null,
@@ -893,6 +1002,9 @@ function parseArgs(argv) {
         break
       case '--head-commit':
         args.headCommit = argv[++i]
+        break
+      case '--repo-dir':
+        args.repoDir = argv[++i]
         break
       case '--phase':
         args.reviewPhase = argv[++i]
@@ -1027,7 +1139,8 @@ Review Options:
   --findings-file      Actionable Markdown findings for changes_requested
 
 Complete Options:
-  --head-commit        Commit that was documented, from \`git rev-parse HEAD\`
+  --head-commit        Commit that was documented (required)
+  --repo-dir           Git checkout that was documented (required)
   --structure-order    Ordered paths, comma- or whitespace-separated
   --model              Model name used for generation
   --tokens-used        Number of tokens used
@@ -1044,7 +1157,7 @@ Examples:
   node wiki_submit.js review-open --generation-id 123 --phase plan --path index --path architecture --summary "Proposed wiki plan" --handoff-file /tmp/wiki-plan.md --writing-plan-file /tmp/wiki-writing-plan.json
   node wiki_submit.js review --generation-id 123 --phase plan --review-status passed --path index --path architecture --focus-path architecture --summary "Plan covers entry points and identifies its core deep dive"
   node wiki_submit.js review-status --generation-id 123 --phase plan
-  node wiki_submit.js complete --generation-id 123 --head-commit $(git rev-parse HEAD)
+  node wiki_submit.js complete --generation-id 123 --head-commit $(git rev-parse HEAD) --repo-dir $(git rev-parse --show-toplevel)
   node wiki_submit.js fail --generation-id 123 --error-message "Failed to analyze repository"
 `)
 }

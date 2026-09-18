@@ -8,7 +8,7 @@ import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from
 
 const labels = {
   task: '任务',
-  board: '项目空间',
+  board: '协作',
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
@@ -148,6 +148,7 @@ function RoutingHarness({
 describe('WorkspaceTabsProvider routing', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     window.history.replaceState({}, '', '/')
   })
 
@@ -162,6 +163,29 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('preserves an auxiliary route before entering settings', () => {
+    sessionStorage.setItem('wework.settingsReturnPath', '/todo')
+    render(<RoutingHarness />)
+
+    act(() => navigateTo('/cloud-work'))
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/cloud-work')
+
+    act(() => navigateTo('/settings/connections?addDevice=1'))
+
+    expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
+  })
+
+  test('does not replace the return route with a settings route', () => {
+    sessionStorage.setItem('wework.settingsReturnPath', '/cloud-work')
+    window.history.replaceState({}, '', '/settings')
+
+    render(<RoutingHarness />)
+
+    act(() => navigateTo('/settings/connections'))
+
+    expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
 
   test('notifies resource owners when a workspace tab closes', () => {
@@ -183,11 +207,9 @@ describe('WorkspaceTabsProvider routing', () => {
     render(<RoutingHarness startupTabKind="board" />)
 
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
-    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
-      '/todo?projectId=default-work-items'
-    )
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
     expect(window.location.pathname).toBe('/todo')
-    expect(window.location.search).toContain('projectId=default-work-items')
+    expect(window.location.search).not.toContain('projectId=default-work-items')
     expect(window.location.search).toContain('workspaceTab=board-')
   })
 
@@ -221,9 +243,7 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
-    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
-      '/todo?projectId=default-work-items'
-    )
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
   })
 
   test('synchronizes a missing fixed startup tab before selecting it', () => {
@@ -363,7 +383,7 @@ describe('WorkspaceTabsProvider routing', () => {
             id: 'board-default',
             kind: 'board',
             title: '工作项',
-            contentRoute: '/todo',
+            contentRoute: '/todo?projectId=default-work-items',
           },
           {
             id: 'board-project',
@@ -378,7 +398,8 @@ describe('WorkspaceTabsProvider routing', () => {
 
     render(<RoutingHarness />)
 
-    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('项目空间')
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('协作')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
     expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
   })
 

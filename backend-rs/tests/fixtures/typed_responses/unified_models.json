@@ -1,0 +1,758 @@
+[
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": null,
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": false,
+    "listingId": null
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": null,
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": true,
+    "listingId": null
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": null,
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": false,
+    "listingId": null,
+    "isActive": false
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": null,
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": true,
+    "listingId": null,
+    "isActive": false
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": false,
+    "listingId": null
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": true,
+    "listingId": null
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": false,
+    "listingId": null,
+    "isActive": false
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": true,
+    "listingId": null,
+    "isActive": false
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "value",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": false,
+    "listingId": null
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "value",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": true,
+    "listingId": null
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "value",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": false,
+    "listingId": null,
+    "isActive": false
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": false,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "costIndex": "value",
+    "modelCapabilities": null,
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": true,
+    "listingId": null,
+    "isActive": false
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": null,
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": false,
+    "listingId": null,
+    "resourceUserId": 0
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": null,
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": true,
+    "listingId": 9,
+    "resourceUserId": 0
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": null,
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": false,
+    "listingId": null,
+    "resourceUserId": 0,
+    "isActive": true
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": null,
+    "provider": null,
+    "modelId": null,
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": null,
+    "modelSubGroup": null,
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": null,
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": null
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": null,
+    "updated_at": null,
+    "isReference": true,
+    "listingId": 9,
+    "resourceUserId": 0,
+    "isActive": true
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": false,
+    "listingId": null,
+    "resourceUserId": 0
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": true,
+    "listingId": 9,
+    "resourceUserId": 0
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": false,
+    "listingId": null,
+    "resourceUserId": 0,
+    "isActive": true
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "",
+    "provider": "",
+    "modelId": "",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "",
+    "modelSubGroup": "",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": null,
+      "provider": ""
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "",
+    "updated_at": "",
+    "isReference": true,
+    "listingId": 9,
+    "resourceUserId": 0,
+    "isActive": true
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "value",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": false,
+    "listingId": null,
+    "resourceUserId": 0
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "value",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": true,
+    "listingId": 9,
+    "resourceUserId": 0
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "value",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": false,
+    "listingId": null,
+    "resourceUserId": 0,
+    "isActive": true
+  },
+  {
+    "name": "model",
+    "type": "user",
+    "displayName": "value",
+    "provider": "value",
+    "modelId": "value",
+    "namespace": "default",
+    "modelCategoryType": "llm",
+    "isAdvanced": true,
+    "modelGroup": "value",
+    "modelSubGroup": "value",
+    "contextWindow": 0,
+    "maxOutputTokens": 1024,
+    "costIndex": "value",
+    "modelCapabilities": {
+      "images": true
+    },
+    "runtime": {
+      "family": "value.http",
+      "provider": "value"
+    },
+    "config": {
+      "protocol": "  HTTP ",
+      "custom": null,
+      "modelCapabilities": {
+        "images": true
+      }
+    },
+    "created_at": "value",
+    "updated_at": "value",
+    "isReference": true,
+    "listingId": 9,
+    "resourceUserId": 0,
+    "isActive": true
+  }
+]

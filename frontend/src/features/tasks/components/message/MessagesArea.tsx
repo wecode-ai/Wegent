@@ -45,10 +45,7 @@ import { taskApis } from '@/apis/tasks'
 import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
-import {
-  ForwardMessageDialog,
-  type ForwardableMessage,
-} from '@/features/inbox/components/ForwardMessageDialog'
+import { SendToCollaborationDialog } from '@/features/collaboration/SendToCollaborationDialog'
 import { useMessagePresenter, type DisplayMessage } from '../../presentation/useMessagePresenter'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -1042,6 +1039,7 @@ function MessagesArea({
             <Button
               variant="outline"
               size="sm"
+              data-testid="message-export-menu"
               className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
               <Download className="h-3.5 w-3.5" />
@@ -1147,27 +1145,6 @@ function MessagesArea({
   )
 
   // Convert messages to ForwardableMessage format for the forward dialog
-  const forwardableMessages = useMemo((): ForwardableMessage[] => {
-    return messages
-      .filter(msg => msg.subtaskId && msg.status === 'completed')
-      .map(msg => {
-        // Remove markdown prefix from AI messages if present
-        let content = msg.content || ''
-        if (msg.type === 'ai' && content.startsWith('${$$}$')) {
-          content = content.substring(6)
-        }
-
-        return {
-          subtaskId: msg.subtaskId!,
-          type: msg.type,
-          content,
-          timestamp: msg.timestamp,
-          botName: msg.botName,
-          senderUserName: msg.senderUserName,
-        }
-      })
-  }, [messages])
-
   // Handle forward button click from MessageBubble
   const handleForwardClick = useCallback((subtaskId: number) => {
     setForwardInitialSubtaskId(subtaskId)
@@ -1504,14 +1481,13 @@ function MessagesArea({
         />
       )}
 
-      {/* Forward Message Dialog */}
+      {/* Send Message to Collaboration */}
       {selectedTaskDetail?.id && (
-        <ForwardMessageDialog
+        <SendToCollaborationDialog
           taskId={selectedTaskDetail.id}
           subtaskIds={forwardInitialSubtaskId ? [forwardInitialSubtaskId] : undefined}
           open={isForwardDialogOpen}
           onOpenChange={setIsForwardDialogOpen}
-          allMessages={forwardableMessages}
         />
       )}
     </div>

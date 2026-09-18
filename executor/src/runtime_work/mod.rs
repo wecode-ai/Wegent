@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod api_context;
 mod automations;
 mod codex_global_state;
 mod codex_notifications;
@@ -12,6 +13,8 @@ mod events;
 pub mod fork_transfer;
 mod handler;
 pub(crate) mod local_connector_auth;
+mod local_execution;
+pub(crate) mod native_transcript;
 mod notification_mapping;
 mod remote_projects;
 mod response;

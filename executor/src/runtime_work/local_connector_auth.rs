@@ -22,6 +22,7 @@ use crate::local::app_ipc::AppIpcError;
 use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
+mod diagnostics;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -287,7 +288,19 @@ fn resolve_plugin_root_candidates(
         env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
         dirs::home_dir(),
     )?;
+    let codex_homes = ["CODEX_HOME", "WEGENT_CODEX_HOME"]
+        .into_iter()
+        .filter_map(env::var_os)
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    installed_plugin_root_candidates(plugin_key, &executor_home, &codex_homes)
+}
 
+fn installed_plugin_root_candidates(
+    plugin_key: &str,
+    executor_home: &Path,
+    codex_homes: &[PathBuf],
+) -> Result<Vec<PathBuf>, AppIpcError> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     let store_plugins = executor_home.join("capabilities/store/plugins");
     if store_plugins.is_dir() {
@@ -302,12 +315,10 @@ fn resolve_plugin_root_candidates(
     }
 
     let mut cache_roots = vec![executor_home.join("codex/plugins/cache")];
-    for env_key in ["CODEX_HOME", "WEGENT_CODEX_HOME"] {
-        if let Some(codex_home) = env::var_os(env_key) {
-            let cache_root = PathBuf::from(codex_home).join("plugins/cache");
-            if !cache_roots.iter().any(|existing| existing == &cache_root) {
-                cache_roots.push(cache_root);
-            }
+    for codex_home in codex_homes {
+        let cache_root = codex_home.join("plugins/cache");
+        if !cache_roots.iter().any(|existing| existing == &cache_root) {
+            cache_roots.push(cache_root);
         }
     }
     for cache_root in &cache_roots {
@@ -728,6 +739,20 @@ async fn run_plugin_command(
     tool: Option<&Path>,
     timeout_seconds: u64,
 ) -> Result<Value, AppIpcError> {
+    let mut invocation = diagnostics::Invocation::new(plugin_root);
+    let result =
+        run_plugin_command_inner(plugin_root, args, tool, timeout_seconds, &invocation).await;
+    invocation.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
+}
+
+async fn run_plugin_command_inner(
+    plugin_root: &Path,
+    args: &[String],
+    tool: Option<&Path>,
+    timeout_seconds: u64,
+    invocation: &diagnostics::Invocation,
+) -> Result<Value, AppIpcError> {
     if args.is_empty() {
         return Err(AppIpcError::new(
             "local_auth_invalid",
@@ -747,11 +772,35 @@ async fn run_plugin_command(
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
     }
-    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
+    let mut child = command
+        .spawn()
+        .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
+    let mut stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let collect = async {
+        use tokio::io::AsyncReadExt;
+        let stdout = async {
+            let mut bytes = Vec::new();
+            stdout_pipe.read_to_end(&mut bytes).await?;
+            Ok(bytes)
+        };
+        let (stdout, stderr, status) = tokio::try_join!(
+            stdout,
+            diagnostics::read_stderr(stderr_pipe, |event| invocation.emit(event)),
+            child.wait()
+        )?;
+        Ok::<_, std::io::Error>(std::process::Output {
+            stdout,
+            stderr,
+            status,
+        })
+    };
+    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), collect)
         .await
         .map_err(|_| AppIpcError::new("local_auth_timeout", "localAuth command timed out"))?
         .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
 
+    invocation.emit(json!({"stage": "process_exit", "status": if output.status.success() { "ok" } else { "failed" }, "exit_code": output.status.code()}));
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if stdout.is_empty() {
@@ -1004,14 +1053,6 @@ fn redact_secrets(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     fn write_plugin_manifest(plugin_root: &Path) {
         fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
@@ -1325,36 +1366,16 @@ switch ($Action) {
 
     #[test]
     fn resolve_plugin_root_scans_all_marketplace_caches() {
-        let _guard = env_lock();
         let temp = tempfile::tempdir().unwrap();
         let executor_home = temp.path().join("executor-home");
         let plugin_root = executor_home
             .join("codex/plugins/cache/desktop-e2e-marketplace/desktop-e2e-plugin/0.1.0");
         write_plugin_manifest(&plugin_root);
 
-        let previous_executor_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let previous_codex_home = env::var_os("CODEX_HOME");
-        let previous_wegent_codex_home = env::var_os("WEGENT_CODEX_HOME");
-        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-        env::remove_var("CODEX_HOME");
-        env::remove_var("WEGENT_CODEX_HOME");
-
         let candidates =
-            resolve_plugin_root_candidates("desktop-e2e-plugin", &json!({})).expect("candidates");
+            installed_plugin_root_candidates("desktop-e2e-plugin", &executor_home, &[])
+                .expect("candidates");
         assert_eq!(candidates, vec![plugin_root]);
-
-        match previous_executor_home {
-            Some(value) => env::set_var("WEGENT_EXECUTOR_HOME", value),
-            None => env::remove_var("WEGENT_EXECUTOR_HOME"),
-        }
-        match previous_codex_home {
-            Some(value) => env::set_var("CODEX_HOME", value),
-            None => env::remove_var("CODEX_HOME"),
-        }
-        match previous_wegent_codex_home {
-            Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
-            None => env::remove_var("WEGENT_CODEX_HOME"),
-        }
     }
 
     #[test]
@@ -1368,7 +1389,6 @@ switch ($Action) {
 
     #[test]
     fn resolve_plugin_root_prefers_newest_version_directory() {
-        let _guard = env_lock();
         let temp = tempfile::tempdir().unwrap();
         let executor_home = temp.path().join("executor-home");
         let older = executor_home.join("codex/plugins/cache/wegent/demo-plugin/0.1.0");
@@ -1376,29 +1396,9 @@ switch ($Action) {
         write_plugin_manifest(&older);
         write_plugin_manifest(&newer);
 
-        let previous_executor_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let previous_codex_home = env::var_os("CODEX_HOME");
-        let previous_wegent_codex_home = env::var_os("WEGENT_CODEX_HOME");
-        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-        env::remove_var("CODEX_HOME");
-        env::remove_var("WEGENT_CODEX_HOME");
-
-        let candidates =
-            resolve_plugin_root_candidates("demo-plugin", &json!({})).expect("candidates");
+        let candidates = installed_plugin_root_candidates("demo-plugin", &executor_home, &[])
+            .expect("candidates");
         assert_eq!(candidates.first(), Some(&newer));
-
-        match previous_executor_home {
-            Some(value) => env::set_var("WEGENT_EXECUTOR_HOME", value),
-            None => env::remove_var("WEGENT_EXECUTOR_HOME"),
-        }
-        match previous_codex_home {
-            Some(value) => env::set_var("CODEX_HOME", value),
-            None => env::remove_var("CODEX_HOME"),
-        }
-        match previous_wegent_codex_home {
-            Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
-            None => env::remove_var("WEGENT_CODEX_HOME"),
-        }
     }
 
     #[test]

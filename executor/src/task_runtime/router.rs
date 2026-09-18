@@ -1932,6 +1932,7 @@ esac
                     task_id: "runtime-1".to_owned(),
                     task_title: Some("AI Table task".to_owned()),
                     backend_task_id: None,
+                    model_selection: None,
                     workflow_node_id: None,
                 },
             )

@@ -309,12 +309,22 @@ def ensure_branch_collectors(
                         continue
                     resource = _collector_resource(platform, change_request)
                     if mode == "webhook":
-                        hook = _configured_webhook(
-                            db,
-                            project_id=str(project.id),
-                            subscription_id=configured_subscription_id,
-                            platform=platform,
-                            resource=resource,
+                        hook = (
+                            _configured_webhook(
+                                db,
+                                project_id=str(project.id),
+                                subscription_id=configured_subscription_id,
+                                platform=platform,
+                                resource=resource,
+                            )
+                            if configured_subscription_id
+                            else _existing_collector(
+                                db,
+                                project_id=str(project.id),
+                                platform=platform,
+                                mode=mode,
+                                resource=resource,
+                            )
                         )
                     else:
                         hook = _existing_collector(

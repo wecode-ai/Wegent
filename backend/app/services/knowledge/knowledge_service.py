@@ -315,6 +315,7 @@ class KnowledgeService:
                 data.kb_type or KnowledgeBaseType.NOTEBOOK
             ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
+            "dingtalkAutoSyncEnabled": data.dingtalk_auto_sync_enabled,
             "summaryEnabled": data.summary_enabled,
         }
         if data.allow_document_download is not None:
@@ -494,6 +495,43 @@ class KnowledgeService:
             knowledge_base_id,
             user_id,
             kb=kb,
+        )
+
+    @staticmethod
+    def resolve_read_user_for_knowledge_base(
+        db: Session,
+        *,
+        user_id: int,
+        task_id: int | None,
+        knowledge_base_id: int,
+    ) -> User | None:
+        """Resolve the user whose permissions and runtime identity apply."""
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            return None
+        if task_id is None or KnowledgeService.can_directly_access_knowledge_base(
+            db,
+            knowledge_base_id,
+            user.id,
+        ):
+            return user
+
+        from app.services.chat.task_default_knowledge_bases import (
+            resolve_task_default_knowledge_base_read_user_id,
+        )
+
+        access_user_id = resolve_task_default_knowledge_base_read_user_id(
+            db,
+            task_id,
+            user.id,
+            knowledge_base_id,
+        )
+        if access_user_id is None:
+            return user
+        return (
+            db.query(User)
+            .filter(User.id == access_user_id, User.is_active.is_(True))
+            .first()
         )
 
     @staticmethod
@@ -910,6 +948,9 @@ class KnowledgeService:
                     )
                 spec["retrievalConfig"] = current_retrieval_config
 
+        if data.dingtalk_auto_sync_enabled is not None:
+            spec["dingtalkAutoSyncEnabled"] = data.dingtalk_auto_sync_enabled
+
         # Update summary_enabled if provided
         if data.summary_enabled is not None:
             spec["summaryEnabled"] = data.summary_enabled
@@ -1068,6 +1109,20 @@ class KnowledgeService:
 
         forget_repository(db, knowledge_base_id)
 
+        # The scheduler projection belongs to the wiki. It is deliberately removed
+        # in the same transaction so no due worker can observe an orphaned plan.
+        from app.models.subscription import BackgroundExecution
+        from app.services.knowledge.code_wiki.scheduled_update import (
+            scheduled_update_for,
+        )
+
+        scheduled_update = scheduled_update_for(db, kb)
+        if scheduled_update is not None:
+            db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == scheduled_update.id
+            ).delete(synchronize_session=False)
+            db.delete(scheduled_update)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
@@ -1094,6 +1149,7 @@ class KnowledgeService:
                 Kind.user_id == knowledge_base.user_id,
                 Kind.is_active.is_(True),
             )
+            .populate_existing()
             .with_for_update()
             .first()
         )

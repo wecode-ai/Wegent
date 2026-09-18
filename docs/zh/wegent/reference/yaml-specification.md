@@ -68,6 +68,28 @@ spec:
 | `spec.mcpServers`    | object | 否   | MCP 服务器配置,定义智能体的工具能力                 |
 | `spec.skills`        | array  | 否   | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
 
+### 业务方 MCP 服务器身份校验
+
+当 `spec.mcpServers` 配置的是业务方提供的远程 MCP 服务器时，业务方可以用
+Wegent 在出站请求中注入的任务 token 校验当前用户。在 server 的 headers 里
+配置 `${{task_token}}` 占位符，Wegent 构建请求时会把它替换为签发的任务
+token：
+
+```yaml
+spec:
+  mcpServers:
+    business:
+      type: streamable-http
+      url: https://mcp.business.example.com/mcp
+      headers:
+        Authorization: "Bearer ${{task_token}}"
+```
+
+任务 token 绑定当前任务（默认 24 小时）。业务方收到请求后，可用同一个
+`Authorization: Bearer <token>` 头调用 `GET /api/external/mcp-identity/userinfo`
+校验并获取当前用户基本信息（`id`、`user_name`、`email`）；接口不会返回
+git 凭据。
+
 ---
 
 ## ✨ Skill

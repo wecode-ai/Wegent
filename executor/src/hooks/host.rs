@@ -17,9 +17,10 @@ use super::{
     matcher::matches_tool,
     model::{
         HookEventName, HookHealth, HookRunStatus, HookRunSummary, HookUser, PostToolUseInput,
-        ResolvedHookPluginView,
+        ResolvedHookPluginView, CODEX_ROLLOUT_SUBSCRIPTION,
     },
     registry::HookRegistryStore,
+    rollout::CodexRolloutObserver,
 };
 
 const MAX_ASYNC_HOOKS: usize = 4;
@@ -28,6 +29,7 @@ const MAX_DEDUP_ENTRIES: usize = 4096;
 
 #[derive(Clone)]
 pub struct HookService {
+    pub rollout: CodexRolloutObserver,
     registry: HookRegistryStore,
     capacity: Arc<Semaphore>,
     seen: Arc<Mutex<HashMap<String, Instant>>>,
@@ -36,8 +38,17 @@ pub struct HookService {
 
 impl HookService {
     pub fn from_env() -> Self {
+        let registry = HookRegistryStore::from_env();
         Self {
-            registry: HookRegistryStore::from_env(),
+            rollout: CodexRolloutObserver::new(
+                registry
+                    .plugins_dir()
+                    .parent()
+                    .expect("hooks directory")
+                    .join("codex-rollout.sqlite"),
+                crate::agents::wework_codex_home(),
+            ),
+            registry,
             capacity: Arc::new(Semaphore::new(MAX_ASYNC_HOOKS)),
             seen: Arc::new(Mutex::new(HashMap::new())),
             event_tx: Arc::new(Mutex::new(None)),
@@ -49,6 +60,8 @@ impl HookService {
             .event_tx
             .lock()
             .expect("hook event sender lock should not be poisoned") = Some(sender);
+        self.rollout
+            .start(self.registry.clone(), Arc::clone(&self.event_tx));
     }
 
     pub fn list(&self) -> Vec<ResolvedHookPluginView> {
@@ -60,7 +73,7 @@ impl HookService {
 
     pub async fn dispatch(&self, input: PostToolUseInput) {
         for plugin in self.registry.discover() {
-            if !plugin.enabled || plugin.health != HookHealth::Ready {
+            if !dispatches_from_turn_stream(&plugin) {
                 continue;
             }
             for hook in plugin.hooks {
@@ -219,7 +232,7 @@ impl HookService {
     }
 }
 
-fn emit_run_event(
+pub(super) fn emit_run_event(
     sender: &Arc<Mutex<Option<broadcast::Sender<serde_json::Value>>>>,
     run: &HookRunSummary,
 ) {
@@ -229,7 +242,7 @@ fn emit_run_event(
     }
 }
 
-fn summary(
+pub(super) fn summary(
     plugin_id: String,
     handler_id: String,
     started_at_ms: i64,
@@ -264,4 +277,67 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+/// A plugin that subscribed to the durable rollout feed receives its
+/// `PostToolUse` events from the rollout observer, so the live turn stream must
+/// not dispatch to it as well: every edit would be reported twice.
+fn dispatches_from_turn_stream(plugin: &super::registry::ResolvedHookPlugin) -> bool {
+    plugin.enabled
+        && plugin.health == HookHealth::Ready
+        && !plugin.manifest.subscribes(CODEX_ROLLOUT_SUBSCRIPTION)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hooks::model::HookPluginManifest;
+    use crate::hooks::registry::ResolvedHookPlugin;
+
+    fn plugin(subscriptions: &[&str], enabled: bool, health: HookHealth) -> ResolvedHookPlugin {
+        ResolvedHookPlugin {
+            manifest: HookPluginManifest {
+                schema_version: 1,
+                id: "example".to_owned(),
+                name: "example".to_owned(),
+                description: String::new(),
+                version: "1.0.0".to_owned(),
+                subscriptions: subscriptions
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect(),
+            },
+            enabled,
+            source: crate::hooks::model::HookSource::User,
+            directory: PathBuf::from("/hooks/plugins/example"),
+            policy: crate::hooks::model::HookPolicy::for_source(
+                crate::hooks::model::HookSource::User,
+            ),
+            health,
+            hooks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rollout_subscribers_are_not_dispatched_from_the_turn_stream() {
+        assert!(!dispatches_from_turn_stream(&plugin(
+            &[CODEX_ROLLOUT_SUBSCRIPTION],
+            true,
+            HookHealth::Ready,
+        )));
+    }
+
+    #[test]
+    fn other_ready_plugins_are_dispatched_from_the_turn_stream() {
+        assert!(dispatches_from_turn_stream(&plugin(
+            &[],
+            true,
+            HookHealth::Ready
+        )));
+        assert!(!dispatches_from_turn_stream(&plugin(
+            &[],
+            false,
+            HookHealth::Disabled
+        )));
+    }
 }

@@ -226,6 +226,21 @@ class SkillBindingService:
             db, [group_namespace]
         )
 
+    def list_user_group_skill_ids(self, db: Session, user_id: int) -> set[int]:
+        """Return active Skills shared with any group the user can access."""
+        from app.services.group_permission import (
+            check_group_permission,
+            get_user_groups,
+        )
+
+        namespaces = [
+            name
+            for name in get_user_groups(db, user_id)
+            if name != "default"
+            and check_group_permission(db, user_id, name, GroupRole.Reporter)
+        ]
+        return self.list_group_skill_ids_for_authorized_namespaces(db, namespaces)
+
     def list_group_skill_ids_for_authorized_namespaces(
         self,
         db: Session,

@@ -22,13 +22,15 @@ RUN mkdir -p src/bin \
 FROM builder-deps AS builder
 
 COPY executor/src ./src
+COPY sdk/plugin-auth /workspace/src/sdk/plugin-auth
+COPY sdk/plugin-creator /workspace/src/sdk/plugin-creator
 COPY shared/assets /workspace/src/shared/assets
 RUN find src -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-executor
 
 FROM ${BASE_IMAGE}
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.247 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
     && npm cache clean --force
 
 COPY --from=builder /workspace/src/executor/target/release/wegent-executor /app/executor

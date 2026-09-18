@@ -1,4 +1,15 @@
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
@@ -16,6 +27,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
   ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
@@ -27,6 +39,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
   ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
+  ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
@@ -44,6 +57,7 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-transcript-sync',
 ] as const
 const CORE_UI_BUNDLES = [
+  '@wegent/dsh-conversation-export',
   '@wegent/dsh-ui-core-apps',
   '@wegent/dsh-ui-core-settings',
   '@wegent/dsh-ui-plugin-center',
@@ -55,6 +69,7 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-home-focus',
   '@wegent/dsh-ui-home-developer',
   '@wegent/dsh-ui-git',
+  '@wegent/dsh-ui-outputs',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
@@ -98,11 +113,21 @@ export interface CoreDshLaunch {
   sourceFingerprint: string
 }
 
-export interface PrepareCoreDshOptions {
+export interface PreparedCoreDshRuntime {
+  command: string
+  entry: string
+  cwd: string
+  dshHome: string
+  environment: NodeJS.ProcessEnv
+  profile: string
+  version: string
+  sourceFingerprint: string
+}
+
+export interface PrepareCoreDshRuntimeOptions {
   runtimeRoot: string
   dataDirectory: string
   environment: NodeJS.ProcessEnv
-  port: number
 }
 
 export type CommandRunner = (
@@ -111,7 +136,9 @@ export type CommandRunner = (
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ) => Promise<void>
 
-export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Promise<CoreDshLaunch> {
+export async function prepareCoreDshRuntime(
+  options: PrepareCoreDshRuntimeOptions
+): Promise<PreparedCoreDshRuntime> {
   const pluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
   if (!pluginsRoot) {
     throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
@@ -132,14 +159,6 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   return {
     command: nodeCommand,
     entry: runtime.entry,
-    args: runtimeNodeArgs(options.environment, [
-      runtime.entry,
-      '--profile',
-      PROFILE_NAME,
-      '--no-open',
-      '--port',
-      String(options.port),
-    ]),
     cwd: runtime.root,
     dshHome,
     environment: {
@@ -153,6 +172,20 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
+  }
+}
+
+export function createCoreDshLaunch(runtime: PreparedCoreDshRuntime, port: number): CoreDshLaunch {
+  return {
+    ...runtime,
+    args: runtimeNodeArgs(runtime.environment, [
+      runtime.entry,
+      '--profile',
+      PROFILE_NAME,
+      '--no-open',
+      '--port',
+      String(port),
+    ]),
   }
 }
 
@@ -230,12 +263,6 @@ async function prepareProfile(options: {
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
   const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
   const currentBundles = stringArray(currentProfile.bundles)
-  const recoveredUserPlugins = await recoverInstalledDshDependencies(
-    profileRoot,
-    currentDependencies,
-    currentBundles,
-    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
-  )
   const removedDependencies = new Set<string>(
     REMOVED_CORE_DEPENDENCIES.filter(
       name => Object.hasOwn(currentDependencies, name) || currentBundles.includes(name)
@@ -247,16 +274,16 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
-  if (
-    stampIsCurrent &&
-    removedDependencies.size === 0 &&
-    recoveredUserPlugins.dependencies.size === 0 &&
-    coreDependenciesAreCurrent
-  ) {
-    await ensureCoreWorkspace(workspacePath)
+  if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
 
+  const recoveredUserPlugins = await recoverInstalledDshDependencies(
+    profileRoot,
+    currentDependencies,
+    currentBundles,
+    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
+  )
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&
@@ -309,12 +336,55 @@ async function prepareProfile(options: {
     const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await rm(destination, { recursive: true, force: true })
-    await cp(source, destination, { recursive: true })
+    await copyManagedPlugin(source, destination)
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
+}
+
+export async function copyManagedPlugin(
+  source: string,
+  destination: string,
+  options: {
+    platform?: NodeJS.Platform
+    linkDirectory?: typeof symlink
+  } = {}
+): Promise<void> {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'win32') {
+    await cp(source, destination, { recursive: true })
+    return
+  }
+  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
+}
+
+async function copyWindowsEntry(
+  source: string,
+  destination: string,
+  linkDirectory: typeof symlink
+): Promise<void> {
+  const metadata = await lstat(source)
+  if (metadata.isSymbolicLink()) {
+    const target = await realpath(source)
+    const targetMetadata = await lstat(target)
+    if (targetMetadata.isDirectory()) {
+      await linkDirectory(target, destination, 'junction')
+    } else {
+      await cp(target, destination)
+    }
+    return
+  }
+  if (!metadata.isDirectory()) {
+    await cp(source, destination)
+    return
+  }
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  const entries = await readdir(source)
+  for (const entry of entries) {
+    await copyWindowsEntry(join(source, entry), join(destination, entry), linkDirectory)
+  }
 }
 
 async function ensureCoreWorkspace(workspacePath: string): Promise<void> {

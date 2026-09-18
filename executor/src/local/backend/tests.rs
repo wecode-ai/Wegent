@@ -7,9 +7,110 @@ use crate::config::device::UpdateConfig;
 use std::{
     ffi::OsString,
     path::PathBuf,
-    sync::{Mutex as TestMutex, MutexGuard, OnceLock},
+    sync::{
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        Mutex as TestMutex, MutexGuard, OnceLock,
+    },
     time::Duration,
 };
+
+#[derive(Clone, Default)]
+struct RuntimeWorkPollTransport {
+    pull_calls: Arc<AtomicUsize>,
+    accepted_tasks: Arc<AtomicUsize>,
+}
+
+impl LocalBackendTransport for RuntimeWorkPollTransport {
+    fn connect<'a>(&'a self, _config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn call<'a>(
+        &'a self,
+        event: &'a str,
+        _payload: Value,
+        _timeout: Duration,
+    ) -> TransportFuture<'a, Value> {
+        Box::pin(async move {
+            match event {
+                "runtime.tasks.pull" => {
+                    let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    let task = if pull_index == 1 {
+                        json!({
+                            "execution_id": "execution-1",
+                            "runtime_task_id": "runtime-task-1",
+                            "payload": {"execution_id": "execution-1"},
+                        })
+                    } else {
+                        Value::Null
+                    };
+                    Ok(json!({"success": true, "task": task}))
+                }
+                "runtime.tasks.accept" => {
+                    self.accepted_tasks.fetch_add(1, AtomicOrdering::AcqRel);
+                    Ok(json!({"success": true}))
+                }
+                _ => Err(format!("unexpected transport call: {event}")),
+            }
+        })
+    }
+
+    fn emit<'a>(&'a self, _event: &'a str, _payload: Value) -> TransportFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn on(&self, _event: &str, _handler: EventHandler) {}
+}
+
+struct BlockingCapacityRuntimeWorkHandler {
+    capacity_calls: AtomicUsize,
+    create_calls: AtomicUsize,
+    first_capacity_started: Notify,
+    release_first_capacity: Notify,
+}
+
+impl BlockingCapacityRuntimeWorkHandler {
+    fn new() -> Self {
+        Self {
+            capacity_calls: AtomicUsize::new(0),
+            create_calls: AtomicUsize::new(0),
+            first_capacity_started: Notify::new(),
+            release_first_capacity: Notify::new(),
+        }
+    }
+}
+
+impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            match data.get("method").and_then(Value::as_str) {
+                Some("runtime.capacity.get") => {
+                    let call_index = self.capacity_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    if call_index == 0 {
+                        self.first_capacity_started.notify_one();
+                        self.release_first_capacity.notified().await;
+                    }
+                    Ok(json!({"limit": 1, "active": 0, "queued": 0}))
+                }
+                Some("runtime.tasks.create") => {
+                    self.create_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    Ok(json!({"success": true}))
+                }
+                method => Err(AppIpcError::new(
+                    "unexpected_method",
+                    format!("unexpected runtime method: {method:?}"),
+                )),
+            }
+        })
+    }
+}
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
@@ -145,6 +246,43 @@ async fn remote_backend_runner_starts_session_gateway() {
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
     restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
+}
+
+#[tokio::test]
+async fn runtime_work_poll_coalesces_notification_received_while_locked() {
+    let transport = RuntimeWorkPollTransport::default();
+    let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
+    let handler = Arc::new(BlockingCapacityRuntimeWorkHandler::new());
+    let pull_lock = Arc::new(AsyncMutex::new(()));
+    let pull_pending = Arc::new(AtomicBool::new(true));
+
+    let first_poll = tokio::spawn(poll_available_runtime_work(
+        client.clone(),
+        handler.clone(),
+        Arc::clone(&pull_lock),
+        Arc::clone(&pull_pending),
+    ));
+    handler.first_capacity_started.notified().await;
+
+    pull_pending.store(true, Ordering::Release);
+    poll_available_runtime_work(
+        client,
+        handler.clone(),
+        Arc::clone(&pull_lock),
+        Arc::clone(&pull_pending),
+    )
+    .await;
+    handler.release_first_capacity.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(1), first_poll)
+        .await
+        .expect("coalesced poll should finish")
+        .expect("poll task should not panic");
+
+    assert_eq!(handler.capacity_calls.load(AtomicOrdering::Acquire), 2);
+    assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
+    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 3);
+    assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
 }
 
 #[test]

@@ -30,6 +30,7 @@ from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
+from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -173,6 +174,17 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Keep the cache available through startup, channel draining and shutdown.
+    await cache_manager.start()
+    try:
+        async with _application_lifespan(app):
+            yield
+    finally:
+        await cache_manager.aclose()
+
+
+@asynccontextmanager
+async def _application_lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI application.
     Handles startup and shutdown events.
@@ -604,7 +616,7 @@ async def lifespan(app: FastAPI):
         await stop_device_monitor_async()
         logger.info("✓ Device heartbeat monitor stopped")
 
-        # Step 7: Shutdown OpenTelemetry
+        # Step 8: Shutdown OpenTelemetry
         from shared.telemetry.config import get_otel_config
         from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 

@@ -15,19 +15,23 @@ const config: Config = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@wegent/chat-core$': '<rootDir>/../packages/chat-core/src/index.ts',
+    '^@wegent/chat-core/(.*)$': '<rootDir>/../packages/chat-core/src/$1',
+    '^@wegent/collaboration$': '<rootDir>/../packages/collaboration/src/index.ts',
+    '^@wegent/collaboration/tailwind-preset$':
+      '<rootDir>/../packages/collaboration/tailwind-preset.js',
+    '^@wegent/collaboration/(.*)$': '<rootDir>/../packages/collaboration/src/$1',
+    '^streamdown$': '<rootDir>/src/__mocks__/streamdown.tsx',
+    '^@file-viewer/react$': '<rootDir>/src/__mocks__/file-viewer.tsx',
+    '^@file-viewer/preset-engineering$': '<rootDir>/src/__mocks__/file-viewer-preset.ts',
     // Mock ESM-only markdown-related packages
     '^react-markdown$': '<rootDir>/src/__mocks__/react-markdown.tsx',
     '^@/lib/remark-gfm-safe$': '<rootDir>/src/__mocks__/remark-gfm-safe.ts',
     '^remark-math$': '<rootDir>/src/__mocks__/remark-stub.ts',
-    '^remark-gfm$': '<rootDir>/src/__mocks__/remark-stub.ts',
     '^remark-frontmatter$': '<rootDir>/src/__mocks__/remark-stub.ts',
     // Mock jsPDF to avoid ESM import issues
     '^jspdf$': '<rootDir>/src/__mocks__/jspdf-stub.ts',
     '^rehype-katex$': '<rootDir>/src/__mocks__/rehype-stub.ts',
     '^rehype-raw$': '<rootDir>/src/__mocks__/rehype-stub.ts',
-    '^micromark-util-combine-extensions$': '<rootDir>/src/__mocks__/micromark-stub.ts',
-    '^micromark-extension-.*$': '<rootDir>/src/__mocks__/micromark-stub.ts',
-    '^mdast-util-.*$': '<rootDir>/src/__mocks__/micromark-stub.ts',
     // Mock react-syntax-highlighter and its sub-paths
     '^react-syntax-highlighter$': '<rootDir>/src/__mocks__/react-syntax-highlighter.tsx',
     '^react-syntax-highlighter/dist/esm/styles/prism(/.*)?$':
@@ -50,12 +54,28 @@ const config: Config = {
   // Coverage thresholds are enforced incrementally via CI tools (e.g., Codecov)
   // rather than globally to support gradual improvement of legacy code
   testMatch: ['<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}'],
-  // Transform ESM packages that Jest can't handle by default
-  // This list includes react-markdown and all its ESM dependencies
-  transformIgnorePatterns: [
-    '/node_modules/(?!(react-markdown|remark-|rehype-|mdast-util-|micromark|micromark-|unist-|unist-util-|vfile|vfile-message|hast-|hast-util-|bail|ccount|comma-separated-tokens|property-information|space-separated-tokens|trim-lines|html-void-elements|decode-named-character-reference|character-entities|is-plain-obj|longest-streak|markdown-table|escape-string-regexp|stringify-entities|entities|web-namespaces|zwitch|direction)/)',
-  ],
   modulePathIgnorePatterns: ['<rootDir>/.next/'],
 }
 
-export default createJestConfig(config)
+// Next adds node_modules exclusions before custom patterns. Replace those
+// exclusions after resolution so the real shared Markdown parser runs in Jest,
+// including packages installed through pnpm's virtual store.
+const markdownPackages =
+  '(?:@chenglou[/+]pretext|unified|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|vfile(?:-message)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hast-util-[^/]+|html-void-elements|stringify-entities|trim-lines|web-namespaces)'
+
+const resolveJestConfig = async () => {
+  const resolved = await createJestConfig(config)()
+  return {
+    ...resolved,
+    transformIgnorePatterns: resolved.transformIgnorePatterns?.map(pattern =>
+      pattern.startsWith('/node_modules/')
+        ? pattern.replace(
+            '/node_modules/',
+            `/node_modules/(?!${markdownPackages}/)(?!\\.pnpm/${markdownPackages}@)`
+          )
+        : pattern
+    ),
+  }
+}
+
+export default resolveJestConfig

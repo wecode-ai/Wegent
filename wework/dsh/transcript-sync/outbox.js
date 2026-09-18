@@ -33,8 +33,14 @@ export class SqliteSyncOutbox {
         created_at INTEGER NOT NULL,
         UNIQUE (session_id, local_sequence)
       );
+      CREATE TABLE IF NOT EXISTS discarded_turns (
+        turn_id TEXT PRIMARY KEY,
+        discarded_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS pending_turns_delivery_order
         ON pending_turns (created_at, session_id, local_sequence);
+      CREATE INDEX IF NOT EXISTS pending_turns_transcript
+        ON pending_turns (transcript_id);
     `)
     const pendingColumns = this.database
       .prepare('PRAGMA table_info(pending_turns)')
@@ -52,6 +58,15 @@ export class SqliteSyncOutbox {
         acknowledged_sequence
       FROM session_routes
       WHERE session_id = ?
+    `)
+    this.selectDiscardedTurn = this.database.prepare(`
+      SELECT 1
+      FROM discarded_turns
+      WHERE turn_id = ?
+    `)
+    this.insertDiscardedTurn = this.database.prepare(`
+      INSERT OR IGNORE INTO discarded_turns (turn_id, discarded_at)
+      VALUES (?, ?)
     `)
     this.insertRoute = this.database.prepare(`
       INSERT INTO session_routes (
@@ -106,11 +121,41 @@ export class SqliteSyncOutbox {
       ORDER BY created_at, session_id, local_sequence
       LIMIT 1
     `)
+    this.selectSessions = this.database.prepare(`
+      SELECT session_id
+      FROM pending_turns
+      GROUP BY session_id
+      ORDER BY MIN(created_at), session_id
+    `)
+    this.selectSessionFirst = this.database.prepare(`
+      SELECT
+        turn_id,
+        transcript_id,
+        local_sequence,
+        session_id,
+        task_id,
+        executor_turn_id,
+        title,
+        base_sequence,
+        cloud_sequence,
+        parent_transcript_id,
+        forked_at_sequence
+      FROM pending_turns
+      WHERE session_id = ?
+      ORDER BY local_sequence
+      LIMIT 1
+    `)
     this.selectSessionPending = this.database.prepare(`
       SELECT turn_id
       FROM pending_turns
       WHERE session_id = ?
       ORDER BY local_sequence
+    `)
+    this.selectTranscriptPending = this.database.prepare(`
+      SELECT 1
+      FROM pending_turns
+      WHERE transcript_id = ?
+      LIMIT 1
     `)
     this.updateForkRoute = this.database.prepare(`
       UPDATE session_routes
@@ -133,6 +178,13 @@ export class SqliteSyncOutbox {
       WHERE turn_id = ?
     `)
     this.remove = this.database.prepare('DELETE FROM pending_turns WHERE turn_id = ?')
+    this.rebaseAfterDiscard = this.database.prepare(`
+      UPDATE pending_turns
+      SET
+        base_sequence = base_sequence - 1,
+        cloud_sequence = cloud_sequence - 1
+      WHERE session_id = ? AND local_sequence > ?
+    `)
     this.selectCount = this.database.prepare('SELECT COUNT(*) AS count FROM pending_turns')
     this.selectAll = this.database.prepare(`
       SELECT
@@ -157,6 +209,7 @@ export class SqliteSyncOutbox {
   }
 
   enqueue(turn, knownSequence = 0) {
+    if (this.selectDiscardedTurn.get(turn.turnId)) return false
     let route = rowToRoute(this.selectRoute.get(turn.sessionId))
     if (!route) {
       this.insertRoute.run(turn.sessionId, turn.transcriptId, knownSequence, Date.now())
@@ -181,13 +234,26 @@ export class SqliteSyncOutbox {
       route.forkedAtSequence ?? null,
       Date.now()
     )
+    return true
   }
 
   first() {
     return rowToTurn(this.selectFirst.get())
   }
 
-  fork(turn, transcriptId) {
+  sessionIds() {
+    return this.selectSessions.all().map(row => row.session_id)
+  }
+
+  firstForSession(sessionId) {
+    return rowToTurn(this.selectSessionFirst.get(sessionId))
+  }
+
+  hasPendingTranscript(transcriptId) {
+    return Boolean(this.selectTranscriptPending.get(transcriptId))
+  }
+
+  fork(turn, transcriptId, forkedAtSequence = turn.baseSequence) {
     const pending = this.selectSessionPending.all(turn.sessionId)
     const start = pending.findIndex(item => item.turn_id === turn.turnId)
     if (start < 0) throw new Error(`Pending transcript turn is unavailable: ${turn.turnId}`)
@@ -195,7 +261,7 @@ export class SqliteSyncOutbox {
       this.updateForkRoute.run(
         transcriptId,
         turn.transcriptId,
-        turn.baseSequence,
+        forkedAtSequence,
         Date.now(),
         turn.sessionId
       )
@@ -205,7 +271,7 @@ export class SqliteSyncOutbox {
           index,
           index + 1,
           turn.transcriptId,
-          turn.baseSequence,
+          forkedAtSequence,
           item.turn_id
         )
       }
@@ -217,6 +283,16 @@ export class SqliteSyncOutbox {
       this.advanceRoute.run(turn.cloudSequence, Date.now(), turn.sessionId)
       this.remove.run(turn.turnId)
     })
+  }
+
+  discardTurn(turn) {
+    let discarded = false
+    this.transaction(() => {
+      this.insertDiscardedTurn.run(turn.turnId, Date.now())
+      discarded = Boolean(this.remove.run(turn.turnId).changes)
+      if (discarded) this.rebaseAfterDiscard.run(turn.sessionId, turn.sequence)
+    })
+    return discarded
   }
 
   count() {
@@ -247,6 +323,7 @@ export class MemorySyncOutbox {
   constructor(turns = []) {
     this.turns = turns.map(turn => locator(turn, turn.baseSequence ?? 0))
     this.routes = new Map()
+    this.discardedTurns = new Set()
     for (const turn of this.turns) {
       this.routes.set(turn.sessionId, {
         transcriptId: turn.transcriptId,
@@ -262,6 +339,7 @@ export class MemorySyncOutbox {
   }
 
   enqueue(turn, knownSequence = 0) {
+    if (this.discardedTurns.has(turn.turnId)) return false
     if (this.turns.some(item => item.turnId === turn.turnId)) return
     let route = this.routes.get(turn.sessionId)
     if (!route) {
@@ -287,13 +365,29 @@ export class MemorySyncOutbox {
           }
         : {}),
     })
+    return true
   }
 
   first() {
     return this.turns[0] ? structuredClone(this.turns[0]) : null
   }
 
-  fork(turn, transcriptId) {
+  sessionIds() {
+    return [...new Set(this.turns.map(turn => turn.sessionId))]
+  }
+
+  firstForSession(sessionId) {
+    const turn = this.turns
+      .filter(item => item.sessionId === sessionId)
+      .sort((left, right) => left.sequence - right.sequence)[0]
+    return turn ? structuredClone(turn) : null
+  }
+
+  hasPendingTranscript(transcriptId) {
+    return this.turns.some(turn => turn.transcriptId === transcriptId)
+  }
+
+  fork(turn, transcriptId, forkedAtSequence = turn.baseSequence) {
     const sessionTurns = this.turns
       .filter(item => item.sessionId === turn.sessionId)
       .sort((left, right) => left.sequence - right.sequence)
@@ -302,7 +396,7 @@ export class MemorySyncOutbox {
     this.routes.set(turn.sessionId, {
       transcriptId,
       parentTranscriptId: turn.transcriptId,
-      forkedAtSequence: turn.baseSequence,
+      forkedAtSequence,
       acknowledgedSequence: 0,
     })
     for (const [index, item] of sessionTurns.slice(start).entries()) {
@@ -311,7 +405,7 @@ export class MemorySyncOutbox {
         baseSequence: index,
         cloudSequence: index + 1,
         parentTranscriptId: turn.transcriptId,
-        forkedAtSequence: turn.baseSequence,
+        forkedAtSequence,
       })
     }
   }
@@ -321,6 +415,19 @@ export class MemorySyncOutbox {
     if (route) route.acknowledgedSequence = Math.max(route.acknowledgedSequence, turn.cloudSequence)
     const index = this.turns.findIndex(item => item.turnId === turn.turnId)
     if (index >= 0) this.turns.splice(index, 1)
+  }
+
+  discardTurn(turn) {
+    this.discardedTurns.add(turn.turnId)
+    const index = this.turns.findIndex(item => item.turnId === turn.turnId)
+    if (index < 0) return false
+    this.turns.splice(index, 1)
+    for (const item of this.turns) {
+      if (item.sessionId !== turn.sessionId || item.sequence <= turn.sequence) continue
+      item.baseSequence -= 1
+      item.cloudSequence -= 1
+    }
+    return true
   }
 
   count() {

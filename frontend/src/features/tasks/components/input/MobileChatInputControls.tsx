@@ -35,7 +35,6 @@ import {
   canSwitchModelAfterMessages,
   canUseChatContexts,
   isChatShell,
-  teamRequiresWorkspace,
 } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import MobileSkillSelector from '../selector/MobileSkillSelector'
@@ -144,8 +143,9 @@ export interface MobileChatInputControlsProps {
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
+  selectedSkillIds?: number[]
   selectedSkillNames?: string[]
-  onToggleSkill?: (skillName: string) => void
+  onToggleSkill?: (skill: UnifiedSkill) => void
 
   /** When true, hide all selectors - only show send button */
   hideSelectors?: boolean
@@ -178,7 +178,7 @@ export function MobileChatInputControls({
   setSelectedBranch,
   selectedTaskDetail,
   effectiveRequiresWorkspace,
-  onRequiresWorkspaceChange: _onRequiresWorkspaceChange,
+  onRequiresWorkspaceChange,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -232,6 +232,7 @@ export function MobileChatInputControls({
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
+  selectedSkillIds,
   selectedSkillNames = [],
   onToggleSkill,
   hideSelectors,
@@ -264,10 +265,6 @@ export function MobileChatInputControls({
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
   const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
-  const showRepositoryAction =
-    showRepositorySelector &&
-    teamRequiresWorkspace(selectedTeam) &&
-    effectiveRequiresWorkspace !== false
   const showVideoSettings = Boolean(
     isVideoMode &&
     videoParamVisibility.showSettings &&
@@ -288,7 +285,7 @@ export function MobileChatInputControls({
     showAttachmentAction ||
     showChatContexts ||
     showSkillAction ||
-    showRepositoryAction ||
+    showRepositorySelector ||
     showClarificationAction ||
     showCorrectionAction ||
     showGuidanceAction
@@ -583,9 +580,9 @@ export function MobileChatInputControls({
                 </div>
               )}
 
-              {(showRepositoryAction || showClarificationAction || showCorrectionAction) && (
+              {(showRepositorySelector || showClarificationAction || showCorrectionAction) && (
                 <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
-                  {showRepositoryAction && (
+                  {showRepositorySelector && (
                     <MobileRepositorySelector
                       selectedRepo={selectedRepo}
                       handleRepoChange={setSelectedRepo}
@@ -593,6 +590,8 @@ export function MobileChatInputControls({
                       handleBranchChange={setSelectedBranch}
                       disabled={hasMessages}
                       selectedTaskDetail={selectedTaskDetail}
+                      requiresWorkspace={effectiveRequiresWorkspace}
+                      onRequiresWorkspaceChange={onRequiresWorkspaceChange}
                       onSelectorOpenChange={handleNestedSelectorOpenChange}
                     />
                   )}
@@ -756,6 +755,7 @@ export function MobileChatInputControls({
           skills={availableSkills}
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
+          selectedSkillIds={selectedSkillIds}
           selectedSkillNames={selectedSkillNames}
           onToggleSkill={onToggleSkill}
           disabled={isStreaming}

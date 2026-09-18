@@ -4,6 +4,7 @@
 """Loop + branch event-wait state machine behavior."""
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -654,7 +655,7 @@ def test_route_event_uses_subject_binding_instead_of_transport_subscription(test
     assert routed is item
 
 
-def test_route_event_matches_platform_specific_condition(test_db):
+def test_route_webhook_event_matches_platform_without_fixed_subscription(test_db):
     project, item = _workflow_item(test_db)
     binding = LoopItemTaskBinding(
         cloud_project_id=str(project.id),
@@ -680,6 +681,12 @@ def test_route_event_matches_platform_specific_condition(test_db):
     workflow = dict(item.metadata_json["workflow"])
     nodes = [dict(node) for node in workflow["nodes"]]
     branch = next(node for node in nodes if node["id"] == "br")
+    branch["event_wait"] = {
+        "subject_source": "upstream_pull_request",
+        "collection_mode": "webhook",
+        "subscription_id": None,
+        "poll_interval_seconds": None,
+    }
     branch["branch_conditions"] = [
         {
             "source_type": "github",
@@ -831,21 +838,26 @@ async def test_process_with_runs_routes_event_to_loop_without_new_run(test_db):
     test_db.flush()
 
     processor = ProjectAutomationProcessor()
-    runs = await processor.process_with_runs(
-        test_db,
-        ProjectAutomationEvent(
-            event_type="task.status_changed",
-            project_id=str(project.id),
-            subject_id=str(item.id),
-            source="wework",
-            actor_user_id=1,
-            payload={"title": "processing", "status": "in_progress"},
-            event_id="loop-event-1",
-            subscription_id="subscription-1",
-        ),
-    )
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        new=AsyncMock(),
+    ) as wake:
+        runs = await processor.process_with_runs(
+            test_db,
+            ProjectAutomationEvent(
+                event_type="task.status_changed",
+                project_id=str(project.id),
+                subject_id=str(item.id),
+                source="wework",
+                actor_user_id=1,
+                payload={"title": "processing", "status": "in_progress"},
+                event_id="loop-event-1",
+                subscription_id="subscription-1",
+            ),
+        )
 
     assert runs == []
+    wake.assert_awaited_once_with()
     assert test_db.query(ProjectAutomationRun).count() == 0
     test_db.refresh(item)
     by_id = {node["id"]: node for node in item.metadata_json["workflow"]["nodes"]}

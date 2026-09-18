@@ -41,6 +41,24 @@ OpenAI SDK 的 `base_url` 设置为 `https://example.com/api/v1`，通过 `extra
 
 PC、手机版创建的会话也可查询。会话详情中的 `latest_response.id` 可直接用于查询、订阅和停止。`is_latest` 表示是否为当前会话最后一轮；`status` 表示该轮执行状态。
 
+## 模型可见的当前会话信息
+
+PC、手机版和 API 启动的 Codex 会话，每轮都会通过 `additionalContext` 的 `wework.session.current` 注入当前信息，模型可直接读取，无需用户手动复制 ID：
+
+| 字段 | 含义 |
+| --- | --- |
+| `base_url` | 包含 `/api/v1` 的 HTTP API 地址；未配置后端时为 `null` |
+| `api_conversation_supported` | 当前工作区是否属于 API 支持的独立会话范围；不代表设备在线或鉴权已通过 |
+| `conversation_id` | 当前会话的 `conv_...` ID，用于查询会话和追问 |
+| `response_id` | 当前用户轮次的 `resp_...` ID，用于查询、订阅和停止 |
+| `execution` | 新建请求所需的 `type: "wework"` 和当前 `device_id` |
+| `model` | 云端模型的完整 API ID，例如 `public:default:0:my-model` |
+| `model_name`、`model_type` | 当前选中的模型名称和来源 |
+
+这些是 HTTP API 的路由 ID，不是底层 Codex thread/turn ID。项目目录和 worktree 任务也能读取当前信息，但 `api_conversation_supported` 为 `false`，不可用这些 ID 调用会话查询和续写接口。同一会话追问时 `conversation_id` 不变，`response_id` 随用户轮次更新，模型信息也随选择刷新。本地模型或缺少云端目录身份的模型，其 `model` 为 `null`；调用 API 时需从 `GET /models?execution=wework` 选择可用模型。
+
+每轮上下文仅包含上述字段和简短使用说明；完整接口用法保留在本文，避免重复占用上下文。继续当前会话需要等待当前轮次结束，传 `conversation` 或 `previous_response_id` 二选一，不再传设备和标题。上下文不包含个人 API Key、登录令牌或模型密钥；实际 HTTP 调用仍需单独提供个人 API Key。
+
 ## 创建任务
 
 先调用 `/devices` 选择设备，再调用 `/models` 获取模型 `id`。设备列表使用相同的个人 API Key，返回格式如下：

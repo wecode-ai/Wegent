@@ -397,6 +397,23 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
   })
 
+  it('keeps the skill list visible when default binding lookup fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    mockedFetchMyDefaultSkillBindings.mockRejectedValue(new Error('binding lookup failed'))
+
+    try {
+      render(<SkillListWithScope scope="personal" compact />)
+
+      const librarySection = await screen.findByTestId('skill-library-section')
+
+      expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
+      expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
+      expect(screen.queryByText('binding lookup failed')).not.toBeInTheDocument()
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
+  })
+
   it('marks marketplace-published skills in the compact card header', async () => {
     mockedFetchUnifiedSkillsList.mockResolvedValue([
       buildSkill({
@@ -425,6 +442,30 @@ describe('SkillListWithScope default enabled skills', () => {
     )
     const privateCard = screen.getByTestId('skill-library-item-8')
     expect(within(privateCard).queryByTestId('published-skill-8-indicator')).toBeNull()
+  })
+
+  it('shows a system Skill bound to the selected group while hiding unbound system Skills', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 9,
+        name: 'bound-system-skill',
+        user_id: 0,
+        namespace: 'default',
+        is_group_shared: true,
+      }),
+      buildSkill({
+        id: 10,
+        name: 'unbound-system-skill',
+        user_id: 0,
+        namespace: 'default',
+        is_public: true,
+      }),
+    ])
+    render(
+      <SkillListWithScope scope="group" selectedGroup="platform" sourceFilter="group" compact />
+    )
+    expect(await screen.findByTestId('skill-library-item-9')).toBeVisible()
+    expect(screen.queryByTestId('skill-library-item-10')).not.toBeInTheDocument()
   })
 
   it('labels a personal source Skill shared by binding as a team Skill', async () => {
@@ -481,7 +522,7 @@ describe('SkillListWithScope default enabled skills', () => {
             name: 'group-default-skill',
             displayName: 'Group Default Skill',
             namespace: 'platform',
-            user_id: 1,
+            user_id: 2,
             availability: { inMyDefault: true },
           }),
           buildSkill({
@@ -866,6 +907,74 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).queryByText('Installed Mine Skill')).not.toBeInTheDocument()
     expect(within(librarySection).queryByText('Other User Skill')).not.toBeInTheDocument()
     expect(within(librarySection).queryByText('System Skill')).not.toBeInTheDocument()
+  })
+
+  it('keeps my own team skills editable and configurable without showing external installs', async () => {
+    const user = userEvent.setup()
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 30,
+        name: 'team-owned-enabled-skill',
+        displayName: 'Team Owned Enabled Skill',
+        namespace: 'platform',
+        user_id: 1,
+        availability: { inMyDefault: true },
+      }),
+      buildSkill({
+        id: 31,
+        name: 'team-owned-skill',
+        displayName: 'Team Owned Skill',
+        namespace: 'platform',
+        user_id: 1,
+      }),
+    ])
+
+    render(
+      <SkillListWithScope scope="all" sourceFilter="mine" compact showAutoEnabledSkills={false} />
+    )
+
+    const librarySection = await screen.findByTestId('skill-library-section')
+
+    expect(within(librarySection).queryByTestId('installed-skill-card-30')).not.toBeInTheDocument()
+
+    for (const skillId of [30, 31]) {
+      const card = within(librarySection).getByTestId(`skill-library-item-${skillId}`)
+      expect(within(card).getByTestId(`edit-skill-button-${skillId}`)).toHaveTextContent('编辑')
+    }
+
+    await user.click(within(librarySection).getByTestId('skill-card-more-button-30'))
+
+    expect(await screen.findByTestId('download-skill-button-30')).toBeInTheDocument()
+    await user.click(await screen.findByTestId('configure-personal-skill-30'))
+    expect(
+      await screen.findByRole('dialog', { name: 'Team Owned Enabled Skill' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps my own team skills editable while automatic enablement is managed', async () => {
+    const user = userEvent.setup()
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 32,
+        name: 'team-owned-enabled-skill',
+        displayName: 'Team Owned Enabled Skill',
+        namespace: 'platform',
+        user_id: 1,
+        availability: { inMyDefault: true },
+      }),
+    ])
+
+    render(<SkillListWithScope scope="personal" compact />)
+
+    const card = await screen.findByTestId('skill-library-item-32')
+    expect(within(card).getByTestId('edit-skill-button-32')).toHaveTextContent('编辑')
+
+    await user.click(within(card).getByTestId('skill-card-more-button-32'))
+    await user.click(await screen.findByTestId('configure-personal-skill-32'))
+
+    expect(
+      await screen.findByRole('dialog', { name: 'Team Owned Enabled Skill' })
+    ).toBeInTheDocument()
   })
 
   it('shows edit and download actions to a group developer without delete access', async () => {

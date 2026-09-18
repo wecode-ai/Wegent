@@ -297,9 +297,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-core-e2e-build-diagnostics
-          path: wework/test-results/desktop-e2e/
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/*.zip
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 6
 
   wework-desktop-core-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -329,7 +333,7 @@ jobs:
           persist-credentials: false
 
       - name: Restore local harness CLIs
-        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
+        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
         id: local-harness-clis-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -337,11 +341,11 @@ jobs:
           key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
       - name: Install local harness CLIs
-        if: (contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')) && steps.local-harness-clis-cache.outputs.cache-hit != 'true'
+        if: (contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')) && steps.local-harness-clis-cache.outputs.cache-hit != 'true'
         run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
 
       - name: Verify local harness CLIs
-        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
+        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
@@ -371,6 +375,12 @@ jobs:
       - name: Restore retried Wework desktop Core E2E build
         if: steps.restore-core-e2e-build.outcome == 'failure'
         run: .github/scripts/restore-wework-core-e2e-build.sh
+
+      - name: Set up Collaboration frontend
+        if: contains(matrix.segments, 'collaboration-shared-core') || contains(matrix.segments, 'collaboration-agent-automation-chain')
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
 
       - name: Run Wework desktop Core shard E2E
         env:
@@ -404,15 +414,17 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/*.zip
             !wework/test-results/desktop-e2e/**/harness-runtime/**
             !wework/test-results/desktop-e2e/**/node-runtime/**
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   build-wework-desktop-windows-core-e2e:
     name: Build Windows Wework Desktop Core E2E Artifact
@@ -547,9 +559,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-windows-core-e2e-build-diagnostics
-          path: wework/test-results/desktop-e2e/
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/*.zip
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 6
 
   wework-desktop-windows-core-e2e:
     name: Wework Desktop Windows E2E (${{ matrix.name }})
@@ -626,6 +642,8 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows Wework desktop Core shard E2E
+        id: windows-core-e2e
+        continue-on-error: true
         shell: pwsh
         env:
           CI: true
@@ -647,7 +665,23 @@ jobs:
               throw "Missing Windows Wework desktop E2E resource: $path"
             }
           }
-          node wework/e2e/desktop/run-checkpoints.mjs --parallel-segments $env:WEWORK_E2E_SEGMENTS
+          $arguments = @(
+            "wework/e2e/desktop/run-checkpoints.mjs",
+            "--parallel-segments",
+            $env:WEWORK_E2E_SEGMENTS
+          )
+          $nodePath = (Get-Command node).Source
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath $nodePath `
+            @arguments
+
+      - name: Report Windows standard-user startup failures
+        if: always() && steps.windows-core-e2e.outcome == 'failure'
+        run: node .github/scripts/report-wework-desktop-e2e-failures.mjs
+
+      - name: Fail Windows Wework desktop Core shard E2E
+        if: always() && steps.windows-core-e2e.outcome == 'failure'
+        run: exit 1
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
@@ -662,15 +696,17 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/*.zip
             !wework/test-results/desktop-e2e/**/harness-runtime/**
             !wework/test-results/desktop-e2e/**/node-runtime/**
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   wework-desktop-cloud-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -772,15 +808,17 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/*.zip
             !wework/test-results/desktop-e2e/**/harness-runtime/**
             !wework/test-results/desktop-e2e/**/node-runtime/**
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -870,15 +908,17 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/*.zip
             !wework/test-results/desktop-e2e/**/harness-runtime/**
             !wework/test-results/desktop-e2e/**/node-runtime/**
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   wework-e2e-summary:
     name: Wework E2E Summary
@@ -1079,6 +1119,20 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           pnpm --filter wework e2e:desktop:memory
 
+      - name: Set up macOS Inspector backend runtime
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Install macOS Inspector backend dependencies
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        run: |
+          brew install redis libmagic
+          redis-server --version
+          uv sync --project backend --frozen
+          uv run --project backend python -c "import magic; assert magic.from_buffer(b'Wework E2E', mime=True) == 'text/plain'"
+
       - name: Run Wework desktop macOS Inspector E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
@@ -1087,7 +1141,7 @@ jobs:
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+          pnpm --filter wework e2e:desktop -- --parallel-segments browser-toolbar-actions,tray-lifecycle
 
       - name: Run Wework desktop macOS browser annotation overlay E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1123,12 +1177,14 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/*.zip
             !wework/test-results/desktop-e2e/**/harness-runtime/**
             !wework/test-results/desktop-e2e/**/node-runtime/**
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6

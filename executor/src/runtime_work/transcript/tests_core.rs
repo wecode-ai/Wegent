@@ -672,6 +672,7 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
     assert_eq!(messages[2]["content"], "inspect runtime");
     assert_eq!(messages[3]["role"], "assistant");
     assert_eq!(messages[3]["content"], "Done.");
+    assert_eq!(messages[3]["createdAt"], 1_780_000_005_000_i64);
     assert_eq!(messages[3]["blocks"][0]["type"], "text");
     assert_eq!(
         messages[3]["blocks"][0]["content"],
@@ -1009,6 +1010,32 @@ fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
 }
 
 #[test]
+fn transcript_keeps_in_progress_codex_plan_items_streaming() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "status": "inProgress",
+            "items": [{
+                "id": "plan-1",
+                "type": "plan",
+                "text": "# Plan\n\n- Inspect the repo.",
+                "status": "inProgress"
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["type"], "plan");
+    assert_eq!(messages[0]["blocks"][0]["status"], "streaming");
+}
+
+#[test]
 fn transcript_deduplicates_completed_event_and_response_items_with_equivalent_text() {
     let thread = json!({
         "id": "thread-1",
@@ -1120,4 +1147,79 @@ fn transcript_unwraps_completed_plan_events_and_skips_duplicate_final_text() {
         messages[1]["blocks"][0]["content"],
         "# Plan\n\n- Inspect the repo."
     );
+}
+
+#[test]
+fn transcript_projects_collab_agent_calls_as_subagent_activity() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "completedAt": 1_780_000_010,
+            "status": "completed",
+            "items": [
+                {
+                    "id": "spawn-1",
+                    "type": "collabAgentToolCall",
+                    "tool": "spawnAgent",
+                    "prompt": "Say hello",
+                    "receiverThreadIds": ["agent-1"],
+                    "agentsStates": {
+                        "agent-1": {"status": "running"}
+                    }
+                },
+                {
+                    "id": "activity-1",
+                    "type": "subAgentActivity",
+                    "agentThreadId": "agent-1",
+                    "agentPath": "/root/say_hello",
+                    "kind": "started"
+                },
+                {
+                    "id": "child-result-1",
+                    "type": "agentMessage",
+                    "author": "/root/say_hello",
+                    "recipient": "/root",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/say_hello\nPayload:\nhello"
+                    }]
+                },
+                {
+                    "id": "wait-1",
+                    "type": "collabAgentToolCall",
+                    "tool": "wait",
+                    "receiverThreadIds": ["agent-1"],
+                    "agentsStates": {
+                        "agent-1": {"status": "completed"}
+                    }
+                },
+                {
+                    "id": "assistant-final",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "hello"
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages
+        .iter()
+        .find(|message| message["role"] == "assistant")
+        .expect("assistant transcript should be projected");
+    let blocks = assistant["blocks"].as_array().unwrap();
+
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["type"], "subagent");
+    assert_eq!(blocks[0]["agent_thread_id"], "agent-1");
+    assert_eq!(blocks[0]["title"], "say_hello");
+    assert_eq!(blocks[0]["description"], "Say hello");
+    assert_eq!(blocks[0]["output"], "hello");
+    assert_eq!(blocks[0]["status"], "done");
+    assert_eq!(blocks[0]["agent_status"], "done");
+    assert_eq!(blocks[0]["children"][0]["content"], "hello");
 }

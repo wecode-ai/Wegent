@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
@@ -9,8 +9,12 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST'
 const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST_COMPLETE'
+const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
+const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
+const LONG_HISTORY_ITEM_COUNT = 1_200
+const HYDRATION_RESPONSE_TIMEOUT_MS = 3_000
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -59,6 +63,132 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('Timed out waiting for the running-history task row')
+}
+
+function appendLongRunningHistory(rollout, threadId) {
+  const records = rollout
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+  const turnId = records.findLast(
+    record => record.type === 'event_msg' && record.payload?.type === 'task_started'
+  )?.payload?.turn_id
+  assert.ok(turnId, 'The running-history rollout did not contain an active turn')
+  const firstOrdinal = Math.max(0, ...records.map(record => Number(record.ordinal) || 0)) + 1
+  return Array.from({ length: LONG_HISTORY_ITEM_COUNT }, (_, index) =>
+    JSON.stringify({
+      timestamp: '2026-09-13T13:23:16.000Z',
+      ordinal: firstOrdinal + index,
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        thread_id: threadId,
+        turn_id: turnId,
+        item: {
+          id: `long-history-command-${index}`,
+          type: 'CommandExecution',
+          command: ['printf', String(index)],
+          status: 'completed',
+        },
+      },
+    })
+  ).join('\n')
+}
+
+async function findRolloutPath(directory, threadId) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      const nested = await findRolloutPath(path, threadId)
+      if (nested) return nested
+    } else if (entry.name.endsWith(`${threadId}.jsonl`)) {
+      return path
+    }
+  }
+  return null
+}
+
+async function waitForLongHistoryHydration(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(
+      await control.command('performanceSnapshot', 'body', {
+        timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
+      })
+    )
+    if (snapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
+      return snapshot
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for the long running transcript to hydrate')
+}
+
+async function waitForTranscriptState(control, predicate, description, timeoutMs) {
+  const startedAt = Date.now()
+  let latest = null
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (predicate(latest)) return latest
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
+}
+
+async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
+  const targetPath = join(executorHome, 'task-move-target')
+  await mkdir(targetPath, { recursive: true })
+  await createSingleRootLocalProject(control, targetPath, 'Task move target')
+  const row = '[data-testid="runtime-local-task-row-' + taskId + '"]'
+  await control.command('click', row)
+  const address = await waitForTaskAddress(control, taskId, timeoutMs)
+  await control.command('contextMenu', row)
+  await control.command('click', '[data-testid="runtime-local-task-menu-move-' + taskId + '"]')
+  const prefix = 'runtime-local-task-move-' + taskId + '-'
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const targetId = snapshot.testIds.find(id => id.startsWith(prefix))
+  assert.ok(targetId, 'The task move menu did not offer the destination project')
+  assert.equal(
+    await control.command('getText', '[data-testid="' + targetId + '"]'),
+    'Task move target'
+  )
+  const projectKey = targetId.slice(prefix.length)
+  await control.command('click', '[data-testid="' + targetId + '"]')
+  await assertMovedProject(control, projectKey, address, timeoutMs)
+  return { projectKey, address }
+}
+
+async function waitForTaskAddress(control, taskId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    const address = state?.currentRuntimeTask
+    if (
+      address?.taskId === taskId &&
+      state.activeTask?.taskId === taskId &&
+      state.activeTask.threadId
+    ) {
+      return { ...address, threadId: state.activeTask.threadId }
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The source task did not resolve its session before moving')
+}
+
+async function assertMovedProject(control, projectKey, address, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    if (state?.activeTaskProjectKey === projectKey) {
+      assert.equal(state.currentRuntimeTask.taskId, address.taskId)
+      assert.equal(state.currentRuntimeTask.workspacePath, address.workspacePath)
+      assert.equal(state.currentRuntimeTask.deviceId, address.deviceId)
+      assert.equal(state.activeTask?.threadId, address.threadId)
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The task did not remain in its destination project')
 }
 
 export function createDesktopScenario({
@@ -119,6 +249,17 @@ export function createDesktopScenario({
         return true
       }
 
+      if (body.includes(SWITCH_PROMPT)) {
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(responseId, SWITCH_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
       response.end(sse([responseCreated(responseId), responseCompleted(responseId)]))
       return true
     },
@@ -142,11 +283,54 @@ export function createDesktopScenario({
       const taskRowTestId = await waitForNewTaskRow(control, knownRows, uiTimeoutMs)
       const taskId = taskRowTestId.replace('runtime-local-task-row-', '')
       const taskRow = `[data-testid="${taskRowTestId}"]`
-      const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
-      const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+      const rowsAfterFirstTask = new Set(knownRows).add(taskRowTestId)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('fill', COMPOSER_SELECTOR, { value: SWITCH_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SWITCH_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      const switchTaskRowTestId = await waitForNewTaskRow(control, rowsAfterFirstTask, uiTimeoutMs)
+      const switchTaskId = switchTaskRowTestId.replace('runtime-local-task-row-', '')
+      const switchTaskRow = `[data-testid="${switchTaskRowTestId}"]`
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The task-switch fixture did not settle before the transcript race',
+        uiTimeoutMs
+      )
+
+      await control.command('click', taskRow)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+          snapshot.pane?.transcript?.loading === true,
+        'The source transcript request did not remain in flight',
+        uiTimeoutMs
+      )
+      await control.command('click', switchTaskRow)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'Returning to the cached task retained another task transcript loading state',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SWITCH_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
+      const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+
       await control.command('doubleClick', taskRow)
       await control.command('waitFor', renameInput, {
         visible: true,
@@ -171,6 +355,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
+      const moved = await verifyMoveToProject(control, {
+        taskId,
+        executorHome,
+        timeoutMs: uiTimeoutMs,
+      })
+
       assert.ok(restartDesktopApp, 'The running-history scenario cannot restart Wework')
       await restartDesktopApp(async () => {
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
@@ -181,6 +371,14 @@ export function createDesktopScenario({
         assert.ok(task, 'The running-history task was missing from the persisted runtime index')
         delete task.runtime_handle?.completedTranscriptMessages
         delete task.runtime_handle?.completedTranscriptThreadId
+        const threadId = task.thread_id
+        assert.equal(typeof threadId, 'string', 'The running-history task has no Codex thread')
+        const threadPath = await findRolloutPath(join(executorHome, 'codex', 'sessions'), threadId)
+        assert.ok(threadPath, 'The running-history Codex rollout was not found')
+        const rollout = await readFile(threadPath, 'utf8')
+        const longHistory = appendLongRunningHistory(rollout, threadId)
+        await appendFile(threadPath, `${longHistory}\n`, 'utf8')
+        task.runtime_handle.cloudTranscript ??= {}
         await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
       })
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
@@ -189,6 +387,26 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
+      const hydrationStartedAt = Date.now()
+      const performanceSnapshot = JSON.parse(
+        await control.command('performanceSnapshot', 'body', {
+          timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
+        })
+      )
+      assert.ok(
+        Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
+        'Hydrating a long running transcript blocked the renderer'
+      )
+      const hydratedSnapshot = await waitForLongHistoryHydration(control, uiTimeoutMs)
+      assert.ok(
+        hydratedSnapshot.runtimeConversationCache?.messageEntries >= 1,
+        'The long running transcript was not restored into the conversation cache'
+      )
+      assert.ok(
+        hydratedSnapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT,
+        'The restored conversation did not include the complete long tool history'
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -223,6 +441,7 @@ export function createDesktopScenario({
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-user"]', {
         text: SECOND_PROMPT,
         timeoutMs: uiTimeoutMs,
@@ -250,6 +469,7 @@ export function createDesktopScenario({
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       active = false
     },
 

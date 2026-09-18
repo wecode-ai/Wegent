@@ -1,4 +1,5 @@
 import { sendPrompt } from './conversation-navigation.mjs'
+import { verifyConversationShortcuts } from './conversation-shortcuts.mjs'
 
 import { ensureTaskRowVisible, waitForScenarioRequestCount } from './memory-tool-flows.mjs'
 
@@ -52,7 +53,11 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await sendPrompt(
+    control,
+    composerSelector,
+    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  )
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -160,6 +165,31 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
 
+  const toggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-user-message-button"]`
+  const expandableContentSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]:has([data-testid="toggle-user-message-button"]) [data-testid="user-message-content"]`
+  const beforeExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The collapsed user message'
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, { stableMs: 300 })
+  const afterExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The expanded user message'
+  )
+  assert.ok(
+    afterExpansion.height > beforeExpansion.height,
+    'Expanding the user message did not reveal more content'
+  )
+  assert.ok(
+    Math.abs(afterExpansion.top - beforeExpansion.top) <= 8,
+    `Expanding the user message moved its top from ${beforeExpansion.top}px to ${afterExpansion.top}px`
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="false"]`, { stableMs: 300 })
+
   const taskRowsBeforeRace = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -261,6 +291,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     DEFAULT_STEP_TIMEOUT_MS,
     'Opening an existing conversation after app startup did not focus the composer'
   )
+  await verifyConversationShortcuts(control, composerSelector)
   await control.command(
     'hover',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="message-hover-region"]`
@@ -796,6 +827,10 @@ async function captureMemorySample(control, phase) {
     phase,
     timestamp: snapshot.timestamp,
     domNodeCount: snapshot.domNodeCount,
+    assistantDom: snapshot.assistantDom,
+    activeRuntimeAssistant: snapshot.activeRuntimeAssistant,
+    usedJSHeapSize: snapshot.rendererHeap?.usedSize ?? null,
+    totalJSHeapSize: snapshot.rendererHeap?.totalSize ?? null,
     rssKiB: webContent.rss_kib,
     physicalFootprintKiB: webContent.physical_footprint_kib,
     pids: webContent.pids,
@@ -941,19 +976,18 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   )
   await captureVerificationScreenshot(control, 'worktree-status-02-mode-selected.png')
 
-  control.setScenario('checkpoint_task')
-  const scenarioRequest = control.awaitScenarioRequest('checkpoint_task')
-  await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
-  const creatingSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('worktree-creation-status') ||
-      snapshot.text.includes(CHECKPOINT_TASK_PROMPT),
-    'The worktree task neither showed creation progress nor entered the conversation'
-  )
-  // Fast local fixtures can finish creating the worktree between waitFor and getText.
-  // Validate the transient status only when it is still present.
-  if (creatingSnapshot.testIds.includes('worktree-creation-status')) {
+  const scenario = 'worktree_status_hold'
+  const scenarioCompletionText = 'WORKTREE_STATUS_HOLD_COMPLETE'
+  control.holdScenarioResponse(scenario)
+  control.setScenario(scenario)
+  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  try {
+    await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+    const creatingSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes('worktree-creation-status'),
+      'The worktree task did not show creation progress'
+    )
     assert.match(
       creatingSnapshot.text,
       /正在搭建你的独立工作树|Building your independent worktree/,
@@ -965,22 +999,39 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
       'The composer remained interactive while the worktree was being created'
     )
     await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
-  }
-  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
-    text: CHECKPOINT_TASK_PROMPT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
 
-  await withTimeout(
-    scenarioRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The worktree task did not reach the model service after creation'
-  )
+    await withTimeout(
+      scenarioRequest,
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The worktree task did not reach the model service after creation'
+    )
+    const waitingSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(CHECKPOINT_TASK_PROMPT) &&
+        !snapshot.testIds.includes('worktree-creation-status'),
+      'The worktree task did not enter its conversation after creation'
+    )
+    assert.equal(
+      waitingSnapshot.testIds.includes('thinking-indicator'),
+      true,
+      'The worktree task first rendered an idle conversation after creation'
+    )
+    assert.equal(
+      waitingSnapshot.text.includes(scenarioCompletionText),
+      false,
+      'The held worktree response completed before the thinking state was verified'
+    )
+    await captureVerificationScreenshot(control, 'worktree-status-04-waiting-for-assistant.png')
+  } finally {
+    control.releaseScenarioResponse(scenario)
+  }
+
   await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    text: scenarioCompletionText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'worktree-status-04-task-started.png')
+  await captureVerificationScreenshot(control, 'worktree-status-05-task-started.png')
 
   const taskDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const worktreeTaskId = taskDebugSnapshot.workbench?.currentRuntimeTask?.taskId
@@ -1009,7 +1060,7 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
     {
       target: '[data-testid="fork-message-button"]',
-      text: CHECKPOINT_TASK_COMPLETION_TEXT,
+      text: scenarioCompletionText,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
@@ -1042,7 +1093,7 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
     text: FORK_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'worktree-status-05-fork-follow-up-complete.png')
+  await captureVerificationScreenshot(control, 'worktree-status-06-fork-follow-up-complete.png')
 
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
   await withTimeout(

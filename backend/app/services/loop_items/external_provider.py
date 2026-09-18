@@ -13,7 +13,7 @@ import re
 import tempfile
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, BinaryIO
 from urllib.parse import quote
@@ -35,7 +35,9 @@ from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
+    IssueAction,
     require_cloud_project_role,
+    require_issue_action,
 )
 from app.services.delivery.storage import delivery_storage
 from app.services.loop_item_executions.service import (
@@ -63,6 +65,7 @@ EXTERNAL_BOARD_STATUSES = {
     "completed",
 }
 ISSUE_LIST_PAGE_SIZE = 100
+MAX_EXTERNAL_COMMENT_PAGES = 100
 ISSUE_PAGE_CACHE_SECONDS = 30
 GITLAB_PROVIDER_UPLOAD_PATTERN = re.compile(
     r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]*/uploads/[^)]+)\)"
@@ -233,6 +236,38 @@ class ExternalLoopItemProvider:
         if not response["can_view_detail"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         return response
+
+    def get_many(
+        self,
+        db: Session,
+        project_id: str,
+        user_id: int,
+        item_ids: list[str],
+    ) -> list[dict[str, object]]:
+        """Load selected provider tasks without serial per-task requests."""
+
+        if not item_ids:
+            return []
+        access = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        project = access.project
+        self._require_external(project)
+        item_id_by_number = {
+            number: item_id
+            for item_id in item_ids
+            if (number := self._item_number(project, item_id)) is not None
+        }
+        issues = self._get_issues(project, list(item_id_by_number))
+        responses: list[dict[str, object]] = []
+        for issue in issues:
+            number = self._number(issue)
+            if number not in item_id_by_number:
+                continue
+            response = self._response(db, project, issue, access, user_id)
+            if response["can_view_detail"]:
+                responses.append(response)
+        return responses
 
     def create(
         self,
@@ -962,6 +997,14 @@ class ExternalLoopItemProvider:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Robot is not active in this project",
                 )
+            from app.services.issue_assignments import issue_assignment_service
+
+            issue_assignment_service.require_canonical_member(
+                db,
+                project=project,
+                member_type="agent",
+                member_id=agent.id,
+            )
             assignee_label = self._assignee_label(
                 "agent", agent.id, agent.title or agent.name
             )
@@ -1013,7 +1056,7 @@ class ExternalLoopItemProvider:
                 )
             },
         )
-        self._ensure_index_row(
+        index_row = self._ensure_index_row(
             db,
             item_id=item_id,
             project=project,
@@ -1030,14 +1073,25 @@ class ExternalLoopItemProvider:
             assignee_name=assignee_name,
             user_id=user_id,
         )
-        cancelled_runs = self._cancel_active_executions(
-            db,
-            item_id,
-            preserve_automation_run_id=str(
-                (automation_context or {}).get("run_id") or ""
-            ),
+        from app.services.issue_assignments import issue_assignment_service
+
+        target_id = (
+            agent.id
+            if agent is not None
+            else str(team.id) if team is not None else str(target_user_id)
         )
-        if agent is not None:
+        _, assignment_created = issue_assignment_service.record(
+            db,
+            project_id=project.id,
+            issue_id=index_row.id,
+            member_type=("human" if values.assignee_type == "user" else "agent"),
+            member_id=target_id,
+            assigned_by_user_id=user_id,
+            workflow_step=values.workflow_step,
+            notify=values.notify_assignee,
+            trigger=values.trigger,
+        )
+        if agent is not None and assignment_created:
             self._create_execution_for_agent(
                 db,
                 item_id=item_id,
@@ -1048,7 +1102,7 @@ class ExternalLoopItemProvider:
                 automation_context=automation_context,
                 instruction=instruction,
             )
-        elif team is not None:
+        elif team is not None and assignment_created:
             loop_item_execution_service.create_for_team_assignment(
                 db,
                 loop_item_id=item_id,
@@ -1060,6 +1114,7 @@ class ExternalLoopItemProvider:
         if (
             values.notify_assignee
             and values.assignee_type == "user"
+            and assignment_created
             and (
                 target_user_id != user_id
                 or automation_context is not None
@@ -1083,12 +1138,6 @@ class ExternalLoopItemProvider:
                 assigner_name=assigner.user_name if assigner else str(user_id),
             )
         db.commit()
-        if cancelled_runs:
-            from app.services.board_team_execution import (
-                request_execution_cancellations,
-            )
-
-            request_execution_cancellations(cancelled_runs)
         return self._response(db, project, issue, access, user_id)
 
     def _ensure_index_row(
@@ -1329,11 +1378,25 @@ class ExternalLoopItemProvider:
             db, project.id, user_id, BaseRole.RestrictedAnalyst
         )
         issue = self._get_issue(project, number)
-        if not self._permissions(
-            access, self._creator_id(self._labels(issue)), user_id
-        )[1]:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_issue_action(
+            access,
+            action=IssueAction.COMMENT,
+            issue_creator_user_id=self._creator_id(self._labels(issue)),
+            user_id=user_id,
+        )
         return self._create_comment(project, number, body)
+
+    def list_comments(
+        self, db: Session, item_id: str, user_id: int
+    ) -> list[dict[str, object]]:
+        project, number = self._resolve_project(db, item_id)
+        access = require_cloud_project_role(
+            db, project.id, user_id, BaseRole.RestrictedAnalyst
+        )
+        issue = self._get_issue(project, number)
+        if not self._response(db, project, issue, access, user_id)["can_view_detail"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        return self._list_comments(project, number)
 
     def _response(
         self,
@@ -1548,6 +1611,14 @@ class ExternalLoopItemProvider:
         if resolved is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         return resolved
+
+    @staticmethod
+    def _item_number(project: CloudProject, item_id: str) -> int | None:
+        prefix = f"{project.project_key}-"
+        if not item_id.startswith(prefix):
+            return None
+        raw_number = item_id.removeprefix(prefix)
+        return int(raw_number) if raw_number.isdigit() else None
 
     @staticmethod
     def _find_project(db: Session, item_id: str) -> tuple[CloudProject, int] | None:
@@ -1827,6 +1898,55 @@ class ExternalLoopItemProvider:
         )
         return self._request(project, "GET", path)
 
+    def _get_issues(
+        self, project: CloudProject, numbers: list[int]
+    ) -> list[dict[str, Any]]:
+        unique_numbers = list(dict.fromkeys(numbers))
+        if not unique_numbers:
+            return []
+        if project.task_provider == "gitlab":
+            repository = self._repository(project)
+            path = f"/projects/{quote(repository, safe='')}/issues"
+            issues: list[dict[str, Any]] = []
+            for offset in range(0, len(unique_numbers), ISSUE_LIST_PAGE_SIZE):
+                batch_numbers = unique_numbers[offset : offset + ISSUE_LIST_PAGE_SIZE]
+                issues.extend(
+                    self._request(
+                        project,
+                        "GET",
+                        path,
+                        params={
+                            "iids[]": batch_numbers,
+                            "state": "all",
+                            "per_page": len(batch_numbers),
+                        },
+                    )
+                )
+            return issues
+
+        issues_by_number: dict[int, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=min(8, len(unique_numbers))) as executor:
+            future_by_number = {
+                executor.submit(self._get_issue, project, number): number
+                for number in unique_numbers
+            }
+            for future in as_completed(future_by_number):
+                number = future_by_number[future]
+                try:
+                    issues_by_number[number] = future.result()
+                except Exception:
+                    logger.warning(
+                        "[External tasks] Skip provider issue project_id=%s number=%s",
+                        project.id,
+                        number,
+                        exc_info=True,
+                    )
+        return [
+            issues_by_number[number]
+            for number in unique_numbers
+            if number in issues_by_number
+        ]
+
     def _create_issue(
         self, project: CloudProject, title: str, body: str, labels: list[str]
     ) -> dict[str, Any]:
@@ -1881,6 +2001,45 @@ class ExternalLoopItemProvider:
             path,
             json={"body": body},
         )
+        return self._comment_response(project, response)
+
+    def _list_comments(
+        self, project: CloudProject, number: int
+    ) -> list[dict[str, object]]:
+        repository = self._repository(project)
+        path = (
+            f"/repos/{repository}/issues/{number}/comments"
+            if project.task_provider == "github"
+            else f"/projects/{quote(repository, safe='')}/issues/{number}/notes"
+        )
+        comments: list[dict[str, object]] = []
+        for page in range(1, MAX_EXTERNAL_COMMENT_PAGES + 2):
+            params: dict[str, object] = {
+                "per_page": ISSUE_LIST_PAGE_SIZE,
+                "page": page,
+            }
+            if project.task_provider == "github":
+                params.update({"sort": "created", "direction": "asc"})
+            else:
+                params.update({"order_by": "created_at", "sort": "asc"})
+            batch = self._request(project, "GET", path, params=params)
+            if page > MAX_EXTERNAL_COMMENT_PAGES:
+                if batch:
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        "Provider comment list exceeds the supported page limit",
+                    )
+                break
+            comments.extend(
+                self._comment_response(project, comment) for comment in batch
+            )
+            if len(batch) < ISSUE_LIST_PAGE_SIZE:
+                break
+        return comments
+
+    def _comment_response(
+        self, project: CloudProject, response: dict[str, Any]
+    ) -> dict[str, object]:
         return {
             "id": str(response.get("id") or ""),
             "body": str(response.get("body") or ""),

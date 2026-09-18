@@ -1,11 +1,121 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS,
+  MAX_RUNTIME_TASK_STREAM_HANDLERS,
+  createRuntimeConversationStreamHandlers,
   createRuntimeTaskStreamHandlers,
   runtimeMessagesToWorkbenchMessages,
   runtimeTranscriptTurnsToConversationTurns,
 } from './runtimePaneMessages'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
+
+describe('createRuntimeConversationStreamHandlers', () => {
+  test('bounds task-specific stream state across long-running navigation', () => {
+    const onAssistantStart = vi.fn()
+    const handlers = createRuntimeConversationStreamHandlers({
+      onMessageAction: vi.fn(),
+      onAssistantStart,
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+    })
+    handlers.onChatDone?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+      result: {},
+    })
+
+    for (let index = 1; index <= MAX_RUNTIME_TASK_STREAM_HANDLERS; index += 1) {
+      handlers.onChatStart?.({
+        deviceId: 'device-1',
+        taskId: `task-${index}`,
+        subtaskId: 'turn-1',
+      })
+    }
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+    })
+
+    expect(onAssistantStart).toHaveBeenCalledTimes(MAX_RUNTIME_TASK_STREAM_HANDLERS + 2)
+  })
+
+  test('does not evict stream state for an active task', () => {
+    const onAssistantFirstToken = vi.fn()
+    const handlers = createRuntimeConversationStreamHandlers({
+      onMessageAction: vi.fn(),
+      onAssistantFirstToken,
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+    })
+    handlers.onChatChunk?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+      content: 'first',
+    })
+    for (let index = 1; index <= MAX_RUNTIME_TASK_STREAM_HANDLERS; index += 1) {
+      handlers.onChatStart?.({
+        deviceId: 'device-1',
+        taskId: `task-${index}`,
+        subtaskId: 'turn-1',
+      })
+    }
+    handlers.onChatChunk?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+      content: 'second',
+    })
+
+    expect(onAssistantFirstToken).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createRuntimeTaskStreamHandlers lifecycle retention', () => {
+  test('bounds settled turn deduplication state for a long-running task', () => {
+    const onAssistantStart = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'task-1' },
+      {
+        onMessageAction: vi.fn(),
+        onAssistantStart,
+      }
+    )
+
+    for (let index = 0; index <= MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS; index += 1) {
+      const subtaskId = `turn-${index}`
+      handlers.onChatStart?.({
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        subtaskId,
+      })
+      handlers.onChatDone?.({
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        subtaskId,
+        result: {},
+      })
+    }
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      subtaskId: 'turn-0',
+    })
+
+    expect(onAssistantStart).toHaveBeenCalledTimes(MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS + 2)
+  })
+})
 
 describe('runtime transcript status', () => {
   test('preserves the first transcript message index for turn ordering', () => {
@@ -19,6 +129,19 @@ describe('runtime transcript status', () => {
     ])
 
     expect(turn.runtimeMessageIndex).toBe(42)
+  })
+
+  test('preserves the item prepend merge mode for an older item page', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        itemMerge: 'prepend',
+        items: [],
+        status: 'done',
+      },
+    ])
+
+    expect(turn.itemMerge).toBe('prepend')
   })
 
   test('keeps valid canonical items when a transcript turn contains a malformed item', () => {
@@ -143,6 +266,60 @@ describe('runtime transcript status', () => {
         }),
       }),
     ])
+  })
+
+  test('restores subagent identity, lifecycle, and nested streamed blocks', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'in_progress',
+        items: [
+          {
+            id: 'subagent-item-1',
+            type: 'block',
+            block: {
+              id: 'subagent-thread-1',
+              type: 'subagent',
+              agent_thread_id: 'thread-1',
+              agent_status: 'running',
+              title: 'Explorer',
+              status: 'streaming',
+              timestamp: 1_780_000_001_000,
+              children: [
+                {
+                  id: 'child-text-1',
+                  type: 'text',
+                  parent_tool_use_id: 'subagent-thread-1',
+                  content: 'Inspecting the repository',
+                  status: 'streaming',
+                  timestamp: 1_780_000_001_500,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toContainEqual(
+      expect.objectContaining({
+        type: 'block',
+        block: expect.objectContaining({
+          id: 'subagent-thread-1',
+          type: 'subagent',
+          agentThreadId: 'thread-1',
+          agentStatus: 'running',
+          title: 'Explorer',
+          children: [
+            expect.objectContaining({
+              id: 'child-text-1',
+              parentToolUseId: 'subagent-thread-1',
+              content: 'Inspecting the repository',
+            }),
+          ],
+        }),
+      })
+    )
   })
 
   test('does not infer streaming from an active conversation status', () => {
@@ -376,13 +553,14 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     expect(actions).toEqual([
-      {
+      expect.objectContaining({
         type: 'assistant_started',
         taskId: 'runtime-task-1',
         subtaskId: 'codex-turn-9',
         clientUserMessageId: 'client-user-1',
         shellType: undefined,
-      },
+        startedAt: expect.any(Number),
+      }),
     ])
   })
 
@@ -560,6 +738,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       shellType: 'codex',
       error: 'Context window exceeded',
       type: 'response.failed',
+      startedAt: 1_789_714_800_000,
+      durationMs: 2500,
     })
 
     expect(actions).toHaveLength(1)
@@ -568,6 +748,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'codex-turn-9',
       error: 'Context window exceeded',
       errorType: 'response.failed',
+      startedAt: 1_789_714_800_000,
+      durationMs: 2500,
     })
   })
 
@@ -924,6 +1106,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       offset: 0,
       result: {
         turnId: 'turn-9',
+        startedAt: 1_789_714_800_000,
+        durationMs: 18_250,
         value: [
           '当前分支比 origin/main ahead 1，可以直接 push。',
           '',
@@ -937,6 +1121,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_done',
       subtaskId: 'subtask-9',
       turnId: 'turn-9',
+      startedAt: 1_789_714_800_000,
+      durationMs: 18_250,
     })
     expect(info).toHaveBeenCalledWith(
       '[Wework] Runtime terminal event accepted',

@@ -9,15 +9,19 @@ use ignore::WalkBuilder;
 const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn reconcile_and_resume_persisted_turns(&self) {
+        if self.reconcile_worktrees_once().await {
+            self.resume_persisted_turns().await;
+        }
+    }
+
     pub(super) fn spawn_startup_worktree_reconciliation(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         let handler = self.clone();
         runtime.spawn(async move {
-            if handler.reconcile_worktrees_once().await {
-                handler.resume_persisted_turns().await;
-            }
+            handler.reconcile_and_resume_persisted_turns().await;
         });
     }
 
@@ -41,6 +45,13 @@ impl RuntimeWorkRpcHandler {
             .clone();
         let worktrees = self.worktrees.clone();
         let store = self.store.clone();
+        let recoverable_goal_task_ids = self
+            .active_goal_turns
+            .lock()
+            .expect("active Goal turn map lock should not be poisoned")
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
         let result = tokio::task::spawn_blocking(move || {
             let reconciled = worktrees.reconcile()?;
             let mut failed_task_ids = HashSet::new();
@@ -53,6 +64,9 @@ impl RuntimeWorkRpcHandler {
                 let task_id = outcome
                     .interrupted_execution_task_id
                     .unwrap_or(outcome.record.worktree_id);
+                if recoverable_goal_task_ids.contains(&task_id) {
+                    continue;
+                }
                 let error = outcome.record.last_error.unwrap_or_else(|| {
                     if outcome.interrupted_execution {
                         "Executor restarted while the Worktree task was executing; runtime was not resumed"
@@ -738,14 +752,14 @@ impl RuntimeWorkRpcHandler {
                 .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         }
         if if_idle && !force {
-            match self.codex_app_server.restart_if_no_pending_requests().await {
+            match self.codex_app_server.restart_if_idle().await {
                 Ok(()) => {}
-                Err(count) => {
+                Err((active_turn_count, pending_request_count)) => {
                     return Ok(json!({
                         "restarted": false,
                         "requiresConfirmation": true,
-                        "activeTaskCount": active_task_count,
-                        "pendingRequestCount": count,
+                        "activeTaskCount": active_task_count.max(active_turn_count),
+                        "pendingRequestCount": pending_request_count,
                     }));
                 }
             }

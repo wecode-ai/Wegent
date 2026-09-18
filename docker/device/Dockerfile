@@ -57,6 +57,8 @@ ENV PATH=/root/.cargo/bin:${PATH}
 WORKDIR /build/executor
 COPY executor/Cargo.toml executor/Cargo.lock ./
 COPY executor/src ./src
+COPY sdk/plugin-auth /build/sdk/plugin-auth
+COPY sdk/plugin-creator /build/sdk/plugin-creator
 COPY shared/assets /build/shared/assets
 RUN if [ -n "$CARGO_REGISTRIES_CRATES_IO_INDEX" ]; then \
         export CARGO_REGISTRIES_CRATES_IO_INDEX; \

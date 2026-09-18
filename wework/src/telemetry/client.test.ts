@@ -178,6 +178,22 @@ describe('telemetry client', () => {
     expect(endCall?.[1]).not.toHaveProperty('prompt')
   })
 
+  test('preserves the remote execution target on task events', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('task_started', {
+      execution_target: 'remote',
+    })
+
+    await flushPostHogCaptures()
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      'task_started',
+      expect.objectContaining({ execution_target: 'remote' })
+    )
+  })
+
   test('captures $ai_generation with model, tokens, latency, and estimated cost', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
@@ -635,53 +651,62 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('project_id')
   })
 
-  test('captures smart app events with coarse properties only', async () => {
+  test('captures only approved Smart App events with coarse properties', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
 
-    track('smart_app_installed', {
-      domain: 'smart_app',
-      install_source: 'marketplace',
-      smart_app_id: 'private-smart-app',
-      file_path: '/Users/private/Downloads/workbench.zip',
-    } as {
-      domain: 'smart_app'
-      install_source: 'marketplace'
-      smart_app_id: string
-      file_path: string
-    })
-    track('feature_action_completed', {
-      domain: 'smart_app',
-      action: 'update',
-      app_name: 'private workbench',
-    } as { domain: 'smart_app'; action: 'update'; app_name: string })
-    track('operation_failed', {
-      domain: 'smart_app',
-      operation: 'smart_app_zip_import',
-      error_message: 'private archive validation detail',
-    } as { domain: 'smart_app'; operation: 'smart_app_zip_import'; error_message: string })
+    const events = [
+      { name: 'smart_app_marketplace_opened', properties: { domain: 'smart_app' } },
+      { name: 'smart_app_owned_opened', properties: { domain: 'smart_app' } },
+      { name: 'smart_app_opened', properties: { domain: 'smart_app' } },
+      { name: 'smart_app_install_succeeded', properties: { domain: 'smart_app' } },
+      {
+        name: 'smart_app_install_failed',
+        properties: { domain: 'smart_app', failure_stage: 'install' },
+      },
+      { name: 'smart_app_update_succeeded', properties: { domain: 'smart_app' } },
+      {
+        name: 'smart_app_update_failed',
+        properties: { domain: 'smart_app', failure_stage: 'confirm' },
+      },
+      { name: 'smart_app_zip_import_succeeded', properties: { domain: 'smart_app' } },
+      {
+        name: 'smart_app_zip_import_failed',
+        properties: { domain: 'smart_app', failure_stage: 'preview' },
+      },
+    ] as const
+
+    for (const event of events) {
+      track(
+        event.name as never,
+        {
+          ...event.properties,
+          file_path: '/Users/private/Downloads/workbench.zip',
+          smart_app_name: 'private workbench',
+        } as never
+      )
+    }
+    track(
+      'smart_app_install_failed' as never,
+      {
+        domain: 'smart_app',
+        failure_stage: 'private-stage',
+      } as never
+    )
 
     await flushPostHogCaptures()
 
-    expect(posthogMocks.capture).toHaveBeenNthCalledWith(
-      1,
-      'smart_app_installed',
-      expect.objectContaining({ domain: 'smart_app', install_source: 'marketplace' })
-    )
-    expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('smart_app_id')
-    expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('file_path')
-    expect(posthogMocks.capture).toHaveBeenNthCalledWith(
-      2,
-      'feature_action_completed',
-      expect.objectContaining({ domain: 'smart_app', action: 'update' })
-    )
-    expect(posthogMocks.capture.mock.calls[1]?.[1]).not.toHaveProperty('app_name')
-    expect(posthogMocks.capture).toHaveBeenNthCalledWith(
-      3,
-      'operation_failed',
-      expect.objectContaining({ domain: 'smart_app', operation: 'smart_app_zip_import' })
-    )
-    expect(posthogMocks.capture.mock.calls[2]?.[1]).not.toHaveProperty('error_message')
+    expect(posthogMocks.capture.mock.calls.map(call => call[0])).toEqual([
+      ...events.map(event => event.name),
+      'smart_app_install_failed',
+    ])
+    events.forEach((event, index) => {
+      const properties = posthogMocks.capture.mock.calls[index]?.[1]
+      expect(properties).toEqual(expect.objectContaining(event.properties))
+      expect(properties).not.toHaveProperty('file_path')
+      expect(properties).not.toHaveProperty('smart_app_name')
+    })
+    expect(posthogMocks.capture.mock.calls.at(-1)?.[1]).not.toHaveProperty('failure_stage')
   })
 
   test('clears identity and stops both SDKs when disabled', async () => {

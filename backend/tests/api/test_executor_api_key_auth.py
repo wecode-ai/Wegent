@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
+from app.services.auth import create_skill_identity_token
 
 
 @pytest.fixture(scope="function")
@@ -270,6 +271,28 @@ class TestSkillDownloadWithApiKey:
         assert response.json()["detail"] == (
             "System skills cannot be downloaded by individual users"
         )
+
+    def test_download_system_skill_with_skill_identity_token(
+        self,
+        test_client: TestClient,
+        test_user: User,
+        test_public_skill_setup,
+    ):
+        """A validated executor Skill identity is a runtime download credential."""
+        token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="claude-code-runtime",
+        )
+
+        response = test_client.get(
+            f"/api/v1/kinds/skills/{test_public_skill_setup.id}/download",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
 
 
 @pytest.mark.integration

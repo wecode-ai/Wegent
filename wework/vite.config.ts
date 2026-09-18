@@ -125,6 +125,10 @@ export default defineConfig({
         'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
         'wework-ui-home-developer': path.resolve(__dirname, 'dsh/ui-home-developer/src/home.tsx'),
         'wework-ui-home-focus': path.resolve(__dirname, 'dsh/ui-home-focus/src/home.tsx'),
+        'wework-ui-conversation-export': path.resolve(
+          __dirname,
+          'dsh/conversation-export/src/dialog.tsx'
+        ),
         'wework-ui-git-board-card-status': path.resolve(
           __dirname,
           'dsh/ui-git/src/board-card-status.tsx'
@@ -146,6 +150,10 @@ export default defineConfig({
         'wework-ui-git-workspace-menu-section': path.resolve(
           __dirname,
           'dsh/ui-git/src/workspace-menu-section.tsx'
+        ),
+        'wework-ui-outputs-conversation-summary': path.resolve(
+          __dirname,
+          'dsh/ui-outputs/src/conversation-summary.tsx'
         ),
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
@@ -206,7 +214,7 @@ export default defineConfig({
     globals: true,
     server: {
       deps: {
-        inline: [/@file-viewer/, /@panzoom/],
+        inline: [/@file-viewer/, /@panzoom/, /mermaid/],
       },
     },
     // Keep local and pre-push runs below the resource-contention point where
@@ -216,6 +224,7 @@ export default defineConfig({
       ...configDefaults.exclude,
       'dsh/**/*.test.mjs',
       'e2e/**',
+      'electron/**',
       'scripts/electron-e2e-launch-arguments.test.mjs',
       'scripts/harness-runtime-metadata.test.mjs',
       'test-results/**',

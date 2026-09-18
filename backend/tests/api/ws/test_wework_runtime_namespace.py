@@ -161,6 +161,9 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
+    registry.get_service_by_name.return_value.accepts_runtime_source = AsyncMock(
+        return_value=True
+    )
     monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
 
     result = await _relay_runtime_event(
@@ -197,6 +200,9 @@ async def test_runtime_waiting_result_preserves_terminal_metadata(
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
+    registry.get_service_by_name.return_value.accepts_runtime_source = AsyncMock(
+        return_value=True
+    )
     monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
 
     result = await _relay_runtime_event(
@@ -238,6 +244,9 @@ async def test_runtime_event_fails_im_channel_callback_on_failed_event(
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
+    registry.get_service_by_name.return_value.accepts_runtime_source = AsyncMock(
+        return_value=True
+    )
     monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
 
     result = await _relay_runtime_event(
@@ -351,6 +360,11 @@ async def test_runtime_terminal_event_notifies_im_dispatcher(
             "taskId": "runtime-375023196",
             "taskTitle": "分析线上问题",
             "data": event_data,
+            "modelSelection": {
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"},
+            },
         },
     )
 
@@ -360,6 +374,11 @@ async def test_runtime_terminal_event_notifies_im_dispatcher(
         address={
             "deviceId": "local-device",
             "localTaskId": "runtime-375023196",
+            "modelSelection": {
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"},
+            },
         },
         title="分析线上问题",
         status=expected_status,
@@ -433,6 +452,65 @@ async def test_runtime_notification_failure_does_not_break_wework_relay(
     assert result == {"success": True}
     sio.emit.assert_awaited_once()
     assert sio.emit.await_args.args[0] == "runtime:event"
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_projects_logical_id_but_publishes_runtime_route(
+    monkeypatch,
+):
+    namespace = DeviceNamespace()
+    sio = AsyncMock()
+    forward = AsyncMock()
+    publish = AsyncMock()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={
+                "user_id": 7,
+                "device_id": "runtime-device",
+                "logical_device_id": "app-device",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        "app.services.wework_api.events.publish_runtime_event",
+        publish,
+    )
+    monkeypatch.setattr(
+        namespace._local_task_responses,
+        "forward_runtime_event_to_channels",
+        forward,
+    )
+
+    result = await namespace.on_runtime_event(
+        "device-sid",
+        {
+            "event": "response.completed",
+            "payload": {
+                "deviceId": "runtime-device",
+                "taskId": "runtime-task-1",
+                "data": {"value": "done"},
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    relay_payload = sio.emit.await_args.args[1]
+    relayed = relay_payload["payload"]
+    assert relayed["deviceId"] == "app-device"
+    assert relayed["device_id"] == "app-device"
+    forward.assert_awaited_once_with(
+        device_id="app-device",
+        payload=relayed,
+    )
+    publish.assert_awaited_once_with(7, "runtime-device", relay_payload)
 
 
 @pytest.mark.asyncio

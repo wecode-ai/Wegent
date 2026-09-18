@@ -32,7 +32,7 @@ import type { SystemRecordReplay } from './system-record-replay.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import { sendE2EKey } from './e2e-keyboard.js'
+import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -52,6 +52,9 @@ import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
+import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
+import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
+import type { WeworkSyncRequest } from './wework-sync-request.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -97,6 +100,7 @@ export interface ElectronDesktopServices {
   browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
+  quitApplication: () => void
   openRuntimeTask: (taskAddressId: string) => void
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
@@ -107,12 +111,7 @@ export interface ElectronDesktopServices {
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
-  weworkSyncRequest?: (request: {
-    apiBaseUrl: string
-    path: string
-    method: 'GET' | 'POST' | 'PUT'
-    body?: unknown
-  }) => Promise<unknown>
+  weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
 interface ElectronNotificationHandle {
@@ -195,13 +194,15 @@ export interface ElectronE2EHost {
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
-  traySnapshot: () => TraySnapshot | null
+  traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
     exists: boolean
     focused: boolean
     visible: boolean
+    windowId: number | null
+    webContentsId: number | null
   }
   setSystemDragContext: (context: { conversationTitle: string | null }) => void
   setSystemSleepEnabled: (enabled: boolean) => void
@@ -257,7 +258,13 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
-    popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
+    popoutWindowSnapshot: () => ({
+      exists: false,
+      focused: false,
+      visible: false,
+      windowId: null,
+      webContentsId: null,
+    }),
     setSystemDragContext: () => undefined,
     setSystemSleepEnabled: () => undefined,
     setSystemSleepTaskActive: () => undefined,
@@ -276,6 +283,7 @@ export function createElectronCapabilityRouter(
     retainedFiles: 2,
   })
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
+  registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
   router.register('navigation.pendingSchemes', () => desktopServices.pendingSchemes.read())
   router.register('navigation.acknowledgeScheme', params => {
@@ -283,6 +291,9 @@ export function createElectronCapabilityRouter(
     if (id !== undefined) desktopServices.pendingSchemes.acknowledge(id)
   })
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
+  router.register('app.quit', (_params, context) => {
+    context.deferUntilResponseSent(desktopServices.quitApplication)
+  })
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
@@ -566,17 +577,53 @@ export function createElectronCapabilityRouter(
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
   })
-  router.register('e2e.pressKey', params => {
+  router.register('e2e.insertText', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
     const contents = e2eHost.captureTarget(label)
     if (!contents) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
     }
-    return sendE2EKey(contents, stringParam(params, 'key'), () =>
-      label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)
+    return sendE2EText(
+      contents,
+      stringParam(params, 'text'),
+      () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
+      process.env
+    )
+  })
+  router.register('e2e.pressKey', params => {
+    const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const phase = optionalStringParam(params, 'phase') ?? 'press'
+    if (!['press', 'down', 'up'].includes(phase)) {
+      throw new HostCapabilityError('e2e_invalid_key_phase', 'Unsupported verification key phase')
+    }
+    const contents = e2eHost.captureTarget(label)
+    if (!contents) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+    }
+    return sendE2EKey(
+      contents,
+      stringParam(params, 'key'),
+      () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
+      process.env,
+      phase as E2EKeyPhase
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.getRendererHeapUsage', async () => {
+    const contents = e2eHost.captureTarget('main')
+    if (!contents || contents.isDestroyed()) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
+    }
+    const debugSession = contents.debugger
+    const alreadyAttached = debugSession.isAttached()
+    if (!alreadyAttached) debugSession.attach('1.3')
+    try {
+      await debugSession.sendCommand('HeapProfiler.collectGarbage')
+      return await debugSession.sendCommand('Runtime.getHeapUsage')
+    } finally {
+      if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
+    }
+  })
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
   router.register('e2e.getWindowFocusSnapshot', () => {
@@ -587,6 +634,8 @@ export function createElectronCapabilityRouter(
       popoutExists: popout.exists,
       popoutFocused: popout.focused,
       popoutVisible: popout.visible,
+      popoutWindowId: popout.windowId,
+      popoutWebContentsId: popout.webContentsId,
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
     }
   })
@@ -709,11 +758,27 @@ export function createElectronCapabilityRouter(
     }
     const method = optionalStringParam(params, 'method') ?? 'GET'
     if (!['GET', 'POST', 'PUT'].includes(method)) invalidParam('method')
+    const file = Object.hasOwn(params, 'file') ? recordParam(params, 'file') : null
     return desktopServices.weworkSyncRequest({
       apiBaseUrl: stringParam(params, 'apiBaseUrl'),
       path: stringParam(params, 'path'),
       method: method as 'GET' | 'POST' | 'PUT',
       ...(Object.hasOwn(params, 'body') ? { body: params.body } : {}),
+      ...(Object.hasOwn(params, 'downloadPath')
+        ? { downloadPath: stringParam(params, 'downloadPath') }
+        : {}),
+      ...(Object.hasOwn(params, 'downloadSizeBytes')
+        ? { downloadSizeBytes: requiredIntegerParam(params, 'downloadSizeBytes') }
+        : {}),
+      ...(file
+        ? {
+            file: {
+              path: stringParam(file, 'path'),
+              name: stringParam(file, 'name'),
+              contentType: stringParam(file, 'contentType'),
+            },
+          }
+        : {}),
     })
   })
   registerRendererStorageCapabilities(router, rendererStorage)
@@ -1044,7 +1109,11 @@ export function createWorkbenchCapabilityRouter(
       }),
     }
   })
-  router.grant(WEWORK_WORKBENCH_PRINCIPAL, WORKBENCH_ONLY_CAPABILITIES)
+  registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
+  router.grant(WEWORK_WORKBENCH_PRINCIPAL, [
+    ...WORKBENCH_ONLY_CAPABILITIES,
+    'deviceDiagnostics.microphone',
+  ])
   return router
 }
 

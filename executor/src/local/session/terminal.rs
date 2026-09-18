@@ -4,6 +4,9 @@
 
 use super::*;
 
+const TERMINAL_DELIVERY_RETRY_BASE_MILLIS: u64 = 100;
+const TERMINAL_DELIVERY_RETRY_MAX_MILLIS: u64 = 5_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     Output {
@@ -89,6 +92,7 @@ impl LocalSession {
         protocol: TerminalProtocol,
         consumer_id: Option<&str>,
         last_acked_sequence: u64,
+        browser_socket_id: Option<&str>,
     ) -> Result<(), String> {
         if self
             .terminal_protocol
@@ -123,6 +127,8 @@ impl LocalSession {
         self.terminal_attached = true;
         self.terminal_protocol = Some(protocol);
         self.terminal_consumer_id = consumer_id.map(str::to_owned);
+        self.terminal_browser_socket_id = browser_socket_id.map(str::to_owned);
+        self.reset_terminal_delivery_retry();
         if was_attached {
             let replayed_batches = self
                 .terminal_replay
@@ -232,6 +238,43 @@ impl LocalSession {
         Ok(())
     }
 
+    fn defer_terminal_delivery(&mut self) -> Duration {
+        let exponent = self.terminal_delivery_retry_attempts.min(6);
+        let base_millis = TERMINAL_DELIVERY_RETRY_BASE_MILLIS
+            .saturating_mul(1_u64 << exponent)
+            .min(TERMINAL_DELIVERY_RETRY_MAX_MILLIS);
+        let jitter_percent = self
+            .session_id
+            .bytes()
+            .fold(0_u64, |value, byte| value.wrapping_add(u64::from(byte)))
+            % 21;
+        let delay = Duration::from_millis(
+            base_millis
+                .saturating_add(base_millis.saturating_mul(jitter_percent) / 100)
+                .min(TERMINAL_DELIVERY_RETRY_MAX_MILLIS),
+        );
+        self.terminal_delivery_retry_attempts =
+            self.terminal_delivery_retry_attempts.saturating_add(1);
+        self.terminal_delivery_retry_not_before = Some(Instant::now() + delay);
+        delay
+    }
+
+    fn terminal_delivery_ready(&mut self) -> bool {
+        let Some(not_before) = self.terminal_delivery_retry_not_before else {
+            return true;
+        };
+        if Instant::now() < not_before {
+            return false;
+        }
+        self.terminal_delivery_retry_not_before = None;
+        true
+    }
+
+    fn reset_terminal_delivery_retry(&mut self) {
+        self.terminal_delivery_retry_attempts = 0;
+        self.terminal_delivery_retry_not_before = None;
+    }
+
     fn require_terminal_consumer(&self, consumer_id: &str) -> Result<(), String> {
         if self.terminal_protocol != Some(TerminalProtocol::V2) {
             return Err("Terminal consumer ACK requires protocol v2".to_owned());
@@ -283,11 +326,36 @@ impl LocalSessionHandler {
             TerminalProtocol::V2,
             Some(consumer_id),
             last_acked_sequence,
+            None,
+        )
+    }
+
+    pub(crate) fn handle_terminal_attach_with_browser_socket(
+        &mut self,
+        session_id: &str,
+        consumer_id: &str,
+        last_acked_sequence: u64,
+        browser_socket_id: Option<&str>,
+    ) -> SessionResult {
+        self.attach_terminal_session(
+            session_id,
+            TerminalProtocol::V2,
+            Some(consumer_id),
+            last_acked_sequence,
+            browser_socket_id,
         )
     }
 
     pub fn handle_legacy_terminal_attach(&mut self, session_id: &str) -> SessionResult {
-        self.attach_terminal_session(session_id, TerminalProtocol::V1, None, 0)
+        self.attach_terminal_session(session_id, TerminalProtocol::V1, None, 0, None)
+    }
+
+    pub(crate) fn handle_legacy_terminal_attach_with_browser_socket(
+        &mut self,
+        session_id: &str,
+        browser_socket_id: Option<&str>,
+    ) -> SessionResult {
+        self.attach_terminal_session(session_id, TerminalProtocol::V1, None, 0, browser_socket_id)
     }
 
     fn attach_terminal_session(
@@ -296,12 +364,18 @@ impl LocalSessionHandler {
         protocol: TerminalProtocol,
         consumer_id: Option<&str>,
         last_acked_sequence: u64,
+        browser_socket_id: Option<&str>,
     ) -> SessionResult {
         let notifier = Arc::clone(&self.terminal_event_notifier);
         let Some(session) = self.terminal_session_mut(session_id) else {
             return SessionResult::error("Terminal session not found");
         };
-        if let Err(error) = session.attach_terminal(protocol, consumer_id, last_acked_sequence) {
+        if let Err(error) = session.attach_terminal(
+            protocol,
+            consumer_id,
+            last_acked_sequence,
+            browser_socket_id,
+        ) {
             return SessionResult::error(error);
         }
         if let Some(terminal) = session.terminal.as_mut() {
@@ -357,6 +431,16 @@ impl LocalSessionHandler {
         Ok(true)
     }
 
+    pub(crate) fn terminal_browser_socket_id<'a>(
+        &self,
+        session_id: &str,
+        consumer_id: impl Into<Option<&'a str>>,
+    ) -> Option<String> {
+        let session = self.sessions.get(session_id)?;
+        session.require_terminal_control(consumer_id.into()).ok()?;
+        session.terminal_browser_socket_id.clone()
+    }
+
     /// V1 confirms only Backend acceptance, never browser consumption. V2 ignores this ACK.
     pub fn complete_terminal_output_delivery(
         &mut self,
@@ -366,6 +450,7 @@ impl LocalSessionHandler {
         let Some(session) = self.terminal_session_mut(session_id) else {
             return Ok(());
         };
+        session.reset_terminal_delivery_retry();
         if session.terminal_protocol == Some(TerminalProtocol::V1) {
             session.acknowledge_terminal_output(sequence)?;
             session.terminal_last_sent_sequence = session.terminal_last_sent_sequence.max(sequence);
@@ -397,6 +482,11 @@ impl LocalSessionHandler {
         true
     }
 
+    pub fn defer_terminal_delivery(&mut self, session_id: &str) -> Option<Duration> {
+        self.terminal_session_mut(session_id)
+            .map(LocalSession::defer_terminal_delivery)
+    }
+
     pub fn complete_terminal_exit<'a>(
         &mut self,
         session_id: &str,
@@ -424,6 +514,7 @@ impl LocalSessionHandler {
             subtract_metric(&TERMINAL_ACK_LAG_BYTES, session.terminal_ack_lag_bytes);
             session.terminal_ack_lag_bytes = 0;
             session.terminal_last_sent_sequence = session.terminal_acked_sequence;
+            session.reset_terminal_delivery_retry();
             should_notify |= !session.terminal_replay.is_empty() || session.terminal_exit.is_some();
         }
         if should_notify {
@@ -481,6 +572,10 @@ impl LocalSessionHandler {
         self.close_terminal_session(session_id)
     }
 
+    pub fn retire_terminal_session(&mut self, session_id: &str) -> SessionResult {
+        self.close_terminal_session(session_id)
+    }
+
     fn close_terminal_session(&mut self, session_id: &str) -> SessionResult {
         let Some(mut session) = self.sessions.remove(session_id) else {
             return SessionResult::success();
@@ -520,6 +615,9 @@ impl LocalSessionHandler {
             let Some(session) = self.sessions.get_mut(&session_id) else {
                 continue;
             };
+            if !session.terminal_delivery_ready() {
+                continue;
+            }
             let mut session_events = session.unsent_terminal_output(MAX_TERMINAL_READS_PER_DRAIN);
             let mut remaining_capacity =
                 MAX_TERMINAL_READS_PER_DRAIN.saturating_sub(session_events.len());

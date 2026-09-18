@@ -14,12 +14,23 @@ import type {
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import { WORKSPACE_PATH_DRAG_TYPE } from '@/lib/workspace-path-transfer'
 import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
+    i18n: { language: 'zh-CN' },
     t: (
       key: string,
-      options?: string | { action?: string; count?: number; device?: string; location?: string },
+      options?:
+        | string
+        | {
+            action?: string
+            count?: number
+            device?: string
+            location?: string
+            defaultValue?: string
+          },
       interpolation?: { model?: string }
     ) => {
       if (typeof options === 'string') {
@@ -36,7 +47,7 @@ vi.mock('@/hooks/useTranslation', () => ({
       if (key === 'workbench.remove_code_comments') {
         return '移除代码评论'
       }
-      return key
+      return options?.defaultValue ?? key
     },
   }),
 }))
@@ -286,6 +297,27 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
+  test.each(['desktop', 'compact'] as const)(
+    'keeps the %s send action disabled until model selection is ready',
+    async variant => {
+      const onSubmit = vi.fn()
+      render(
+        <ChatInput
+          value="new task"
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant={variant}
+          projectChat={projectChatControls({ isModelSelectionReady: false })}
+        />
+      )
+
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).not.toHaveBeenCalled()
+    }
+  )
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
@@ -494,7 +526,9 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('runtime-plan-progress')).toHaveClass('z-0')
     expect(screen.getByTestId('project-chat-composer-form')).toHaveClass('z-10')
-    expect(await screen.findByTestId('composer-plugin-picker')).toHaveClass('z-popover')
+    const picker = await screen.findByTestId('composer-plugin-picker')
+    expect(picker).toHaveClass('z-system-popover')
+    expect(picker.parentElement).toBe(document.body)
   })
 
   test('shows the plan mode pill when plan mode is selected', async () => {
@@ -554,17 +588,21 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
+        collapseWhenIdle
         isStreaming
         onPause={onPause}
       />
     )
 
+    const form = screen.getByTestId('project-chat-composer-form')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
     expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('pause-response-button'))
 
     expect(onPause).toHaveBeenCalledTimes(1)
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
   })
 
   test('shows desktop send button for a draft while the assistant is streaming', async () => {
@@ -589,6 +627,46 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('继续修复')
   })
 
+  test('uses the selected follow-up behavior for the primary streaming action', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: {
+                  send_key: 'cmd_enter',
+                  follow_up_behavior: 'guide',
+                },
+              },
+            },
+          } as WorkbenchContextValue
+        }
+      >
+        <ChatInput
+          value="调整当前回复"
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant="desktop"
+          isStreaming
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith('调整当前回复', {
+      guideWhenBusy: true,
+    })
+  })
+
   test('offers interrupt-and-send while the assistant is streaming', async () => {
     const onSubmit = vi.fn()
 
@@ -604,8 +682,14 @@ describe('ChatInput', () => {
     )
 
     const menuButton = screen.getByTestId('send-mode-menu-button')
-    expect(menuButton).toHaveAttribute('title', '选择发送方式')
+    expect(menuButton).not.toHaveAttribute('title')
     expect(menuButton.querySelector('.lucide-chevron-down')).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    fireEvent.pointerEnter(menuButton.parentElement as HTMLElement)
+    act(() => vi.advanceTimersByTime(700))
+    expect(screen.getByTestId('send-mode-menu-button-tooltip')).toHaveTextContent('选择发送方式')
+    vi.useRealTimers()
 
     await userEvent.click(menuButton)
     expect(
@@ -613,7 +697,9 @@ describe('ChatInput', () => {
     ).toBeInTheDocument()
     const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
     expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
-    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent('⌘')
+    expect(
+      screen.getByTestId('guide-current-turn-option').querySelector('.lucide-corner-down-left')
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent('⇧')
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
@@ -872,6 +958,48 @@ describe('ChatInput', () => {
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
+  test('renders native queued follow-up actions without local queue controls', async () => {
+    const onForceStartQueuedMessage = vi.fn()
+    const onCancelQueuedMessage = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'runtime-queued-1',
+            content: '继续修复并行问题',
+            status: 'queued',
+            runtimeQueued: true,
+            runtimeQueuePosition: 2,
+            createdAt: '2026-09-10T15:00:00.000+08:00',
+          },
+        ]}
+        onForceStartQueuedMessage={onForceStartQueuedMessage}
+        onCancelQueuedMessage={onCancelQueuedMessage}
+        onSendQueuedAsGuidance={vi.fn()}
+        onInterruptAndSendQueuedMessage={vi.fn()}
+        onEditQueuedMessage={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('排队中 · 第 2 位')).toBeInTheDocument()
+    expect(screen.getByTestId('queue-force-start-button-runtime-queued-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('queue-guidance-button-runtime-queued-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-interrupt-button-runtime-queued-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-more-button-runtime-queued-1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('queue-force-start-button-runtime-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-cancel-button-runtime-queued-1'))
+
+    expect(onForceStartQueuedMessage).toHaveBeenCalledWith('runtime-queued-1')
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith('runtime-queued-1')
+  })
+
   test('restores queued message text into the composer when editing', async () => {
     function Harness() {
       const [value, setValue] = useState('')
@@ -943,7 +1071,7 @@ describe('ChatInput', () => {
 
     const interruptButton = screen.getByTestId('queue-interrupt-button-sending-guidance')
     expect(screen.getByText('引导中')).toBeInTheDocument()
-    expect(interruptButton).toHaveTextContent('workbench.interrupt_and_send_short')
+    expect(interruptButton).toHaveTextContent('立即发送')
     expect(interruptButton).toHaveClass('text-text-secondary', 'hover:bg-muted')
     expect(interruptButton).not.toHaveClass('border', 'bg-base', 'shadow-sm')
     expect(screen.queryByTestId('queue-guidance-button-sending-guidance')).not.toBeInTheDocument()
@@ -1004,6 +1132,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         queuedMessages={queuedMessages}
+        onReorderQueuedMessages={vi.fn()}
         guidanceMessages={[]}
       />
     )
@@ -1853,7 +1982,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-tooltip')).toHaveClass('h-9')
     expect(screen.getByTestId('model-selector-tooltip')).toHaveClass(
       'group-hover/model-selector:opacity-100',
-      'group-hover/model-selector:delay-[1500ms]'
+      'group-hover/model-selector:[transition-delay:1500ms]'
     )
     expect(screen.getByTestId('model-selector-tooltip')).not.toHaveClass(
       'group-focus-within/model-selector:delay-0'
@@ -3424,7 +3553,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('goal-status-bar')).not.toHaveTextContent('继续执行中')
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('正在开始下一轮')
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
   })
 
@@ -3937,33 +4066,43 @@ describe('ChatInput', () => {
     })
   })
 
-  test('enables send when only attachments are present', async () => {
-    const onSubmit = vi.fn()
-    const attachment: Attachment = {
-      id: 44,
-      filename: 'brief.pdf',
-      file_size: 1200,
-      mime_type: 'application/pdf',
-      status: 'ready',
-      file_extension: '.pdf',
-      created_at: '2026-05-27T00:00:00.000Z',
+  test.each([false, true])(
+    'applies requireText=%s to attachment-only submissions',
+    async requireText => {
+      const onSubmit = vi.fn()
+      const attachment: Attachment = {
+        id: 44,
+        filename: 'brief.pdf',
+        file_size: 1200,
+        mime_type: 'application/pdf',
+        status: 'ready',
+        file_extension: '.pdf',
+        created_at: '2026-05-27T00:00:00.000Z',
+      }
+
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({ attachments: [attachment] })}
+          requireText={requireText}
+        />
+      )
+
+      if (requireText) {
+        expect(screen.getByTestId('send-message-button')).toBeDisabled()
+        fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 'Enter' })
+        expect(onSubmit).not.toHaveBeenCalled()
+        return
+      }
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).toHaveBeenCalledTimes(1)
     }
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={onSubmit}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({ attachments: [attachment] })}
-      />
-    )
-
-    expect(screen.getByTestId('send-message-button')).toBeEnabled()
-    await userEvent.click(screen.getByTestId('send-message-button'))
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
+  )
 
   test('opens project work menu and selects a project', async () => {
     const onSelectProjectWorkspace = vi.fn()
@@ -4000,6 +4139,7 @@ describe('ChatInput', () => {
   })
 
   test('shows no-project transition from the standalone entry', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -4029,6 +4169,7 @@ describe('ChatInput', () => {
             },
           ],
           currentProjectId: 7,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4037,10 +4178,12 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('shows no-project option before selecting a concrete project', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -4053,6 +4196,7 @@ describe('ChatInput', () => {
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           currentProjectId: undefined,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4064,10 +4208,12 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
-  test('hides standalone devices and selects the local device for no-project mode', async () => {
+  test('hides standalone devices and clears the project for no-project mode', async () => {
+    const onSelectProject = vi.fn()
     const onSelectStandaloneDevice = vi.fn()
     const devices: DeviceInfo[] = [
       {
@@ -4110,6 +4256,7 @@ describe('ChatInput', () => {
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           devices,
           currentProjectId: 7,
+          onSelectProject,
           onSelectStandaloneDevice,
         })}
       />
@@ -4122,7 +4269,8 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('standalone-device-option-local-online')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('no-project-option'))
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-online')
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
   })
 
   test('marks the current project instead of a remembered standalone device', async () => {
@@ -4502,7 +4650,6 @@ describe('ChatInput', () => {
   })
 
   test('shows three common plugin tasks and keeps additional tasks secondary', async () => {
-    const applyTrialTemplate = vi.fn()
     const dismissTrialGuide = vi.fn()
     const onSubmit = vi.fn()
     const trialTemplates = Array.from({ length: 4 }, (_, index) => ({
@@ -4524,7 +4671,6 @@ describe('ChatInput', () => {
             logoUrl: 'https://example.com/documents.png',
           },
           trialTemplates,
-          applyTrialTemplate,
           dismissTrialGuide,
         })}
       />
@@ -4546,10 +4692,14 @@ describe('ChatInput', () => {
     expect(screen.getByText('Scenario 4')).toBeInTheDocument()
 
     await userEvent.click(screen.getByText('Scenario 4'))
-    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
+    expect(
+      (screen.getByTestId('chat-message-input') as HTMLElement & { value: string }).value
+    ).toBe('Prompt 4 ')
 
     await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
-    expect(applyTrialTemplate).toHaveBeenLastCalledWith(trialTemplates[0])
+    expect(
+      (screen.getByTestId('chat-message-input') as HTMLElement & { value: string }).value
+    ).toBe('Prompt 1 ')
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
@@ -4576,8 +4726,6 @@ describe('ChatInput', () => {
           projectChat={projectChatControls({
             trialPluginName: 'Browser',
             trialTemplates: [template],
-            applyTrialTemplate: selectedTemplate =>
-              setValue(`${pluginReference} ${selectedTemplate.description} `),
           })}
         />
       )

@@ -1,193 +1,51 @@
+export type {
+  MessageRole,
+  MessageStatus,
+  ToolBlockStatus,
+  BaseProcessingBlock,
+  ToolBlock,
+  ThinkingBlock,
+  TextBlock,
+  PlanBlock,
+  SubagentBlock,
+  FileChangesBlock,
+  ProcessingBlock,
+  MessageSource,
+  RuntimeWorkbenchMessageStatus,
+  RuntimeSubagentStatusState,
+  RuntimeSubagentStatus,
+  WorkbenchMessage,
+  RuntimeAssistantDisplayItem,
+  RuntimeConversationTurn,
+  RuntimeConversationItem,
+} from '@wegent/chat-core/runtime-conversation'
+
 import type {
-  Attachment,
-  CodexMemoryCitation,
-  CodexReference,
   DeviceInfo,
-  ModelOptions,
   ProjectWithTasks,
-  RuntimeAdditionalContext,
-  RuntimeContextUsage,
-  RuntimeGoalCreateInput,
-  RuntimeSendRequest,
   RuntimeTaskAddress,
-  RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
   Team,
-  TurnFileChangesSummary,
   User,
 } from './api'
-import type {
-  BaseWorkbenchProcessingBlock,
-  WorkbenchMessage as CoreWorkbenchMessage,
-  WorkbenchMessageRole,
-  WorkbenchMessageStatus,
-  WorkbenchFileChangesBlock,
-  WorkbenchPlanBlock,
-  WorkbenchProcessingBlock,
-  WorkbenchThinkingBlock,
-  WorkbenchTextBlock,
-  WorkbenchToolBlock,
-  WorkbenchToolBlockStatus,
-} from '@wegent/chat-core'
-import type { CodeCommentContext } from './workspace-files'
 
-export type MessageRole = WorkbenchMessageRole
-export type MessageStatus = WorkbenchMessageStatus
+export type {
+  QueuedMessageStatus,
+  GuidanceMessageStatus,
+  QueuedWorkbenchMessage,
+  RuntimePaneQueuedMessage,
+  GuidanceWorkbenchMessage,
+} from '@wegent/chat-core/conversation-queue'
 
-export type ToolBlockStatus = WorkbenchToolBlockStatus
-
-export type BaseProcessingBlock = BaseWorkbenchProcessingBlock
-
-export type ToolBlock = WorkbenchToolBlock
-
-export type ThinkingBlock = WorkbenchThinkingBlock
-
-export type TextBlock = WorkbenchTextBlock
-
-export type PlanBlock = WorkbenchPlanBlock
-
-export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
-
-export type ProcessingBlock = WorkbenchProcessingBlock<TurnFileChangesSummary>
-
-export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
-
-export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
-
-export type RuntimeSubagentStatusState = 'running' | 'done' | 'interrupted'
-
-export interface RuntimeSubagentStatus {
-  id: string
-  agentId: string
-  agentPath: string
-  agentName: string
-  status: RuntimeSubagentStatusState
-  kind?: string
-  updatedAtMs?: number | null
-}
-
-export type WorkbenchMessage = Omit<
-  CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>,
-  'blocks'
-> & {
-  blocks?: ProcessingBlock[]
-  runtimeDisplayItems?: RuntimeAssistantDisplayItem[]
-  runtimeMessageIndex?: number | null
-  turnId?: string | null
-  runtimeStatus?: RuntimeWorkbenchMessageStatus | null
-  completedAt?: string | number | null
-  stoppedNotice?: boolean | null
-  runtimeGoalRequest?: boolean | null
-  runtimeGuidance?: boolean | null
-  runtimeGuidanceSplitBefore?: boolean | null
-  runtimeGuidanceContinuation?: boolean | null
-  codeComments?: CodeCommentContext[] | null
-  references?: CodexReference[] | null
-  memoryCitations?: CodexMemoryCitation[] | null
-}
-
-export type RuntimeAssistantDisplayItem =
-  | {
-      id: string
-      type: 'assistant_text'
-      content: string
-    }
-  | {
-      id: string
-      type: 'block'
-    }
-
-export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
-export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'
-
-export interface QueuedWorkbenchMessage {
-  id: string
-  content: string
-  status: QueuedMessageStatus
-  deliveryMode?: 'message' | 'guidance'
-  awaitingTurnStart?: boolean
-  awaitingGuidanceAcceptance?: boolean
-  createdAt: string
-  error?: string
-  notice?: string
-}
-
-export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
-  attachments?: Attachment[]
-  displayContent?: string
-  codeComments?: CodeCommentContext[]
-  modelId?: string
-  modelType?: RuntimeSendRequest['modelType']
-  modelOptions?: ModelOptions
-  runtimeGoalRequest?: boolean
-  initialGoal?: RuntimeGoalCreateInput
-  additionalContext?: RuntimeAdditionalContext
-}
-
-export interface GuidanceWorkbenchMessage {
-  id: string
-  content: string
-  status: GuidanceMessageStatus
-  createdAt: string
-  error?: string
-}
-
-export interface RuntimePaneTranscript {
-  messages: WorkbenchMessage[]
-  turns: RuntimeConversationTurn[]
-  running?: boolean
-  contextUsage?: RuntimeContextUsage | null
-  turnNavigation?: RuntimeTurnNavigationItem[]
-  fullContent?: boolean
-  rangeStart?: number | null
-  rangeEnd?: number | null
-  hasMoreBefore?: boolean
-  beforeCursor?: string | null
-  hasMoreAfter?: boolean
-  afterCursor?: string | null
-}
-
-export interface RuntimeConversationTurn {
-  id: string | null
-  clientUserMessageId?: string
-  runtimeMessageIndex?: number
-  items: RuntimeConversationItem[]
-  status: RuntimeWorkbenchMessageStatus
-  completedAt?: string | number | null
-  error?: string
-  errorType?: string
-  stoppedNotice?: boolean | null
-  streamingThinkingContent?: string
-  fileChanges?: TurnFileChangesSummary
-  references?: CodexReference[]
-  memoryCitations?: CodexMemoryCitation[]
-}
-
-export type RuntimeConversationItem =
-  | {
-      id: string
-      type: 'user_message'
-      message: WorkbenchMessage & { role: 'user' }
-    }
-  | {
-      id: string
-      type: 'assistant_text'
-      content: string
-      streamTextOffset?: number
-      createdAt: string
-    }
-  | {
-      id: string
-      type: 'block'
-      block: ProcessingBlock
-    }
-
+export type { RuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
+import type { RuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 export interface RuntimePaneTranscriptLoadOptions {
   limit?: number
   beforeCursor?: string | null
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  navigationOnly?: boolean
 }
 
 export type RuntimeTranscriptLoader = (

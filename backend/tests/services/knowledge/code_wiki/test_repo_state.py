@@ -23,6 +23,7 @@ from app.services.knowledge.code_wiki.repo_state import (
     RepositoryState,
     read_repository_state,
 )
+from app.services.knowledge.code_wiki.run_mode import ChangedPath
 from app.services.knowledge.code_wiki.source import (
     SUPPORTED_SOURCE_TYPES,
     SourceRepository,
@@ -43,12 +44,23 @@ PUBLISHED = "aaaaaaa"
 class FakeProvider:
     """A provider that answers exactly what a test tells it to."""
 
-    def __init__(self, head=None, files=None, head_raises=False, files_raise=False):
+    def __init__(
+        self,
+        head=None,
+        files=None,
+        file_count=None,
+        head_raises=False,
+        files_raise=False,
+        file_count_raises=False,
+    ):
         self._head = head if head is not None else {"branch": "main", "commit": HEAD}
         self._files = files
+        self._file_count = file_count
         self._head_raises = head_raises
         self._files_raise = files_raise
+        self._file_count_raises = file_count_raises
         self.diff_calls = []
+        self.count_calls = []
 
     def get_default_branch_head(self, *, token, git_domain, repo_name):
         if self._head_raises:
@@ -60,6 +72,12 @@ class FakeProvider:
         if self._files_raise:
             raise RuntimeError("compare failed")
         return self._files
+
+    def get_tracked_file_count(self, *, token, git_domain, repo_name, ref):
+        self.count_calls.append(ref)
+        if self._file_count_raises:
+            raise RuntimeError("tree failed")
+        return self._file_count
 
 
 def _with(provider, token="t0ken"):
@@ -76,11 +94,22 @@ def _with(provider, token="t0ken"):
     )
 
 
-def _read(test_db: Session, provider, *, token="t0ken", since=PUBLISHED):
+def _read(
+    test_db: Session,
+    provider,
+    *,
+    token="t0ken",
+    since=PUBLISHED,
+    include_tracked_file_count=False,
+):
     provider_patch, git_patch = _with(provider, token)
     with provider_patch, git_patch:
         return read_repository_state(
-            test_db, user_id=1, source=SOURCE, since_commit=since
+            test_db,
+            user_id=1,
+            source=SOURCE,
+            since_commit=since,
+            include_tracked_file_count=include_tracked_file_count,
         )
 
 
@@ -188,6 +217,32 @@ def test_a_genuinely_empty_diff_is_kept_as_empty(test_db: Session):
     assert state.changed_paths == ()
 
 
+def test_a_historical_run_reads_the_head_tree_only_after_a_nonempty_diff(
+    test_db: Session,
+):
+    provider = FakeProvider(
+        files=[{"path": "src/one.py", "status": "M"}], file_count=7_211
+    )
+
+    state = _read(test_db, provider, include_tracked_file_count=True)
+
+    assert state.tracked_file_count == 7_211
+    assert provider.count_calls == [HEAD]
+
+
+def test_a_failed_tree_count_keeps_the_diff_but_leaves_the_size_unknown(
+    test_db: Session,
+):
+    provider = FakeProvider(
+        files=[{"path": "src/one.py", "status": "M"}], file_count_raises=True
+    )
+
+    state = _read(test_db, provider, include_tracked_file_count=True)
+
+    assert state.changed_paths == (ChangedPath("src/one.py", "M"),)
+    assert state.tracked_file_count is None
+
+
 # --- the platforms that must be able to answer ------------------------------
 
 
@@ -200,3 +255,4 @@ def test_every_supported_platform_can_report_repository_state(source_type: str):
     assert provider is not None
     assert hasattr(provider, "get_default_branch_head")
     assert hasattr(provider, "get_changed_files")
+    assert hasattr(provider, "get_tracked_file_count")

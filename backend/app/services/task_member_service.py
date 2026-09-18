@@ -92,7 +92,9 @@ class TaskMemberService:
         logger.info(f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}")
         return is_group_chat
 
-    def convert_to_group_chat(self, db: Session, task_id: int) -> bool:
+    def convert_to_group_chat(
+        self, db: Session, task_id: int, *, commit: bool = True
+    ) -> bool:
         """Convert an existing task to a group chat"""
         task = self.get_task(db, task_id)
         if not task:
@@ -119,7 +121,10 @@ class TaskMemberService:
 
         task.updated_at = datetime.utcnow()
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(task)
 
         logger.info(f"Task {task_id} converted to group chat")
@@ -220,6 +225,8 @@ class TaskMemberService:
         task_id: int,
         user_id: int,
         invited_by: int,
+        *,
+        commit: bool = True,
     ) -> ResourceMember:
         """Add a user as a member to a task"""
         logger.info(
@@ -261,7 +268,10 @@ class TaskMemberService:
             # Clear stale review metadata from previous rejection
             existing.reviewed_by_user_id = 0
             existing.reviewed_at = EPOCH_TIME
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             db.refresh(existing)
             logger.info(
                 f"[add_member] Member reactivated successfully: id={existing.id}"
@@ -286,7 +296,10 @@ class TaskMemberService:
             requested_at=datetime.utcnow(),
         )
         db.add(new_member)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(new_member)
         logger.info(f"[add_member] New member created successfully: id={new_member.id}")
         return new_member

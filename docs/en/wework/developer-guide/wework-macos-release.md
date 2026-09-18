@@ -8,6 +8,20 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
+Both macOS arm64 and x64 releases use the Apple Silicon `macos-14` runner. The
+x64 build verifies Rosetta 2 and then installs x64 Node.js through
+`actions/setup-node`. Before installing dependencies, the workflow checks that
+the running Node.js architecture matches the target. Harness Runtime native
+dependencies follow the running Node.js architecture, so selecting an Electron
+Builder target alone cannot cross-build the complete runtime. If the
+architectures differ, correct the Node.js architecture and rebuild; do not
+reuse artifacts built for the wrong architecture or rerun only publication.
+
+When formal macOS arm64 package verification fails, the workflow prunes large
+temporary runtime directories and uploads desktop E2E diagnostics retained for
+seven days. Use those logs to establish the root cause instead of hiding a
+failure through reruns or weaker E2E assertions.
+
 ## Version and artifacts
 
 The release version is written to `wework/package.json` and
@@ -207,6 +221,16 @@ covers component downloads, host download, verification, and installation
 readiness, and includes bytes transferred before a failed differential attempt.
 The local Squirrel.Mac handoff of the cached ZIP is not counted as network
 traffic.
+
+When one component download encounters an explicitly transient transport
+failure, the client makes at most three attempts, waiting one second and then
+two seconds before retrying. Retries are limited to interrupted connections,
+DNS, connection, or request timeouts, HTTP 408, HTTP 429, and HTTP 5xx
+responses. Other HTTP 4xx responses, archive size or SHA-256 mismatches, and
+extracted-content SHA-256 mismatches are not retried and remain real update
+failures. Bytes transferred by a failed component attempt are removed from the
+current progress before retrying. Failure events in `app-update.log` record the
+sanitized error type, code, message, and first-level cause without logging URLs.
 
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it

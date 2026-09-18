@@ -44,6 +44,10 @@ describe('messageService canUseChatContexts', () => {
     expect(canUseChatContexts('chat', createTeam('ClaudeCode'))).toBe(true)
   })
 
+  it('returns true for Codex shell teams in chat mode', () => {
+    expect(canUseChatContexts('chat', createTeam('Codex'))).toBe(true)
+  })
+
   it('returns true for chat shell teams in chat mode', () => {
     const team = {
       id: 1,
@@ -73,6 +77,14 @@ describe('messageService canSwitchModelAfterMessages', () => {
 
   it('allows ClaudeCode teams detected from bot shell type', () => {
     expect(canSwitchModelAfterMessages(createTeam('', 'ClaudeCode'))).toBe(true)
+  })
+
+  it('allows Codex teams to switch models after messages exist', () => {
+    expect(canSwitchModelAfterMessages(createTeam('Codex'))).toBe(true)
+  })
+
+  it('allows Codex teams detected from bot shell type', () => {
+    expect(canSwitchModelAfterMessages(createTeam('', 'Codex'))).toBe(true)
   })
 
   it('keeps unknown shells disabled after messages exist', () => {

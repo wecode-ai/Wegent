@@ -128,4 +128,18 @@ describe('DshMenuActions', () => {
 
     expect(screen.getByTestId('wework-menu-action-quality.refresh.menu')).toBeDisabled()
   })
+
+  test('passes host surface arguments to the command', async () => {
+    context.set('workspace.ready', true)
+    const args = { deviceId: 'device-1', taskId: 'task-1' }
+
+    render(<DshMenuActions args={args} location="conversation.toolbar" />)
+    await userEvent.click(screen.getByTestId('wework-menu-action-quality.refresh.menu'))
+
+    expect(execute).toHaveBeenCalledWith('quality.refresh', args, {
+      menuId: 'quality.refresh.menu',
+      menuLocation: 'conversation.toolbar',
+      source: 'menu',
+    })
+  })
 })

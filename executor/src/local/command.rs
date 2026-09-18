@@ -31,6 +31,8 @@ pub trait DeviceCommandHandler: Send + Sync {
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandRequest {
+    #[serde(default)]
+    pub command_key: Option<String>,
     pub command: String,
     #[serde(default)]
     pub argv: Vec<String>,
@@ -79,6 +81,7 @@ impl CommandRequest {
             .unwrap_or_default();
 
         Self {
+            command_key: string_field(&value, "command_key"),
             command,
             argv,
             cwd,
@@ -176,6 +179,11 @@ impl CommandHandler {
             }
         }
 
+        #[cfg(windows)]
+        if let Some(result) = execute_windows_builtin_command(&request) {
+            return result;
+        }
+
         let mut command = process_command(&request);
         command.env_clear();
         command.envs(build_env(&request.env));
@@ -230,6 +238,61 @@ impl CommandHandler {
             error: None,
         }
     }
+}
+
+pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {
+    let configured = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+    #[cfg(windows)]
+    {
+        return configured
+            .map(normalize_windows_home_path)
+            .or_else(dirs::home_dir);
+    }
+    #[cfg(not(windows))]
+    {
+        configured.or_else(dirs::home_dir)
+    }
+}
+
+#[cfg(any(windows, test))]
+fn normalize_windows_home_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    let value = path.to_string_lossy();
+    let bytes = value.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b'/' {
+        let drive = (bytes[1] as char).to_ascii_uppercase();
+        let suffix = value[3..].replace('/', "\\");
+        return std::path::PathBuf::from(format!("{drive}:\\{suffix}"));
+    }
+    path
+}
+
+#[cfg(windows)]
+fn execute_windows_builtin_command(request: &CommandRequest) -> Option<CommandResult> {
+    match request.command_key.as_deref() {
+        Some("home_dir") => Some(CommandResult::ok(
+            configured_home_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| ".".to_owned()),
+        )),
+        Some("pwd") => Some(CommandResult::ok(request.cwd.clone().unwrap_or_else(
+            || {
+                std::env::current_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| ".".to_owned())
+            },
+        ))),
+        Some("project_workspace_root") => Some(CommandResult::ok(project_workspace_root_path())),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn project_workspace_root_path() -> String {
+    crate::workspace_paths::workspace_root()
+        .display()
+        .to_string()
 }
 
 pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String> {
@@ -297,4 +360,26 @@ fn normalized_f64(value: Option<&Value>, default: f64, upper_bound: f64) -> f64 
 fn elapsed_seconds(started_at: Instant) -> f64 {
     let elapsed = started_at.elapsed().as_secs_f64();
     (elapsed * 1_000_000.0).round() / 1_000_000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_windows_home_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn windows_home_path_converts_msys_drive_paths() {
+        assert_eq!(
+            normalize_windows_home_path(PathBuf::from("/d/a/Wegent/Wegent")),
+            PathBuf::from(r"D:\a\Wegent\Wegent")
+        );
+    }
+
+    #[test]
+    fn windows_home_path_preserves_native_paths() {
+        assert_eq!(
+            normalize_windows_home_path(PathBuf::from(r"D:\a\Wegent\Wegent")),
+            PathBuf::from(r"D:\a\Wegent\Wegent")
+        );
+    }
 }

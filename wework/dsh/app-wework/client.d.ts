@@ -136,12 +136,91 @@ export interface WeworkComposerService {
   setValue(value: string, selectionOffset?: number): void
 }
 
+export interface WeworkConversationReference {
+  readonly deviceId: string
+  readonly taskId: string
+  readonly workspacePath?: string | null
+}
+
+export interface WeworkConversationAttachment {
+  readonly id: number
+  readonly filename: string
+  readonly fileSize: number
+  readonly mimeType: string
+  readonly localPath?: string | null
+  readonly previewUrl?: string | null
+}
+
+export type WeworkConversationBlock =
+  | {
+      readonly type: 'thinking' | 'text' | 'plan'
+      readonly content: string
+      readonly status: string
+    }
+  | {
+      readonly type: 'tool'
+      readonly toolName: string
+      readonly toolInput?: unknown
+      readonly toolOutput?: unknown
+      readonly status: string
+    }
+  | {
+      readonly type: 'file_changes'
+      readonly fileChanges: unknown
+      readonly status: string
+    }
+
+export type WeworkConversationItem =
+  | {
+      readonly id: string
+      readonly type: 'user_message'
+      readonly content: string
+      readonly createdAt?: string | null
+      readonly status: string
+      readonly attachments: readonly WeworkConversationAttachment[]
+    }
+  | {
+      readonly id: string
+      readonly type: 'assistant_text'
+      readonly content: string
+      readonly createdAt?: string | null
+    }
+  | {
+      readonly id: string
+      readonly type: 'block'
+      readonly block: WeworkConversationBlock
+    }
+
+export interface WeworkConversationTurn {
+  readonly id?: string | null
+  readonly status: string
+  readonly completedAt?: string | number | null
+  readonly items: readonly WeworkConversationItem[]
+}
+
+export interface WeworkConversationSnapshot {
+  readonly reference: WeworkConversationReference
+  readonly title: string
+  readonly complete: boolean
+  readonly turns: readonly WeworkConversationTurn[]
+}
+
+export interface WeworkConversationService {
+  getTranscript(reference: WeworkConversationReference): Promise<WeworkConversationSnapshot>
+}
+
+export interface WeworkDialogService {
+  save(options?: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
 export interface WeworkContribution {
   readonly id: string
   readonly label?: string
   readonly icon?: string
   readonly module?: string
   readonly order?: number
+  readonly requiredHostServices?: readonly string[]
+  readonly when?: WeworkContextExpression
   readonly [key: string]: unknown
 }
 
@@ -155,7 +234,7 @@ export interface WeworkContributionMap {
   readonly 'wework.plugins.action': WeworkContribution
   readonly 'wework.board.card.status': WeworkContribution
   readonly 'wework.composer.action': WeworkContribution
-  readonly 'wework.environment.section': WeworkContribution
+  readonly 'wework.conversation.summary': WeworkContribution
   readonly 'wework.home': WeworkContribution
   readonly 'wework.project.create.section': WeworkContribution
   readonly 'wework.project.work.section': WeworkContribution
@@ -330,12 +409,30 @@ export interface WeworkSecretRegistry {
   scope(namespace: string): WeworkScopedSecrets
 }
 
+export interface WeworkTelemetrySink {
+  readonly id: string
+  readonly protocol: 'telemetry-sink/v1'
+  accept(fact: Readonly<Record<string, unknown>>): void | Promise<void>
+}
+
+export interface WeworkTelemetrySinkRegistry {
+  register(owner: Context, sink: WeworkTelemetrySink): () => void
+  get(id: string): WeworkTelemetrySink | null
+  list(): readonly WeworkTelemetrySink[]
+  subscribe(listener: () => void): () => void
+}
+
+export interface WeworkTelemetryService {
+  readonly sinks: WeworkTelemetrySinkRegistry
+}
+
 export interface WeworkService {
   readonly host: WeworkDesktopService
   readonly backend: WeworkPluginBackendRegistry
   readonly chat: WeworkChatService
   readonly commands: WeworkCommandRegistry
   readonly composer: WeworkComposerService
+  readonly conversations: WeworkConversationService
   readonly contributions: WeworkContributionCatalog
   readonly context: WeworkContextRegistry
   readonly environments: WeworkEnvironmentService
@@ -345,6 +442,7 @@ export interface WeworkService {
   readonly configuration: WeworkConfigurationRegistry
   readonly storage: WeworkStorageRegistry
   readonly secrets: WeworkSecretRegistry
+  readonly telemetry: WeworkTelemetryService
   readonly testing: WeworkTestingService
 }
 
@@ -354,6 +452,7 @@ export interface WeworkExtensionHost extends Pick<
   | 'backend'
   | 'chat'
   | 'composer'
+  | 'conversations'
   | 'contributions'
   | 'context'
   | 'environments'
@@ -363,8 +462,10 @@ export interface WeworkExtensionHost extends Pick<
   | 'configuration'
   | 'storage'
   | 'secrets'
+  | 'telemetry'
   | 'testing'
 > {
+  readonly dialog: WeworkDialogService
   getRevision(): number
   subscribe(listener: () => void): () => void
 }
@@ -405,7 +506,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'session-maybe'
       owner: { readonly compact: boolean; readonly disabled: boolean }
     }
-    'wework.environment.section': {
+    'wework.conversation.summary': {
       kind: 'list'
       scope: 'session-maybe'
       owner: Readonly<Record<string, unknown>>

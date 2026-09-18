@@ -1,4 +1,11 @@
 {
+  "table": {
+    "expand": "Expand table",
+    "close": "Close expanded table",
+    "copy": "Copy table",
+    "copied": "Table copied",
+    "failed": "Could not copy table. Try again."
+  },
   "continue_in_new_task": "Continue in new task",
   "message_navigation": {
     "label": "Previous message navigation",
@@ -15,6 +22,37 @@
   },
   "process_text": {
     "running": "Working"
+  },
+  "subagent": {
+    "agent": "Subagent",
+    "activity": "Subagent activity",
+    "group_started": "started working",
+    "group_updated": "updated",
+    "group_finished": "finished",
+    "group_interrupted": "interrupted",
+    "group_failed": "failed",
+    "open_agent": "Open {{name}} subagent",
+    "open_panel": "Open subagents ({{count}})",
+    "summary_active": "{{count}} working",
+    "summary_done": "{{count}} done",
+    "summary_mixed": "{{active}} working · {{done}} done",
+    "others_one": "and {{count}} other subagent",
+    "others_other": "and {{count}} other subagents",
+    "status_summary": "{{agents}}, {{status}}",
+    "back": "Back to main conversation",
+    "back_to_list": "Back to subagents",
+    "active_count": "Active · {{count}}",
+    "done_count": "Done · {{count}}",
+    "no_active": "No active subagents",
+    "working": "Working",
+    "status_working": "Working",
+    "status_done": "Done",
+    "status_interrupted": "Interrupted",
+    "status_failed": "Failed",
+    "loading_history": "Loading subagent history…",
+    "history_load_failed": "Failed to load subagent history",
+    "waiting_for_output": "The subagent is working…",
+    "no_output": "This subagent has no messages to display"
   },
   "tool_activity": {
     "reconnecting": "Connection interrupted. Reconnecting…",
@@ -68,6 +106,9 @@
     "renamed_file": "Renamed {{filename}}"
   },
   "assistant_status": {
+    "working": "Working",
+    "working_for": "Working for {{duration}}",
+    "worked_for": "Worked for {{duration}}",
     "stopped": "Stopped",
     "stopped_after": "You stopped after {{duration}}"
   },
@@ -162,10 +203,14 @@
     "revert": "Revert",
     "confirm_revert_title": "Revert this turn's file changes?",
     "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",
+    "confirm_partial_revert_description": "Revert the selected changes? The workspace changes only when the reverse patch applies safely.",
     "confirm_revert": "Confirm revert",
     "cancel": "Cancel",
     "close": "Close",
     "reverting": "Reverting",
+    "applying": "Applying",
+    "comment_placeholder": "Describe what should change here",
+    "add_comment": "Add comment",
     "loading_diff": "Loading changes from the device...",
     "empty_diff": "No text changes to display",
     "changes_label": "Changes",
@@ -189,7 +234,15 @@
       "expand_file_diff": "Expand file diff",
       "copy_git_apply": "Copy git apply command",
       "hide_files": "Hide files",
-      "show_files": "Show files"
+      "show_files": "Show files",
+      "show_split": "Switch to split view",
+      "show_unified": "Switch to unified view",
+      "stage_file": "Stage file",
+      "stage_hunk": "Stage",
+      "unstage_file": "Unstage file",
+      "unstage_hunk": "Unstage",
+      "revert_file": "Revert file",
+      "revert_hunk": "Revert"
     },
     "review_failed": "Failed to load file changes",
     "revert_failed": "Failed to revert file changes",
@@ -221,6 +274,11 @@
       "payload_too_large": {
         "title": "Content too large: conversation history or attachment exceeds the limit",
         "description": "Reduce attachments or context content, then retry."
+      },
+      "model_service_connection_error": {
+        "title": "Unable to connect to the model service",
+        "description": "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry.",
+        "description_with_endpoint": "Connection error: The request could not be sent to {{endpoint}}. Check your network or VPN connection and retry."
       },
       "network_error": {
         "title": "Network error: Please check your connection and try again",

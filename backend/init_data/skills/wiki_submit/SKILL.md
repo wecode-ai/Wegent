@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "2.0.5"
+version: "2.0.7"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -49,6 +49,13 @@ Anything submitted is part of the version; there is no scratch page or draft nam
 Remove an accidental page before completing the run.
 
 ## Generation workflow
+
+### Bounded Section Writers
+
+If the invocation identifies you as a bounded Section Writer or assigns one Work
+Package, submit only that package's pages and return the result to the Coordinator.
+A bounded Section Writer must not run `plan`, `complete`, or `fail`: those commands
+change the whole generation and belong to its Coordinator.
 
 ### Before the first submit
 
@@ -174,12 +181,25 @@ node wiki_submit.js plan \
 ### Complete the wiki generation
 
 Report the commit you documented, so the next run knows what has already been covered.
+`complete` also records the Git-tracked file count for the same commit. This is
+automatic and lets a later incremental run use a proportional change limit. For older
+published versions without that metadata, the server reads the repository tree before
+making the next run-mode decision.
+
+`complete` requires both `--head-commit` and `--repo-dir`. `--repo-dir` is the exact
+Git checkout you analyzed, not a temporary folder holding generated Markdown. It is
+required even when the command runs outside the checkout: the Skill verifies that its
+HEAD is the reported commit and refuses to publish if that check fails. If the local
+Git tree scan itself cannot run, it warns and publishes without the count; the server
+then reads the provider tree before the next run-mode decision.
 
 ```bash
+REPO_DIR=/absolute/path/to/the/checkout
 node wiki_submit.js complete \
   --generation-id 123 \
-  --head-commit "$(git rev-parse HEAD)" \
-  --structure-order index,quickstart,architecture,modules
+  --head-commit "$(git -C "$REPO_DIR" rev-parse HEAD)" \
+  --structure-order index,quickstart,architecture,modules \
+  --repo-dir "$REPO_DIR"
 ```
 
 `--structure-order` controls the order readers see. Put `index` first and arrange the

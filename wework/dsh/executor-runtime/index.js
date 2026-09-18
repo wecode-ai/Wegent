@@ -14,6 +14,7 @@ const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 const MAX_EVENT_FRAME_BYTES = 16 * 1024 * 1024
 const SLOW_CONSUMER_TIMEOUT_MS = 30_000
+const TRANSCRIPT_EXPORT_TIMEOUT_MS = 10 * 60 * 1000
 
 export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
@@ -23,7 +24,8 @@ export async function apply(ctx) {
     onError: error => {
       console.error('[wework-executor-runtime] transcript subscriber failed', error)
     },
-    readTurn: turn => readExecutorTurn(client, turn),
+    readTurn: (turn, options) => exportExecutorTranscript(client, turn, options),
+    summarizeTurn: turn => readExecutorTurn(client, turn),
   })
   const projector = new ExecutorSessionProjector(ctx.sessions, {
     onTurnCompleted: turn => transcriptSource.publish(turn),
@@ -59,11 +61,12 @@ export function createTranscriptTarget(client) {
         ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
       })
     },
-    import(transcript, turns) {
-      return client.request('runtime.tasks.transcript.import', {
+    restore(transcript, segments, options = {}) {
+      return client.request('runtime.tasks.transcript.restore', {
         transcriptId: transcript.transcriptId,
         ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
-        turns,
+        segments,
+        encryptionKey: options.encryptionKey,
       })
     },
     acknowledge(turn) {
@@ -71,16 +74,37 @@ export function createTranscriptTarget(client) {
         transcriptId: turn.transcriptId,
         taskId: turn.taskId,
         sequence: turn.cloudSequence,
+        rolloutEnd: turn.rolloutEnd,
         ...(turn.parentTranscriptId ? { parentTranscriptId: turn.parentTranscriptId } : {}),
       })
     },
   })
 }
 
+export async function exportExecutorTranscript(client, turn, options = {}) {
+  const summarized = options.summary
+    ? { ...turn, payload: options.summary }
+    : await readExecutorTurn(client, turn)
+  const exported = await client.request(
+    'runtime.tasks.transcript.export',
+    {
+      transcriptId: turn.transcriptId,
+      taskId: turn.taskId,
+      baseSequence: options.baseSequence,
+      sequence: options.sequence,
+      snapshot: options.snapshot === true,
+      encryptionKey: options.encryptionKey,
+    },
+    TRANSCRIPT_EXPORT_TIMEOUT_MS
+  )
+  return { ...turn, ...exported, summary: summarized.payload }
+}
+
 export async function readExecutorTurn(client, turn) {
   let beforeCursor
   const pages = []
   const observedCursors = new Set()
+  let taskAvailable = false
   for (;;) {
     const transcript = await client.request('runtime.tasks.transcript', {
       taskId: turn.taskId,
@@ -88,6 +112,7 @@ export async function readExecutorTurn(client, turn) {
       ...(beforeCursor ? { beforeCursor } : {}),
     })
     const turns = Array.isArray(transcript?.turns) ? transcript.turns : []
+    taskAvailable ||= executorTranscriptTaskAvailable(transcript, turns)
     pages.push(turns)
     const matched = turn.executorTurnId
       ? turns.find(candidate => candidate?.id === turn.executorTurnId)
@@ -106,8 +131,20 @@ export async function readExecutorTurn(client, turn) {
     const matched = orderedTurns[turn.sequence - 1]
     if (matched) return { ...turn, payload: executorTurnPayload(matched) }
   }
-  throw new Error(
+  const code = taskAvailable ? 'transcript_turn_missing' : 'transcript_task_missing'
+  throw new ExecutorRuntimeError(
+    code,
     `Executor transcript turn is unavailable: ${turn.taskId}#${turn.executorTurnId ?? turn.sequence}`
+  )
+}
+
+function executorTranscriptTaskAvailable(transcript, turns) {
+  if (turns.length > 0) return true
+  if (typeof transcript?.workspacePath === 'string' && transcript.workspacePath.trim()) return true
+  return (
+    typeof transcript?.runtime === 'string' &&
+    transcript.runtime.trim() !== '' &&
+    transcript.runtime !== 'runtime'
   )
 }
 

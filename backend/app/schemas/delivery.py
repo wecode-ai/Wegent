@@ -101,6 +101,13 @@ class LoopItemReorder(BaseModel):
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
+class LoopItemPermissions(BaseModel):
+    edit_content: bool = False
+    comment: bool = False
+    assign: bool = False
+    execute: bool = False
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -143,6 +150,7 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
     content_revision: int = 1
     is_unread: bool = False
@@ -292,6 +300,11 @@ class LoopItemCommentResponse(BaseModel):
     updated_at: datetime
 
 
+class CollaborationMessageImportResponse(BaseModel):
+    issue: LoopItemResponse
+    comment: LoopItemCommentResponse | None = None
+
+
 class LoopItemAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -328,6 +341,18 @@ class LoopItemAttachmentResponse(BaseModel):
 class LoopItemAttachmentAccessResponse(BaseModel):
     url: str
     expires_in_seconds: int
+
+
+class ProjectLoopItemAttachmentResponse(LoopItemAttachmentResponse):
+    loop_item_title: str
+
+
+class ProjectLoopItemAttachmentListResponse(BaseModel):
+    items: list[ProjectLoopItemAttachmentResponse]
+
+
+class LoopItemAttachmentImport(BaseModel):
+    context_ids: list[int] = Field(min_length=1)
 
 
 class MyWorkItemResponse(LoopItemResponse):

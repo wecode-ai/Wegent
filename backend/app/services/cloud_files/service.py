@@ -21,7 +21,11 @@ from app.models.cloud_project import CloudProjectFile
 from app.models.delivery import Delivery, DeliveryAsset, LoopItem
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.delivery.storage import DeliveryStorage, delivery_storage
+from app.services.delivery.storage import (
+    DeliveryStorage,
+    DeliveryStorageUnavailableError,
+    delivery_storage,
+)
 
 
 @dataclass(frozen=True)
@@ -185,7 +189,14 @@ class CloudFileService:
                     )
             staged.seek(0)
             object_key = f"{access.project.storage_prefix}/shared/{safe_path}"
-            self.storage.put_stream(object_key, staged, length, content_type)
+            try:
+                self.storage.put_stream(object_key, staged, length, content_type)
+            except DeliveryStorageUnavailableError as exc:
+                db.rollback()
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Delivery object storage is unavailable",
+                ) from exc
 
         file = CloudProjectFile(
             cloud_project_id=cloud_project_id,

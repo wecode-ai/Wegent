@@ -16,14 +16,19 @@ import logging
 from typing import Any, Dict, Optional
 
 import dingtalk_stream
+from websockets.exceptions import InvalidProxy, InvalidURI
 
 from app.services.channels.base import BaseChannelProvider
+from app.services.channels.dingtalk.card_follow_up import DingTalkCardCallbackHandler
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
+from app.services.channels.dingtalk.stream_client import DingTalkStreamConnection
 from app.services.channels.messager_config import (
+    get_channel_chat_card_config,
     get_channel_default_model_name,
     get_channel_default_team_id,
     get_channel_user_mapping_config,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +51,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
             channel: Channel-like object (IMChannelAdapter) with DingTalk configuration
         """
         super().__init__(channel)
-        self._client: Optional[dingtalk_stream.DingTalkStreamClient] = None
+        self._client: Optional[DingTalkStreamConnection] = None
         self._task: Optional[asyncio.Task] = None
+        self._card_handler: Optional[DingTalkCardCallbackHandler] = None
 
     @property
     def client_id(self) -> Optional[str]:
@@ -90,6 +96,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
             return True
 
         try:
+            await self.stop()
             logger.info(
                 "[DingTalk] Starting channel %s (id=%d)...",
                 self.channel_name,
@@ -103,7 +110,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
             )
 
             # Create client
-            self._client = dingtalk_stream.DingTalkStreamClient(credential)
+            self._client = DingTalkStreamConnection(credential, logger=logger)
 
             # Register chatbot handler with dynamic configuration getters
             # This reads from database to always get the latest configuration
@@ -119,6 +126,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 get_user_mapping_config=lambda: get_channel_user_mapping_config(
                     channel_id
                 ),
+                get_chat_card_config=lambda: get_channel_chat_card_config(channel_id),
                 channel_id=channel_id,  # Pass channel_id for IM binding and callback purposes
             )
             self._client.register_callback_handler(
@@ -126,12 +134,20 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 handler,
             )
 
+            self._card_handler = DingTalkCardCallbackHandler(handler._channel_handler)
+            handler.set_card_quote_handler(self._card_handler.process_quote)
+            self._client.register_callback_handler(
+                dingtalk_stream.CallbackHandler.TOPIC_CARD_CALLBACK,
+                self._card_handler,
+            )
+            self._card_handler.start()
+
             # Start client in background task
             self._task = asyncio.create_task(self._run_client())
             self._set_running(True)
 
             logger.info(
-                "[DingTalk] Channel %s (id=%d) started successfully, client_id=%s...",
+                "[DingTalk] Channel %s (id=%d) connection worker started, client_id=%s...",
                 self.channel_name,
                 self.channel_id,
                 self.client_id[:8] if self.client_id else "N/A",
@@ -143,6 +159,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
             self._set_running(False)
             return False
 
+    @trace_async(tracer_name=__name__)
     async def _run_client(self) -> None:
         """
         Run the stream client with automatic reconnection.
@@ -154,60 +171,67 @@ class DingTalkChannelProvider(BaseChannelProvider):
         max_retries = 10
         base_delay = 1.0
 
-        while self._is_running:
-            try:
-                logger.info(
-                    "[DingTalk] Channel %s (id=%d) starting connection...",
-                    self.channel_name,
-                    self.channel_id,
-                )
-                await self._client.start()
+        try:
+            while self._is_running:
+                try:
+                    logger.info(
+                        "[DingTalk] Channel %s (id=%d) starting connection...",
+                        self.channel_name,
+                        self.channel_id,
+                    )
+                    await self._client.connect_once()
 
-            except asyncio.CancelledError:
-                logger.info(
-                    "[DingTalk] Channel %s (id=%d) task cancelled",
-                    self.channel_name,
-                    self.channel_id,
-                )
-                break
+                except asyncio.CancelledError:
+                    logger.info(
+                        "[DingTalk] Channel %s (id=%d) task cancelled",
+                        self.channel_name,
+                        self.channel_id,
+                    )
+                    raise
 
-            except Exception as e:
-                if not self._is_running:
+                except (ImportError, InvalidProxy, InvalidURI) as e:
+                    self._set_error(f"Invalid Stream configuration: {e}")
                     break
 
-                retry_count += 1
-                if retry_count > max_retries:
-                    self._set_error(f"Max retries ({max_retries}) exceeded")
-                    self._set_running(False)
-                    break
+                except Exception as e:
+                    if not self._is_running:
+                        break
 
-                # Exponential backoff with max 60 seconds
-                delay = min(base_delay * (2 ** (retry_count - 1)), 60.0)
-                logger.warning(
-                    "[DingTalk] Channel %s (id=%d) connection error (attempt %d/%d), "
-                    "reconnecting in %.1fs: %s",
-                    self.channel_name,
-                    self.channel_id,
-                    retry_count,
-                    max_retries,
-                    delay,
-                    e,
-                )
-                await asyncio.sleep(delay)
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        self._set_error(f"Max retries ({max_retries}) exceeded: {e}")
+                        break
 
-            else:
-                # Reset retry count on successful connection
-                retry_count = 0
+                    # Exponential backoff with max 60 seconds
+                    delay = min(base_delay * (2 ** (retry_count - 1)), 60.0)
+                    logger.warning(
+                        "[DingTalk] Channel %s (id=%d) connection error (attempt %d/%d), "
+                        "reconnecting in %.1fs: %s",
+                        self.channel_name,
+                        self.channel_id,
+                        retry_count,
+                        max_retries,
+                        delay,
+                        e,
+                    )
+                    await asyncio.sleep(delay)
 
-        logger.info(
-            "[DingTalk] Channel %s (id=%d) client loop exited",
-            self.channel_name,
-            self.channel_id,
-        )
+                else:
+                    # Reset retry count on successful connection
+                    retry_count = 0
+                    # A clean remote close still needs a reconnect delay.
+                    await asyncio.sleep(base_delay)
+        finally:
+            self._set_running(False)
+            logger.info(
+                "[DingTalk] Channel %s (id=%d) client loop exited",
+                self.channel_name,
+                self.channel_id,
+            )
 
     async def stop(self) -> None:
         """Stop the DingTalk Stream client."""
-        if not self._is_running:
+        if not self._is_running and self._task is None and self._client is None:
             logger.debug(
                 "[DingTalk] Channel %s (id=%d) is not running",
                 self.channel_name,
@@ -237,6 +261,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
                     self.channel_id,
                 )
 
+        if self._card_handler:
+            await self._card_handler.drain()
+        self._card_handler = None
         self._task = None
         self._client = None
 
@@ -254,6 +281,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
             Dictionary containing status information
         """
         status = super().get_status()
+        status["is_connected"] = (
+            self._client is not None and self._client.websocket is not None
+        )
         status["extra_info"] = {
             "client_id": f"{self.client_id[:8]}..." if self.client_id else None,
             "use_ai_card": self.use_ai_card,

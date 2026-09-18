@@ -4,23 +4,50 @@
 
 """Private object storage for archived Wework transcripts."""
 
-import io
-from datetime import timedelta
-from typing import Optional
+import logging
+from typing import BinaryIO, Iterator
 
 from minio import Minio
+from minio.error import S3Error
 from urllib3 import PoolManager, Timeout
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class WeworkTranscriptStorageError(RuntimeError):
     """Raised when transcript object storage is unavailable."""
 
+    code = "transcript_storage_unavailable"
+
+
+def _failure(
+    operation: str,
+    exc: Exception,
+    **context: object,
+) -> WeworkTranscriptStorageError:
+    """Log the underlying object-storage failure and describe it to the caller.
+
+    The reported reason distinguishes an authorization failure from a missing
+    bucket or an unreachable endpoint; without it every failure looks identical
+    to whoever reads the error on the device.
+    """
+    reason = _reason(exc)
+    logger.error(operation, exc_info=True, extra={**context, "storage_reason": reason})
+    return WeworkTranscriptStorageError(f"{operation} ({reason})")
+
+
+def _reason(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    return type(exc).__name__
+
 
 class WeworkTranscriptStorage:
     def __init__(self) -> None:
-        self._client: Optional[Minio] = None
+        self._client: Minio | None = None
 
     @property
     def bucket(self) -> str:
@@ -33,6 +60,14 @@ class WeworkTranscriptStorage:
             access_key = settings.ATTACHMENT_S3_ACCESS_KEY
             secret_key = settings.ATTACHMENT_S3_SECRET_KEY
             if not endpoint or not access_key or not secret_key:
+                logger.error(
+                    "Wework transcript object storage is not configured",
+                    extra={
+                        "endpoint_configured": bool(endpoint),
+                        "access_key_configured": bool(access_key),
+                        "secret_key_configured": bool(secret_key),
+                    },
+                )
                 raise WeworkTranscriptStorageError(
                     "Wework transcript object storage is unavailable"
                 )
@@ -50,53 +85,90 @@ class WeworkTranscriptStorage:
             try:
                 if not client.bucket_exists(self.bucket):
                     client.make_bucket(self.bucket)
+                    logger.info(
+                        "Created Wework transcript bucket",
+                        extra={"bucket": self.bucket},
+                    )
             except Exception as exc:
-                raise WeworkTranscriptStorageError(
-                    "Wework transcript object storage is unavailable"
+                raise _failure(
+                    "Wework transcript object storage is unavailable",
+                    exc,
+                    bucket=self.bucket,
                 ) from exc
             self._client = client
         return self._client
 
-    def put(self, object_key: str, content: bytes) -> None:
+    def stream(self, object_key: str) -> Iterator[bytes]:
+        client = self.client
         try:
-            self.client.put_object(
-                self.bucket,
-                object_key,
-                io.BytesIO(content),
-                len(content),
-                content_type="application/zstd",
-            )
+            response = client.get_object(self.bucket, object_key)
         except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to store archived Wework transcript"
+            raise _failure(
+                "Failed to read transcript segment",
+                exc,
+                bucket=self.bucket,
             ) from exc
+        return self._stream_response(response)
 
-    def get(self, object_key: str) -> bytes:
-        response = None
+    @staticmethod
+    def _stream_response(response) -> Iterator[bytes]:
         try:
-            response = self.client.get_object(self.bucket, object_key)
-            return response.read()
-        except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to read archived Wework transcript"
-            ) from exc
+            yield from response.stream(amt=1024 * 1024)
         finally:
-            if response is not None:
-                response.close()
-                response.release_conn()
+            response.close()
+            response.release_conn()
 
-    def download_url(self, object_key: str) -> str:
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        size_bytes: int,
+    ) -> None:
+        client = self.client
         try:
-            return self.client.presigned_get_object(
+            client.put_object(
                 self.bucket,
                 object_key,
-                expires=timedelta(
-                    seconds=settings.WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS
-                ),
+                stream,
+                size_bytes,
+                content_type="application/octet-stream",
             )
         except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to create archived transcript download URL"
+            raise _failure(
+                "Failed to store transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+
+    def exists(self, object_key: str) -> bool:
+        client = self.client
+        try:
+            client.stat_object(self.bucket, object_key)
+            return True
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                return False
+            raise _failure(
+                "Failed to inspect transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+        except Exception as exc:
+            raise _failure(
+                "Failed to inspect transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+
+    def delete(self, object_key: str) -> None:
+        client = self.client
+        try:
+            client.remove_object(self.bucket, object_key)
+        except Exception as exc:
+            raise _failure(
+                "Failed to delete obsolete transcript segment",
+                exc,
+                bucket=self.bucket,
             ) from exc
 
 

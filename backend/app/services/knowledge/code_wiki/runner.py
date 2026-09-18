@@ -39,11 +39,13 @@ from app.schemas.task import TaskCreate
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
+    SOURCE_TRACKED_FILE_COUNT_KEY,
     FailureCode,
     GenerationInFlight,
     GenerationWikiNotFound,
     finish_generation,
     published_commit,
+    published_tracked_file_count,
     record_failure_reason,
     start_generation,
 )
@@ -64,10 +66,17 @@ from app.services.knowledge.code_wiki.quality_gate import (
     PLAN_ONLY_REVIEW_POLICY,
     require_quality_review,
 )
-from app.services.knowledge.code_wiki.repo_state import read_repository_state
+from app.services.knowledge.code_wiki.repo_state import (
+    read_repository_state,
+    read_repository_tracked_file_count,
+)
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
 from app.services.knowledge.code_wiki.source import SourceRepository
+from app.services.knowledge.code_wiki.version_store import (
+    BACKGROUND_EXECUTION_EXT_KEY,
+    BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY,
+)
 from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
@@ -151,6 +160,8 @@ def start_run(
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
     force_full: bool = False,
+    background_execution_id: int = 0,
+    background_execution_timeout_seconds: int = 0,
 ) -> StartedRun:
     """Start a run for ``knowledge_base`` and hand its instructions to a task.
 
@@ -163,8 +174,13 @@ def start_run(
             as unknown — which costs a full rebuild.
         changed_paths: Diff since the published commit. ``None`` asks for it to be
             read from the provider alongside the commit.
-        total_source_files: Repository size, used by the change-ratio threshold.
+        total_source_files: Explicit repository size for callers/tests. Normal runs
+            use the tracked-file count returned by the currently published checkout.
         force_full: Whether an explicit caller requested a fresh full rebuild.
+        background_execution_id: Scheduler execution used to recover a Task callback
+            if the launcher dies before binding its task id. Zero for manual runs.
+        background_execution_timeout_seconds: Logical scheduled-run deadline. Zero
+            leaves the ordinary Code Wiki stale-generation policy unchanged.
 
     Returns:
         The started run, or a reason why none was needed.
@@ -204,6 +220,9 @@ def start_run(
         return execution["team"].id
 
     previous_commit = published_commit(db, knowledge_base)
+    if total_source_files is None:
+        total_source_files = published_tracked_file_count(db, knowledge_base)
+    needs_repository_size = bool(previous_commit and total_source_files is None)
     # Read on every run, including the first.
     #
     # This used to be skipped when nothing was published, on the grounds that a first
@@ -227,22 +246,32 @@ def start_run(
             user_id=task_user.id,
             source=source,
             since_commit=previous_commit,
+            include_tracked_file_count=needs_repository_size,
         )
         head_commit = state.head_commit
         if changed_paths is None:
             changed_paths = state.changed_paths
+        if total_source_files is None:
+            total_source_files = state.tracked_file_count
+    elif needs_repository_size:
+        total_source_files = read_repository_tracked_file_count(
+            db,
+            user_id=task_user.id,
+            source=source,
+            ref=head_commit,
+        )
 
     started = start_generation(
         db,
         knowledge_base=knowledge_base,
         # The account that runs the task, not the one that asked: it is the identity
-        # the agent authenticates as, so anything scoped to "this run's owner" has to
-        # agree with it, and it is the account that owns the knowledge base being
-        # published into.
+        # the agent authenticates as, so the generation records who actually ran it.
+        # Publishing separately keeps KB content under the knowledge-base owner.
         user=task_user,
         head_commit=head_commit,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        require_total_source_files=needs_repository_size,
         force_full=force_full,
         # A real foreign key on wiki_generations. Resolved here rather than defaulted
         # to zero: MySQL rejects the insert outright, and SQLite does not enforce it,
@@ -261,6 +290,14 @@ def start_run(
         )
 
     generation = started.generation
+    if background_execution_id > 0:
+        generation_ext = dict(generation.ext or {})
+        generation_ext[BACKGROUND_EXECUTION_EXT_KEY] = background_execution_id
+        if background_execution_timeout_seconds > 0:
+            generation_ext[BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY] = (
+                background_execution_timeout_seconds
+            )
+        generation.ext = generation_ext
     full = RunMode(started.decision.mode) is RunMode.FULL
     strategy = execution["strategy"]
     team = execution["team"]
@@ -317,8 +354,6 @@ def start_run(
         model_ref=_execution_model_of(knowledge_base),
     )
 
-    generation.task_id = task_id
-    db.commit()
     logger.info(
         "[code_wiki] generation %s for kb %s running under task %s",
         generation.id,
@@ -343,6 +378,7 @@ def finish_run(
     error_message: str = "",
     failure_code: str = "",
     head_commit: str = "",
+    tracked_file_count: Optional[int] = None,
 ) -> Optional[PublishResult]:
     """Conclude a run the agent has reported on, and publish it if it succeeded.
 
@@ -355,6 +391,8 @@ def finish_run(
             run started with, because the agent read the working tree and the trigger
             only knew what it was told — and this value is what the next run's mode
             decision compares against.
+        tracked_file_count: Number of Git-tracked files in that same checkout. It is
+            optional for compatibility with historical runs and unavailable worktrees.
 
     Returns:
         The publish outcome, or ``None`` when the run failed or was not publishable.
@@ -365,16 +403,22 @@ def finish_run(
             f"generation {generation.id} has no knowledge base to publish into"
         )
 
-    user = db.get(User, generation.user_id)
-    if user is None:
+    runner = db.get(User, generation.user_id)
+    if runner is None:
         raise CodeWikiRunError(
-            f"generation {generation.id} has no user to publish as "
-            f"(user {generation.user_id})"
+            f"generation {generation.id} has no runner " f"(user {generation.user_id})"
+        )
+    owner = db.get(User, knowledge_base.user_id)
+    if owner is None:
+        raise CodeWikiRunError(
+            f"Code wiki {knowledge_base.id} has no owner to publish its version"
         )
 
     if head_commit:
         snapshot = dict(generation.source_snapshot or {})
         snapshot[SOURCE_COMMIT_KEY] = head_commit
+        if tracked_file_count is not None:
+            snapshot[SOURCE_TRACKED_FILE_COUNT_KEY] = tracked_file_count
         generation.source_snapshot = snapshot
         db.flush()
 
@@ -382,9 +426,13 @@ def finish_run(
         db,
         knowledge_base=knowledge_base,
         generation=generation,
-        user=user,
+        # The configured runner owns the execution and remains recorded on the
+        # generation. Published files still belong to the knowledge-base owner;
+        # changing who performs future runs must not transfer existing content or
+        # make newly generated pages change hands.
+        user=owner,
         effects=build_projection_side_effects(
-            db, knowledge_base=knowledge_base, user=user
+            db, knowledge_base=knowledge_base, user=owner
         ),
         succeeded=succeeded,
         error_message=error_message,
@@ -407,6 +455,21 @@ def _knowledge_base_of(db: Session, generation: WikiGeneration) -> Optional[Kind
     return knowledge_base
 
 
+def assert_runner_can_execute_in_namespace(
+    db: Session, knowledge_base: Kind, runner: User
+) -> None:
+    """Require the same namespace role needed to create knowledge content."""
+    from app.services.knowledge.permission_policy import (
+        can_create_namespace_knowledge_base,
+    )
+
+    if not can_create_namespace_knowledge_base(db, runner, knowledge_base.namespace):
+        raise CodeWikiRunError(
+            "NAMESPACE_ACCESS_DENIED: generation runner requires a Developer role "
+            "in the knowledge-base namespace"
+        )
+
+
 def _resolve_execution_context(
     db: Session,
     knowledge_base: Kind,
@@ -416,16 +479,10 @@ def _resolve_execution_context(
 ) -> tuple[Kind, User]:
     """Find the team that runs code wikis, and the user it runs as.
 
-    **The run executes as the knowledge base's owner, not as whoever triggered it.**
-    It said so and did the other thing: it took the caller. Anyone the wiki is shared
-    with who has write access to the repository may trigger a run, and doing so made
-    them the identity that clones it, owns the version, and owns every page projected
-    out of it. A member with no credentials for that host failed at checkout on
-    somebody else's wiki, and the pages a successful run wrote changed hands.
-
-    The owner is the right identity because the wiki is theirs: an expired token
-    fails their own wiki and is attributable to them, where a shared account's expiry
-    would fail everybody's at once.
+    By default the owner executes it; an explicitly configured future runner replaces
+    that execution identity. The request caller never does. The runner clones the
+    repository and owns the generation record, while publishing separately keeps
+    documents and attachments under the knowledge-base owner.
 
     The team, by contrast, comes from configuration rather than from the request: it
     carries the prompt and the tools the agent gets, so letting the caller choose it
@@ -433,15 +490,33 @@ def _resolve_execution_context(
     """
     from app.services.adapters.team_kinds import team_kinds_service
 
-    task_user = db.get(User, knowledge_base.user_id)
+    configured_user_id = (
+        (knowledge_base.json or {}).get("spec", {}).get("executionPrincipalUserId")
+    )
+    task_user = db.get(User, configured_user_id or knowledge_base.user_id)
     if task_user is None:
         raise CodeWikiRunError(
-            f"Code wiki {knowledge_base.id} has no owner to execute its generation"
+            "RUNNER_INACTIVE: configured generation runner does not exist"
+            if configured_user_id
+            else f"Code wiki {knowledge_base.id} has no owner to execute its generation"
         )
     if not task_user.is_active:
         raise CodeWikiRunError(
-            f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
+            "RUNNER_INACTIVE: configured generation runner is inactive"
+            if configured_user_id
+            else f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
         )
+    assert_runner_can_execute_in_namespace(db, knowledge_base, task_user)
+    if configured_user_id:
+        from app.services.knowledge.code_wiki.source import (
+            SourceAccessDenied,
+            assert_user_can_read_source,
+        )
+
+        try:
+            assert_user_can_read_source(db, task_user.id, source_of(knowledge_base))
+        except SourceAccessDenied as exc:
+            raise CodeWikiRunError(f"REPOSITORY_ACCESS_DENIED: {exc}") from exc
     team_name = strategy.team_ref.name
     team_namespace = strategy.team_ref.namespace
 
@@ -649,6 +724,11 @@ def _create_task(
 
     try:
         task_id = task_kinds_service.create_task_id(db, task_user.id)
+        # The placeholder is committed by create_task_id. Persist the reverse link
+        # before create_task_or_append can dispatch it, so an immediate callback can
+        # recover the scheduler execution through this generation.
+        generation.task_id = task_id
+        db.commit()
         task_kinds_service.create_task_or_append(
             db=db,
             obj_in=TaskCreate(

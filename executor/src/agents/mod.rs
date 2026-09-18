@@ -7,15 +7,16 @@ use std::{env, future::Future, path::PathBuf, pin::Pin};
 use serde_json::Value;
 
 mod agno;
-mod backend_url;
+pub(crate) mod backend_url;
 mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
 mod codex_log_db;
 mod dify;
+pub(crate) mod environment_setup;
 pub(crate) mod git_auth;
-mod git_workspace;
+pub(crate) mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
 mod pnpm_worktree;
@@ -32,29 +33,40 @@ use crate::{
 };
 
 pub use agno::build_agno_options;
+pub(crate) use backend_url::request_backend_url;
+pub(crate) use backend_url::rewrite_loopback_model_gateway;
 pub use claude_code::build_claude_command;
 pub(crate) use claude_code::{claude_config_dir, claude_task_dir, model_id, prompt_text};
 use claude_code::{
-    configure_claude_default_settings, configure_claude_file_edit_hooks, deploy_claude_task_skills,
+    configure_claude_default_settings, configure_claude_file_edit_hooks,
     restore_claude_plugin_cache, run_pre_execute_hook,
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
     codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, replace_config,
-    select_wework_codex_user_instructions, start_codex_app_server_thread, wework_codex_home,
+    select_wework_codex_user_instructions, wework_codex_home,
     CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
     CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
-    CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexNotificationSender,
-    CodexRequestUserInputReceiver, CodexResponseValueOrigin, CodexThreadStartedCallback,
-    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexAppServerTurn, CodexAppServerTurnOptions, CodexAuthMutationError, CodexCancellationState,
+    CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
+    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
+    CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
+
+/// Terminates every agent process owned by this executor.
+///
+/// Call this when the executor's owner goes away, so the agents it was driving
+/// cannot outlive it. Returns the number of terminated agents.
+pub async fn terminate_agent_processes() -> usize {
+    codex::terminate_shared_codex_app_servers().await
+}
 
 const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
 const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
@@ -304,6 +316,21 @@ impl AgentEngine for AgentProcessEngine {
             match agent_kind {
                 AgentKind::CodeX => {
                     git_auth::setup_git_authentication(&request).await;
+                    let request = match git_workspace::prepare_git_workspace(request).await {
+                        Ok(request) => request,
+                        Err(message) => {
+                            log_executor_event(
+                                "git workspace preparation failed",
+                                &[("error_len", message.len().to_string())],
+                            );
+                            return ExecutionOutcome::Failed { message };
+                        }
+                    };
+                    if let Err(message) =
+                        environment_setup::prepare_execution_environment(&request).await
+                    {
+                        return ExecutionOutcome::Failed { message };
+                    }
                     runtime_capabilities::prepare_codex_runtime(&request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
@@ -330,6 +357,11 @@ impl AgentEngine for AgentProcessEngine {
                     } else {
                         request
                     };
+                    if let Err(message) =
+                        environment_setup::prepare_execution_environment(&request).await
+                    {
+                        return ExecutionOutcome::Failed { message };
+                    }
                     match planner.command_for(&request) {
                         Ok(mut spec) => {
                             let mut command_fields = fields.clone();
@@ -359,7 +391,6 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 restore_claude_plugin_cache(&request, &spec);
-                                deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
                                 spec = match git_auth::apply_task_git_authentication(&request, spec)
@@ -423,6 +454,22 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
+                    git_auth::setup_git_authentication(&request).await;
+                    let request = match git_workspace::prepare_git_workspace(request).await {
+                        Ok(request) => request,
+                        Err(message) => {
+                            log_executor_event(
+                                "git workspace preparation failed",
+                                &[("error_len", message.len().to_string())],
+                            );
+                            return ExecutionOutcome::Failed { message };
+                        }
+                    };
+                    if let Err(message) =
+                        environment_setup::prepare_execution_environment(&request).await
+                    {
+                        return ExecutionOutcome::Failed { message };
+                    }
                     runtime_capabilities::prepare_codex_runtime(&request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
@@ -449,6 +496,11 @@ impl AgentEngine for AgentProcessEngine {
                     } else {
                         request
                     };
+                    if let Err(message) =
+                        environment_setup::prepare_execution_environment(&request).await
+                    {
+                        return ExecutionOutcome::Failed { message };
+                    }
                     match planner.command_for(&request) {
                         Ok(mut spec) => {
                             let mut command_fields = fields.clone();
@@ -478,7 +530,6 @@ impl AgentEngine for AgentProcessEngine {
                                     }
                                 };
                                 restore_claude_plugin_cache(&request, &spec);
-                                deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
                                 spec = match git_auth::apply_task_git_authentication(&request, spec)

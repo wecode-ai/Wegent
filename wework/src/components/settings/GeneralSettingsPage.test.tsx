@@ -64,6 +64,11 @@ const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const refreshWorkListsMock = vi.hoisted(() => vi.fn())
 const changeWorkbenchModeMock = vi.hoisted(() => vi.fn())
+const telemetryConfigMock = vi.hoisted(() => ({ distribution: 'public' as 'public' | 'internal' }))
+
+vi.mock('@/telemetry/config', () => ({
+  getTelemetryConfig: () => telemetryConfigMock,
+}))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -163,6 +168,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    telemetryConfigMock.distribution = 'public'
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
@@ -327,6 +333,116 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
     })
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  })
+
+  test('saves the message send shortcut as a user preference', async () => {
+    const updateUserPreferences = vi.fn().mockResolvedValue({ send_key: 'cmd_enter' as const })
+    const renderSettings = (sendKey: 'enter' | 'cmd_enter') => (
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: { send_key: sendKey },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const rendered = render(renderSettings('enter'))
+
+    const commandEnterButton = await screen.findByTestId('general-send-key-cmd_enter-button')
+    await waitFor(() => expect(commandEnterButton).toBeEnabled())
+    await userEvent.click(commandEnterButton)
+
+    await waitFor(() => {
+      expect(updateUserPreferences).toHaveBeenCalledWith({ send_key: 'cmd_enter' })
+    })
+    rendered.rerender(renderSettings('cmd_enter'))
+    expect(commandEnterButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('restores the previous send shortcut when saving fails', async () => {
+    const updateUserPreferences = vi.fn().mockRejectedValue(new Error('save failed'))
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: { send_key: 'enter' },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const enterButton = await screen.findByTestId('general-send-key-enter-button')
+    const commandEnterButton = screen.getByTestId('general-send-key-cmd_enter-button')
+    await waitFor(() => expect(commandEnterButton).toBeEnabled())
+    await userEvent.click(commandEnterButton)
+
+    await waitFor(() => expect(enterButton).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByText('workbench.general_settings_send_key_save_failed')).toBeInTheDocument()
+  })
+
+  test('saves the follow-up behavior as a user preference', async () => {
+    const updateUserPreferences = vi.fn().mockResolvedValue({
+      send_key: 'cmd_enter' as const,
+      follow_up_behavior: 'guide' as const,
+    })
+    const renderSettings = (followUpBehavior: 'queue' | 'guide') => (
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {},
+            state: {
+              user: {
+                id: 1,
+                user_name: 'alice',
+                email: 'alice@example.com',
+                preferences: {
+                  send_key: 'cmd_enter',
+                  follow_up_behavior: followUpBehavior,
+                },
+              },
+            },
+            updateUserPreferences,
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+    const rendered = render(renderSettings('queue'))
+
+    const guideButton = await screen.findByTestId('general-follow-up-guide-button')
+    await waitFor(() => expect(guideButton).toBeEnabled())
+    await userEvent.click(guideButton)
+
+    await waitFor(() => {
+      expect(updateUserPreferences).toHaveBeenCalledWith({
+        follow_up_behavior: 'guide',
+      })
+    })
+    rendered.rerender(renderSettings('guide'))
+    expect(guideButton).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('persists the selected startup workspace tab', async () => {
@@ -503,6 +619,15 @@ describe('GeneralSettingsPage', () => {
         telemetryEnabled: false,
       })
     })
+  })
+
+  test('hides public telemetry controls in an internal build', () => {
+    telemetryConfigMock.distribution = 'internal'
+
+    render(<GeneralSettingsPage />)
+
+    expect(screen.queryByTestId('general-settings-privacy-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('general-telemetry-toggle')).not.toBeInTheDocument()
   })
 
   test('shows the loaded shared preferences without flashing defaults', async () => {

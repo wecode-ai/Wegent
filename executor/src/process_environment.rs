@@ -113,13 +113,11 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
         // executor would otherwise never see tools a fresh pwsh can resolve.
         let (machine_path, user_path) = windows_registry_paths()?;
         let current_path = env::var("PATH").unwrap_or_default();
-        let mut merged = Vec::new();
-        for value in [machine_path, user_path].into_iter().flatten() {
-            append_unique_windows_path(&mut merged, &value);
-        }
-        // Keep parent-provided entries that are not in the registry so extra
-        // developer/runtime directories survive a refresh.
-        append_unique_windows_path(&mut merged, &current_path);
+        let merged = merged_windows_path_entries(
+            &current_path,
+            machine_path.as_deref(),
+            user_path.as_deref(),
+        );
         let merged = env::join_paths(merged)
             .map_err(|error| format!("Failed to join Windows PATH entries: {error}"))?;
         let merged = merged.to_string_lossy().into_owned();
@@ -234,6 +232,22 @@ fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> 
         Some(user_path.to_owned())
     };
     Ok((machine_path, user_path))
+}
+
+#[cfg(windows)]
+fn merged_windows_path_entries(
+    current_path: &str,
+    machine_path: Option<&str>,
+    user_path: Option<&str>,
+) -> Vec<std::path::PathBuf> {
+    let mut merged = Vec::new();
+    // Explicit parent-provided entries may contain app/runtime overrides and
+    // must keep precedence. Registry paths supplement stale GUI environments.
+    append_unique_windows_path(&mut merged, current_path);
+    for value in [machine_path, user_path].into_iter().flatten() {
+        append_unique_windows_path(&mut merged, value);
+    }
+    merged
 }
 
 #[cfg(windows)]
@@ -373,7 +387,7 @@ fn capture_shell_environment(
         SHELL_ENV_DELIMITER
     );
     let mut child = Command::new(shell)
-        .args(["-ilc", &script])
+        .args(["-lc", &script])
         .env("CODEX_SHELL", "1")
         .env(SHELL_ENV_MARKER, "1")
         .env("DISABLE_AUTO_UPDATE", "true")
@@ -548,6 +562,27 @@ fn ignored_process_env_key(key: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_registry_paths_supplement_parent_path_without_reordering_it() {
+        let merged = merged_windows_path_entries(
+            r"C:\Wework\fixture;C:\Windows\System32",
+            Some(r"C:\Windows\System32;C:\Program Files\Git\cmd"),
+            Some(r"C:\Users\test\bin;C:\Wework\fixture"),
+        );
+
+        assert_eq!(
+            merged,
+            [
+                r"C:\Wework\fixture",
+                r"C:\Windows\System32",
+                r"C:\Program Files\Git\cmd",
+                r"C:\Users\test\bin",
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn shell_environment_parser_ignores_noise_and_transient_values() {
@@ -610,6 +645,35 @@ mod tests {
         assert_eq!(
             environment.values.get("SHELL").map(String::as_str),
             Some(script_path.to_string_lossy().as_ref())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_environment_loader_uses_a_non_interactive_login_shell() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp directory should be created");
+        let arguments_path = directory.path().join("arguments");
+        let script_path = directory.path().join("shell");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" > '{1}'\nprintf '{0}PATH=/usr/bin\\n{0}'\n",
+            SHELL_ENV_DELIMITER,
+            arguments_path.display()
+        );
+        std::fs::write(&script_path, script).expect("script should be written");
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
+            .expect("script should be executable");
+
+        load_shell_environment_from_candidates(
+            &[script_path.display().to_string()],
+            Duration::from_secs(30),
+        )
+        .expect("shell environment should load");
+
+        assert_eq!(
+            std::fs::read_to_string(arguments_path).expect("arguments should be captured"),
+            "-lc\n"
         );
     }
 

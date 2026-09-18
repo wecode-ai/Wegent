@@ -8,13 +8,13 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
-import {
-  insertPluginReference,
-  notifyLocalPluginSkillsChanged,
-} from '@/features/plugins/pluginTrial'
+import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { clearComposerAppsSnapshot, resetComposerAppsMemory } from './composerAppsSnapshot'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerTextareaHandle } from './ComposerTextarea'
+import { PluginPickerMenu } from './PluginPickerMenu'
+import { ComposerCatalogContext } from './ComposerCatalogContext'
+import { createComposerCatalogStore } from '@wegent/collaboration/composer/createComposerCatalogStore'
 import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
@@ -194,34 +194,49 @@ describe('ComposerTextarea', () => {
     delete window.__WEWORK_DSH_EXTENSIONS__
   })
 
-  test('inserts plugin picker references without replacing the current draft', async () => {
-    const textareaRef = createRef<HTMLElement>()
-
-    function Harness() {
-      const [value, setValue] = useState('keep this draft')
+  test('inserts a picker reference only into its own editor when two drawers are mounted', async () => {
+    const left = createRef<ComposerTextareaHandle>()
+    const right = createRef<ComposerTextareaHandle>()
+    const apps = async () => [{ id: 'github', name: 'GitHub', isEnabled: true, isAccessible: true }]
+    function Harness({ name, handle }: { name: string; handle: typeof left }) {
+      const [value, setValue] = useState(name)
       return (
-        <ComposerTextarea
-          value={value}
-          onChange={setValue}
-          onSubmit={vi.fn()}
-          canSend
-          placeholder="Message"
-          rows={2}
-          textareaRef={textareaRef}
-          className="min-h-12"
-        />
+        <>
+          <ComposerTextarea
+            ref={handle}
+            value={value}
+            onChange={setValue}
+            onSubmit={vi.fn()}
+            canSend
+            placeholder="Message"
+            rows={2}
+            textareaRef={createRef()}
+            className="min-h-12"
+            testId={name}
+          />
+          <PluginPickerMenu
+            onListLocalApps={apps}
+            onInsertReference={reference => {
+              handle.current?.insertReference(reference)
+              handle.current?.focus()
+            }}
+          />
+        </>
       )
     }
-
-    render(<Harness />)
-    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
-    act(() => {
-      editor.focus()
-      insertPluginReference('[$GitHub](/tmp/github/SKILL.md)')
-    })
-
-    await waitFor(() => expect(editor.value).toContain('[$GitHub](/tmp/github/SKILL.md)'))
-    expect(editor.value).toContain('keep this draft')
+    render(
+      <>
+        <Harness name="left-draft" handle={left} />
+        <Harness name="right-draft" handle={right} />
+      </>
+    )
+    act(() => right.current?.setValue('right-draft', 5))
+    fireEvent.click(screen.getAllByTestId('composer-plugin-picker-button')[1])
+    fireEvent.click(await screen.findByTestId('composer-plugin-picker-item-github'))
+    expect(left.current?.getValue()).toBe('left-draft')
+    expect(right.current?.getValue()).toContain('[$GitHub]')
+    expect(right.current?.getValue()).toContain('-draft')
+    expect(document.activeElement).toBe(screen.getByTestId('right-draft'))
   })
 
   test('places the caret at the end when returning to a restored new-chat draft', async () => {
@@ -290,6 +305,92 @@ describe('ComposerTextarea', () => {
 
     expect(onSubmit).toHaveBeenCalledWith('Stop and do this now', {
       interruptWhenBusy: true,
+    })
+  })
+
+  test('uses Enter to send by default and Shift-Enter for a line break', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="Send this"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    expect(onSubmit).toHaveBeenCalledWith('Send this', undefined)
+
+    onSubmit.mockClear()
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', shiftKey: true })
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  test('uses Command-Enter to send when configured and keeps Enter as a line break', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const composerRef = createRef<ComposerTextareaHandle>()
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        ref={composerRef}
+        value="Send this"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        sendKey="cmd_enter"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    composerRef.current?.setValue('Send this', 'Send this'.length)
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onChange).toHaveBeenCalledWith('Send this\n')
+    expect(composerRef.current?.getValue()).toBe('Send this\n')
+
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', metaKey: true })
+    expect(onSubmit).toHaveBeenCalledWith('Send this\n', undefined)
+  })
+
+  test('applies the configured follow-up behavior while a response is streaming', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="Adjust the response"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        sendKey="cmd_enter"
+        followUpBehavior="guide"
+        isStreaming
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter', metaKey: true })
+
+    expect(onSubmit).toHaveBeenCalledWith('Adjust the response', {
+      guideWhenBusy: true,
     })
   })
 
@@ -847,6 +948,48 @@ describe('ComposerTextarea', () => {
 
     expect(await screen.findByTestId('slash-command-option-app-github')).toBeInTheDocument()
     expect(onListLocalApps).toHaveBeenCalledTimes(1)
+  })
+
+  test('uses the same task-scoped source for slash plugins and skills', async () => {
+    const listApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])
+    const listSkills = vi.fn().mockResolvedValue([GMAIL_SKILL])
+    const inheritedApps = vi.fn()
+    const inheritedSkills = vi.fn()
+    render(
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: createComposerCatalogStore(),
+          catalogEvents: {},
+          listApps,
+          listSkills,
+          prefetchLocalAuth: false,
+        }}
+      >
+        <ComposerTextarea
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={createRef()}
+          className="min-h-12"
+          onListLocalApps={inheritedApps}
+          onListLocalSkills={inheritedSkills}
+        />
+      </ComposerCatalogContext.Provider>
+    )
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+    expect(await screen.findByTestId('slash-command-option-app-github')).toBeInTheDocument()
+    expect(await screen.findByTestId('slash-command-option-skill-gmail')).toBeInTheDocument()
+    expect(listApps).toHaveBeenCalledTimes(1)
+    expect(listSkills).toHaveBeenCalledTimes(1)
+    expect(inheritedApps).not.toHaveBeenCalled()
+    expect(inheritedSkills).not.toHaveBeenCalled()
   })
 
   test('reloads plugin metadata after the installed plugin state changes', async () => {

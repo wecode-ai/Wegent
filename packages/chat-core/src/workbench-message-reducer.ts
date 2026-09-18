@@ -20,6 +20,7 @@ export interface MessageSource {
 export interface BaseWorkbenchProcessingBlock {
   id: string
   subtaskId: string
+  parentToolUseId?: string
   status: WorkbenchToolBlockStatus
   createdAt: number
   completedAt?: number
@@ -56,6 +57,24 @@ export interface WorkbenchPlanBlock extends BaseWorkbenchProcessingBlock {
   content: string
 }
 
+export interface WorkbenchSubagentBlock<
+  TFileChanges = unknown
+> extends BaseWorkbenchProcessingBlock {
+  type: 'subagent'
+  anchorBlockId?: string
+  toolName?: string
+  agentType?: string
+  agentId?: string
+  agentThreadId?: string
+  agentPath?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: WorkbenchProcessingBlock<TFileChanges>[]
+}
+
 export interface WorkbenchFileChangesBlock<
   TFileChanges = unknown
 > extends BaseWorkbenchProcessingBlock {
@@ -68,6 +87,7 @@ export type WorkbenchProcessingBlock<TFileChanges = unknown> =
   | WorkbenchThinkingBlock
   | WorkbenchTextBlock
   | WorkbenchPlanBlock
+  | WorkbenchSubagentBlock<TFileChanges>
   | WorkbenchFileChangesBlock<TFileChanges>
 
 export interface WorkbenchMessage<
@@ -117,6 +137,10 @@ type ProcessingBlockUpdate = {
   toolOutputOriginalBytes?: number
   renderPayload?: unknown
   fileChanges?: unknown
+  output?: string
+  summary?: string
+  parentToolUseId?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
   status?: WorkbenchToolBlockStatus
   completedAt?: number
   durationMs?: number
@@ -125,6 +149,7 @@ type ProcessingBlockUpdate = {
 const MAX_LIVE_MESSAGE_CONTENT_CHARS = 200_000
 const MAX_LIVE_BLOCK_CONTENT_CHARS = 120_000
 const MAX_LIVE_TOOL_OUTPUT_CHARS = 64 * 1024
+const MAX_LIVE_SUBAGENT_CHILDREN = 256
 
 export type WorkbenchMessageAction<
   TAttachment = unknown,
@@ -139,14 +164,7 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       clientUserMessageId?: string
       shellType?: string
-    }
-  | {
-      type: 'assistant_cached'
-      messageId?: string
-      taskId?: string
-      subtaskId?: string
-      content: string
-      blocks?: WorkbenchProcessingBlock<TFileChanges>[]
+      startedAt?: number
     }
   | {
       type: 'assistant_chunk'
@@ -168,12 +186,16 @@ export type WorkbenchMessageAction<
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
+      startedAt?: number
+      durationMs?: number
     }
   | {
       type: 'assistant_cancelled'
       messageId?: string
       subtaskId?: string
       content?: string
+      startedAt?: number
+      durationMs?: number
     }
   | {
       type: 'file_changes_updated'
@@ -187,6 +209,8 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       error: string
       errorType?: string
+      startedAt?: number
+      durationMs?: number
     }
   | {
       type: 'block_created'
@@ -246,35 +270,6 @@ export function reduceWorkbenchMessages<
             taskId: action.taskId,
             subtaskId: action.subtaskId,
             shellType: action.shellType
-          })
-        )
-      ]
-    case 'assistant_cached':
-      if (
-        state.some((message) => isAssistantMessageForAction(message, action))
-      ) {
-        return state.map((message) =>
-          isAssistantMessageForAction(message, action)
-            ? limitWorkbenchMessage({
-                ...clearMessageError(message),
-                taskId: action.taskId ?? message.taskId,
-                content: action.content,
-                streamingThinkingContent: undefined,
-                status: 'streaming' as const,
-                blocks: action.blocks ?? message.blocks
-              })
-            : message
-        )
-      }
-      return [
-        ...state,
-        limitWorkbenchMessage(
-          createAssistantMessage<TAttachment, TFileChanges>({
-            messageId: action.messageId,
-            taskId: action.taskId,
-            subtaskId: action.subtaskId,
-            content: action.content,
-            blocks: action.blocks ?? []
           })
         )
       ]
@@ -591,7 +586,7 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
     message.contentOriginalChars
   )
   const blocks = sortProcessingBlocksByCreatedAt(
-    message.blocks?.map(limitProcessingBlock)
+    message.blocks?.map(limitWorkbenchProcessingBlock)
   )
   return {
     ...message,
@@ -605,7 +600,7 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
   }
 }
 
-function limitProcessingBlock<TFileChanges>(
+export function limitWorkbenchProcessingBlock<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.type === 'tool') {
@@ -631,7 +626,257 @@ function limitProcessingBlock<TFileChanges>(
       contentLoadRef: content.truncated ? blockContentLoadRef(block) : undefined
     }
   }
+  if (block.type === 'subagent') {
+    const title = limitOptionalBlockText(block.title)
+    const description = limitOptionalBlockText(block.description)
+    const output = limitOptionalBlockText(block.output)
+    const summary = limitOptionalBlockText(block.summary)
+    const children = block.children?.slice(-MAX_LIVE_SUBAGENT_CHILDREN)
+    return {
+      ...block,
+      title: title.text,
+      description: description.text,
+      output: output.text,
+      summary: summary.text,
+      children: children?.map(limitWorkbenchProcessingBlock),
+      contentTruncated:
+        block.contentTruncated ||
+        title.truncated ||
+        description.truncated ||
+        output.truncated ||
+        summary.truncated ||
+        children?.length !== block.children?.length ||
+        undefined
+    }
+  }
   return block
+}
+
+function limitOptionalBlockText(value?: string): {
+  text: string | undefined
+  truncated: boolean
+} {
+  if (value === undefined) return { text: undefined, truncated: false }
+  return limitTextContent(value, MAX_LIVE_BLOCK_CONTENT_CHARS)
+}
+
+export function nestWorkbenchProcessingBlocks<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[]
+): WorkbenchProcessingBlock<TFileChanges>[] {
+  const blockMap = new Map<string, WorkbenchProcessingBlock<TFileChanges>>()
+  const blockOrder: string[] = []
+  const parentIds = new Map<string, string>()
+
+  const collect = (
+    block: WorkbenchProcessingBlock<TFileChanges>,
+    nestedParentId?: string
+  ) => {
+    const existing = blockMap.get(block.id)
+    const blockWithoutChildren =
+      block.type === 'subagent' ? { ...block, children: undefined } : block
+    if (!existing) blockOrder.push(block.id)
+    blockMap.set(
+      block.id,
+      existing
+        ? ({
+            ...existing,
+            ...blockWithoutChildren
+          } as WorkbenchProcessingBlock<TFileChanges>)
+        : blockWithoutChildren
+    )
+
+    const parentId = block.parentToolUseId ?? nestedParentId
+    if (parentId && parentId !== block.id) parentIds.set(block.id, parentId)
+    if (block.type === 'subagent') {
+      block.children?.forEach(child => collect(child, block.id))
+    }
+  }
+
+  blocks.forEach(block => collect(block))
+
+  const childIdsByParent = new Map<string, string[]>()
+  parentIds.forEach((parentId, childId) => {
+    if (blockMap.get(parentId)?.type !== 'subagent') return
+    const childIds = childIdsByParent.get(parentId) ?? []
+    childIds.push(childId)
+    childIdsByParent.set(parentId, childIds)
+  })
+
+  const build = (
+    blockId: string,
+    ancestors: ReadonlySet<string>
+  ): WorkbenchProcessingBlock<TFileChanges> => {
+    const block = blockMap.get(blockId)!
+    if (block.type !== 'subagent' || ancestors.has(blockId)) return block
+    const nextAncestors = new Set(ancestors)
+    nextAncestors.add(blockId)
+    return {
+      ...block,
+      children: (childIdsByParent.get(blockId) ?? []).map(childId =>
+        build(childId, nextAncestors)
+      )
+    }
+  }
+
+  return blockOrder
+    .filter(blockId => {
+      const parentId = parentIds.get(blockId)
+      return !parentId || blockMap.get(parentId)?.type !== 'subagent'
+    })
+    .map(blockId => build(blockId, new Set()))
+}
+
+export function projectWorkbenchSubagentActivity<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[]
+): WorkbenchProcessingBlock<TFileChanges>[] {
+  const explicitSubagents = new Map<
+    string,
+    WorkbenchSubagentBlock<TFileChanges>
+  >()
+  for (const block of blocks) {
+    if (block.type !== 'subagent') continue
+    explicitSubagents.set(subagentIdentity(block), block)
+  }
+
+  const waitBlocks = blocks.filter(
+    (block): block is WorkbenchToolBlock =>
+      block.type === 'tool' && isSubagentWaitTool(block.toolName)
+  )
+  const projected: WorkbenchProcessingBlock<TFileChanges>[] = []
+  const consumedSubagents = new Set<string>()
+
+  for (const block of blocks) {
+    if (block.type === 'subagent') continue
+    if (block.type !== 'tool' || !isSubagentCoordinationTool(block.toolName)) {
+      projected.push(block)
+      continue
+    }
+    if (isSubagentWaitTool(block.toolName)) continue
+
+    const agentId = subagentAgentId(block)
+    const identity = agentId ?? block.id
+    const explicit = explicitSubagents.get(identity)
+    if (explicit) consumedSubagents.add(identity)
+    const status = projectedSubagentStatus(block, waitBlocks, agentId)
+    projected.push({
+      id: explicit?.id ?? `subagent-${identity}`,
+      anchorBlockId: block.id,
+      subtaskId: block.subtaskId,
+      type: 'subagent',
+      toolName: block.toolName,
+      agentId: explicit?.agentId ?? agentId,
+      agentThreadId: explicit?.agentThreadId ?? agentId,
+      agentStatus:
+        explicit?.agentStatus ??
+        (status === 'done'
+          ? 'done'
+          : status === 'error'
+            ? 'interrupted'
+            : 'running'),
+      description: explicit?.description ?? subagentPrompt(block),
+      status: explicit?.status ?? status,
+      createdAt: explicit?.createdAt ?? block.createdAt,
+      completedAt:
+        explicit?.completedAt ??
+        (status === 'done' ? block.completedAt : undefined),
+      durationMs: explicit?.durationMs,
+      title: explicit?.title,
+      output: explicit?.output,
+      summary: explicit?.summary,
+      children: explicit?.children
+    })
+  }
+
+  for (const block of explicitSubagents.values()) {
+    if (!consumedSubagents.has(subagentIdentity(block))) projected.push(block)
+  }
+  return projected
+}
+
+function isSubagentCoordinationTool(toolName: string): boolean {
+  return isSubagentSpawnTool(toolName) || isSubagentWaitTool(toolName)
+}
+
+function isSubagentSpawnTool(toolName: string): boolean {
+  return normalizedCoordinationToolName(toolName).endsWith('spawnagent')
+}
+
+function isSubagentWaitTool(toolName: string): boolean {
+  const normalized = normalizedCoordinationToolName(toolName)
+  return normalized === 'wait' || normalized.endsWith('waitagent')
+}
+
+function normalizedCoordinationToolName(toolName: string): string {
+  return toolName.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function subagentIdentity<TFileChanges>(
+  block: WorkbenchSubagentBlock<TFileChanges>
+): string {
+  return (
+    block.agentThreadId ?? block.agentId ?? block.id.replace(/^subagent-/, '')
+  )
+}
+
+function subagentPrompt(block: WorkbenchToolBlock): string | undefined {
+  for (const key of ['message', 'prompt', 'task']) {
+    const value = block.toolInput?.[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
+}
+
+function subagentAgentId(block: WorkbenchToolBlock): string | undefined {
+  return findAgentId(block.toolOutput)
+}
+
+function findAgentId(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    try {
+      return findAgentId(JSON.parse(value))
+    } catch {
+      return undefined
+    }
+  }
+  if (!value || typeof value !== 'object') return undefined
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const agentId = findAgentId(item)
+      if (agentId) return agentId
+    }
+    return undefined
+  }
+  const record = value as Record<string, unknown>
+  for (const key of ['agent_id', 'agentId', 'thread_id', 'threadId']) {
+    const candidate = record[key]
+    if (typeof candidate === 'string' && candidate.trim())
+      return candidate.trim()
+  }
+  for (const candidate of Object.values(record)) {
+    const agentId = findAgentId(candidate)
+    if (agentId) return agentId
+  }
+  return undefined
+}
+
+function projectedSubagentStatus(
+  spawnBlock: WorkbenchToolBlock,
+  waitBlocks: WorkbenchToolBlock[],
+  agentId: string | undefined
+): WorkbenchToolBlockStatus {
+  if (spawnBlock.status === 'error') return 'error'
+  const matchingWaits = waitBlocks.filter(block => {
+    if (!agentId) return true
+    const targets = block.toolInput?.targets
+    return (
+      !Array.isArray(targets) ||
+      targets.length === 0 ||
+      targets.includes(agentId)
+    )
+  })
+  if (matchingWaits.some(block => block.status === 'error')) return 'error'
+  if (matchingWaits.some(block => block.status === 'done')) return 'done'
+  return 'streaming'
 }
 
 function sortProcessingBlocksByCreatedAt<TFileChanges>(

@@ -7,6 +7,7 @@
   },
   "input": {
     "no_team_placeholder": "请先选择或创建智能体",
+    "loading_teams_placeholder": "正在加载智能体...",
     "expand": "展开输入框",
     "collapse": "收起输入框"
   },
@@ -37,7 +38,7 @@
     "cancel": "取消",
     "re_edit": "重新编辑",
     "re_edit_tooltip": "重新编辑",
-    "forward": "转发"
+    "forward": "发送到协作"
   },
   "edit": {
     "tooltip": "编辑消息",

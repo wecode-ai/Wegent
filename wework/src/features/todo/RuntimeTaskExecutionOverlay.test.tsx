@@ -1,8 +1,22 @@
-import { render, screen } from '@testing-library/react'
+import { render as renderComponent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
+
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import type { ReactElement } from 'react'
+
+function render(element: ReactElement) {
+  return renderComponent(
+    <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore()}>
+      {element}
+    </RuntimeTaskLifecycleProvider>
+  )
+}
 
 const reloadRuntimeTranscript = vi.fn()
 
@@ -15,7 +29,17 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
           {
             deviceId: 'device-1',
             projectId: null,
-            tasks: [{ taskId: 'codex-queue-1', title: 'Implement quicksort' }],
+            tasks: [
+              {
+                taskId: 'codex-queue-1',
+                title: 'Implement quicksort',
+                modelSelection: {
+                  modelName: 'current-cloud-model',
+                  modelType: 'user',
+                  options: {},
+                },
+              },
+            ],
           },
         ],
         totalTasks: 1,
@@ -36,11 +60,9 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     waitingForAssistant: false,
     transcriptHasMoreBefore: false,
     transcriptLoadingMoreBefore: false,
-    transcriptLoadingFullContent: false,
     turnNavigation: [],
     loadedTranscriptRanges: [],
     loadMoreTranscriptBefore: vi.fn(),
-    loadFullTranscript: vi.fn(),
     loadTranscriptTurnNavigationItem: vi.fn(),
     loadTranscriptGap: vi.fn(),
     status: {
@@ -52,6 +74,19 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
 }))
 
 describe('RuntimeTaskExecutionOverlay', () => {
+  it('shows the runtime model instead of stale activity metadata', () => {
+    render(
+      <RuntimeTaskExecutionOverlay
+        address={{ deviceId: 'device-1', taskId: 'codex-queue-1' }}
+        senderName="Bot"
+        modelName="stale-model"
+        onClose={vi.fn()}
+      />
+    )
+    expect(screen.getByText(/current-cloud-model/)).toBeInTheDocument()
+    expect(screen.queryByText(/stale-model/)).not.toBeInTheDocument()
+  })
+
   it('separates transcript timeout from the running execution and offers retry', async () => {
     const user = userEvent.setup()
 

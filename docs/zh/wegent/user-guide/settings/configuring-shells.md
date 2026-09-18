@@ -33,6 +33,7 @@ Bot = Ghost (灵魂) + Shell (身体) + Model (大脑)
 ```
 
 **类比**:
+
 - **Ghost**: 人的性格和专业知识
 - **Shell**: 人的身体和手脚(执行动作的能力)
 - **Model**: 人的大脑(思考能力)
@@ -40,17 +41,20 @@ Bot = Ghost (灵魂) + Shell (身体) + Model (大脑)
 ### 与数据库的关系
 
 Shell 资源存储在数据库的以下表中:
+
 - `public_shells`: 存储系统提供的公共 Shell 配置 (所有用户共享)
 - `kinds`: 存储用户定义的自定义 Shell 配置 (用户特有)
 
 ### Shell 查找顺序
 
 当 Bot 引用 Shell 时,系统按照以下顺序查找:
+
 1. **用户自定义 Shell**: 首先在 `kinds` 表中查找用户在指定命名空间下的 Shell
 2. **公共 Shell**: 如果未找到,则回退到 `public_shells` 表中的系统公共 Shell
 
 这允许用户:
-- 直接使用预设的公共 Shell (如 `ClaudeCode` 和 `Dify`)
+
+- 直接使用预设的公共 Shell (如 `Codex`、`ClaudeCode` 和 `Dify`)
 - 通过创建同名 Shell 覆盖公共 Shell
 - 定义只有自己可以访问的私有 Shell
 
@@ -70,40 +74,65 @@ Shell 为 Bot 提供以下核心能力:
 
 ## 📊 运行时选择指南
 
-Web 配置流程当前提供 ClaudeCode 和 Dify 供用户选择。Chat 作为直接 LLM 运行时在智能体和机器人流程中使用。Agno 正在下线过程中，不再作为 Web UI 可选执行器展示。
+创建或编辑智能体时，普通设置不会直接要求用户理解 Shell。用户先选择运行场景:
 
-### ClaudeCode 运行时 (推荐)
+- **日常对话**: 适合问答、知识检索和轻量任务，系统使用 Chat。
+- **复杂任务与编程**: 适合多步骤复杂任务、修改代码、操作文件、执行命令和连接设备。选择后再选择 Codex 或 Claude Code。
+- **高级自定义**: 面向需要指定自定义 Shell 的高级用户。
+
+Agno 正在下线过程中，不再作为 Web UI 的预设选项展示。Dify 和其他自定义 Shell 可通过高级自定义配置使用。
+
+### Codex 运行时
 
 **适用场景**:
+
 - 代码开发和重构
 - 文件操作和管理
 - Git 分支管理和提交
-- 需要工具调用的复杂任务
+- 使用 OpenAI 模型完成自主编程和工具调用
 
 **特性**:
+
+- ✅ 支持 MCP 工具调用
+- ✅ 完整的文件系统访问
+- ✅ Git 集成
+- ✅ 支持工作区和设备执行
+
+### Claude Code 运行时
+
+**适用场景**:
+
+- 代码开发和重构
+- 文件操作和管理
+- Git 分支管理和提交
+- 使用 Anthropic 模型完成编程和工具调用
+
+**特性**:
+
 - ✅ 基于 Claude Agent SDK
 - ✅ 支持 MCP 工具调用
 - ✅ 完整的文件系统访问
 - ✅ Git 集成
-- ✅ 成熟稳定
-
-**推荐用于**: 大多数开发任务
+- ✅ 支持工作区和设备执行
 
 ### Dify 运行时
 
 **适用场景**:
+
 - 与 Dify 平台应用集成
 - 工作流自动化
 - 与外部 AI 服务的多轮对话
 - 智能体对话应用
 
 **特性**:
+
 - ✅ 支持多种 Dify 应用模式 (chat、chatflow、workflow、agent-chat)
 - ✅ 会话管理支持多轮对话
 - ✅ 支持任务取消
 - ✅ 与 Dify 生态无缝集成
 
 **环境变量**:
+
 - `DIFY_API_KEY`: 您的 Dify API 密钥
 - `DIFY_BASE_URL`: Dify 服务器 URL (默认: https://api.dify.ai/v1)
 - `DIFY_APP_ID`: Dify 应用 ID
@@ -113,15 +142,12 @@ Web 配置流程当前提供 ClaudeCode 和 Dify 供用户选择。Chat 作为�
 
 ### 选择决策表
 
-| 特性 | ClaudeCode | Dify |
-|------|------------|------|
-| **稳定性** | ⭐⭐⭐⭐⭐ 成熟 | ⭐⭐⭐⭐ 稳定 |
-| **代码开发** | ⭐⭐⭐⭐⭐ 优秀 | ⭐⭐ 有限 |
-| **工具调用** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐⭐ 通过 Dify |
-| **Git 集成** | ⭐⭐⭐⭐⭐ 完整 | ❌ 无 |
-| **工作流支持** | ⭐⭐ 基础 | ⭐⭐⭐⭐⭐ 优秀 |
-| **学习曲线** | ⭐⭐⭐⭐ 简单 | ⭐⭐⭐⭐ 简单 |
-| **推荐程度** | ✅ 开发任务 | ✅ 工作流 |
+| 场景                     | 建议选择                     |
+| ------------------------ | ---------------------------- |
+| 对话、问答、知识检索     | 日常对话                     |
+| 使用 OpenAI 模型编程     | 复杂任务与编程 → Codex       |
+| 使用 Anthropic 模型编程  | 复杂任务与编程 → Claude Code |
+| 使用 Dify 或私有运行环境 | 高级自定义                   |
 
 ---
 
@@ -129,7 +155,20 @@ Web 配置流程当前提供 ClaudeCode 和 Dify 供用户选择。Chat 作为�
 
 Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 
-### 1. ClaudeCode
+### 1. Codex
+
+**名称**: `Codex`
+**运行时**: `Codex`
+**状态**: ✅ 默认可用
+**命名空间**: `default`
+
+**推荐场景**:
+
+- 使用 OpenAI 模型完成代码开发
+- 功能实现和代码重构
+- 文件、命令和 MCP 工具操作
+
+### 2. ClaudeCode
 
 **名称**: `ClaudeCode`
 **运行时**: `ClaudeCode`
@@ -137,12 +176,13 @@ Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 **命名空间**: `default`
 
 **推荐场景**:
+
 - 日常代码开发
 - 功能实现
 - 代码重构
 - 文档编写
 
-### 2. Dify
+### 3. Dify
 
 **名称**: `Dify`
 **运行时**: `Dify`
@@ -150,6 +190,7 @@ Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 **命名空间**: `default`
 
 **推荐场景**:
+
 - 与 Dify 平台集成
 - 工作流自动化任务
 - 多轮对话应用
@@ -161,7 +202,9 @@ Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 
 ### 方式 1: 使用预设 Shell (推荐新手)
 
-系统已经预设了 `ClaudeCode` 和 `Dify` 等 Shell,您可以直接在创建 Bot 时引用:
+普通用户可在智能体设置中选择 **复杂任务与编程**，然后选择 **Codex** 或 **Claude Code**，无需手工创建 Shell。
+
+系统也已经预设了 `Codex`、`ClaudeCode` 和 `Dify` 等 Shell。通过 YAML 创建 Bot 时可以直接引用:
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -174,7 +217,7 @@ spec:
     name: my-ghost
     namespace: default
   shellRef:
-    name: ClaudeCode  # 直接使用预设 Shell
+    name: Codex # 直接使用预设 Shell
     namespace: default
   modelRef:
     name: my-model
@@ -202,8 +245,8 @@ spec:
 4. 填写以下字段:
    - **名称**: Shell 的唯一标识符 (小写字母和中划线)
    - **命名空间**: 通常使用 `default`
-   - **运行时类型**: 自定义本地执行 Shell 选择 `ClaudeCode`
-   - **支持的模型类型**: (可选) 指定此 Shell 支持的模型类型
+   - **运行时类型**: 自定义本地执行 Shell 可选择 `Codex` 或 `ClaudeCode`
+   - **支持的模型提供商**: (可选) 指定此 Shell 支持的模型提供商
 5. 点击 **提交** 创建
 
 #### 通过 YAML 文件配置
@@ -235,26 +278,27 @@ status:
 
 #### metadata 部分
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | 是 | Shell 的唯一标识符,使用小写字母和中划线 |
-| `namespace` | string | 是 | 命名空间,通常使用 `default` |
+| 字段        | 类型   | 必填 | 说明                                    |
+| ----------- | ------ | ---- | --------------------------------------- |
+| `name`      | string | 是   | Shell 的唯一标识符,使用小写字母和中划线 |
+| `namespace` | string | 是   | 命名空间,通常使用 `default`             |
 
 #### spec 部分
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `runtime` | string | 是 | Web UI 暴露的运行时类型,可选值: `ClaudeCode`, `Dify` |
-| `supportModel` | array | 否 | 支持的模型类型列表,空数组表示支持所有模型 |
+| 字段           | 类型   | 必填 | 说明                                                     |
+| -------------- | ------ | ---- | -------------------------------------------------------- |
+| `runtime`      | string | 是   | 运行时类型,常用值: `Codex`, `ClaudeCode`, `Dify`, `Chat` |
+| `supportModel` | array  | 否   | 支持的模型提供商列表,空数组表示支持所有模型                |
 
 **supportModel 说明**:
-- 空数组 `[]`: 支持所有模型类型
-- 指定列表: 仅支持列表中的模型类型,例如 `["anthropic", "openai"]`
+
+- 未填写或为空数组 `[]`：不按 provider 限制模型列表。
+- 指定列表：与模型的 `spec.modelConfig.env.model` 匹配，例如 `["claude", "openai"]`；不按运行时名称追加限制。空白 provider 值无效。
 
 #### status 部分
 
-| 字段 | 说明 |
-|------|------|
+| 字段    | 说明                                                     |
+| ------- | -------------------------------------------------------- |
 | `state` | Shell 的状态: `Available` (可用), `Unavailable` (不可用) |
 
 ---
@@ -271,12 +315,13 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: []  # 支持所有模型类型
+  supportModel: [] # 支持所有模型提供商
 status:
   state: "Available"
 ```
 
 **说明**:
+
 - 这是系统预设的 ClaudeCode Shell 配置
 - 支持所有类型的 AI 模型
 - 适合大多数开发任务
@@ -291,12 +336,13 @@ metadata:
   namespace: default
 spec:
   runtime: Dify
-  supportModel: []  # 支持所有模型类型
+  supportModel: [] # 支持所有模型提供商
 status:
   state: "Available"
 ```
 
 **说明**:
+
 - 系统预设的 Dify Shell 配置
 - 与 Dify 平台应用集成
 - 支持 chat、chatflow、workflow、agent-chat 模式
@@ -312,12 +358,13 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: ["anthropic"]  # 仅支持 Anthropic 模型
+  supportModel: ["claude"] # 仅支持 Anthropic 模型
 status:
   state: "Available"
 ```
 
 **说明**:
+
 - 自定义 Shell 配置
 - 仅支持 Anthropic 模型 (Claude 系列)
 - 适合有特定模型限制的场景
@@ -338,6 +385,7 @@ status:
 ```
 
 **说明**:
+
 - 开发环境专用 Shell
 - 使用独立的命名空间 `development`
 - 适合多环境管理
@@ -359,7 +407,7 @@ spec:
     name: my-ghost
     namespace: default
   shellRef:
-    name: ClaudeCode  # 引用 Shell
+    name: ClaudeCode # 引用 Shell
     namespace: default
   modelRef:
     name: my-model
@@ -380,7 +428,7 @@ spec:
     namespace: team-a
   shellRef:
     name: ClaudeCode
-    namespace: default  # 引用 default 命名空间的 Shell
+    namespace: default # 引用 default 命名空间的 Shell
   modelRef:
     name: my-model
     namespace: team-a
@@ -395,11 +443,13 @@ spec:
 **答**: 通过以下方式查看:
 
 **方式 1: Web 界面**
+
 - 登录 Wegent Web 界面
 - 进入 **资源管理** → **Shell 配置**
 - 查看 Shell 列表
 
 **方式 2: API 查询**
+
 - 访问 http://localhost:8000/api/docs
 - 使用 Shell 相关的 API 接口查询
 
@@ -407,14 +457,15 @@ spec:
 
 **答**:
 
-| 特性 | ClaudeCode | Dify |
-|------|------------|------|
-| **成熟度** | 成熟稳定 | 稳定 |
-| **主要用途** | 代码开发 | 工作流自动化 |
-| **工具支持** | 完整 | 通过 Dify 平台 |
-| **推荐程度** | ✅ 推荐 | ✅ 工作流 |
+| 特性         | ClaudeCode | Dify           |
+| ------------ | ---------- | -------------- |
+| **成熟度**   | 成熟稳定   | 稳定           |
+| **主要用途** | 代码开发   | 工作流自动化   |
+| **工具支持** | 完整       | 通过 Dify 平台 |
+| **推荐程度** | ✅ 推荐    | ✅ 工作流      |
 
 **建议**:
+
 - 代码开发任务使用 ClaudeCode
 - 工作流自动化和 Dify 集成使用 Dify
 
@@ -423,6 +474,7 @@ spec:
 **答**:
 
 通过 Web 界面查看 Shell 状态:
+
 1. 进入 **资源管理** → **Shell 配置**
 2. 查看每个 Shell 的状态列
 3. `Available` 表示可用,`Unavailable` 表示不可用
@@ -432,16 +484,19 @@ spec:
 **答**: 常见错误和解决方案:
 
 **错误 1: Shell 状态为 Unavailable**
-- 检查运行时类型是否正确 (`ClaudeCode` 或 `Dify`)
+
+- 检查运行时类型是否正确 (`Codex`、`ClaudeCode` 或 `Dify`)
 - 检查配置格式是否符合 YAML 规范
 - 查看后端日志: `docker-compose logs backend`
 
 **错误 2: Bot 无法使用 Shell**
+
 - 检查 Bot 引用的 Shell 名称和命名空间是否正确
 - 确认 Shell 状态为 `Available`
-- 检查 supportModel 配置是否限制了模型类型
+- 检查 supportModel 配置是否限制了模型提供商
 
 **错误 3: 跨命名空间引用失败**
+
 - 确认 Shell 在目标命名空间中存在
 - 检查命名空间名称拼写是否正确
 
@@ -450,14 +505,16 @@ spec:
 **答**:
 
 **使用空数组 `[]` (推荐)**:
-- 支持所有模型类型
+
+- 支持所有模型提供商
 - 最大灵活性
 - 适合大多数场景
 
-**指定模型类型列表**:
-- 限制可用的模型类型
+**指定模型提供商列表**:
+
+- 限制可用的模型提供商
 - 适合有严格模型要求的场景
-- 例如: `["anthropic"]` 仅支持 Claude 模型
+- 例如: `["claude"]` 仅支持 Claude 模型
 
 ### Q6: 可以修改预设的 Shell 吗?
 
@@ -466,6 +523,7 @@ spec:
 系统预设的 `ClaudeCode` Shell 是推荐配置,建议不要修改。
 
 如果需要自定义配置:
+
 - 创建新的 Shell 资源
 - 使用不同的名称
 - 在 Bot 中引用新创建的 Shell
@@ -482,7 +540,7 @@ metadata:
   name: bot-1
 spec:
   shellRef:
-    name: ClaudeCode  # 共享
+    name: ClaudeCode # 共享
     namespace: default
 ---
 kind: Bot
@@ -490,7 +548,7 @@ metadata:
   name: bot-2
 spec:
   shellRef:
-    name: ClaudeCode  # 共享
+    name: ClaudeCode # 共享
     namespace: default
 ```
 
@@ -499,12 +557,15 @@ spec:
 ## 🔗 相关资源
 
 ### 相关配置指南
+
 - [Model (模型) 配置完整指南](./configuring-models.md) - 配置 AI 模型参数
 
 ### 下一步
+
 - [智能体设置](./agent-settings.md) - 配置智能体和机器人
 
 ### 参考文档
+
 - [核心概念](../../../concepts/core-concepts.md) - 理解 Shell 在架构中的角色
 - [YAML 规范](../../../reference/yaml-specification.md) - 完整的配置格式
 

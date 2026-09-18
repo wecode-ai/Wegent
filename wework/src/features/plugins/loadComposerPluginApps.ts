@@ -1,13 +1,13 @@
+import { buildComposerPluginInventory } from '@wegent/chat-core/composer-plugin-inventory'
 import type { InstalledPlugin, LocalDeviceApp, PluginMarketplaceItem } from '@/types/api'
-import { mergeInstalledPlugins } from '@/components/plugins/installedPluginMerge'
 import { installedPluginHasRelativeLogo } from '@/components/plugins/plugin-assets'
 import {
-  appendInstalledPluginsAsComposerApps,
-  enrichComposerApps,
+  pluginPresentation,
   overlayMarketplaceLogosOnComposerApps,
 } from '@/features/plugins/composerPluginMetadata'
 
 export interface ComposerPluginAppSources {
+  deviceId: string
   listCodexApps: () => Promise<LocalDeviceApp[]>
   readLocalInstalledPlugins: () => Promise<InstalledPlugin[]>
   readLocalInstalledPluginDetail?: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
@@ -32,26 +32,6 @@ export interface LoadComposerPluginAppsOptions {
   visiblePluginKeys?: ReadonlySet<string>
 }
 
-function applyScopedPluginVisibility(
-  plugins: InstalledPlugin[],
-  visiblePluginKeys: ReadonlySet<string> | undefined
-): InstalledPlugin[] {
-  if (!visiblePluginKeys?.size) return plugins
-  return plugins.map(plugin => {
-    const key =
-      plugin.spec.source.pluginKey ||
-      (typeof plugin.metadata.name === 'string' ? plugin.metadata.name : '')
-    if (!key || !visiblePluginKeys.has(key) || plugin.spec.enabled) return plugin
-    return {
-      ...plugin,
-      spec: {
-        ...plugin.spec,
-        enabled: true,
-      },
-    }
-  })
-}
-
 async function enrichLocalPluginsWithDetails(
   localItems: InstalledPlugin[],
   readLocalInstalledPluginDetail: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
@@ -59,22 +39,14 @@ async function enrichLocalPluginsWithDetails(
   const pluginsNeedingDetail = localItems.filter(installedPluginHasRelativeLogo)
   if (pluginsNeedingDetail.length === 0) return localItems
 
-  const detailResults = await Promise.allSettled(
+  const detailResults = await Promise.all(
     pluginsNeedingDetail.map(plugin => readLocalInstalledPluginDetail(plugin))
   )
   const detailedByKey = new Map<string, InstalledPlugin>()
-  detailResults.forEach((result, index) => {
-    if (result.status !== 'fulfilled') {
-      console.warn(
-        '[Wework] Failed to resolve an installed plugin logo for composer.',
-        result.reason
-      )
-      return
-    }
+  detailResults.forEach((plugin, index) => {
     const key =
-      pluginsNeedingDetail[index]?.spec.source.pluginKey ||
-      pluginsNeedingDetail[index]?.metadata.name
-    if (typeof key === 'string' && key) detailedByKey.set(key, result.value)
+      pluginsNeedingDetail[index].spec.source.pluginKey || pluginsNeedingDetail[index].metadata.name
+    if (typeof key === 'string' && key) detailedByKey.set(key, plugin)
   })
 
   return localItems.map(plugin => {
@@ -83,91 +55,30 @@ async function enrichLocalPluginsWithDetails(
   })
 }
 
-/**
- * Build the composer plugin inventory from Codex apps + local/cloud installs.
- * Cloud installs are loaded even when the local Codex state read fails.
- */
+/** Reject failed sources; a successful empty inventory is authoritative. */
 export async function loadComposerPluginApps(
   sources: ComposerPluginAppSources,
   options: LoadComposerPluginAppsOptions = {}
 ): Promise<LocalDeviceApp[]> {
-  let apps: LocalDeviceApp[] = []
-  try {
-    apps = await sources.listCodexApps()
-  } catch (error) {
-    console.warn(
-      '[Wework] Failed to load local Codex apps; continuing with installed plugins.',
-      error
-    )
-  }
-
-  let localItems: InstalledPlugin[] = []
-  try {
-    localItems = await sources.readLocalInstalledPlugins()
-  } catch (error) {
-    console.warn('[Wework] Failed to read local installed plugins for composer.', error)
-  }
-
-  let cloudItems: InstalledPlugin[] = []
-  try {
-    cloudItems = await sources.listCloudInstalledPlugins()
-  } catch (error) {
-    console.warn('[Wework] Failed to list cloud installed plugins for composer.', error)
-  }
-
-  const readLocalInstalledPluginDetail = sources.readLocalInstalledPluginDetail
-  if (options.enrichRelativeLogos && readLocalInstalledPluginDetail) {
-    localItems = await enrichLocalPluginsWithDetails(localItems, readLocalInstalledPluginDetail)
-  }
-
-  const installedPlugins = applyScopedPluginVisibility(
-    mergeInstalledPlugins(cloudItems, localItems, ''),
-    options.visiblePluginKeys
-  )
+  const [apps, local, cloud] = await Promise.all([
+    sources.listCodexApps(),
+    sources.readLocalInstalledPlugins(),
+    sources.listCloudInstalledPlugins(),
+  ])
+  const localInstalledPlugins =
+    options.enrichRelativeLogos && sources.readLocalInstalledPluginDetail
+      ? await enrichLocalPluginsWithDetails(local, sources.readLocalInstalledPluginDetail)
+      : local
   const marketplaceItems = options.marketplaceItems ?? []
-
-  try {
-    apps = enrichComposerApps(apps, installedPlugins, marketplaceItems)
-  } catch (error) {
-    console.warn(
-      '[Wework] Failed to enrich Codex apps for composer; using installed plugins.',
-      error
-    )
-    apps = []
-  }
-
-  try {
-    apps = appendInstalledPluginsAsComposerApps(apps, installedPlugins, marketplaceItems)
-  } catch (error) {
-    console.warn('[Wework] Failed to append installed plugins to composer.', error)
-  }
-
-  // Last resort: ignore merge filters and map cloud rows directly.
-  if (apps.length === 0 && cloudItems.length > 0) {
-    try {
-      apps = appendInstalledPluginsAsComposerApps([], cloudItems, marketplaceItems)
-    } catch (error) {
-      console.warn('[Wework] Failed cloud-only composer plugin fallback.', error)
-    }
-  }
-
-  apps = overlayMarketplaceLogosOnComposerApps(apps, marketplaceItems)
-
-  if (installedPlugins.length > 0 && apps.length === 0) {
-    console.warn('[Wework] Installed plugins were loaded but none are composer-visible.', {
-      installedCount: installedPlugins.length,
-      cloudCount: cloudItems.length,
-      localCount: localItems.length,
-      pluginKeys: installedPlugins.map(
-        plugin => plugin.spec.source?.pluginKey || plugin.metadata.name
-      ),
-      pluginStates: installedPlugins.map(plugin => ({
-        key: plugin.spec.source?.pluginKey || plugin.metadata.name,
-        enabled: plugin.spec.enabled,
-        installState: plugin.spec.installState,
-      })),
-    })
-  }
-
-  return apps
+  return overlayMarketplaceLogosOnComposerApps(
+    buildComposerPluginInventory({
+      deviceId: sources.deviceId,
+      apps,
+      localInstalledPlugins,
+      cloudInstalledPlugins: cloud,
+      visiblePluginKeys: options.visiblePluginKeys,
+      presentation: plugin => pluginPresentation(plugin, marketplaceItems),
+    }),
+    marketplaceItems
+  )
 }

@@ -251,8 +251,11 @@ def test_redelivery_during_fetch_does_not_read_source_again(
 ) -> None:
     document = _create_placeholder(task_db, test_user.id)
 
+    redelivered = []
+
     async def fetch(*args):
         _run_task(document.id)
+        redelivered.append(document.id)
         raise RuntimeError("source unavailable")
 
     provider = SimpleNamespace(fetch_content=AsyncMock(side_effect=fetch))
@@ -263,6 +266,7 @@ def test_redelivery_during_fetch_does_not_read_source_again(
 
     _run_task(document.id)
 
+    assert redelivered == [document.id]
     provider.fetch_content.assert_awaited_once()
     task_db.refresh(document)
     assert document.index_generation == 1

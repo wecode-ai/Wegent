@@ -28,6 +28,7 @@ import {
 } from './smart-app-scaffold.js'
 import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
+import { ensureDirectory } from './ensure-directory.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -72,7 +73,7 @@ export interface SmartAppRuntimeHost {
 
 export interface SmartAppManagerOptions {
   dataDirectory: string
-  downloadsDirectory: string
+  downloadsDirectory: () => string
   logDirectory: string
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
@@ -501,6 +502,7 @@ export class SmartAppManager {
     )
     if (installation.source === 'linked') {
       const packed = await this.verificationService.pack(installation.packagePath, archivePath)
+      await rejectOversizedPublishArchive(packed.archivePath, packed.sizeBytes)
       return {
         archivePath: packed.archivePath,
         sha256: packed.sha256,
@@ -510,6 +512,7 @@ export class SmartAppManager {
     }
     await archiveDirectory(installation.packagePath, archivePath)
     const metadata = await stat(archivePath)
+    await rejectOversizedPublishArchive(archivePath, metadata.size)
     return {
       archivePath,
       sha256: await fileSha256(archivePath),
@@ -520,9 +523,10 @@ export class SmartAppManager {
 
   async exportToDownloads(installationId: string): Promise<SmartAppSavedExport> {
     const exported = await this.export(installationId)
-    await mkdir(this.options.downloadsDirectory, { recursive: true })
+    const downloadsDirectory = this.options.downloadsDirectory()
+    await ensureDirectory(downloadsDirectory)
     const filename = `${safeName(exported.manifest.name)}-${exported.manifest.version}.zip`
-    const destinationPath = await uniquePath(this.options.downloadsDirectory, filename)
+    const destinationPath = await uniquePath(downloadsDirectory, filename)
     await copyFile(exported.archivePath, destinationPath)
     return { ...exported, destinationPath }
   }
@@ -655,6 +659,12 @@ export class SmartAppManager {
     )
     return result
   }
+}
+
+async function rejectOversizedPublishArchive(path: string, sizeBytes: number): Promise<void> {
+  if (sizeBytes <= MAX_SMART_APP_ARCHIVE_BYTES) return
+  await rm(path, { force: true })
+  throw new Error('发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。')
 }
 
 async function refreshLinkedInstallation(installation: SmartAppInstallation): Promise<boolean> {

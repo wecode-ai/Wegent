@@ -55,6 +55,7 @@ impl UnixPtyManager {
             })
             .map_err(|error| error.to_string())?;
         let mut command = CommandBuilder::new(program);
+        command.env_clear();
         for arg in args {
             command.arg(arg);
         }

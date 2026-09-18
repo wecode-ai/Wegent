@@ -1,18 +1,19 @@
-import type {
-  ChatBlockCreatedPayload,
-  ChatBlockUpdatedPayload,
-  ChatChunkPayload,
-  ChatDonePayload,
-  ChatErrorPayload,
-  ChatStartPayload,
-  RuntimeGoalEventPayload,
-  RuntimeGoalContinuationPayload,
-  RuntimePlanEventPayload,
-  RuntimeTaskTitleUpdatedPayload,
-  RuntimeGuidanceAppliedPayload,
-  RuntimeSubagentActivityPayload,
-  RuntimeSupervisorEventPayload,
-} from '@/types/api'
+import type { ChatStreamHandlers as RuntimeChatStreamHandlers } from '@wegent/chat-core/runtime-stream-types'
+export type {
+  ChatStreamScope,
+  RuntimeTransportReplacedPayload,
+  RuntimeEventLaggedPayload,
+  RuntimeWorkChangedPayload,
+  ProjectTaskAssignedPayload,
+} from '@wegent/chat-core/runtime-stream-types'
+export interface ChatStreamHandlers extends RuntimeChatStreamHandlers {
+  onDeviceOnline?: (payload: unknown) => void
+  onDeviceOffline?: (payload: unknown) => void
+  onDeviceStatus?: (payload: unknown) => void
+  onDeviceSlotUpdate?: (payload: DeviceSlotUpdatePayload) => void
+  onDeviceUpgradeStatus?: (payload: DeviceUpgradeStatusPayload) => void
+}
+
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
 import {
@@ -22,55 +23,6 @@ import {
 } from './responseApiStream'
 
 export type WorkbenchSocket = SocketClientSocket
-
-export interface ChatStreamScope {
-  deviceId?: string
-  taskId?: string
-}
-
-export interface RuntimeTransportReplacedPayload {
-  previousRuntimeInstanceId: string
-  runtimeInstanceId: string
-}
-
-export interface RuntimeEventLaggedPayload {
-  skipped: number
-}
-
-export interface ProjectTaskAssignedPayload {
-  projectId: string
-  projectName: string
-  itemId: string
-  itemTitle: string
-  assignerName: string
-}
-
-export interface ChatStreamHandlers {
-  scope?: ChatStreamScope
-  onChatStart?: (payload: ChatStartPayload) => void
-  onChatChunk?: (payload: ChatChunkPayload) => void
-  onChatDone?: (payload: ChatDonePayload) => void
-  onChatError?: (payload: ChatErrorPayload) => void
-  onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
-  onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
-  onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
-  onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
-  onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
-  onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
-  onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
-  onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
-  onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
-  onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
-  onRuntimeEventLagged?: (payload: RuntimeEventLaggedPayload) => void
-  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
-  onWeworkNotification?: () => void
-  onProjectTaskAssigned?: (payload: ProjectTaskAssignedPayload) => void
-  onDeviceOnline?: (payload: unknown) => void
-  onDeviceOffline?: (payload: unknown) => void
-  onDeviceStatus?: (payload: unknown) => void
-  onDeviceSlotUpdate?: (payload: DeviceSlotUpdatePayload) => void
-  onDeviceUpgradeStatus?: (payload: DeviceUpgradeStatusPayload) => void
-}
 
 export function createChatStream(
   socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>

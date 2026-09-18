@@ -1,8 +1,12 @@
 import { createElement, Fragment, useEffect, useState, type ComponentType } from 'react'
 
 import { DshSlotSurface } from './DshSlotSurface'
+import {
+  matchesConversationSummaryContext,
+  type ConversationSummaryContext,
+} from './conversationSummarySurface'
 import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
-import { type WeworkDshSlotEntry, type WeworkDshSlotName } from './dshUiSlots'
+import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry, type WeworkDshSlotName } from './dshUiSlots'
 import { useDshSlotEntries } from './useDshSlotEntries'
 
 interface WeworkDshContributionEntry extends WeworkDshSlotEntry {
@@ -53,13 +57,24 @@ export function DshContributionSlotSurface({
   slot,
 }: DshContributionSlotSurfaceProps) {
   const entries = useDshSlotEntries<WeworkDshContributionEntry>(slot)
-  const visibleEntries = entryId ? entries.filter(entry => entry.id === entryId) : entries
+  const isConversationSummary = slot === WEWORK_DSH_SLOTS.conversationSummary
+  const context =
+    'context' in props && typeof props.context === 'object' && props.context !== null
+      ? (props.context as ConversationSummaryContext)
+      : {}
+  const matchingEntries = isConversationSummary
+    ? entries.filter(entry => matchesConversationSummaryContext(context, entry.when))
+    : entries
+  const visibleEntries = entryId
+    ? matchingEntries.filter(entry => entry.id === entryId)
+    : matchingEntries
+  const renderedEntries = isConversationSummary ? visibleEntries.slice(0, 1) : visibleEntries
 
-  if (visibleEntries.length === 0) return null
+  if (renderedEntries.length === 0) return null
 
   return (
     <Fragment>
-      {visibleEntries.map(entry =>
+      {renderedEntries.map(entry =>
         entry.module ? (
           <DshContributionModuleLoader
             key={`${entry.id}:${entry.module}`}

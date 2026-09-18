@@ -88,15 +88,10 @@ export async function GET() {
         process.env.RUNTIME_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false' &&
         process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
 
-      // Enable creating code wikis
-      // Runtime only, deliberately: this is a staged rollout, and a build-time twin
-      // would be a second variable for one decision that also cannot be turned on
-      // without redeploying. Off by default so a deployment opts in, rather than
-      // having to remember to opt out everywhere but the pilot group.
-      //
-      // The server refuses creation on WIKI_CODE_WIKI_ENABLED regardless of this;
-      // this only decides whether the option is offered. Set both.
-      enableCodeWiki: process.env.RUNTIME_ENABLE_CODE_WIKI === 'true',
+      // Enable creating code wikis. The UI is available unless a deployment turns
+      // it off explicitly. The backend still enforces WIKI_CODE_WIKI_ENABLED, so
+      // this decides only whether the creation option is offered.
+      enableCodeWiki: process.env.RUNTIME_ENABLE_CODE_WIKI !== 'false',
 
       // Enable workspace project UI
       // Priority: RUNTIME_ENABLE_PROJECT_WORKSPACE > NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE > false

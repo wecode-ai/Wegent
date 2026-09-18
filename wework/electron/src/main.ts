@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
@@ -40,6 +40,7 @@ import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
+import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import {
@@ -58,6 +59,7 @@ import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge
 import { ComputerUseService } from './host/computer-use-service.js'
 import { SystemRecordReplay } from './host/system-record-replay.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
+import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -72,7 +74,7 @@ import {
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayBootstrapIcon, createTrayIcon } from './host/tray-icon.js'
+import { createTrayIcon } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
@@ -84,6 +86,7 @@ import {
   createNativeContextMenuActions,
   installContextMenu,
 } from './host/image-context-actions.js'
+import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
@@ -120,11 +123,14 @@ import {
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
-  createWeworkSyncRequestSignal,
+  createWeworkSyncDownloadTimeout,
+  createWeworkSyncFetchInit,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
+  readWeworkSyncResponse,
 } from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -278,14 +284,19 @@ const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
 const executorHome =
   process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+const configuredExecutorLogFile = process.env.WEGENT_EXECUTOR_LOG_FILE?.trim()
+const runtimeLogDirectories = [
+  app.getPath('logs'),
+  join(executorHome, 'logs'),
+  ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
+    ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
+    : []),
+  ...(configuredExecutorLogFile && isAbsolute(configuredExecutorLogFile)
+    ? [dirname(configuredExecutorLogFile)]
+    : []),
+].filter((directory, index, directories) => directories.indexOf(directory) === index)
 const logRetention = new LogRetentionService({
-  directories: [
-    app.getPath('logs'),
-    join(executorHome, 'logs'),
-    ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
-      ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
-      : []),
-  ],
+  directories: runtimeLogDirectories,
   onResult: reportLogCleanup,
 })
 autoUpdater.logger = appUpdateLogger
@@ -600,6 +611,25 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
+    void desktopRuntime
+      .listCoreDshPlugins()
+      .then(plugins =>
+        detectCoreDshStartupPluginFailure(
+          contents,
+          plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
+        )
+      )
+      .then(pluginName => {
+        if (!pluginName || quitting || contents.isDestroyed()) return
+        runtimeError = `Core DSH plugin failed to load: ${pluginName}`
+        rendererHealth.failed('plugin_load_failed')
+        logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
+        notifyRuntimeChanged()
+        return startupSplash?.showError(pluginName)
+      })
+      .catch(error => {
+        console.error('[startup] failed to inspect Core DSH plugin loading', error)
+      })
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
@@ -1048,7 +1078,6 @@ async function hideMainWindowToBackground(): Promise<void> {
     app.hide()
     await setDockVisible(false)
   }
-  primaryDshLoaded = false
 }
 
 async function closeMainWindowToTray(): Promise<void> {
@@ -1070,10 +1099,10 @@ async function reactivateMainWindow(): Promise<void> {
     app.setActivationPolicy('regular')
   }
   await setDockVisible(true)
-  await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()
+  await loadPrimaryDshView()
 }
 
 function dispatchTrayAction(action: TrayAction): void {
@@ -1094,7 +1123,7 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayBootstrapIcon(nativeImage, iconPath), trayGuid),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1124,6 +1153,11 @@ function installIpc(): void {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     logStartupStep('startup-recovery-app-state', 'started')
     return requiredStartupRecovery().run('app-state')
+  })
+  ipcMain.handle('startup-recovery:disable-plugin', (event, name: unknown) => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    if (typeof name !== 'string' || !name.trim()) throw new Error('Plugin name is required')
+    return requiredStartupRecovery().disablePlugin(name)
   })
   ipcMain.handle('cloud-credentials:get-device-public-key', () =>
     requiredCloudCredentials().devicePublicKey()
@@ -1208,6 +1242,9 @@ function installIpc(): void {
   ipcMain.handle('runtime:use-builtin-node', async () => {
     await requiredPreferences().update({ nodeExecutablePath: null })
   })
+  ipcMain.handle('runtime:resolve-proxy', async (_event, targetUrl: string) =>
+    resolveSystemProxy(session.defaultSession, targetUrl)
+  )
 }
 
 async function shutdown(): Promise<void> {
@@ -1218,8 +1255,8 @@ async function shutdown(): Promise<void> {
   systemSleep.stop()
   trayNativeStatus?.stop()
   trayNativeStatus = null
-  trayManager?.destroy()
-  trayManager = null
+  // Keep the tray alive until process exit. Explicit destruction removes the
+  // macOS status item's saved position, undoing menu bar manager placement.
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
@@ -1277,6 +1314,18 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
   }
 }
 
+function downloadsDirectory(): string {
+  return resolveDownloadsDirectory(
+    name => app.getPath(name),
+    (error, fallbackPath) => {
+      console.warn(
+        `[downloads] system Downloads folder is unavailable; using ${fallbackPath}`,
+        error
+      )
+    }
+  )
+}
+
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
@@ -1309,8 +1358,8 @@ async function configureDesktopRuntime(): Promise<void> {
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
-    downloadsDirectory: app.getPath('downloads'),
-    logDirectories: [app.getPath('logs')],
+    downloadsDirectory,
+    logDirectories: runtimeLogDirectories,
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
@@ -1330,6 +1379,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  Object.assign(environment, embeddedBrowserBridge.environment())
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
@@ -1361,7 +1411,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
       dataDirectory: app.getPath('userData'),
-      downloadsDirectory: app.getPath('downloads'),
+      downloadsDirectory,
       logDirectory: app.getPath('logs'),
       runtimeRoot,
       environment,
@@ -1381,6 +1431,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
+    onStartupStep: logStartupStep,
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
@@ -1431,6 +1482,7 @@ async function configureDesktopRuntime(): Promise<void> {
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
+          quitApplication: () => requestApplicationShutdown(() => app.quit()),
           openRuntimeTask: taskAddressId =>
             dispatchTrayAction({
               type: 'open-task',
@@ -1447,25 +1499,26 @@ async function configureDesktopRuntime(): Promise<void> {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
             const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const response = await fetch(`${apiBaseUrl}${path}`, {
-              method: request.method,
-              signal: createWeworkSyncRequestSignal(),
-              headers: {
-                authorization: `${credential.tokenType} ${credential.accessToken}`,
-                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
-              },
-              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-            })
-            const text = await response.text()
-            let body: unknown = null
-            if (text) {
-              try {
-                body = JSON.parse(text)
-              } catch {
-                body = text
-              }
+            const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
+            try {
+              const response = await fetch(
+                `${apiBaseUrl}${path}`,
+                await createWeworkSyncFetchInit(
+                  request,
+                  `${credential.tokenType} ${credential.accessToken}`,
+                  downloadTimeout?.signal
+                )
+              )
+              const body = await readWeworkSyncResponse(
+                response,
+                request.downloadPath,
+                request.downloadSizeBytes,
+                downloadTimeout?.refresh
+              )
+              return { status: response.status, body }
+            } finally {
+              downloadTimeout?.clear()
             }
-            return { status: response.status, body }
           },
         },
         {
@@ -1510,9 +1563,13 @@ async function configureDesktopRuntime(): Promise<void> {
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)
+            syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
           },
-          traySnapshot: () => trayManager?.snapshot() ?? null,
+          traySnapshot: () => {
+            const snapshot = trayManager?.snapshot()
+            return snapshot ? { ...snapshot, dockBadge: app.dock?.getBadge() ?? null } : null
+          },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
             exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),
@@ -1522,6 +1579,9 @@ async function configureDesktopRuntime(): Promise<void> {
             visible: Boolean(
               popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isVisible()
             ),
+            windowId: popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.id : null,
+            webContentsId:
+              popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.webContents.id : null,
           }),
           capturePopout: async () => {
             const target = await ensureAuxiliaryWindow('popout-window')
@@ -1685,7 +1745,7 @@ if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     logStartupStep('electron-ready', 'completed')
     if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {
-      app.dock.setBadge(developmentDockIdentity.badge)
+      syncDockBadge(app.dock, 0, developmentDockIdentity.badge)
       console.info('[development] Dock identity configured', developmentDockIdentity)
     }
     logStartupStep('log-retention-start', 'started')
@@ -1714,6 +1774,10 @@ if (hasSingleInstanceLock) {
         session.defaultSession.clearStorageData({
           storages: ['serviceworkers', 'cachestorage'],
         }),
+      disablePlugin: async name => {
+        if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+        await desktopRuntime.setCoreDshPluginEnabled(name, false)
+      },
       log: logStartupStep,
       relaunch: () => app.relaunch(),
       shutdown: () => requestApplicationShutdown(() => app.exit(0)),
@@ -1749,9 +1813,15 @@ if (hasSingleInstanceLock) {
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }
-    await createWindow(
-      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
-    )
+    await Promise.all([
+      createWindow(
+        resolveStartupSplashTheme(
+          startupPreferences.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+      ),
+      configureDesktopRuntime(),
+    ])
     void startDesktopRuntime()
   })
 }

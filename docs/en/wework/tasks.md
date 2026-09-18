@@ -12,6 +12,12 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+### Edit Markdown and tables
+
+Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
+
+Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
+
 ## Add a conversation to a project-space board
 
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. Sending the first message creates the corresponding board task and links the conversation. A project space inherited from the local-project automatic-join setting appears through the same control.
@@ -110,7 +116,20 @@ Completed processing activity is summarized by type. Terminal commands and Node.
 
 A plan generated in Plan mode remains part of the visible response instead of being placed inside the completed **Processed** disclosure. It stays directly visible after restoring a background task or reopening the conversation. Ordinary commands, file operations, and tool calls continue to use the summary and disclosure behavior described above.
 
+## Manage conversations
+
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
+
+### Export a conversation
+
+Select **Export conversation** at the top of a conversation, or open the conversation item's menu, to export the complete conversation as Markdown or HTML. Before exporting, choose whether to include the message body, tool calls and file changes, thinking, images, and other attachments. Included tool calls, file changes, and thinking are collapsed by default in HTML so the conversation remains easy to read.
+
+- **Markdown** includes only the message body by default; images are not selected by default. A text-only export creates an `.md` file. Including images or other attachments creates a ZIP archive whose Markdown file references the packaged assets with relative paths.
+- **HTML** includes the message body and images by default. Images are embedded so the HTML file works offline. Including other attachments that must remain separate creates a ZIP archive.
+
+After you choose a save location, the export window continues to show packaging and writing progress. It reports completion only after the background export task finishes and the destination file is confirmed. When replacing an existing file, a failed write leaves the original file intact.
 
 To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.
 

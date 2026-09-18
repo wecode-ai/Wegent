@@ -7,6 +7,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'terminal-runtime',
   'transcript-sync',
   'plugin-runtime',
+  'conversation-export',
   'ui-core-apps',
   'ui-core-settings',
   'ui-plugin-center',
@@ -18,10 +19,12 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-home-focus',
   'ui-home-developer',
   'ui-git',
+  'ui-outputs',
 ]
 
 const CORE_PLUGIN_TARGETS = {
   'app-wework': 'wework-app',
+  'conversation-export': 'wework-conversation-export',
   'browser-runtime': 'wework-browser-runtime',
   'electron-host': 'wework-electron-host',
   'executor-runtime': 'wework-executor-runtime',
@@ -40,6 +43,7 @@ const CORE_PLUGIN_TARGETS = {
   'ui-home-focus': 'wework-ui-home-focus',
   'ui-home-developer': 'wework-ui-home-developer',
   'ui-git': 'wework-ui-git',
+  'ui-outputs': 'wework-ui-outputs',
 }
 
 export function corePluginTarget(directory) {

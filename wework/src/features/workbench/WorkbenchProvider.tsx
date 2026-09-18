@@ -1,3 +1,4 @@
+import { createPluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
 import {
   useCallback,
   useEffect,
@@ -85,12 +86,10 @@ import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
-  buildTrialTemplatePrompt,
   consumePluginTrial,
   dismissTrialGuide,
   FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
-  SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
   PLUGIN_TRIAL_QUEUED_EVENT,
   recordPluginUsageFromInput,
   shouldShowPluginTrialGuide,
@@ -119,6 +118,8 @@ import {
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  beginRuntimeGoalSnapshot,
+  isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
   runtimeConversationKey,
@@ -196,7 +197,6 @@ export function WorkbenchProvider({
   debugSnapshotEnabled = true,
   consumePluginTrials = true,
   loadTaskComposerCatalogs = true,
-  prewarmComposerApps = true,
   publishDebugSnapshots = true,
   syncCoreDshModels = false,
   syncRemoteProjects = true,
@@ -365,6 +365,25 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
+  const updateUserPreferences = useCallback(
+    async (patch: UserPreferences): Promise<UserPreferences> => {
+      const userApi = resolvedServices.userApi
+      if (!userApi) {
+        throw new Error('User preferences are unavailable')
+      }
+      const previousPreferences = latestUserPreferencesRef.current ?? {}
+      const updatedUser = await userApi.updateCurrentUser({ preferences: patch })
+      const preferences = {
+        ...previousPreferences,
+        ...patch,
+        ...(updatedUser.preferences ?? {}),
+      }
+      latestUserPreferencesRef.current = preferences
+      dispatch({ type: 'user_preferences_updated', preferences })
+      return preferences
+    },
+    [resolvedServices.userApi]
+  )
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
     devices: state.devices,
@@ -400,54 +419,19 @@ export function WorkbenchProvider({
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
   const trialPluginApp = trialPluginAppByScope[projectChatScopeKey]
-  useEffect(() => {
-    const showGuide = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          pluginName?: unknown
-          templates?: unknown
-          app?: unknown
-        }>
-      ).detail
-      if (typeof detail?.pluginName !== 'string' || !Array.isArray(detail.templates)) return
-      const templates = detail.templates.filter(
-        (template): template is PluginPathComponent =>
-          Boolean(template) &&
-          typeof template === 'object' &&
-          typeof (template as PluginPathComponent).name === 'string' &&
-          typeof (template as PluginPathComponent).path === 'string'
-      )
-      if (templates.length === 0) return
+  const showTrialGuide = useCallback(
+    (title: string, app: LocalDeviceApp) => {
+      const guide = createPluginTrialGuide(title, app.trialTemplates, app)
+      if (!guide) return
       setTrialPluginNameByScope(current => ({
         ...current,
-        [projectChatScopeKey]: detail.pluginName as string,
+        [projectChatScopeKey]: guide.pluginName,
       }))
-      setTrialTemplatesByScope(current => ({
-        ...current,
-        [projectChatScopeKey]: templates.slice(0, 6),
-      }))
-      if (
-        detail.app &&
-        typeof detail.app === 'object' &&
-        typeof (detail.app as LocalDeviceApp).id === 'string' &&
-        typeof (detail.app as LocalDeviceApp).name === 'string'
-      ) {
-        setTrialPluginAppByScope(current => ({
-          ...current,
-          [projectChatScopeKey]: detail.app as LocalDeviceApp,
-        }))
-      } else {
-        setTrialPluginAppByScope(current => {
-          if (!current[projectChatScopeKey]) return current
-          const next = { ...current }
-          delete next[projectChatScopeKey]
-          return next
-        })
-      }
-    }
-    window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
-    return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
-  }, [projectChatScopeKey])
+      setTrialTemplatesByScope(current => ({ ...current, [projectChatScopeKey]: guide.templates }))
+      setTrialPluginAppByScope(current => ({ ...current, [projectChatScopeKey]: app }))
+    },
+    [projectChatScopeKey]
+  )
   const setDraftInputForScope = useCallback((scopeKey: string, value: string) => {
     setDraftInputByScope(current => {
       if ((current[scopeKey] ?? '') === value) return current
@@ -523,12 +507,6 @@ export function WorkbenchProvider({
       return next
     })
   }, [projectChatScopeKey, trialPluginName])
-  const applyTrialTemplate = useCallback(
-    (template: PluginPathComponent) => {
-      setDraftInput(buildTrialTemplatePrompt(draftInput, template))
-    },
-    [draftInput, setDraftInput]
-  )
   const applyQueuedPluginTrial = useCallback(
     (scopeKey: string, trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
       setDraftInputByScope(current => ({ ...current, [scopeKey]: trial.input }))
@@ -881,7 +859,8 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
-  const taskComposerCatalogsEnabled = loadTaskComposerCatalogs || taskComposerCatalogsRequested
+  const taskComposerCatalogsEnabled =
+    taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
     setTaskComposerCatalogsRequested(true)
   }, [])
@@ -1793,6 +1772,15 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  useEffect(
+    () =>
+      resolvedServices.chatStream.subscribe({
+        onRuntimeWorkChanged: () => {
+          void stableRefreshWorkLists()
+        },
+      }),
+    [resolvedServices.chatStream, stableRefreshWorkLists]
+  )
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
     void refreshRuntimeTask(address)
@@ -1878,14 +1866,14 @@ export function WorkbenchProvider({
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
 
+    const snapshotVersion = beginRuntimeGoalSnapshot(address)
     void runtimeTasks
       .getRuntimeGoal(address)
       .then(response => {
-        if (!response.accepted) return
-        const goal = response.goal
-        if (!goal) return
+        if (!response.accepted || !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)) return
+        const goal = response.goal ?? null
         setRuntimeConversationGoal(address, goal)
-        lifecycleStore.goalStatusReceived(address, goal.status)
+        lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
       })
       .catch(error => {
         console.warn('[Wework] Runtime Goal snapshot sync failed', {
@@ -2155,7 +2143,7 @@ export function WorkbenchProvider({
   }, [projectPluginNames])
 
   const listLocalApps = useCallback(
-    async (options?: { allowEmptySnapshot?: boolean; supersedeInstalledRequest?: boolean }) => {
+    async (options?: { supersedeInstalledRequest?: boolean }) => {
       localAppsRequestedRef.current = true
       const cached = localAppsCacheRef.current
       if (cached && cached.expiresAt > Date.now()) {
@@ -2171,44 +2159,40 @@ export function WorkbenchProvider({
         : undefined
       const isCurrentLoad = () => loadGeneration === localAppsLoadGenerationRef.current
       const publishCurrentComposerApps = (apps: LocalDeviceApp[]) => {
-        if (!isCurrentLoad() || apps.length === 0) return
-        publishComposerApps(apps)
+        if (!isCurrentLoad()) return
+        replaceComposerApps(apps)
       }
       const loadPromise = (async () => {
         // Composer only needs installed membership. Never await Codex plugin/list
         // here — it reconciles for ~10s and stalls turns on the shared app-server
         // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
-        let currentComposerDeviceId: string | null = null
+        const currentComposerDeviceId =
+          peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId?.trim() ||
+          peekLocalCodexPluginsReadState()?.deviceId?.trim() ||
+          (await ensureLocalExecutorStarted()).deviceId?.trim()
+        if (!currentComposerDeviceId)
+          throw new Error('Composer plugin inventory requires a device ID')
+
+        // Both passes share one membership snapshot; logo hydration cannot restore removed plugins.
+        const installedSnapshot = Promise.all([
+          localPluginApi
+            .listInstalledPlugins({
+              shareInflight: !options?.supersedeInstalledRequest,
+              requireComplete: true,
+            })
+            .then(response => response.items),
+          cloudConnection.isConnected
+            ? cloudPluginApi
+                .listInstalledPlugins(currentComposerDeviceId)
+                .then(response => response.items)
+            : Promise.resolve([] as InstalledPlugin[]),
+        ])
         const composerPluginSources = {
-          // Retain inaccessible Codex apps while merging installed plugins so an
-          // unlinked connector cannot be reintroduced as an accessible skill-only app.
+          deviceId: currentComposerDeviceId,
+          // Keep inaccessible apps during matching so their plugins cannot add selectable duplicates.
           listCodexApps: () => localPluginApi.listApps({ includeInaccessible: true }),
-          readLocalInstalledPlugins: async () => {
-            currentComposerDeviceId =
-              peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
-              peekLocalCodexPluginsReadState()?.deviceId ||
-              null
-            if (!currentComposerDeviceId) {
-              try {
-                const status = await ensureLocalExecutorStarted()
-                currentComposerDeviceId = status.deviceId?.trim() || null
-              } catch {
-                currentComposerDeviceId = null
-              }
-            }
-            try {
-              const response = await localPluginApi.listInstalledPlugins({
-                shareInflight: !options?.supersedeInstalledRequest,
-              })
-              currentComposerDeviceId =
-                peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
-                peekLocalCodexPluginsReadState()?.deviceId ||
-                currentComposerDeviceId
-              return response.items
-            } catch {
-              return []
-            }
-          },
+          readLocalInstalledPlugins: async () => (await installedSnapshot)[0],
+          listCloudInstalledPlugins: async () => (await installedSnapshot)[1],
           readLocalInstalledPluginDetail: (plugin: InstalledPlugin) => {
             const labels = plugin.metadata.labels
             const id =
@@ -2217,10 +2201,6 @@ export function WorkbenchProvider({
               typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
             )
           },
-          listCloudInstalledPlugins: () =>
-            cloudPluginApi
-              .listInstalledPlugins(currentComposerDeviceId ?? undefined)
-              .then(response => response.items),
         }
 
         const marketplaceCache = getPluginMarketplaceCache(
@@ -2293,13 +2273,10 @@ export function WorkbenchProvider({
             }
           )
             .then(enriched => {
-              if (!isCurrentLoad() || enriched.length === 0) {
-                return
-              }
-              const byId = new Map(apps.map(app => [app.id, app]))
-              for (const app of enriched) byId.set(app.id, app)
-              const merged = [...byId.values()]
-              publishComposerApps(merged)
+              if (!isCurrentLoad()) return
+              const byId = new Map(enriched.map(app => [app.id, app]))
+              const merged = apps.map(app => byId.get(app.id) ?? app)
+              replaceComposerApps(merged)
               localAppsCacheRef.current = {
                 expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
                 apps: merged,
@@ -2310,31 +2287,14 @@ export function WorkbenchProvider({
             })
         }
 
-        const isCurrentGeneration = isCurrentLoad()
-        if (apps.length > 0) {
-          if (isCurrentGeneration) {
-            publishComposerApps(apps)
-            localAppsCacheRef.current = {
-              expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-              apps,
-            }
+        if (isCurrentLoad()) {
+          replaceComposerApps(apps)
+          localAppsCacheRef.current = {
+            expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+            apps,
           }
-          return apps
         }
-
-        if (options?.allowEmptySnapshot && isCurrentGeneration) {
-          replaceComposerApps([])
-          return apps
-        }
-
-        // Never pin an empty TTL cache, and never wipe the shared last-known list on a
-        // transient []. Slash keeps React state; returning/keeping getComposerApps()
-        // is what stops the toolbar picker from saying no plugins are installed.
-        if (isCurrentGeneration) {
-          localAppsCacheRef.current = null
-        }
-        const kept = getComposerApps()
-        return kept.length > 0 ? kept : apps
+        return apps
       })()
 
       localAppsInflightRef.current = loadPromise
@@ -2355,8 +2315,6 @@ export function WorkbenchProvider({
     ]
   )
 
-  const localAppsPrewarmSourceRef = useRef<typeof listLocalApps | null>(null)
-
   const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
   useEffect(() => {
     if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
@@ -2371,32 +2329,11 @@ export function WorkbenchProvider({
     localAppsLoadGenerationRef.current += 1
     if (!shouldRefreshApps) return
     void listLocalApps({
-      allowEmptySnapshot: true,
       supersedeInstalledRequest: true,
-    })
+    }).catch(error => console.error('[Wework] Failed to refresh composer plugins.', error))
   }, [listLocalApps, projectPluginNamesKey])
 
-  // Warm the shared composer app cache once the startup project context is
-  // stable. Composer controls consume this snapshot instead of issuing their
-  // own mount requests.
   useEffect(() => {
-    if (
-      prewarmComposerApps &&
-      isWorkbenchShellReady &&
-      localAppsPrewarmSourceRef.current !== listLocalApps
-    ) {
-      localAppsPrewarmSourceRef.current = listLocalApps
-      if (localAppsRefreshTimerRef.current !== null) {
-        window.clearTimeout(localAppsRefreshTimerRef.current)
-        localAppsRefreshTimerRef.current = null
-      }
-      localSkillsCacheRef.current.clear()
-      localAppsCacheRef.current = null
-      localAppsInflightRef.current = null
-      localAppsLoadGenerationRef.current += 1
-      void listLocalApps()
-    }
-
     const clearLocalSkillCache = () => {
       const shouldRefreshApps = localAppsRequestedRef.current
       localSkillsCacheRef.current.clear()
@@ -2413,9 +2350,8 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
         localAppsInflightRef.current = null
         void listLocalApps({
-          allowEmptySnapshot: true,
           supersedeInstalledRequest: true,
-        })
+        }).catch(error => console.error('[Wework] Failed to refresh composer plugins.', error))
       }, LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS)
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
@@ -2426,7 +2362,7 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
       }
     }
-  }, [isWorkbenchShellReady, listLocalApps, prewarmComposerApps])
+  }, [listLocalApps])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
   // onto composer apps when the cache arrives after the warm path.
@@ -2505,7 +2441,7 @@ export function WorkbenchProvider({
       trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
-      applyTrialTemplate,
+      showTrialGuide,
       selectedSkills: skillSelection.selectedSkills,
       attachmentStateByScope: attachmentSelection.stateByScope,
       attachments: attachmentSelection.attachments,
@@ -2567,7 +2503,7 @@ export function WorkbenchProvider({
       trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
-      applyTrialTemplate,
+      showTrialGuide,
       handleBlockedModelSelect,
       currentContextUsage,
       isOptionsLocked,
@@ -2615,7 +2551,7 @@ export function WorkbenchProvider({
       trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
-      applyTrialTemplate,
+      showTrialGuide,
       selectedSkills: skillSelection.selectedSkills,
       attachmentStateByScope: attachmentSelection.stateByScope,
       attachments: attachmentSelection.attachments,
@@ -2677,7 +2613,7 @@ export function WorkbenchProvider({
       trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
-      applyTrialTemplate,
+      showTrialGuide,
       handleBlockedModelSelect,
       currentContextUsage,
       listLocalSkills,
@@ -2718,6 +2654,7 @@ export function WorkbenchProvider({
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    updateUserPreferences,
     setWorkbenchError,
     projectWorktreeBranch,
     setProjectWorktreeBranch,

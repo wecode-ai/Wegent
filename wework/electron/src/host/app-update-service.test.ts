@@ -217,6 +217,48 @@ describe('AppUpdateService', () => {
 
     await expect(service(updater).check('stable')).rejects.toThrow('GitHub is unavailable')
   })
+
+  test('logs the concrete download failure without exposing its URL', async () => {
+    const updater = new FakeUpdater()
+    const log = vi.fn()
+    updater.checkForUpdates.mockResolvedValue({
+      updateInfo: {
+        version: '0.2.7',
+        files: [],
+        path: 'pending',
+        sha512: 'sha',
+        releaseDate: '2026-08-25T00:00:00Z',
+      },
+      cancellationToken: {} as never,
+      downloadPromise: null,
+      isUpdateAvailable: true,
+    })
+    const failure = Object.assign(new Error('fetch failed for https://example.com/private'), {
+      code: 'ECONNRESET',
+    })
+    updater.downloadUpdate.mockRejectedValue(failure)
+    const appUpdate = new AppUpdateService({
+      updater: updater as unknown as AppUpdater,
+      currentVersion: () => '0.2.6',
+      isPackaged: () => true,
+      prepareUpdate: vi.fn().mockResolvedValue(undefined),
+      prepareInstall: vi.fn().mockResolvedValue(undefined),
+      updateBaseUrl: 'https://example.com',
+      log,
+    })
+
+    await appUpdate.check('stable')
+    await expect(appUpdate.download()).rejects.toBe(failure)
+
+    expect(log).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        event: 'update-failed',
+        errorType: 'Error',
+        errorCode: 'ECONNRESET',
+        errorMessage: 'fetch failed for [URL removed]',
+      })
+    )
+  })
 })
 
 test('preserves an active download across repeated checks and accumulates failed differential bytes', async () => {

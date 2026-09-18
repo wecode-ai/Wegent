@@ -27,6 +27,7 @@ use crate::{
     local::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
+        environment_prepare::execute_environment_prepare,
         event_stream::{event_sequence, ExecutorEventHub},
         session::{LocalSessionHandler, SessionType, TerminalEvent},
         session_gateway::start_session_gateway,
@@ -155,6 +156,7 @@ pub struct LocalBackendRunner<
     runtime_event_hub: Option<ExecutorEventHub>,
     connection_status: Arc<AtomicBool>,
     runtime_pull_lock: Arc<AsyncMutex<()>>,
+    runtime_pull_pending: Arc<AtomicBool>,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -323,6 +325,7 @@ where
             runtime_event_hub: None,
             connection_status: Arc::new(AtomicBool::new(false)),
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
+            runtime_pull_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -509,14 +512,21 @@ where
                         &self.client.config.backend_url,
                         &self.client.config.device_id,
                     ));
-                    retry_delay = self.client.config.reconnect_delay;
-                    self.heartbeat_until_reconnect().await;
+                    let stable_connection = self.heartbeat_until_reconnect().await;
                     self.connection_status.store(false, Ordering::Release);
                     if let Err(error) = self.client.transport.disconnect().await {
                         write_executor_error_line(&format_executor_log(
                             "local backend stale connection cleanup failed",
                             &[("error", error)],
                         ));
+                    }
+                    if stable_connection {
+                        retry_delay = self.client.config.reconnect_delay;
+                    } else {
+                        sleep(retry_delay).await;
+                        retry_delay = retry_delay
+                            .saturating_mul(2)
+                            .min(self.client.config.reconnect_delay_max);
                     }
                 }
                 Err(error) => {
@@ -625,8 +635,9 @@ where
         }
     }
 
-    async fn heartbeat_until_reconnect(&self) {
+    async fn heartbeat_until_reconnect(&self) -> bool {
         let mut consecutive_failures = 0_u32;
+        let mut observed_successful_heartbeat = false;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
         let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
             handler
@@ -646,7 +657,7 @@ where
                         &[("error", error)],
                     ));
                     let _ = self.client.disconnect().await;
-                    return;
+                    return observed_successful_heartbeat;
                 }
             }
             if let Some(handler) = &self.session_handler {
@@ -658,6 +669,7 @@ where
             let failure = match self.client.emit_liveness_heartbeat().await {
                 Ok(()) => {
                     consecutive_failures = 0;
+                    observed_successful_heartbeat = true;
                     self.trigger_runtime_work_poll();
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
@@ -672,7 +684,7 @@ where
             ));
             if consecutive_failures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES {
                 let _ = self.client.disconnect().await;
-                return;
+                return observed_successful_heartbeat;
             }
             next_heartbeat_at = Instant::now() + self.client.config.heartbeat_timeout;
         }
@@ -682,24 +694,60 @@ where
         let Some(handler) = self.runtime_work_handler.clone() else {
             return;
         };
-        tokio::spawn(poll_available_runtime_work(
+        schedule_runtime_work_poll(
             self.client.clone(),
             handler,
             Arc::clone(&self.runtime_pull_lock),
-        ));
+            Arc::clone(&self.runtime_pull_pending),
+        );
     }
+}
+
+fn schedule_runtime_work_poll<T>(
+    client: LocalBackendClient<T>,
+    handler: Arc<dyn RuntimeWorkHandler>,
+    pull_lock: Arc<AsyncMutex<()>>,
+    pull_pending: Arc<AtomicBool>,
+) where
+    T: LocalBackendTransport,
+{
+    pull_pending.store(true, Ordering::Release);
+    tokio::spawn(poll_available_runtime_work(
+        client,
+        handler,
+        pull_lock,
+        pull_pending,
+    ));
 }
 
 async fn poll_available_runtime_work<T>(
     client: LocalBackendClient<T>,
     handler: Arc<dyn RuntimeWorkHandler>,
     pull_lock: Arc<AsyncMutex<()>>,
+    pull_pending: Arc<AtomicBool>,
 ) where
     T: LocalBackendTransport,
 {
-    let Ok(_guard) = pull_lock.try_lock() else {
-        return;
-    };
+    loop {
+        let Ok(guard) = pull_lock.try_lock() else {
+            return;
+        };
+        pull_pending.store(false, Ordering::Release);
+        drain_available_runtime_work(&client, &handler).await;
+        drop(guard);
+
+        if !pull_pending.swap(false, Ordering::AcqRel) {
+            return;
+        }
+    }
+}
+
+async fn drain_available_runtime_work<T>(
+    client: &LocalBackendClient<T>,
+    handler: &Arc<dyn RuntimeWorkHandler>,
+) where
+    T: LocalBackendTransport,
+{
     let capacity = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.capacity.get",
@@ -834,7 +882,7 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
     let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-        RuntimeWorkRpcHandler::with_event_sender(
+        RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
             app_ipc_device_id.clone(),
             resolve_codex_binary(),
             runtime_event_tx.clone(),
@@ -920,6 +968,7 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
     }
+    crate::agents::rewrite_loopback_model_gateway(request, &config.backend_url);
 }
 
 fn runtime_error_response(error: AppIpcError) -> Value {

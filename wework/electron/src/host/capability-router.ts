@@ -2,6 +2,7 @@ export const HOST_PROTOCOL_VERSION = 1
 
 export const HOST_CAPABILITIES = [
   'app.getVersion',
+  'app.quit',
   'appUpdate.check',
   'appUpdate.download',
   'appUpdate.downloadProgress',
@@ -57,6 +58,7 @@ export const HOST_CAPABILITIES = [
   'dialog.open',
   'dialog.save',
   'desktop.events',
+  'deviceDiagnostics.microphone',
   'diagnostics.filePreview',
   'developer.openDevTools',
   'developer.openLogDirectory',
@@ -69,8 +71,10 @@ export const HOST_CAPABILITIES = [
   'e2e.activateRuntimeTaskNotification',
   'e2e.focusMainWindow',
   'e2e.focusWindow',
+  'e2e.insertText',
   'e2e.pressKey',
   'e2e.getProcessSnapshot',
+  'e2e.getRendererHeapUsage',
   'e2e.getRuntimeDiagnostics',
   'e2e.getClipboardText',
   'e2e.getStartupSplashSnapshot',

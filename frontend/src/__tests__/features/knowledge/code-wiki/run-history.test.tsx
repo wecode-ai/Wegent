@@ -9,7 +9,7 @@
  * before it existed the reader got an empty page and no explanation.
  */
 
-import { canRepublish, summarise } from '@/features/knowledge/code-wiki/RunHistory'
+import { canRepublish, strategyTitle, summarise } from '@/features/knowledge/code-wiki/RunHistory'
 import { failureText } from '@/features/knowledge/code-wiki/failureText'
 import { formatRelativeTime } from '@/utils/dateTime'
 import type { CodeWikiRunStatus } from '@/types/code-wiki'
@@ -105,6 +105,22 @@ describe('why a run failed', () => {
 
   it('says nothing when there is nothing to say', () => {
     expect(failureText('', '', t)).toBe('')
+  })
+})
+
+describe('generation strategy labels', () => {
+  it('uses translated labels for the built-in and legacy history strategies', () => {
+    expect(strategyTitle('coordinator_adaptive', t)).toBe(
+      'codeWiki.strategy.options.coordinator_adaptive.title'
+    )
+    expect(strategyTitle('coordinator_solo', t)).toBe(
+      'codeWiki.strategy.options.coordinator_solo.title'
+    )
+    expect(strategyTitle('legacy', t)).toBe('codeWiki.strategy.legacyTitle')
+  })
+
+  it('keeps an unknown strategy id visible for forward compatibility', () => {
+    expect(strategyTitle('configured_later', t)).toBe('configured_later')
   })
 })
 

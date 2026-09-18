@@ -36,11 +36,14 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_items import external_provider as external_provider_module
 from app.services.loop_items.external_provider import (
     ASSIGNEE_PREFIX,
+    MAX_EXTERNAL_COMMENT_PAGES,
     PARENT_MARKER,
     external_loop_item_provider,
 )
 from app.services.loop_items.provider_router import loop_item_provider_router
+from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
+from tests.utils.agent_resources import create_runnable_wegent_team
 
 
 @pytest.fixture(autouse=True)
@@ -172,6 +175,89 @@ def _active_execution(db: Session, item_id: str) -> LoopItemExecution | None:
         .order_by(LoopItemExecution.id.desc())
         .first()
     )
+
+
+def test_get_many_batches_gitlab_issue_reads(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    requests: list[tuple[str, dict[str, object] | None]] = []
+
+    def request(_project, _method, path, *, params=None, **_kwargs):
+        requests.append((path, params))
+        return [_issue(1), _issue(2)]
+
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_repository",
+        lambda _project: "group/project",
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_request", request)
+
+    rows = external_loop_item_provider.get_many(
+        test_db,
+        str(project.id),
+        test_user.id,
+        [f"{project.project_key}-1", f"{project.project_key}-2"],
+    )
+
+    assert [row["id"] for row in rows] == [
+        f"{project.project_key}-1",
+        f"{project.project_key}-2",
+    ]
+    assert requests == [
+        (
+            "/projects/group%2Fproject/issues",
+            {"iids[]": [1, 2], "state": "all", "per_page": 2},
+        )
+    ]
+
+
+def test_my_work_batches_external_rows_per_project(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    item_ids = [f"{project.project_key}-1", f"{project.project_key}-2"]
+    local_item_id = f"{project.project_key}-15"
+    ordered_item_ids = [item_ids[1], local_item_id, item_ids[0]]
+    test_db.add_all(
+        [
+            LoopItem(
+                id=item_id,
+                cloud_project_id=str(project.id),
+                assignee_user_id=test_user.id,
+                metadata_json={"external_index": True},
+            )
+            for item_id in item_ids
+        ]
+        + [
+            LoopItem(
+                id=local_item_id,
+                cloud_project_id=str(project.id),
+                assignee_user_id=test_user.id,
+                metadata_json={},
+            )
+        ]
+    )
+    test_db.commit()
+    calls: list[tuple[str, list[str]]] = []
+
+    def get_many(_db, project_id, user_id, requested_item_ids):
+        assert user_id == test_user.id
+        calls.append((project_id, requested_item_ids))
+        return [{"id": item_id} for item_id in requested_item_ids]
+
+    monkeypatch.setattr(external_loop_item_provider, "get_many", get_many)
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "get",
+        lambda *_args, **_kwargs: pytest.fail("serial provider read"),
+    )
+
+    rows = loop_item_service.list_my_work(test_db, test_user.id)
+
+    assert [row["id"] for row in rows] == ordered_item_ids
+    assert calls == [(str(project.id), [item_ids[1], item_ids[0]])]
 
 
 def test_external_board_page_is_filtered_and_detail_is_lazy(
@@ -468,17 +554,11 @@ def test_assign_wegent_runtime_robot_on_gitlab_keeps_robot_identity(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"external-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="external",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     _mock_issue(monkeypatch)
     bot = _make_bot(
         test_db,
@@ -516,17 +596,11 @@ def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
-    team = Kind(
-        kind="Team",
-        name=f"external-team-{uuid.uuid4().hex[:8]}",
-        namespace="default",
+    team = create_runnable_wegent_team(
+        test_db,
         user_id=test_user.id,
-        is_active=True,
-        json={},
+        name_prefix="external",
     )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
     _mock_issue(monkeypatch)
     bot = _make_bot(
         test_db,
@@ -811,6 +885,74 @@ def test_project_chat_scope_for_external_task_creates_no_shadow(
 
     assert result.id == str(project.id)
     assert test_db.get(LoopItem, _item_id(project)) is None
+
+
+def test_external_comments_raise_instead_of_silently_truncating(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    requested_pages: list[int] = []
+
+    def request(_project, _method, _path, *, params, **_kwargs):
+        page = int(params["page"])
+        requested_pages.append(page)
+        return [
+            {
+                "id": page,
+                "body": f"comment {page}",
+                "author": {"username": "reviewer"},
+                "created_at": "2026-09-11T00:00:00Z",
+            }
+        ] * 100
+
+    monkeypatch.setattr(
+        external_loop_item_provider, "_repository", lambda _project: "repo"
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_request", request)
+
+    with pytest.raises(HTTPException) as exc:
+        external_loop_item_provider._list_comments(project, 7)
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == (
+        "Provider comment list exceeds the supported page limit"
+    )
+    assert requested_pages == list(range(1, MAX_EXTERNAL_COMMENT_PAGES + 2))
+
+
+def test_external_comments_accept_exact_page_limit(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    requested_pages: list[int] = []
+
+    def request(_project, _method, _path, *, params, **_kwargs):
+        page = int(params["page"])
+        requested_pages.append(page)
+        if page > MAX_EXTERNAL_COMMENT_PAGES:
+            return []
+        return [
+            {
+                "id": page,
+                "body": f"comment {page}",
+                "author": {"username": "reviewer"},
+                "created_at": "2026-09-11T00:00:00Z",
+            }
+        ] * 100
+
+    monkeypatch.setattr(
+        external_loop_item_provider, "_repository", lambda _project: "repo"
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_request", request)
+
+    comments = external_loop_item_provider._list_comments(project, 7)
+
+    assert len(comments) == MAX_EXTERNAL_COMMENT_PAGES * 100
+    assert requested_pages == list(range(1, MAX_EXTERNAL_COMMENT_PAGES + 2))
 
 
 def test_external_assigned_task_chat_start_creates_message(

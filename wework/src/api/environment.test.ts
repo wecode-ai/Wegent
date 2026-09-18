@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  applyProjectEnvironmentPatch,
   buildPullRequestUrl,
   checkoutProjectBranch,
   commitAndPushProjectChanges,
@@ -35,11 +36,22 @@ describe('parseGitShortStat', () => {
   })
 
   test('detects a non-git workspace without depending on localized stderr', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: false,
-      stdout: '',
-      error: 'Command failed',
-      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          exit_code: 0,
+          stdout: 'false\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        exit_code: 128,
+        stdout: '',
+        error: 'Command failed',
+        stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+      })
     })
 
     const info = await loadProjectEnvironment(
@@ -2076,6 +2088,52 @@ describe('loadProjectEnvironment', () => {
 })
 
 describe('commitProjectChanges', () => {
+  test('applies a selected patch through the restricted device command', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+    const patch = [
+      'diff --git a/src/env.ts b/src/env.ts',
+      '--- a/src/env.ts',
+      '+++ b/src/env.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      '',
+    ].join('\n')
+
+    await applyProjectEnvironmentPatch(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      'stage',
+      patch
+    )
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_apply_patch',
+      path: '/workspace/Wegent',
+      args: ['stage', btoa(patch)],
+      timeout_seconds: 30,
+      max_output_bytes: 64 * 1024,
+    })
+  })
+
   test('loads the full environment diff through the project device command API', async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       success: true,

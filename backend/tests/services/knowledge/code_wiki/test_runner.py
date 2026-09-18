@@ -12,11 +12,13 @@ wiki, and that the commit the agent reports is the one the next run compares aga
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
 from app.models.wiki import (
     WikiContent,
@@ -58,6 +60,7 @@ class FakeTasks:
     # task is listed as a conversation is this run's decision, not a field a client
     # could set.
     namespaces: list[str] = field(default_factory=list)
+    users: list[int] = field(default_factory=list)
     next_id: int = 500
     fails: bool = False
 
@@ -72,6 +75,7 @@ class FakeTasks:
             raise RuntimeError("no executor available")
         self.created.append(obj_in)
         self.namespaces.append(namespace)
+        self.users.append(user.id)
         return {"id": task_id}
 
     @property
@@ -263,6 +267,37 @@ def test_the_run_is_reachable_from_the_task_it_created(
 
     assert started.generation.task_id == started.task_id
     assert started.task_id > 0
+
+
+def test_generation_is_linked_before_the_task_can_be_dispatched(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.adapters import task_kinds
+
+    def assert_generation_linked_before_dispatch(**kwargs: Any) -> dict[str, int]:
+        generation = (
+            test_db.query(WikiGeneration)
+            .filter(WikiGeneration.kind_id == knowledge_base.id)
+            .one()
+        )
+        assert generation.task_id == kwargs["task_id"]
+        return tasks.create_task_or_append(**kwargs)
+
+    monkeypatch.setattr(
+        task_kinds.task_kinds_service,
+        "create_task_or_append",
+        assert_generation_linked_before_dispatch,
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.task_id == started.generation.task_id
 
 
 def test_a_first_run_gets_the_full_rebuild_instructions(
@@ -630,7 +665,13 @@ def _publish_a_first_wiki(test_db, knowledge_base, test_user, tasks) -> WikiGene
     _write_page(test_db, started.generation, "index")
     _write_page(test_db, started.generation, "architecture")
     _write_page(test_db, started.generation, "architecture/backend")
-    finish_run(test_db, generation=started.generation, succeeded=True, head_commit=HEAD)
+    finish_run(
+        test_db,
+        generation=started.generation,
+        succeeded=True,
+        head_commit=HEAD,
+        tracked_file_count=1_000,
+    )
     return started.generation
 
 
@@ -664,6 +705,39 @@ def test_the_commit_the_agent_reports_is_what_the_next_run_compares_against(
     )
 
     assert published_commit(test_db, knowledge_base) == NEXT_HEAD
+
+
+def test_a_published_checkout_count_enables_the_relative_change_limit(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    _write_page(test_db, first.generation, "architecture")
+    _write_page(test_db, first.generation, "architecture/backend")
+    finish_run(
+        test_db,
+        generation=first.generation,
+        succeeded=True,
+        head_commit=HEAD,
+        tracked_file_count=100,
+    )
+
+    started = start_run(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=NEXT_HEAD,
+        changed_paths=[ChangedPath(f"src/module_{i}.py", "M") for i in range(30)],
+    )
+
+    assert started.generation.generation_type.value == "full"
+    assert "30 of 100 tracked files" in started.reason
 
 
 def test_a_failed_run_publishes_nothing(
@@ -717,7 +791,7 @@ def test_a_run_belonging_to_no_knowledge_base_is_not_a_code_wiki_run(
 # --- resolving the repository's state when the caller did not supply it ------
 
 
-def _repository_at(monkeypatch, head: str, changed=None):
+def _repository_at(monkeypatch, head: str, changed=None, tracked_file_count=None):
     """Answer as the provider would, without reaching one."""
     from app.services.knowledge.code_wiki import runner
     from app.services.knowledge.code_wiki.repo_state import RepositoryState
@@ -725,8 +799,11 @@ def _repository_at(monkeypatch, head: str, changed=None):
     monkeypatch.setattr(
         runner,
         "read_repository_state",
-        lambda db, *, user_id, source, since_commit: RepositoryState(
-            head_commit=head, branch="main", changed_paths=changed
+        lambda db, **kwargs: RepositoryState(
+            head_commit=head,
+            branch="main",
+            changed_paths=changed,
+            tracked_file_count=tracked_file_count,
         ),
     )
 
@@ -766,6 +843,52 @@ def test_a_changed_repository_is_updated_incrementally_without_being_told(
 
     assert started.mode == "incremental"
     assert "src/one.py" in tasks.prompt
+
+
+def test_a_historical_wiki_uses_the_tree_count_before_applying_the_ratio(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True, head_commit=HEAD)
+    _repository_at(
+        monkeypatch,
+        NEXT_HEAD,
+        changed=(ChangedPath("src/one.py", "M"),),
+        tracked_file_count=1_000,
+    )
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.mode == "incremental"
+
+
+def test_a_historical_wiki_rebuilds_when_its_tree_cannot_be_counted(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True, head_commit=HEAD)
+    _repository_at(monkeypatch, NEXT_HEAD, changed=(ChangedPath("src/one.py", "M"),))
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.mode == "full"
+    assert "file count is unavailable" in started.reason
 
 
 def test_a_repository_that_cannot_be_read_falls_back_to_a_rebuild(
@@ -1166,7 +1289,13 @@ def test_a_pinned_commit_lets_the_next_run_be_incremental(
     )
     first = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
     _write_page(test_db, first.generation, "index")
-    finish_run(test_db, generation=first.generation, succeeded=True)
+    finish_run(
+        test_db,
+        generation=first.generation,
+        succeeded=True,
+        head_commit="aaaaaaa",
+        tracked_file_count=1_000,
+    )
 
     # The repository has moved, and one file changed.
     monkeypatch.setattr(
@@ -1210,6 +1339,56 @@ def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
     assert started.started
     assert knowledge_base.user_id == test_user.id
     assert started.generation.user_id == test_user.id
+
+
+def test_a_configured_runner_runs_future_generations_without_taking_file_ownership(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.knowledge.code_wiki import source
+
+    runner = User(
+        user_name="wiki-runner",
+        email="wiki-runner@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+    test_db.add(runner)
+    test_db.flush()
+    knowledge_base.json["spec"]["executionPrincipalUserId"] = runner.id
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(knowledge_base, "json")
+    test_db.flush()
+    monkeypatch.setattr(
+        source, "assert_user_can_read_source", lambda *args, **kwargs: {}
+    )
+
+    started = start_run(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        background_execution_id=71,
+        background_execution_timeout_seconds=86400,
+    )
+
+    assert started.generation.user_id == runner.id
+    assert started.generation.ext["backgroundExecutionId"] == 71
+    assert started.generation.ext["backgroundExecutionTimeoutSeconds"] == 86400
+    assert tasks.users[-1] == runner.id
+
+    _write_page(test_db, started.generation, "index")
+    finish_run(test_db, generation=started.generation, succeeded=True)
+
+    document = (
+        test_db.query(KnowledgeDocument).filter_by(kind_id=knowledge_base.id).one()
+    )
+    assert document.user_id == test_user.id
 
 
 def test_an_inactive_wiki_owner_refuses_a_run_before_creating_a_task(

@@ -6,7 +6,10 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
-The context indicator beside the task composer shows the current model's context usage. Its used
+The context indicator beside the task composer shows the current model's context usage. The ratio
+is measured against the context available to the input, which is the model's maximum context minus
+its configured maximum output; upstream providers charge the completion budget against the same
+window as the input, so the context cannot grow any further once the ratio reaches 100%. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.

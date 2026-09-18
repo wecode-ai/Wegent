@@ -7,6 +7,7 @@
   },
   "input": {
     "no_team_placeholder": "Please select or create an agent first",
+    "loading_teams_placeholder": "Loading agents...",
     "expand": "Expand input area",
     "collapse": "Collapse input area"
   },
@@ -37,7 +38,7 @@
     "cancel": "Cancel",
     "re_edit": "Re-edit",
     "re_edit_tooltip": "Re-edit",
-    "forward": "Forward"
+    "forward": "Send to Collaboration"
   },
   "edit": {
     "tooltip": "Edit message",

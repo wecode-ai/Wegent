@@ -21,6 +21,8 @@ const EXTERNAL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 
 interface WikiPageContentProps {
   page: CodeWikiPageNode | null
+  /** Changes whenever the published version changes, even when page identity survives. */
+  publishedGenerationId: number
   onContentChange: (markdown: string) => void
   /** Every page path in this wiki, for deciding whether a link has a target. */
   knownPaths: ReadonlySet<string>
@@ -43,6 +45,7 @@ interface WikiPageContentProps {
  */
 export function WikiPageContent({
   page,
+  publishedGenerationId,
   onContentChange,
   knownPaths,
   onNavigate,
@@ -81,7 +84,7 @@ export function WikiPageContent({
     return () => {
       cancelled = true
     }
-  }, [page?.document_id, onContentChange])
+  }, [page?.document_id, publishedGenerationId, onContentChange])
 
   const components = useMemo(
     () => ({

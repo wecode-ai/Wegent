@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
+import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),

@@ -63,6 +63,11 @@ module.exports = {
     category: 'public.app-category.developer-tools',
     electronLanguages: ['en', 'zh_CN'],
     hardenedRuntime: true,
+    entitlements: path.resolve(__dirname, 'entitlements.mac.plist'),
+    entitlementsInherit: path.resolve(__dirname, 'entitlements.mac.plist'),
+    extendInfo: {
+      NSMicrophoneUsageDescription: `${identity.productName} uses the microphone to record audio when you use voice features.`,
+    },
     ...(useCustomMacosNotarization ? { notarize: false } : {}),
     icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
     signIgnore: process.env.APPLE_SIGNING_IDENTITY
@@ -72,6 +77,7 @@ module.exports = {
   },
   dmg: {
     sign: false,
+    writeUpdateInfo: false,
   },
   win: {
     artifactName: `${artifactPrefix}_\${version}_windows_\${arch}-setup.\${ext}`,

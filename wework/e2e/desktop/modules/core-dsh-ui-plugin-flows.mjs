@@ -18,6 +18,15 @@ const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
 const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const UI_PLUGINS = [
   {
+    name: '@wegent/dsh-conversation-export',
+    directory: 'wework-conversation-export',
+    slot: 'wework.shell.overlay',
+    contributions: ['conversation-export.dialog'],
+    navigation: null,
+    route: null,
+    testId: null,
+  },
+  {
     name: '@wegent/dsh-ui-core-apps',
     directory: 'wework-ui-core-apps',
     slot: 'wework.app',
@@ -61,6 +70,15 @@ const UI_PLUGINS = [
     navigation: null,
     route: '/settings/git-hosting',
     testId: 'git-hosting-settings-page',
+  },
+  {
+    name: '@wegent/dsh-ui-outputs',
+    directory: 'wework-ui-outputs',
+    slot: 'wework.conversation.summary',
+    contributions: ['outputs-summary'],
+    navigation: null,
+    route: null,
+    testId: null,
   },
   {
     name: '@wegent/dsh-ui-plugin-center',
@@ -114,7 +132,7 @@ const DEMO_PLUGIN = {
     'wework.action': ['dsh-extension-demo.open'],
     'wework.app': ['dsh-extension-demo'],
     'wework.task.status': ['dsh-extension-demo.task-status'],
-    'wework.environment.section': ['dsh-extension-demo.environment-section'],
+    'wework.conversation.summary': ['dsh-extension-demo.summary-section'],
     'wework.board.card.status': ['dsh-extension-demo.board-card-status'],
     'wework.workspace.menu.section': ['demo-workspace-menu'],
     'wework.plugins.action': ['dsh-extension-demo.create'],

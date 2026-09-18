@@ -43,7 +43,7 @@ TASK_HEARTBEAT_KEY = "task:heartbeat:{id}"
 # Heartbeat configuration
 # Key TTL should be slightly longer than heartbeat interval to avoid false positives
 HEARTBEAT_KEY_TTL = int(
-    os.getenv("HEARTBEAT_KEY_TTL", "20")
+    os.getenv("HEARTBEAT_KEY_TTL", "60")
 )  # TTL for heartbeat key (seconds)
 HEARTBEAT_TIMEOUT = int(
     os.getenv("HEARTBEAT_TIMEOUT", "30")
@@ -147,8 +147,12 @@ class HeartbeatManager:
                 f"[HeartbeatManager] Heartbeat updated: type={heartbeat_type.value}, id={heartbeat_id}"
             )
             return True
-        except Exception as e:
-            logger.error(f"[HeartbeatManager] Failed to update heartbeat: {e}")
+        except Exception as error:
+            logger.exception(
+                "[HeartbeatManager] Failed to update heartbeat: "
+                f"error_type={type(error).__name__}, "
+                f"heartbeat_type={heartbeat_type.value}, error={error}"
+            )
             return False
 
     async def check_heartbeat(

@@ -14,6 +14,7 @@ mod chat;
 mod fork;
 mod harness_protocol;
 mod history;
+mod image_budget;
 mod vision;
 
 use std::{
@@ -206,27 +207,29 @@ pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalMo
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
+    let api_format = canonical_upstream_api_format(
+        &non_empty_string(model_config, "upstream_api_format")
+            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+            .or_else(|| non_empty_string(model_config, "api_format"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+    );
+    let native_by_default = api_format == "openai-responses";
     Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
             .or_else(|| non_empty_string(model_config, "responsesUrl"))
             .or_else(|| non_empty_string(model_config, "request_url"))
             .or_else(|| non_empty_string(model_config, "requestUrl")),
-        api_format: canonical_upstream_api_format(
-            &non_empty_string(model_config, "upstream_api_format")
-                .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-                .or_else(|| non_empty_string(model_config, "api_format"))
-                .unwrap_or_else(|| "openai-responses".to_owned()),
-        ),
+        api_format,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
         native_tool_search: boolean_value(model_config, "native_tool_search")
             .or_else(|| boolean_value(model_config, "nativeToolSearch"))
-            .unwrap_or(false),
+            .unwrap_or(native_by_default),
         native_namespace_tools: boolean_value(model_config, "native_namespace_tools")
             .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
-            .unwrap_or(false),
+            .unwrap_or(native_by_default),
         api_key,
         default_headers: header_pairs(model_config.get("default_headers")),
         proxy_url: model_config
@@ -433,6 +436,77 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
         ],
     );
     Ok(())
+}
+
+pub(crate) fn retain_for_thread(
+    thread_id: &str,
+    expected_routing_model_id: Option<&str>,
+) -> Result<String, String> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let mut matching_tokens = registry
+        .routes
+        .iter()
+        .filter(|(_, registered)| registered.thread_ids.contains(thread_id))
+        .map(|(token, _)| token.clone())
+        .collect::<Vec<_>>();
+    matching_tokens.sort();
+    let token = match matching_tokens.as_slice() {
+        [token] => token.clone(),
+        [] => {
+            return Err(format!(
+                "local model proxy route for Codex thread {thread_id} is not registered"
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "multiple local model proxy routes are bound to Codex thread {thread_id}"
+            ));
+        }
+    };
+    let registered = registry
+        .routes
+        .get_mut(&token)
+        .expect("matched local model proxy route should exist");
+    if let (Some(expected), Some(actual)) = (
+        expected_routing_model_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        registered.upstream.routing_model_id.as_deref(),
+    ) {
+        if expected != actual {
+            return Err(format!(
+                "local model proxy route for Codex thread {thread_id} uses model {actual}, expected {expected}"
+            ));
+        }
+    }
+    registered.active_references += 1;
+    registered.last_used = Instant::now();
+    log_executor_event(
+        "local model proxy retained for task thread",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            (
+                "routing_model_id",
+                registered
+                    .upstream
+                    .routing_model_id
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+            (
+                "auth_present",
+                (!registered.upstream.api_key.is_empty()).to_string(),
+            ),
+            (
+                "active_references",
+                registered.active_references.to_string(),
+            ),
+        ],
+    );
+    Ok(token)
 }
 
 pub(crate) fn unregister(token: &str) {
@@ -1494,6 +1568,7 @@ fn prepare_request_with_model_hint(
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
     normalize_responses_request_ids(&mut responses_body);
+    image_budget::limit_request_images(&mut responses_body);
 
     if api_format == "openai-responses" {
         apply_configured_max_output_tokens(&mut responses_body, max_output_tokens);
@@ -1649,25 +1724,10 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
-    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
-        return reqwest::Client::builder()
-            .timeout(Duration::from_secs(
-                LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
-            ))
-            .build()
-            .map_err(|error| HttpError {
-                status: StatusCode::BAD_GATEWAY,
-                detail: format!("Failed to configure local model proxy client: {error}"),
-            });
-    };
-    reqwest::Client::builder()
+    proxy_client_builder(proxy_url)?
         .timeout(Duration::from_secs(
             LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
         ))
-        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("Invalid local model proxy URL: {error}"),
-        })?)
         .build()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -1687,7 +1747,10 @@ fn proxy_client_without_redirects(proxy_url: Option<&str>) -> Result<reqwest::Cl
 
 fn proxy_client_builder(proxy_url: Option<&str>) -> Result<reqwest::ClientBuilder, HttpError> {
     let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(reqwest::Client::builder());
+        // The executor hydrates the user's login-shell environment, which may
+        // export proxy variables for unrelated tooling. Reaching the backend
+        // must depend only on the configured upstream, never on that shell.
+        return Ok(reqwest::Client::builder().no_proxy());
     };
     Ok(
         reqwest::Client::builder().proxy(reqwest::Proxy::all(proxy_url).map_err(|error| {
@@ -1718,7 +1781,7 @@ async fn send_upstream_request_with_rate_limit_retry(
         .await
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
-            detail: format!("Local model proxy request failed: {error}"),
+            detail: format!("Local model proxy request failed: {error:#}"),
         })?;
         if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
             || retry_count == MAX_RATE_LIMIT_RETRIES
@@ -2165,7 +2228,7 @@ pub(super) fn finish_stream_utf8(pending_utf8: &[u8]) -> Result<(), std::io::Err
 }
 
 fn normalize_responses_event(event: &str) -> String {
-    if !event.contains("response.completed") {
+    if !event.contains("response.completed") && !event.contains("response.failed") {
         return event.to_owned();
     }
     event
@@ -2178,7 +2241,12 @@ fn normalize_responses_event(event: &str) -> String {
             let Ok(mut value) = serde_json::from_str::<Value>(data) else {
                 return line.to_owned();
             };
+            let completed = value.get("type").and_then(Value::as_str) == Some("response.completed");
             normalize_completed_usage(&mut value);
+            let overload_error_normalized = normalize_retryable_overload_error(&mut value);
+            if !completed && !overload_error_normalized {
+                return line.to_owned();
+            }
             format!(
                 "data: {}",
                 serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
@@ -2239,6 +2307,31 @@ fn normalize_completed_usage(value: &mut Value) {
     };
     ensure_usage_detail(usage, "input_tokens_details", "cached_tokens");
     ensure_usage_detail(usage, "output_tokens_details", "reasoning_tokens");
+}
+
+fn normalize_retryable_overload_error(value: &mut Value) -> bool {
+    if value.get("type").and_then(Value::as_str) != Some("response.failed") {
+        return false;
+    }
+    let Some(error) = value
+        .pointer_mut("/response/error")
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    let retryable = error
+        .get("code")
+        .and_then(Value::as_str)
+        .is_some_and(|code| matches!(code, "server_is_overloaded" | "slow_down"));
+    if retryable {
+        // Codex treats these codes as terminal, while other response failures
+        // use its bounded stream retry loop.
+        error.insert(
+            "code".to_owned(),
+            Value::String("server_overloaded_retryable".to_owned()),
+        );
+    }
+    retryable
 }
 
 fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field: &str) {
@@ -2392,6 +2485,11 @@ mod tests {
             .expect("model config should produce an upstream");
 
             assert_eq!(upstream.api_format, expected);
+            assert_eq!(upstream.native_tool_search, expected == "openai-responses");
+            assert_eq!(
+                upstream.native_namespace_tools,
+                expected == "openai-responses"
+            );
         }
     }
     use std::{
@@ -3109,6 +3207,63 @@ mod tests {
     }
 
     #[test]
+    fn makes_structured_model_overload_failures_retryable() {
+        for code in ["server_is_overloaded", "slow_down"] {
+            let event = format!(
+                "event: response.failed\ndata: {}",
+                json!({
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": {
+                            "code": code,
+                            "message": "Selected model is at capacity. Please try a different model."
+                        }
+                    }
+                })
+            );
+
+            let normalized = normalize_responses_event(&event);
+            let value = responses_event_values(&normalized)
+                .into_iter()
+                .next()
+                .expect("normalized failure event");
+
+            assert_eq!(
+                value
+                    .pointer("/response/error/code")
+                    .and_then(Value::as_str),
+                Some("server_overloaded_retryable")
+            );
+            assert_eq!(
+                value
+                    .pointer("/response/error/message")
+                    .and_then(Value::as_str),
+                Some("Selected model is at capacity. Please try a different model.")
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_non_retryable_responses_failures() {
+        let event = format!(
+            "event: response.failed\ndata: {}",
+            json!({
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {
+                        "code": "context_length_exceeded",
+                        "message": "Input is too long."
+                    }
+                }
+            })
+        );
+
+        assert_eq!(normalize_responses_event(&event), event);
+    }
+
+    #[test]
     fn buffers_incomplete_utf8_until_the_next_stream_chunk() {
         let mut buffer = String::new();
         let mut pending_utf8 = Vec::new();
@@ -3481,6 +3636,41 @@ mod tests {
         assert_eq!(error.status, StatusCode::CONFLICT);
 
         drop(entries);
+        unregister(&token);
+    }
+
+    #[test]
+    fn retaining_a_bound_thread_preserves_its_authenticated_upstream() {
+        let token = register(
+            "retained-thread-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("upstream-model".to_owned()),
+                routing_model_id: Some("routing-model".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        bind_thread(&token, "retained-thread").expect("source thread should bind");
+
+        let retained = retain_for_thread("retained-thread", Some("routing-model"))
+            .expect("bound route should be retained");
+
+        assert_eq!(retained, token);
+        let entries = registry().lock().expect("registry lock");
+        let route = entries.routes.get(&token).expect("retained route");
+        assert_eq!(route.upstream.api_key, "secret");
+        assert_eq!(route.active_references, 2);
+        drop(entries);
+
+        unregister(&retained);
         unregister(&token);
     }
 

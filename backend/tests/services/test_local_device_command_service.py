@@ -4,6 +4,7 @@
 
 """Tests for local device command RPC service."""
 
+import base64
 import gzip
 import hashlib
 import json
@@ -117,6 +118,53 @@ def _create_turn_file_changes_sequence_artifact(tmp_path):
         encoding="utf-8",
     )
     return repo, executor_home
+
+
+def test_git_apply_patch_command_stages_unstages_and_reverts(tmp_path):
+    from app.services.device.command_registry import resolve_local_device_command
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    changed_file = repo / "changed.txt"
+    changed_file.write_text("before\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    changed_file.write_text("after\n", encoding="utf-8")
+    patch = _run_git(repo, "diff", "--binary", "--")
+    encoded_patch = base64.b64encode(patch).decode("ascii")
+    definition = resolve_local_device_command("git_apply_patch", {})
+
+    assert definition is not None
+
+    stage = subprocess.run(
+        [*shlex.split(definition.command), "stage", encoded_patch],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert stage.returncode == 0, stage.stderr.decode()
+    assert _run_git(repo, "diff", "--cached", "--") == patch
+
+    unstage = subprocess.run(
+        [*shlex.split(definition.command), "unstage", encoded_patch],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert unstage.returncode == 0, unstage.stderr.decode()
+    assert _run_git(repo, "diff", "--cached", "--") == b""
+
+    revert = subprocess.run(
+        [*shlex.split(definition.command), "revert", encoded_patch],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert revert.returncode == 0, revert.stderr.decode()
+    assert changed_file.read_text(encoding="utf-8") == "before\n"
 
 
 def _create_plain_workspace_add_sequence_artifact(tmp_path):
@@ -1092,6 +1140,7 @@ def test_branch_diff_prefers_fork_parent_default_branch(tmp_path: Path) -> None:
 
 def test_remote_command_policy_separates_read_only_and_mutating_keys():
     from app.services.device.command_service import (
+        INTERNAL_DEVICE_COMMAND_KEYS,
         REMOTE_DEVICE_COMMAND_KEYS,
         REMOTE_MUTATING_COMMAND_KEYS,
         REMOTE_READ_ONLY_COMMAND_KEYS,
@@ -1108,7 +1157,16 @@ def test_remote_command_policy_separates_read_only_and_mutating_keys():
         "workspace_read_text_file",
         "workspace_read_file_chunk",
     } <= REMOTE_READ_ONLY_COMMAND_KEYS
-    assert {"git_checkout", "git_commit", "git_push"} <= REMOTE_MUTATING_COMMAND_KEYS
+    assert {
+        "environment_prepare",
+        "git_checkout",
+        "git_commit",
+        "git_push",
+    } <= REMOTE_MUTATING_COMMAND_KEYS
+    assert INTERNAL_DEVICE_COMMAND_KEYS == {
+        "environment_prepare",
+        "sync_git_credentials",
+    }
     assert REMOTE_DEVICE_COMMAND_KEYS == (
         REMOTE_READ_ONLY_COMMAND_KEYS
         | REMOTE_MUTATING_COMMAND_KEYS
@@ -2342,10 +2400,15 @@ async def test_execute_configured_device_command_rejects_unowned_device(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_execute_configured_device_command_hides_internal_git_sync_key(
+@pytest.mark.parametrize(
+    "command_key",
+    ["environment_prepare", "sync_git_credentials"],
+)
+async def test_execute_configured_device_command_hides_internal_keys(
     monkeypatch,
+    command_key,
 ):
-    """The generic command API must not expose the secret-bearing sync command."""
+    """The generic command API must not expose service-only commands."""
     from app.services.device import command_service
 
     execute_mock = AsyncMock()
@@ -2365,10 +2428,64 @@ async def test_execute_configured_device_command_hides_internal_git_sync_key(
             db=object(),
             user_id=7,
             device_id="device-abc",
-            command_key="sync_git_credentials",
+            command_key=command_key,
         )
 
     execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_allows_internal_environment_prepare(
+    monkeypatch,
+):
+    """Initialization may explicitly dispatch the internal prepare command."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment"},
+            "stderr": "",
+        }
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda *_args: object(),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        command_key="environment_prepare",
+        args=["{}"],
+        command_config={
+            "environment_prepare": {
+                "command": "prepare-environment",
+            }
+        },
+        allow_internal=True,
+    )
+
+    assert result["success"] is True
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-abc",
+        command="prepare-environment",
+        path=None,
+        args=["{}"],
+        env={},
+        timeout_seconds=60,
+        max_output_bytes=1048576,
+        command_key="environment_prepare",
+    )
 
 
 @pytest.mark.asyncio
@@ -2770,6 +2887,7 @@ async def test_execute_configured_device_command_rejects_cloud_unsupported_comma
     ("command_key", "path", "expected_runtime_command_key"),
     [
         ("workspace_tree", "/workspace/repo", "workspace_tree"),
+        ("git_apply_patch", "/workspace/repo", "git_apply_patch"),
         ("git_status_porcelain", "/workspace/repo", None),
     ],
 )

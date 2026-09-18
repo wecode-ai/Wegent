@@ -8,6 +8,7 @@ use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc}
 #[cfg(windows)]
 use std::{env, path::PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -30,6 +31,7 @@ use crate::{
         CodexLocalConfigUpdateRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::environment_prepare::execute_environment_prepare,
     local::git_commands::{
         branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
         workspace_diff, worktree_add, worktree_remove,
@@ -40,6 +42,7 @@ use crate::{
         PrepareLocalHarnessLaunchRequest,
     },
     local::local_skills::list_local_skills,
+    local::native_git::run_git_capture_with_input,
     local::plugin_catalog::{
         list_wegent_store_plugins, read_plugin_manifest, save_plugin_example,
         ReadPluginManifestRequest, SavePluginExampleRequest,
@@ -77,11 +80,13 @@ pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
         Some("executor.plugin_auth.migrate") => 280,
         Some("executor.plugin_auth.run") => 200,
+        Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -99,6 +104,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "runtime.archives",
     "runtime.automations",
     "runtime.codex",
+    "runtime.composer",
     "runtime.connectors",
     "runtime.harness",
     "runtime.hooks",
@@ -1526,6 +1532,9 @@ impl AppIpcServer {
         .round() as usize;
         let native_args = string_list(params.get("args")).unwrap_or_default();
         let native_result = match command_key {
+            "environment_prepare" => {
+                Some(execute_environment_prepare(&native_args, native_timeout).await)
+            }
             "git_diff" => Some(
                 workspace_diff(
                     native_path.clone(),
@@ -1562,6 +1571,16 @@ impl AppIpcServer {
             "git_push" => Some(
                 push_current_branch(
                     native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_apply_patch" => Some(
+                apply_git_patch(
+                    &native_args,
+                    native_path.as_deref(),
                     &native_env,
                     native_timeout,
                     native_max_output,
@@ -1649,6 +1668,7 @@ impl AppIpcServer {
         })?;
 
         let request = CommandRequest {
+            command_key: Some(command_key.to_owned()),
             command: command.command.to_owned(),
             argv: command
                 .argv
@@ -2775,26 +2795,6 @@ async fn handle_builtin_device_command(
     params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
     match command_key {
-        "home_dir" => Some((
-            CommandResult::ok(
-                dirs::home_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| ".".to_string()),
-            ),
-            None,
-        )),
-        "pwd" => Some((
-            CommandResult::ok(
-                std::env::current_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|_| ".".to_string()),
-            ),
-            None,
-        )),
-        "project_workspace_root" => match project_workspace_root_path() {
-            Ok(path) => Some((CommandResult::ok(path), None)),
-            Err(error) => Some((CommandResult::error(error, 0.0, false), None)),
-        },
         "mkdir_p" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -2943,6 +2943,68 @@ fn git_is_worktree(path: &str) -> bool {
     })
 }
 
+async fn apply_git_patch(
+    args: &[String],
+    cwd: Option<&str>,
+    env: &HashMap<String, String>,
+    timeout_seconds: f64,
+    max_output_bytes: usize,
+) -> CommandResult {
+    let action = args.first().map(String::as_str).unwrap_or_default();
+    let encoded_patch = args.get(1).map(String::as_str).unwrap_or_default();
+    let git_args = match action {
+        "stage" => vec![
+            "apply".to_owned(),
+            "--cached".to_owned(),
+            "--whitespace=nowarn".to_owned(),
+            "-".to_owned(),
+        ],
+        "unstage" => vec![
+            "apply".to_owned(),
+            "--cached".to_owned(),
+            "--reverse".to_owned(),
+            "--whitespace=nowarn".to_owned(),
+            "-".to_owned(),
+        ],
+        "revert" => vec![
+            "apply".to_owned(),
+            "--reverse".to_owned(),
+            "--whitespace=nowarn".to_owned(),
+            "-".to_owned(),
+        ],
+        _ => {
+            return CommandResult::error("Unsupported patch action".to_owned(), 0.0, false);
+        }
+    };
+    let patch = match BASE64_STANDARD.decode(encoded_patch) {
+        Ok(patch) => patch,
+        Err(_) => return CommandResult::error("Invalid patch payload".to_owned(), 0.0, false),
+    };
+    let Some(cwd) = cwd.map(Path::new) else {
+        return CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false);
+    };
+    if !git_is_worktree(cwd.to_string_lossy().as_ref()) {
+        return CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false);
+    }
+
+    match run_git_capture_with_input(
+        &git_args,
+        &patch,
+        Some(cwd),
+        env,
+        Duration::from_secs_f64(timeout_seconds.max(0.001)),
+        max_output_bytes,
+    )
+    .await
+    {
+        Ok(capture) if capture.success => {
+            CommandResult::ok(String::from_utf8_lossy(&capture.stdout).into_owned())
+        }
+        Ok(capture) => CommandResult::error(capture.stderr, 0.0, false),
+        Err(error) => CommandResult::error(error.message, 0.0, error.timed_out),
+    }
+}
+
 fn looks_like_git_dir(path: &Path) -> bool {
     path.join("HEAD").is_file()
         && (path.join("objects").is_dir()
@@ -2975,35 +3037,6 @@ fn is_git_workspace_inspection_command(command_key: &str) -> bool {
             | "git_status_porcelain"
             | "git_remote_url"
     )
-}
-
-#[cfg(windows)]
-fn project_workspace_root_path() -> Result<String, String> {
-    if let Ok(value) = env::var("WEGENT_EXECUTOR_PROJECTS_DIR") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_owned());
-        }
-    }
-    if let Ok(value) = env::var("WECODE_HOME") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed)
-                .join("wegent-executor")
-                .join("workspace")
-                .join("projects")
-                .display()
-                .to_string());
-        }
-    }
-    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    Ok(home
-        .join(".wecode")
-        .join("wegent-executor")
-        .join("workspace")
-        .join("projects")
-        .display()
-        .to_string())
 }
 
 pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
@@ -3305,6 +3338,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             None,
         )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
+        "git_apply_patch" => Some(command_definition(
+            "git apply <validated patch>",
+            &["git", "apply"],
+            None,
+        )),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
         "browser_relay_restart" => Some(command_definition(
             "sh -lc <browser_relay_restart>",
@@ -3555,9 +3593,21 @@ mod tests {
     use tokio::time::Duration;
 
     use super::{
-        app_ipc_request_metadata, is_bulk_app_ipc_event, local_app_command, AppIpcServer,
-        BlockingSingleFlight,
+        app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
+        local_app_command, AppIpcServer, BlockingSingleFlight,
     };
+
+    #[test]
+    fn transcript_export_allows_large_snapshot_packaging() {
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.transcript.export")),
+            10 * 60
+        );
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
+            75
+        );
+    }
 
     #[test]
     fn app_ipc_request_metadata_includes_device_command_key() {

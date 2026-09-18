@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
+import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getGlobalModelPreference,
@@ -19,6 +20,44 @@ export interface ModelRef {
   name: string
   namespace: string
   type: 'public' | 'user' | 'group' | 'runtime'
+}
+
+// A knowledge-base edit dialog can show both the generation and summary selectors.
+// Share its active all-scope request, but never cross the current authenticated
+// session: an OIDC account switch retains this module while the old request settles.
+const llmModelsRequests = new Map<string | null, Promise<UnifiedModel[]>>()
+
+function loadLlmModels(): Promise<UnifiedModel[]> {
+  const token = getToken()
+  const existingRequest = llmModelsRequests.get(token)
+  if (existingRequest) {
+    return existingRequest
+  }
+
+  const request = modelApis
+    .getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+    .then(response =>
+      [...(response.data || [])].sort((a, b) => {
+        const nameA = a.displayName || a.name
+        const nameB = b.displayName || b.name
+        return nameA.localeCompare(nameB)
+      })
+    )
+  llmModelsRequests.set(token, request)
+  void request.then(
+    () => {
+      if (llmModelsRequests.get(token) === request) {
+        llmModelsRequests.delete(token)
+      }
+    },
+    () => {
+      if (llmModelsRequests.get(token) === request) {
+        llmModelsRequests.delete(token)
+      }
+    }
+  )
+
+  return request
 }
 
 interface ModelRefSelectorProps {
@@ -49,6 +88,8 @@ interface ModelRefSelectorProps {
   dataTestId: string
 }
 
+const ATTEMPTED_WITHOUT_TEAM = -1
+
 export function ModelRefSelector({
   value,
   onChange,
@@ -68,7 +109,6 @@ export function ModelRefSelector({
   // This allows re-attempting when the team ID changes or dialog reopens
   // ATTEMPTED_WITHOUT_TEAM (-1) is a sentinel value indicating we attempted
   // preselection before team info was loaded, allowing re-attempt when team info arrives
-  const ATTEMPTED_WITHOUT_TEAM = -1
   const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
   // Whether the current value is this effect's own guess rather than a real choice.
   // A guess made before the team id arrived could not consult the cache, so it has
@@ -81,15 +121,7 @@ export function ModelRefSelector({
     const fetchModels = async () => {
       setLoading(true)
       try {
-        // Fetch LLM models (all scopes)
-        const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
-        // Sort by displayName
-        const sortedModels = (response.data || []).sort((a, b) => {
-          const nameA = a.displayName || a.name
-          const nameB = b.displayName || b.name
-          return nameA.localeCompare(nameB)
-        })
-        setModels(sortedModels)
+        setModels(await loadLlmModels())
       } catch (err) {
         console.error('Failed to fetch models:', err)
         setModels([])

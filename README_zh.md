@@ -142,6 +142,7 @@ pnpm --filter wework dev:mac
 | `executor/`                | 本地与远程的智能体任务执行环境          |
 | `frontend/`                | Wegent 平台 Web 管理界面                |
 | `backend/`                 | REST API 和核心业务逻辑                 |
+| `backend-rs/`              | Rust API 渐进迁移网关与已迁移处理器     |
 | `executor_manager/`        | 执行器调度与编排                        |
 | `chat_shell/`              | 对话运行时                              |
 | `knowledge_runtime/`       | 知识检索服务                            |
@@ -243,6 +244,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/luckjun529-lang">
+                    <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
+                    <br />
+                    <sub><b>junlong chen</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/parabala">
                     <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
                     <br />
@@ -271,13 +279,6 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/luckjun529-lang">
-                    <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
-                    <br />
-                    <sub><b>junlong chen</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/cocowh">
                     <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
                     <br />
@@ -294,10 +295,10 @@ pnpm --filter wework dev:mac
 		</tr>
 		<tr>
             <td align="center">
-                <a href="https://github.com/2561056571">
-                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+                <a href="https://github.com/hustfisher">
+                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
-                    <sub><b>Xuemin</b></sub>
+                    <sub><b>fishermen</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -305,6 +306,13 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
                     <br />
                     <sub><b>lvmowei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/2561056571">
+                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+                    <br />
+                    <sub><b>Xuemin</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -322,13 +330,6 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/hustfisher">
-                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
-                    <br />
-                    <sub><b>fishermen</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/earthAlone2026">
                     <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
                     <br />
@@ -336,17 +337,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/maquan0927">
-                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
-                    <br />
-                    <sub><b>Just Quan</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/DavidLeeUX">
                     <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
                     <br />
                     <sub><b>Kva</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/maquan0927">
+                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                    <br />
+                    <sub><b>Just Quan</b></sub>
                 </a>
             </td>
 		</tr>

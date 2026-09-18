@@ -1,3 +1,4 @@
+import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
@@ -12,15 +13,10 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeIMNotificationPresenceResponse,
   RuntimeIMNotificationPresenceUpdateRequest,
-  RuntimeGuidanceRequest,
-  RuntimeGuidanceResponse,
-  RuntimeInterruptAndSendRequest,
   RuntimeModelPrepareRequest,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
-  RuntimeGoalGetRequest,
-  RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
   RuntimeSupervisorClearRequest,
@@ -29,21 +25,17 @@ import type {
   RuntimeSupervisorResponse,
   RuntimeSupervisorRunNowRequest,
   RuntimeSupervisorSetRequest,
-  RuntimeFileChangesRevertRequest,
-  RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
   RuntimeArchiveProjectConversationsRequest,
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
   RuntimeArchivedConversationCleanupResponse,
   RuntimeCompactRequest,
-  RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
-  RuntimeTaskCreateResponse,
   RuntimeTaskMaterializeResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
@@ -65,7 +57,6 @@ import type {
   RuntimeLocalProjectUpsertResponse,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
-  RuntimeWorkListResponse,
   RuntimeProjectAppearanceRequest,
   RuntimeProjectActivateRequest,
   RuntimeProjectPinRequest,
@@ -90,18 +81,16 @@ import type { KeybindingOverride } from '@/lib/keybindings'
 
 export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
 
+export interface RuntimeWorkListRequestOptions extends Pick<HttpRequestOptions, 'signal'> {
+  preferCached?: boolean
+}
+
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
+    ...createRuntimeConversationApi(client),
     prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {
       void data
       return Promise.resolve(true)
-    },
-    listRuntimeWork(
-      requestOptions?: Pick<HttpRequestOptions, 'signal'>
-    ): Promise<RuntimeWorkListResponse> {
-      return requestOptions
-        ? client.get('/runtime-work', requestOptions)
-        : client.get('/runtime-work')
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return client.get('/runtime-work/keybindings')
@@ -146,31 +135,12 @@ export function createRuntimeWorkApi(client: HttpClient) {
     ): Promise<RuntimeWorkspaceSearchResponse> {
       return client.post('/runtime-work/workspace/search', data)
     },
-    revertRuntimeFileChanges(
-      request: RuntimeFileChangesRevertRequest
-    ): Promise<RuntimeFileChangesRevertResponse> {
-      return client.post('/runtime-work/file-changes/revert', request)
-    },
-    sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
-      return client.post('/runtime-work/send', data)
-    },
-    interruptAndSendRuntimeMessage(
-      data: RuntimeInterruptAndSendRequest
-    ): Promise<RuntimeSendResponse> {
-      return client.post('/runtime-work/interrupt-and-send', data)
-    },
     rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/rollback', data)
     },
     compactRuntimeTask(data: RuntimeCompactRequest): Promise<RuntimeSendResponse> {
       void data
       return Promise.reject(new Error('上下文压缩只支持本机 Wework App'))
-    },
-    guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
-      return client.post('/runtime-work/guidance', data)
-    },
-    getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
-      return client.post('/runtime-work/goal/get', data)
     },
     setRuntimeGoal(data: RuntimeGoalSetRequest): Promise<RuntimeGoalSetResponse> {
       return client.post('/runtime-work/goal/set', data)
@@ -349,9 +319,6 @@ export function createRuntimeWorkApi(client: HttpClient) {
     ): Promise<RuntimeArchivedConversationCleanupResponse> {
       return client.post('/runtime-work/archived-conversations/cleanup', data)
     },
-    cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
-      return client.post('/runtime-work/cancel', address)
-    },
     forceStartRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return client.post('/runtime-work/force-start', address)
     },
@@ -359,9 +326,6 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeTaskQueueReorderRequest
     ): Promise<RuntimeTaskQueueReorderResponse> {
       return client.post('/runtime-work/queue/reorder', data)
-    },
-    createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
-      return client.post('/runtime-work/create', data)
     },
     materializeRuntimeTask(
       data: RuntimeTaskCreateRequest

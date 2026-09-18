@@ -4,11 +4,15 @@
 
 """Unit tests for compact DingTalk AI Card progress."""
 
+import asyncio
+import json
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import dingtalk_stream
 import pytest
 
+from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk import emitter as emitter_module
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from shared.models import EventType, ExecutionEvent
@@ -43,6 +47,9 @@ class FakeRedis:
     def __init__(self, cache):
         self.cache = cache
 
+    def lock(self, key, **kwargs):
+        return self.cache.locks.setdefault(key, asyncio.Lock())
+
     async def append(self, key, value):
         self.cache.raw[key] = self.cache.raw.get(key, b"") + value
 
@@ -50,7 +57,7 @@ class FakeRedis:
         return True
 
     async def get(self, key):
-        return self.cache.raw.get(key)
+        return self.cache.raw.get(key) or self.cache.structured.get(key)
 
     async def set(self, key, value, nx=False, px=None):
         if nx and key in self.cache.raw:
@@ -73,6 +80,7 @@ class FakeRedis:
 class FakeCache:
     def __init__(self):
         self.raw: dict[str, bytes] = {}
+        self.locks: dict[str, asyncio.Lock] = {}
         self.structured: dict[str, object] = {}
 
     async def _get_client(self):
@@ -99,7 +107,7 @@ def card_factory(monkeypatch: pytest.MonkeyPatch):
         cards.append(card)
         return card
 
-    monkeypatch.setattr(dingtalk_stream, "AIMarkdownCardInstance", create_card)
+    monkeypatch.setattr(card_module, "DingTalkMarkdownCard", create_card)
     return cards
 
 
@@ -108,6 +116,64 @@ def emitter(card_factory):
     result = StreamingResponseEmitter(object(), object())
     result.MIN_UPDATE_INTERVAL = 0
     return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["done", "error", "cancelled"])
+async def test_terminal_failure_propagates_and_preserves_shared_state(
+    emitter, monkeypatch, terminal
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    emitter.set_shared_content_key("test:answer")
+    await emitter.emit_start(task_id=101, subtask_id=202)
+    await emitter.emit_chunk(task_id=101, subtask_id=202, content="partial", offset=0)
+    operation = "fail" if terminal == "error" else "finish"
+    failure = AsyncMock(side_effect=RuntimeError("card API unavailable"))
+    monkeypatch.setattr(emitter._card, operation, failure)
+    args = {"task_id": 101, "subtask_id": 202}
+    if terminal == "done":
+        args["result"] = {"value": "complete answer"}
+    elif terminal == "error":
+        args["error"] = "model failed"
+    with pytest.raises(RuntimeError, match="card API unavailable"):
+        await getattr(emitter, f"emit_{terminal}")(**args)
+    assert not emitter._finished
+    await emitter.close()
+    assert cache.raw[emitter._answer_key] == (
+        b"complete answer" if terminal == "done" else b"partial"
+    )
+    emitter = StreamingResponseEmitter(object(), object(), emitter.card_instance_id)
+    emitter.set_shared_content_key("test:answer")
+    await getattr(emitter, f"emit_{terminal}")(**args)
+    assert emitter._finished
+    assert emitter._answer_key not in cache.raw
+
+
+@pytest.mark.asyncio
+async def test_finished_reply_log_links_card_to_task_and_masks_content(
+    emitter, card_factory, caplog: pytest.LogCaptureFixture
+):
+    emitter._incoming_message = SimpleNamespace(
+        conversation_id="group-1", message_id="question-1"
+    )
+    answer = "第一轮回答\n token=synthetic-secret"
+
+    with caplog.at_level(logging.INFO, logger=emitter_module.__name__):
+        await emitter.emit_done(task_id=101, subtask_id=202, result={"value": answer})
+
+    records = [r for r in caplog.records if r.msg == "[DingTalkMessage] %s %s"]
+    assert len(records) == 1
+    assert records[0].args[0] == "reply_finished"
+    logged = json.loads(records[0].args[1])
+    assert logged["task_id"] == 101
+    assert logged["subtask_id"] == 202
+    assert logged["card_instance_id"] == "card-1"
+    assert logged["conversation_id"] == "group-1"
+    assert logged["incoming_msg_id"] == "question-1"
+    assert "第一轮回答" in logged["content"]
+    assert "synthetic-secret" not in caplog.text
+    assert card_factory[0].finished == [answer]
 
 
 @pytest.mark.asyncio
@@ -121,6 +187,7 @@ async def test_start_and_thinking_render_safe_compact_status(emitter, card_facto
             content="private chain of thought that must not leave Wework",
         )
     )
+    await emitter.flush()
 
     card = card_factory[0]
     assert "正在理解需求" in card.updates[0]
@@ -141,6 +208,7 @@ async def test_reasoning_summary_updates_live_compact_status(emitter, card_facto
                 data={"thinking_kind": "reasoning_summary"},
             )
         )
+        await emitter.flush()
 
     card = card_factory[0]
     assert "正在分析：正在检查" in card.updates[-2]
@@ -168,6 +236,7 @@ async def test_reconnected_card_projects_first_progress_event_without_throttling
             data={"thinking_kind": "reasoning_summary"},
         )
     )
+    await emitter.flush()
 
     assert card_factory[0].updates
     assert "正在检查跨 worker 状态" in card_factory[0].updates[-1]
@@ -181,7 +250,9 @@ async def test_dispatch_status_stays_in_progress_mode(emitter, card_factory):
         subtask_id=2,
         content="任务已发送到设备 device-1\n\n状态: 正在执行",
     )
+    await emitter.flush()
     await emitter.emit_thinking(task_id=1, subtask_id=2)
+    await emitter.flush()
 
     card = card_factory[0]
     assert "任务已发送到设备 device-1 状态: 正在执行" in card.updates[-2]
@@ -203,6 +274,7 @@ async def test_progress_window_is_bounded_and_omits_tool_payloads(
             tool_input={"path": "/secret/input"},
         )
     )
+    await emitter.flush()
     await emitter.emit(
         ExecutionEvent.create(
             EventType.TOOL_RESULT,
@@ -213,6 +285,7 @@ async def test_progress_window_is_bounded_and_omits_tool_payloads(
             data={"status": "completed"},
         )
     )
+    await emitter.flush()
     for index in range(3):
         await emitter.emit(
             ExecutionEvent.create(
@@ -230,6 +303,7 @@ async def test_progress_window_is_bounded_and_omits_tool_payloads(
                 },
             )
         )
+        await emitter.flush()
 
     rendered = card_factory[0].updates[-1]
     assert rendered.splitlines() == [
@@ -264,6 +338,7 @@ async def test_reasoning_block_is_generic_and_process_text_masks_secrets(
             },
         )
     )
+    await emitter.flush()
     await emitter.emit(
         ExecutionEvent.create(
             EventType.BLOCK_CREATED,
@@ -279,6 +354,7 @@ async def test_reasoning_block_is_generic_and_process_text_masks_secrets(
             },
         )
     )
+    await emitter.flush()
 
     all_updates = "".join(card_factory[0].updates)
     assert "raw private reasoning" not in all_updates
@@ -307,6 +383,7 @@ async def test_block_update_reuses_tool_name_without_exposing_output(
             },
         )
     )
+    await emitter.flush()
     await emitter.emit(
         ExecutionEvent.create(
             EventType.BLOCK_UPDATED,
@@ -321,6 +398,7 @@ async def test_block_update_reuses_tool_name_without_exposing_output(
             },
         )
     )
+    await emitter.flush()
 
     rendered = card_factory[0].updates[-1]
     assert "工具完成：Bash" in rendered
@@ -347,10 +425,28 @@ async def test_interactive_block_points_user_back_to_wework(emitter, card_factor
             },
         )
     )
+    await emitter.flush()
 
     rendered = card_factory[0].updates[-1]
     assert "等待你在 Wework 中确认" in rendered
     assert "secret question" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_error_writes_content_before_marking_failed(emitter, card_factory):
+    """A failed task must render the error text instead of a blank card."""
+    await emitter.emit_start(task_id="task-1", subtask_id=1)
+    await emitter.emit_error(
+        task_id="task-1",
+        subtask_id=1,
+        error="There is an issue with the selected model (gpt-5.1)",
+    )
+
+    card = card_factory[0]
+    assert card.failed is True
+    assert card.updates
+    assert card.updates[-1].startswith("❌ 任务执行失败")
+    assert "gpt-5.1" in card.updates[-1]
 
 
 @pytest.mark.asyncio
@@ -359,7 +455,9 @@ async def test_answer_stream_and_terminal_result_replace_progress(
 ):
     await emitter.emit_start(task_id=1, subtask_id=2)
     await emitter.emit_thinking(task_id=1, subtask_id=2)
+    await emitter.flush()
     await emitter.emit_chunk(task_id=1, subtask_id=2, content="部分回答", offset=4)
+    await emitter.flush()
 
     card = card_factory[0]
     assert card.updates[-1] == "部分回答"
@@ -388,6 +486,7 @@ async def test_process_fallback_is_not_rendered_as_final_answer(emitter, card_fa
             data={"thinking_kind": "reasoning_summary"},
         )
     )
+    await emitter.flush()
 
     await emitter.emit_done(
         task_id=1,
@@ -441,6 +540,7 @@ async def test_structured_terminal_output_does_not_replace_streamed_answer(
 ):
     await emitter.emit_start(task_id=1, subtask_id=2)
     await emitter.emit_chunk(task_id=1, subtask_id=2, content="最终回答", offset=4)
+    await emitter.flush()
     await emitter.emit_done(
         task_id=1,
         subtask_id=2,
@@ -472,6 +572,7 @@ async def test_shared_progress_survives_worker_reconstruction_and_cleans_up(
             data={"status": "completed"},
         )
     )
+    await first.flush()
 
     second = StreamingResponseEmitter(
         object(),
@@ -496,8 +597,9 @@ async def test_shared_progress_survives_worker_reconstruction_and_cleans_up(
             },
         )
     )
+    await second.flush()
 
-    state_key = "channel:streaming_content:task-1:progress"
+    state_key = "channel:streaming_content:task-1:card-1:progress"
     assert cache.structured[state_key]["recent"] == [
         "工具完成：Read",
         "检查完成",
@@ -509,7 +611,7 @@ async def test_shared_progress_survives_worker_reconstruction_and_cleans_up(
         result={"value": "完成"},
     )
     assert state_key not in cache.structured
-    assert "channel:streaming_content:task-1" not in cache.raw
+    assert "channel:streaming_content:task-1:card-1" not in cache.raw
 
 
 @pytest.mark.asyncio
@@ -532,6 +634,7 @@ async def test_display_throttle_does_not_drop_shared_progress(
             data={"status": "completed"},
         )
     )
+    await emitter.flush()
 
-    state = cache.structured["channel:streaming_content:task-2:progress"]
+    state = cache.structured["channel:streaming_content:task-2:card-1:progress"]
     assert state["recent"] == ["工具完成：Read"]

@@ -74,6 +74,12 @@ Wework uses a separate Codex home so it does not write directly into the user's 
 
 To reuse the user's existing login, Wework links the user's `~/.codex/auth.json` into the Wework Codex home. If the target is a stale symlink, it is removed and recreated; on non-Unix systems the auth file is copied. Plugins, marketplace caches, and Wework runtime config remain under Wework's own Codex home.
 
+When no reusable Codex login exists on the device, the user can select **Sign in** under **Settings → Model settings → Codex Settings → Authentication**. Wework asks the local Executor to start Codex app-server's ChatGPT browser-login protocol, opens the authorization page in the system browser, and detects completion from the changed `auth.json` digest. After sign-in, authentication remains stored in the separate Wework Codex home. The login callback uses Codex app-server's local success page and does not redirect into the Codex application. Cancelling, timing out, leaving the page, or failing to open the browser cancels the matching login session; the frontend never reads or displays tokens, authentication file paths, or file digests.
+
+After sign-in, the Authentication section lists the Codex accounts saved on the current device. Selecting **Add account** first saves a private snapshot of the current `auth.json`, then starts another browser login; after it completes, both the previous and new accounts remain in the list. Selecting **Switch** atomically replaces only the active `auth.json` and restarts the Codex app-server process. It does not create, resume, or switch a Wework conversation, and it does not modify the Codex thread ID saved by a task. To prevent an in-flight request from continuing under another account, switching is rejected while a turn or app-server request is active and can be retried after the work finishes.
+
+Account metadata is read directly from non-secret JWT claims in `auth.json` instead of relying on `account/read`, which may omit the account when a custom model provider is active. The account index and authentication snapshots are stored under `wework-account-profiles` in the Wework Codex home; files use mode `0600` on Unix. If the Wework Codex home's `auth.json` is a symlink to the user's native Codex home, switching updates the symlink target and preserves the symlink itself.
+
 On first startup, if the Wework Codex home has not been initialized and a native `~/.codex` directory exists, the app shows a migration choice during startup. The user can choose to:
 
 - Create a new Wework Codex home and only reuse the auth link.
@@ -127,6 +133,8 @@ Wework includes the current model category in local runtime requests. Official C
 ## Chat Runtime
 
 The Executor reuses one app-server for local Codex conversations. After a normal task turn completes, the Executor retains that thread's owner subscription and sends `thread/unsubscribe` only after 30 minutes of inactivity, allowing background terminals and MCP sessions started by Codex to remain available across short gaps between turns. A follow-up reactivates the same thread and invalidates its previous idle timer. To bound resident resources, each app-server retains at most four idle task threads and releases the oldest idle thread when the limit is exceeded. Archiving a task still unsubscribes immediately instead of waiting for the idle window.
+
+When a conversation is forked from a historical turn, the Executor passes the source task's model, provider, permissions, and workspace configuration to Codex `thread/fork`, then copies the same `executionRequest` and `modelSelection` into the new task. A source thread routed through Wework's local model router must also reuse its existing proxy registration. Persisted task data has already redacted model credentials, so it must not re-register or overwrite the authenticated upstream. The returned fork thread is bound to that registration, ensuring that follow-up messages keep using the source model and provider instead of falling back to the current default.
 
 For a new chat, the composer shows the plugin entry with previews for up to three available plugins. After the conversation starts, the entry collapses to a single icon to reduce toolbar usage, while clicking the icon still opens the complete plugin picker. Narrow toolbars use the icon form as well.
 

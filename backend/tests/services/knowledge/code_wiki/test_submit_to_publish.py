@@ -31,7 +31,11 @@ from app.schemas.wiki import (
     WikiContentSummary,
     WikiContentWriteRequest,
 )
-from app.services.knowledge.code_wiki.generation import published_commit
+from app.services.knowledge.code_wiki.generation import (
+    SOURCE_TRACKED_FILE_COUNT_KEY,
+    published_commit,
+    published_tracked_file_count,
+)
 from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
 from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.knowledge.code_wiki.version_store import set_page_path
@@ -204,6 +208,27 @@ def test_the_reported_commit_reaches_the_published_version(
     _submit(test_db, generation, status="COMPLETED", head_commit=HEAD)
 
     assert published_commit(test_db, knowledge_base) == HEAD
+
+
+def test_the_checkout_file_count_is_saved_with_the_reported_commit(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+):
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+
+    _submit(
+        test_db,
+        generation,
+        status="COMPLETED",
+        head_commit=HEAD,
+        tracked_file_count=123,
+    )
+
+    assert generation.source_snapshot[SOURCE_TRACKED_FILE_COUNT_KEY] == 123
+    assert published_tracked_file_count(test_db, knowledge_base) == 123
 
 
 def test_a_failed_submission_publishes_nothing(

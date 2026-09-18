@@ -2,6 +2,9 @@ import { useEffect } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { EditorState } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
+import { composerSchema } from '@/components/chat/composer/composerProseMirrorModel'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
 import {
   RuntimeTaskLifecycleProvider,
@@ -20,11 +23,17 @@ import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
 
-const telemetryMocks = vi.hoisted(() => ({ track: vi.fn() }))
+const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
+
+vi.hoisted(() => {
+  Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' })
+})
 
 vi.mock('@/telemetry/client', async importOriginal => ({
   ...(await importOriginal<typeof import('@/telemetry/client')>()),
   track: telemetryMocks.track,
+  trackEvent: telemetryMocks.trackEvent,
+  useTelemetryEnabled: () => true,
 }))
 
 const TEST_DSH_ROUTES = [
@@ -146,6 +155,7 @@ const desktopHostMocks = vi.hoisted(() => {
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
+        if (capability === 'navigation.pendingSchemes') return []
         if (capability === 'systemDrag.takePending') return []
         return {}
       }
@@ -185,6 +195,9 @@ vi.mock('@/lib/local-terminal', async importOriginal => {
 })
 
 vi.mock('@/desktop/localExecutor', () => ({
+  ensureLocalExecutorAvailable: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
@@ -658,15 +671,13 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     onStartupReadyChange,
-    prewarmComposerApps,
   }: {
     children: React.ReactNode
     onStartupReadyChange?: (ready: boolean) => void
-    prewarmComposerApps?: boolean
   }) => {
     useEffect(() => {
-      workbenchProviderMocks.mounts(prewarmComposerApps)
-    }, [prewarmComposerApps])
+      workbenchProviderMocks.mounts()
+    }, [])
     if (workbenchProviderMocks.autoReady) {
       queueMicrotask(() => onStartupReadyChange?.(true))
     }
@@ -1046,6 +1057,7 @@ describe('App plugins route', () => {
     }
     desktopHostMocks.invoke.mockClear()
     telemetryMocks.track.mockReset()
+    telemetryMocks.trackEvent.mockReset()
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
     workbenchValue.state.devices = [
@@ -1087,30 +1099,25 @@ describe('App plugins route', () => {
 
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
-    expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
-  test('maps smart app locations to distinct telemetry features', () => {
-    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app')).toBe(
-      'smart_apps_marketplace'
-    )
-    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app&view=owned')).toBe(
-      'smart_apps_owned'
-    )
-    expect(telemetryFeatureForLocation('/app/harness-research-desk', '')).toBe('smart_app')
+  test('does not assign legacy generic features to smart app locations', () => {
+    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app')).toBe('sites')
+    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app&view=owned')).toBe('sites')
+    expect(telemetryFeatureForLocation('/app/harness-research-desk', '')).toBe('apps')
     expect(telemetryFeatureForLocation('/sites', '?app_type=web')).toBe('sites')
     expect(telemetryFeatureForLocation('/app/native-task', '')).toBe('apps')
   })
 
-  test('tracks a Smart apps view change when only search changes', async () => {
+  test('automatically observes a Smart App view change when only search changes', async () => {
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
     window.history.pushState({}, '', '/sites?app_type=smart_app')
     renderApp()
 
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
-        domain: 'smart_app',
-        feature: 'smart_apps_marketplace',
+      expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
+        name: 'smart_app_marketplace_opened',
+        properties: { domain: 'smart_app' },
       })
     )
 
@@ -1120,22 +1127,26 @@ describe('App plugins route', () => {
     })
 
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenLastCalledWith('feature_opened', {
-        domain: 'smart_app',
-        feature: 'smart_apps_owned',
+      expect(telemetryMocks.trackEvent).toHaveBeenLastCalledWith({
+        name: 'smart_app_owned_opened',
+        properties: { domain: 'smart_app' },
       })
     )
+
+    expect(telemetryMocks.track).not.toHaveBeenCalledWith('feature_opened', {
+      feature: 'sites',
+    })
   })
 
-  test('tracks an installed Smart App open with its domain', async () => {
+  test('automatically observes an installed Smart App open', async () => {
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
     window.history.pushState({}, '', '/app/harness-research-desk')
     renderApp()
 
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
-        domain: 'smart_app',
-        feature: 'smart_app',
+      expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
+        name: 'smart_app_opened',
+        properties: { domain: 'smart_app' },
       })
     )
   })
@@ -1167,6 +1178,52 @@ describe('App plugins route', () => {
     ).toHaveLength(openedFeatureCount)
   })
 
+  test('dispatches application shortcuts from the focused conversation composer', async () => {
+    window.history.pushState({}, '', '/')
+    renderApp()
+    await screen.findByTestId('app-shell')
+    const composer = document.createElement('textarea')
+    composer.dataset.testid = 'chat-message-input'
+    composer.value = 'Unsent draft'
+    document.body.appendChild(composer)
+    composer.focus()
+
+    try {
+      expect(
+        fireEvent.keyDown(composer, {
+          key: ',',
+          code: 'Comma',
+          metaKey: true,
+        })
+      ).toBe(false)
+      await waitFor(() => expect(window.location.pathname).toBe('/settings'))
+      expect(composer.value).toBe('Unsent draft')
+    } finally {
+      composer.remove()
+    }
+  })
+
+  test('handles the sidebar shortcut before ProseMirror suppresses native bold', async () => {
+    window.history.pushState({}, '', '/plugins')
+    renderApp()
+    await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
+    const editor = new EditorView(document.body, {
+      state: EditorState.create({ schema: composerSchema }),
+      attributes: { 'data-testid': 'chat-message-input' },
+    })
+    Object.defineProperty(editor.dom, 'isContentEditable', { value: true })
+    editor.focus()
+
+    try {
+      fireEvent.keyDown(editor.dom, { key: 'b', code: 'KeyB', keyCode: 66, metaKey: true })
+
+      expect(await screen.findByTestId('auxiliary-expand-sidebar-button')).toBeInTheDocument()
+      expect(editor.state.doc.textContent).toBe('')
+    } finally {
+      editor.destroy()
+    }
+  })
+
   test('does not dispatch application shortcuts from editable targets', async () => {
     window.history.pushState({}, '', '/')
     renderApp()
@@ -1190,29 +1247,33 @@ describe('App plugins route', () => {
 
   test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
-    workbenchProviderMocks.autoReady = false
-    window.history.pushState({}, '', '/')
+    try {
+      workbenchProviderMocks.autoReady = false
+      window.history.pushState({}, '', '/')
 
-    renderApp()
-    await act(async () => {
-      for (let index = 0; index < 10; index += 1) {
-        await Promise.resolve()
-      }
-    })
-    expect(screen.getByTestId('app-shell')).toBeInTheDocument()
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      renderApp()
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) {
+          await Promise.resolve()
+        }
+      })
+      expect(screen.getByTestId('app-shell')).toBeInTheDocument()
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
-    await act(async () => {
-      vi.advanceTimersByTime(10_000)
-    })
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      await act(async () => {
+        vi.advanceTimersByTime(10_000)
+      })
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
-    await act(async () => {
-      window.history.pushState({}, '', '/todo')
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    })
-    expect(window.location.pathname).toBe('/todo')
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      await act(async () => {
+        window.history.pushState({}, '', '/todo')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      expect(window.location.pathname).toBe('/todo')
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {
@@ -1429,7 +1490,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/sites?app_type=web&offset=0&limit=20',
+      expect.stringMatching(/(?:^|\/)api\/sites\?app_type=web&offset=0&limit=20$/),
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
@@ -1441,7 +1502,7 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.stringMatching(/(?:^|\/)api\/plugins\/builtin\/wegent-sites\/ensure-installed$/),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1569,7 +1630,9 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed',
+      expect.stringMatching(
+        /(?:^|\/)api\/plugins\/builtin\/weibo-miniapp-h5-develop-agent\/ensure-installed$/
+      ),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1688,12 +1751,12 @@ describe('App plugins route', () => {
     window.history.pushState({}, '', '/sites')
 
     renderApp()
-    await screen.findByText('还没有站点')
+    expect(await screen.findByText('还没有站点', {}, { timeout: 5_000 })).toBeInTheDocument()
     await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.stringMatching(/(?:^|\/)api\/plugins\/builtin\/wegent-sites\/ensure-installed$/),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),

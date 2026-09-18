@@ -238,18 +238,17 @@ describe('RemoteWorkspaceDialog', () => {
     const handleOpenChange = jest.fn()
     render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={handleOpenChange} />)
 
-    await waitFor(() => {
-      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
-    })
+    const expandButton = await screen.findByRole('button', { name: 'Expand src' })
+    expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    expect(remoteWorkspaceApis.getTree).not.toHaveBeenCalledWith(1, '/workspace/src')
 
     const user = userEvent.setup({ pointerEventsCheck: 0 })
-    await user.click(screen.getByRole('button', { name: 'Expand src' }))
+    await user.click(expandButton)
 
-    await waitFor(() => {
-      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
-    })
-
-    expect(screen.getByRole('button', { name: 'Open directory components' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Open directory components' })
+    ).toBeInTheDocument()
+    expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
   })
 
   test('filters current directory by search keyword', async () => {

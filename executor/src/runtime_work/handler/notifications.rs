@@ -145,6 +145,10 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) {
         let notification = codex_notification(message);
+        if notification.method == "item/plan/delta" {
+            self.record_active_codex_plan_delta(local_task_id, turn_id, notification.params);
+            return;
+        }
         if !matches!(
             notification.method.as_str(),
             "item/started" | "item/completed"
@@ -186,6 +190,51 @@ impl RuntimeWorkRpcHandler {
         } else {
             transcript.items.push(item);
         }
+    }
+
+    fn record_active_codex_plan_delta(&self, local_task_id: &str, turn_id: &str, params: &Value) {
+        let Some(item_id) = string_field(params, "itemId")
+            .or_else(|| string_field(params, "item_id"))
+            .filter(|item_id| !item_id.is_empty())
+        else {
+            return;
+        };
+        let Some(delta) = raw_string_field(params, "delta").filter(|delta| !delta.is_empty())
+        else {
+            return;
+        };
+        let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
+            return;
+        };
+        let Some(transcript) = active_items.get_mut(local_task_id) else {
+            return;
+        };
+        if transcript.turn_id != turn_id {
+            transcript.turn_id = turn_id.to_owned();
+            transcript.items.clear();
+        }
+        if let Some(existing) = transcript
+            .items
+            .iter_mut()
+            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
+        {
+            if string_field(existing, "type").as_deref() != Some("plan") {
+                return;
+            }
+            let text = raw_string_field(existing, "text").unwrap_or_default();
+            if let Some(object) = existing.as_object_mut() {
+                object.insert("text".to_owned(), Value::String(format!("{text}{delta}")));
+                object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
+            }
+            return;
+        }
+        transcript.items.push(json!({
+            "id": item_id,
+            "type": "plan",
+            "text": delta,
+            "status": "inProgress",
+            "createdAt": now_ms(),
+        }));
     }
 
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
@@ -291,6 +340,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn route_codex_notification(&self, message: Value) {
+        self.route_codex_notification_inner(message, None);
+    }
+
+    fn route_codex_notification_inner(&self, message: Value, replaying_route: Option<(&str, u64)>) {
         let thread_id =
             codex_notification_thread_id(&message).or_else(|| self.unscoped_route_thread_id());
         let Some(thread_id) = thread_id else {
@@ -308,53 +361,156 @@ impl RuntimeWorkRpcHandler {
             self.promote_pending_thread_event_route(&thread_id);
         }
 
-        let mut routes = self
-            .thread_event_routes
+        let child_thread_ids = codex_spawned_child_thread_ids(&message);
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        let Some(route) = routes.get_mut(&thread_id) else {
-            debug_unrouted_codex_notification(&message, "missing_route");
+            .expect("thread event routing lock should not be poisoned");
+        let route_generation = routing.routes.get(&thread_id).map(|route| route.generation);
+        let replay_generation = replaying_route
+            .filter(|(replaying_thread_id, _)| *replaying_thread_id == thread_id)
+            .map(|(_, generation)| generation);
+        if replay_generation.is_some() && replay_generation != route_generation {
+            debug_unrouted_codex_notification(&message, "replay_route_replaced");
+            return;
+        }
+        let route_replaying = routing
+            .replaying_route_generations
+            .get(&thread_id)
+            .is_some_and(|generation| Some(*generation) != replay_generation);
+        let Some(route) = routing.routes.get(&thread_id).filter(|_| !route_replaying) else {
+            debug_unrouted_codex_notification(
+                &message,
+                if route_replaying {
+                    "route_replaying"
+                } else {
+                    "route_pending"
+                },
+            );
+            let dropped = if routing.pending_notifications.len() >= MAX_PENDING_CODEX_NOTIFICATIONS
+            {
+                routing.pending_notifications.pop_front()
+            } else {
+                None
+            };
+            routing
+                .pending_notifications
+                .push_back(PendingCodexNotification { thread_id, message });
+            drop(routing);
+            if let Some(dropped) = dropped {
+                let notification = codex_notification(&dropped.message);
+                log_executor_event(
+                    "runtime work pending codex notification dropped",
+                    &[
+                        ("thread_id", dropped.thread_id),
+                        ("method", notification.method),
+                    ],
+                );
+            }
             return;
         };
-        if self.is_active_local_task(&route.local_task_id) {
-            let Some(active_turn) = self.active_codex_turn(&route.local_task_id) else {
-                return;
-            };
-            let Some(notification_turn_id) = notification_turn_id.as_deref() else {
-                return;
-            };
-            if notification_turn_id == active_turn.turn_id {
-                return;
-            }
+        let local_task_id = route.local_task_id.clone();
+        let route_request = route.request.clone();
+        let event_mapper = route.event_mapper.clone();
+        let route_active = route.active;
+        let route_nested = route.nested;
+        if route_nested && codex_stream_debug_enabled() {
+            let notification = codex_notification(&message);
             log_executor_event(
-                "runtime work routes non-active turn notification",
+                "runtime work routes nested notification",
                 &[
                     ("thread_id", thread_id.clone()),
-                    ("active_turn_id", active_turn.turn_id),
-                    ("notification_turn_id", notification_turn_id.to_owned()),
+                    ("method", notification.method),
+                    (
+                        "item_type",
+                        item_type(&notification_item(notification.params)),
+                    ),
+                    (
+                        "item_id",
+                        notification_item(notification.params)
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<none>")
+                            .to_owned(),
+                    ),
                 ],
             );
         }
-        if let Some(started_thread_id) = codex_started_thread_id(&message) {
-            self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
-        }
-        let mut event_request = route.request.clone();
-        if !is_context_compaction_request(&event_request) {
-            if let Some(turn_id) = notification_turn_id {
-                if event_request.subtask_id != turn_id {
-                    event_request.subtask_id = turn_id;
-                    event_request.extra.remove("client_user_message_id");
-                    event_request.extra.remove("clientUserMessageId");
-                }
+        for child_thread_id in &child_thread_ids {
+            if !routing.routes.contains_key(child_thread_id) {
+                let generation = next_thread_event_route_generation(&mut routing);
+                routing.routes.insert(
+                    child_thread_id.clone(),
+                    RuntimeThreadEventRoute {
+                        local_task_id: local_task_id.clone(),
+                        request: route_request.clone(),
+                        event_mapper: event_mapper.clone(),
+                        active: route_active,
+                        nested: true,
+                        generation,
+                    },
+                );
             }
         }
-        route.event_mapper.map(
-            &self.event_tx,
-            &self.device_id,
-            &route.local_task_id,
-            &event_request,
-            message,
-        );
+        let pending_replays =
+            begin_pending_codex_notification_replays(&mut routing, &child_thread_ids);
+        let skip_active_notification = if self.is_active_local_task(&local_task_id) {
+            let Some(active_turn) = self.active_codex_turn(&local_task_id) else {
+                drop(routing);
+                self.replay_codex_notifications(pending_replays);
+                return;
+            };
+            let Some(notification_turn_id) = notification_turn_id.as_deref() else {
+                drop(routing);
+                self.replay_codex_notifications(pending_replays);
+                return;
+            };
+            if notification_turn_id == active_turn.turn_id {
+                true
+            } else {
+                if codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "runtime work routes non-active turn notification",
+                        &[
+                            ("thread_id", thread_id.clone()),
+                            ("active_turn_id", active_turn.turn_id),
+                            ("notification_turn_id", notification_turn_id.to_owned()),
+                        ],
+                    );
+                }
+                false
+            }
+        } else {
+            false
+        };
+        if let Some(started_thread_id) = codex_started_thread_id(&message) {
+            self.register_codex_thread_workspace_root(&started_thread_id, &route_request, false);
+        }
+        drop(routing);
+
+        if !skip_active_notification {
+            let mut event_request = route_request;
+            if !route_nested && !is_context_compaction_request(&event_request) {
+                if let Some(turn_id) = notification_turn_id {
+                    if event_request.subtask_id != turn_id {
+                        event_request.subtask_id = turn_id;
+                        event_request.extra.remove("client_user_message_id");
+                        event_request.extra.remove("clientUserMessageId");
+                    }
+                }
+            }
+            event_mapper
+                .lock()
+                .expect("thread event mapper lock should not be poisoned")
+                .map(
+                    &self.event_tx,
+                    &self.device_id,
+                    &local_task_id,
+                    &event_request,
+                    message,
+                );
+        }
+        self.replay_codex_notifications(pending_replays);
     }
 
     pub(super) fn register_thread_event_route(
@@ -374,23 +530,48 @@ impl RuntimeWorkRpcHandler {
             clear_runtime_handle_messages(&mut link.runtime_handle);
         });
         let pending_id = pending_thread_event_route_id(&local_task_id);
-        let mut routes = self
-            .thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        let existing = routes
+            .expect("thread event routing lock should not be poisoned");
+        let existing = routing
+            .routes
             .remove(thread_id)
-            .or_else(|| routes.remove(&pending_id));
+            .or_else(|| routing.routes.remove(&pending_id));
         let mut route = existing.unwrap_or_else(|| {
-            RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active)
+            let generation = next_thread_event_route_generation(&mut routing);
+            RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active, generation)
         });
-        if active {
-            route.event_mapper = CodexNotificationEventMapper::default();
+        if route.local_task_id != local_task_id {
+            route.generation = next_thread_event_route_generation(&mut routing);
+            routing.replaying_route_generations.remove(thread_id);
+            routing
+                .pending_notifications
+                .retain(|notification| notification.thread_id != thread_id);
         }
+        let preserve_active_turn_request = route.active
+            && !active
+            && !is_context_compaction_request(&route.request)
+            && is_context_compaction_request(&request);
+        if active {
+            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
+        }
+        route
+            .event_mapper
+            .lock()
+            .expect("thread event mapper lock should not be poisoned")
+            .observe_root_thread_id(thread_id);
         route.local_task_id = local_task_id;
-        route.request = request;
+        if !preserve_active_turn_request {
+            route.request = request;
+        }
         route.active = route.active || active;
-        routes.insert(thread_id.to_owned(), route);
+        route.nested = false;
+        routing.routes.insert(thread_id.to_owned(), route);
+        let pending_replay =
+            begin_pending_codex_notification_replays(&mut routing, &[thread_id.to_owned()]);
+        drop(routing);
+        self.replay_codex_notifications(pending_replay);
     }
 
     pub(super) fn repair_legacy_task_activity_time(&self, local_task_id: &str, thread: &Value) {
@@ -415,18 +596,19 @@ impl RuntimeWorkRpcHandler {
         request: ExecutionRequest,
     ) {
         let pending_id = pending_thread_event_route_id(&local_task_id);
-        let mut routes = self
-            .thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        if let Some(route) = routes.get_mut(&pending_id) {
+            .expect("thread event routing lock should not be poisoned");
+        if let Some(route) = routing.routes.get_mut(&pending_id) {
             route.request = request;
             route.active = true;
             return;
         }
-        routes.insert(
+        let generation = next_thread_event_route_generation(&mut routing);
+        routing.routes.insert(
             pending_id,
-            RuntimeThreadEventRoute::new(local_task_id, request, true),
+            RuntimeThreadEventRoute::new(local_task_id, request, true, generation),
         );
     }
 
@@ -468,9 +650,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn thread_event_route_exists(&self, thread_id: &str) -> bool {
-        self.thread_event_routes
+        self.thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
+            .expect("thread event routing lock should not be poisoned")
+            .routes
             .contains_key(thread_id)
     }
 
@@ -479,14 +662,15 @@ impl RuntimeWorkRpcHandler {
             return false;
         }
 
-        let mut routes = self
-            .thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        if routes.contains_key(thread_id) {
+            .expect("thread event routing lock should not be poisoned");
+        if routing.routes.contains_key(thread_id) {
             return true;
         }
-        let mut pending_route_ids = routes
+        let mut pending_route_ids = routing
+            .routes
             .iter()
             .filter(|(route_id, route)| is_pending_thread_event_route_id(route_id) && route.active)
             .map(|(route_id, _)| route_id.clone());
@@ -496,27 +680,37 @@ impl RuntimeWorkRpcHandler {
         if pending_route_ids.next().is_some() {
             return false;
         }
-        let Some(route) = routes.remove(&pending_route_id) else {
+        let Some(mut route) = routing.routes.remove(&pending_route_id) else {
             return false;
         };
+        route
+            .event_mapper
+            .lock()
+            .expect("thread event mapper lock should not be poisoned")
+            .observe_root_thread_id(thread_id);
+        route.nested = false;
         let local_task_id = route.local_task_id.clone();
-        routes.insert(thread_id.to_owned(), route);
-        drop(routes);
+        routing.routes.insert(thread_id.to_owned(), route);
+        let pending_replay =
+            begin_pending_codex_notification_replays(&mut routing, &[thread_id.to_owned()]);
+        drop(routing);
 
         self.store.update_task(&local_task_id, |link| {
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             link.updated_at = now_ms();
         });
+        self.replay_codex_notifications(pending_replay);
         true
     }
 
     pub(super) fn unscoped_route_thread_id(&self) -> Option<String> {
-        let routes = self
-            .thread_event_routes
+        let routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned");
-        let mut active_routes = routes
+            .expect("thread event routing lock should not be poisoned");
+        let mut active_routes = routing
+            .routes
             .iter()
             .filter(|(_, route)| route.active)
             .map(|(thread_id, _)| thread_id.clone());
@@ -527,7 +721,7 @@ impl RuntimeWorkRpcHandler {
             return Some(thread_id);
         }
 
-        let mut route_ids = routes.keys().cloned();
+        let mut route_ids = routing.routes.keys().cloned();
         let thread_id = route_ids.next()?;
         if route_ids.next().is_some() {
             None
@@ -538,9 +732,10 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn mark_thread_event_route_idle(&self, thread_id: &str) {
         if let Some(route) = self
-            .thread_event_routes
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
+            .expect("thread event routing lock should not be poisoned")
+            .routes
             .get_mut(thread_id)
         {
             route.active = false;
@@ -548,17 +743,23 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn remove_thread_event_route(&self, thread_id: &str) {
-        self.thread_event_routes
+        let mut routing = self
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
-            .remove(thread_id);
+            .expect("thread event routing lock should not be poisoned");
+        routing.routes.remove(thread_id);
+        routing.replaying_route_generations.remove(thread_id);
+        routing
+            .pending_notifications
+            .retain(|notification| notification.thread_id != thread_id);
     }
 
     pub(super) fn mark_thread_event_routes_idle_for_local_task(&self, local_task_id: &str) {
         for route in self
-            .thread_event_routes
+            .thread_event_routing
             .lock()
-            .expect("thread event route lock should not be poisoned")
+            .expect("thread event routing lock should not be poisoned")
+            .routes
             .values_mut()
         {
             if route.local_task_id == local_task_id {
@@ -566,6 +767,146 @@ impl RuntimeWorkRpcHandler {
             }
         }
     }
+
+    pub(super) fn replay_codex_notifications(
+        &self,
+        pending_replay: Option<PendingCodexNotificationReplay>,
+    ) {
+        let Some(PendingCodexNotificationReplay {
+            route_generations,
+            mut notifications,
+        }) = pending_replay
+        else {
+            return;
+        };
+        loop {
+            for notification in notifications {
+                let Some(generation) = route_generations.get(&notification.thread_id) else {
+                    continue;
+                };
+                self.route_codex_notification_inner(
+                    notification.message,
+                    Some((&notification.thread_id, *generation)),
+                );
+            }
+
+            let mut routing = self
+                .thread_event_routing
+                .lock()
+                .expect("thread event routing lock should not be poisoned");
+            let active_thread_ids = route_generations
+                .iter()
+                .filter(|(thread_id, generation)| {
+                    routing
+                        .routes
+                        .get(*thread_id)
+                        .is_some_and(|route| route.generation == **generation)
+                        && routing
+                            .replaying_route_generations
+                            .get(*thread_id)
+                            .is_some_and(|replaying| replaying == *generation)
+                })
+                .map(|(thread_id, _)| thread_id.clone())
+                .collect::<Vec<_>>();
+            notifications = take_pending_codex_notifications(&mut routing, &active_thread_ids);
+            if notifications.is_empty() {
+                for (thread_id, generation) in &route_generations {
+                    if routing
+                        .replaying_route_generations
+                        .get(thread_id)
+                        .is_some_and(|replaying| replaying == generation)
+                    {
+                        routing.replaying_route_generations.remove(thread_id);
+                    }
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn begin_pending_codex_notification_replays(
+    routing: &mut RuntimeThreadEventRouting,
+    thread_ids: &[String],
+) -> Option<PendingCodexNotificationReplay> {
+    let route_generations = thread_ids
+        .iter()
+        .filter_map(|thread_id| {
+            let generation = routing.routes.get(thread_id)?.generation;
+            if routing.replaying_route_generations.contains_key(thread_id) {
+                return None;
+            }
+            routing
+                .replaying_route_generations
+                .insert(thread_id.clone(), generation);
+            Some((thread_id.clone(), generation))
+        })
+        .collect::<HashMap<_, _>>();
+    if route_generations.is_empty() {
+        return None;
+    }
+    let thread_ids = route_generations.keys().cloned().collect::<Vec<_>>();
+    let notifications = take_pending_codex_notifications(routing, &thread_ids);
+    Some(PendingCodexNotificationReplay {
+        route_generations,
+        notifications,
+    })
+}
+
+fn next_thread_event_route_generation(routing: &mut RuntimeThreadEventRouting) -> u64 {
+    routing.next_route_generation = routing.next_route_generation.wrapping_add(1).max(1);
+    routing.next_route_generation
+}
+
+fn take_pending_codex_notifications(
+    routing: &mut RuntimeThreadEventRouting,
+    thread_ids: &[String],
+) -> Vec<PendingCodexNotification> {
+    if thread_ids.is_empty() || routing.pending_notifications.is_empty() {
+        return Vec::new();
+    }
+    let thread_ids = thread_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut pending = Vec::new();
+    let mut remaining = VecDeque::new();
+    while let Some(notification) = routing.pending_notifications.pop_front() {
+        if thread_ids.contains(notification.thread_id.as_str()) {
+            pending.push(notification);
+        } else {
+            remaining.push_back(notification);
+        }
+    }
+    routing.pending_notifications = remaining;
+    pending
+}
+
+fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {
+    let params = message.get("params").unwrap_or(message);
+    let item = params.get("item").unwrap_or(params);
+    if item_type(item) != "collabagenttoolcall"
+        || string_field(item, "tool").as_deref() != Some("spawnAgent")
+    {
+        return Vec::new();
+    }
+
+    let mut thread_ids = Vec::new();
+    if let Some(receiver_ids) = item.get("receiverThreadIds").and_then(Value::as_array) {
+        for thread_id in receiver_ids.iter().filter_map(Value::as_str) {
+            if !thread_id.trim().is_empty() && !thread_ids.iter().any(|value| value == thread_id) {
+                thread_ids.push(thread_id.to_owned());
+            }
+        }
+    }
+    if let Some(agent_states) = item.get("agentsStates").and_then(Value::as_object) {
+        for thread_id in agent_states.keys() {
+            if !thread_id.trim().is_empty() && !thread_ids.iter().any(|value| value == thread_id) {
+                thread_ids.push(thread_id.to_owned());
+            }
+        }
+    }
+    thread_ids
 }
 
 fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {

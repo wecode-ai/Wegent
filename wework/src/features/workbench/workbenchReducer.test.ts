@@ -1393,6 +1393,45 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('updates device slot state from websocket payload without replacing device metadata', () => {
+    const state = {
+      ...initialWorkbenchState,
+      devices: [
+        {
+          id: 1,
+          device_id: 'logical-device',
+          socket_device_id: 'socket-device',
+          name: 'Remote Device',
+          status: 'online' as const,
+          is_default: false,
+          slot_used: 0,
+          slot_max: 1,
+          running_tasks: [],
+        },
+      ],
+    }
+
+    const updated = workbenchReducer(state, {
+      type: 'device_slot_updated',
+      payload: {
+        device_id: 'socket-device',
+        slot_used: 1,
+        slot_max: 3,
+        running_tasks: [{ task_id: 42, title: 'Running task' }],
+      },
+    })
+
+    expect(updated.devices[0]).toMatchObject({
+      device_id: 'logical-device',
+      socket_device_id: 'socket-device',
+      name: 'Remote Device',
+      status: 'online',
+      slot_used: 1,
+      slot_max: 3,
+      running_tasks: [{ task_id: 42, title: 'Running task' }],
+    })
+  })
+
   test('preserves runtime task order on refresh and appends new tasks', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

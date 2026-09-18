@@ -3,7 +3,7 @@ import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harness
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getErrorMessage } from '@/lib/error-message'
+import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import {
   harnessAppRoute,
@@ -125,7 +125,11 @@ export function useHarnessAppManagement({
         return true
       } catch (error) {
         onError(
-          getErrorMessage(error, t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'))
+          getSmartAppErrorMessage(
+            error,
+            t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'),
+            t
+          )
         )
         return false
       } finally {
@@ -151,9 +155,10 @@ export function useHarnessAppManagement({
         await onRefresh()
       } catch (error) {
         onError(
-          getErrorMessage(
+          getSmartAppErrorMessage(
             error,
-            t('workbench.smart_apps_model_change_failed', '修改智能工作台模型失败。')
+            t('workbench.smart_apps_model_change_failed', '修改智能工作台模型失败。'),
+            t
           )
         )
       } finally {

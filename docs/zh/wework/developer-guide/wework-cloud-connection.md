@@ -191,7 +191,9 @@ DeepSeek V4-Flash 和 V4-Pro 是内置 provider profile：上游地址为 `https
 
 本地设备代理保存后不会立即中断正在运行的 Codex 任务。界面会提示用户手动重启 Codex；用户确认后，Wework 只重启当前 App 本机 executor 内维护的 persistent Codex app-server，不会终止机器上其他 Codex 进程。新 Codex app-server 启动时会获得代理相关环境变量，后续新对话会使用该代理。
 
-Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。对于用户在 Codex `config.toml` 中配置的自定义模型 provider，该转发器会使用任务携带的同一份本地设备代理访问上游；否则模型请求会绕过 Codex app-server 进程环境。日志只记录是否配置代理，不输出代理 URL。
+Wework 中手动填写的本地代理优先于系统代理。未填写时，构建本地模型执行请求会通过 Electron 按实际目标 URL 解析系统代理（包括 PAC），不缓存全局代理地址。例如，PAC 可要求 ChatGPT 走代理、Wegent 内网模型网关直连；不能把 ChatGPT 的解析结果复用到内网请求。创建任务、续聊和切换模型时重新解析。云端执行请求不使用本机的 PAC。
+
+Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。云端模型网关、本地自定义模型及独立 harness 都根据各自的请求地址选择代理；Codex `config.toml` 自定义 provider 的地址通过 `config/read` 读取。视觉辅助模型独立解析自己的目标地址，明确的 `DIRECT` 不得继承主模型代理。Codex 官方账号连接仍在启动时按 ChatGPT 地址配置进程代理，因此更改它的代理后仍需要重启 Codex。日志不输出代理凭据。
 
 ## 本机认证状态
 

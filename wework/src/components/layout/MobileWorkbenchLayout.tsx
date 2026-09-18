@@ -408,8 +408,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               turnNavigation={paneSession.turnNavigation}
               loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
               onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-              onLoadFullTranscript={paneSession.loadFullTranscript}
-              loadingFullTranscript={paneSession.transcriptLoadingFullContent}
               onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
               onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
@@ -534,6 +532,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       }
                       taskPlan={paneSession.taskPlan}
                       onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                      onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                       onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                       queuePaused={paneSession.queuedMessagesPaused}
                       onResumeQueue={paneSession.resumeQueuedMessages}
@@ -647,6 +646,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 }
                 taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                 onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                 queuePaused={paneSession.queuedMessagesPaused}
                 onResumeQueue={paneSession.resumeQueuedMessages}
