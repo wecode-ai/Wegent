@@ -340,7 +340,9 @@
           "indexLockTimeout": "The document indexing task waited too long. Please retry.",
           "indexDispatchFailed": "The document indexing task could not be submitted. Please retry later.",
           "processingFailed": "Document processing failed. Please retry.",
-          "externalImportFailed": "The external document could not be imported. Please retry later."
+          "externalImportFailed": "The external document could not be imported. Please retry later.",
+          "externalSourceMissing": "The source document was deleted, so it cannot be synced.",
+          "externalSourceUnavailable": "The source document is not accessible, so it cannot be synced."
         },
         "model": "Model"
       },

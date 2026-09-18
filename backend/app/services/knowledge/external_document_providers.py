@@ -283,6 +283,21 @@ def _envelope_failure_detail(payload: Any) -> str:
     return f": {detail[:500]}" if detail else ""
 
 
+def _mcp_error_detail(exc: Exception) -> str:
+    """Read an MCP protocol error's structured payload, never transport text.
+
+    A transport failure's message can embed the signed provider URL, so an
+    unexpected failure is identified by its class plus, for protocol errors,
+    the server's own error code and message.
+    """
+    error = getattr(exc, "error", None)
+    return " ".join(
+        str(part)[:500]
+        for part in (getattr(error, "code", None), getattr(error, "message", None))
+        if part
+    )
+
+
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
@@ -401,8 +416,17 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise ExternalDocumentFetchError("DingTalk import timed out") from None
         except ExternalDocumentFetchError:
             raise
-        except Exception:
-            raise ExternalDocumentFetchError("DingTalk content read failed") from None
+        except Exception as exc:
+            # Keep the failure class (and an MCP error payload) visible: without
+            # it a deleted source and a broken session look identical.
+            logger.warning(
+                "[DingTalk Provider] Content read failed type=%s detail=%s",
+                type(exc).__name__,
+                _mcp_error_detail(exc) or "none",
+            )
+            raise ExternalDocumentFetchError(
+                f"DingTalk content read failed: {type(exc).__name__}"
+            ) from None
         if update_time is not None:
             metadata = {**metadata, "source_update_time": update_time}
         return ExternalDocumentContent(

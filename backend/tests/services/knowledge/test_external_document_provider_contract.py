@@ -419,6 +419,32 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         assert excinfo.value.error_code == "external_source_missing"
         assert "workspace node has been recycled" in str(excinfo.value)
 
+    @pytest.mark.asyncio
+    async def test_fetch_reports_the_class_of_an_unexpected_read_failure(
+        self, test_db, test_user, monkeypatch, caplog
+    ):
+        """An unexpected failure stays visible instead of reading as a hiccup."""
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "broken-read", "Broken Doc")
+
+        async def broken_read(mcp_url, node_id, user):
+            raise ValueError("unexpected read failure")
+
+        monkeypatch.setattr(provider, "_fetch_document_content", broken_read)
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(ExternalDocumentFetchError) as excinfo:
+                await provider.fetch_content(test_db, test_user, "broken-read")
+
+        # The class is how a deleted source is told apart from a broken session.
+        assert "ValueError" in str(excinfo.value)
+        assert "type=ValueError" in caplog.text
+
     @staticmethod
     def answer_document_info(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:
         """Answer every MCP call with one canned ``get_document_info`` result."""

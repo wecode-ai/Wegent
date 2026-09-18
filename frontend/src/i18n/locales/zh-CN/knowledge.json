@@ -340,7 +340,9 @@
           "indexLockTimeout": "文档索引任务等待超时，请重试。",
           "indexDispatchFailed": "无法提交文档索引任务，请稍后重试。",
           "processingFailed": "文档处理失败，请重试。",
-          "externalImportFailed": "外部文档导入失败，请稍后重试。"
+          "externalImportFailed": "外部文档导入失败，请稍后重试。",
+          "externalSourceMissing": "来源文档已删除，无法继续同步。",
+          "externalSourceUnavailable": "来源文档不可访问，无法继续同步。"
         },
         "model": "模型"
       },
