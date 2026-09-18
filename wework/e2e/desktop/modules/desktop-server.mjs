@@ -397,6 +397,12 @@ function readyPluginWorkspaceResult(body) {
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
 
+const HELD_WORKTREE_SCENARIOS = new Set([
+  'worktree_queue_hold',
+  'worktree_restart_hold',
+  'worktree_status_hold',
+])
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -816,8 +822,7 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
-        'worktree_queue_hold',
-        'worktree_restart_hold',
+        ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -853,7 +858,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      HELD_WORKTREE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -3919,7 +3924,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
