@@ -27,7 +27,6 @@ from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_EXECUTOR_VALUE,
     LABEL_POOL_PROFILE,
     LABEL_POOL_STATE,
-    LABEL_RELEASE_INSTANCE,
     LABEL_TASK_ID,
     LABEL_WARM_POOL,
     POOL_PROFILE_EXECUTOR_STANDARD,
@@ -165,40 +164,6 @@ def test_get_pods_by_executor_name_prefers_k8s_namespace(mocker):
     core_v1.list_namespaced_pod.assert_called_once_with(
         namespace=K8S_NAMESPACE,
         label_selector="aigc.weibo.com/executor=wegent,app=executor-1",
-    )
-    core_v1.read_namespaced_pod.assert_not_called()
-
-
-def test_get_pods_by_executor_name_reads_direct_sandbox_pod(mocker):
-    executor = object.__new__(K8sExecutor)
-    core_v1 = mocker.MagicMock()
-    core_v1.list_namespaced_pod.return_value = SimpleNamespace(items=[])
-    core_v1.read_namespaced_pod.return_value = SimpleNamespace(
-        metadata=SimpleNamespace(
-            name="executor-claim-1",
-            creation_timestamp="now",
-            labels={LABEL_EXECUTOR: LABEL_EXECUTOR_VALUE},
-        ),
-        status=SimpleNamespace(pod_ip="10.0.0.8", phase="Running"),
-    )
-    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
-
-    result = executor.get_pods_by_executor_name("executor-claim-1")
-
-    assert result == {
-        "status": "success",
-        "pods": [
-            {
-                "name": "executor-claim-1",
-                "ip": "10.0.0.8",
-                "status": "Running",
-                "creation_timestamp": "now",
-            }
-        ],
-    }
-    core_v1.read_namespaced_pod.assert_called_once_with(
-        name="executor-claim-1",
-        namespace=K8S_NAMESPACE,
     )
 
 
@@ -1519,18 +1484,12 @@ def test_submit_executor_cleans_up_pod_on_prepare_failure(mocker):
     cleanup.assert_called_once_with(result["executor_name"], K8S_NAMESPACE)
 
 
-def _warmpool_cr(
-    name: str,
-    template: str,
-    age_days: float,
-    release_instance: str = "current",
-) -> dict:
+def _warmpool_cr(name: str, template: str, age_days: float) -> dict:
     created = datetime.now(timezone.utc) - timedelta(days=age_days)
     return {
         "metadata": {
             "name": name,
             "creationTimestamp": created.isoformat().replace("+00:00", "Z"),
-            "labels": {LABEL_RELEASE_INSTANCE: release_instance},
         },
         "spec": {"sandboxTemplateRef": {"name": template}},
     }
@@ -1556,11 +1515,6 @@ def test_cleanup_stale_warmpools_deletes_old_mismatched_template(mocker):
         "wegent-sandbox-1.0.247",
     )
     executor = object.__new__(K8sExecutor)
-    mocker.patch.object(
-        executor,
-        "_resolve_own_release_instance",
-        return_value="current",
-    )
     warm_pool_client = _mock_warmpool_client(
         mocker,
         [
@@ -1584,11 +1538,6 @@ def test_cleanup_stale_warmpools_records_failed_count(mocker):
         "wegent-sandbox-1.0.247",
     )
     executor = object.__new__(K8sExecutor)
-    mocker.patch.object(
-        executor,
-        "_resolve_own_release_instance",
-        return_value="current",
-    )
     warm_pool_client = _mock_warmpool_client(
         mocker,
         [
@@ -1616,11 +1565,6 @@ def test_cleanup_stale_warmpools_keeps_cr_within_grace_period(mocker):
         "wegent-sandbox-1.0.247",
     )
     executor = object.__new__(K8sExecutor)
-    mocker.patch.object(
-        executor,
-        "_resolve_own_release_instance",
-        return_value="current",
-    )
     warm_pool_client = _mock_warmpool_client(
         mocker,
         [_warmpool_cr("pool-recent", "wegent-sandbox-1.0.246", age_days=3)],
@@ -1639,11 +1583,6 @@ def test_cleanup_stale_warmpools_dry_run_does_not_delete(mocker):
         "wegent-sandbox-1.0.247",
     )
     executor = object.__new__(K8sExecutor)
-    mocker.patch.object(
-        executor,
-        "_resolve_own_release_instance",
-        return_value="current",
-    )
     warm_pool_client = _mock_warmpool_client(
         mocker,
         [_warmpool_cr("pool-old", "wegent-sandbox-1.0.234", age_days=12)],
@@ -1667,63 +1606,3 @@ def test_cleanup_stale_warmpools_skips_when_template_not_configured(mocker):
 
     assert result["status"] == "skipped"
     assert result["reason"] == "warmpool_template_not_configured"
-
-
-def test_cleanup_stale_warmpools_skips_other_release(mocker):
-    mocker.patch(
-        "executor_manager.wecode.executors.k8s.k8s_executor.WARMPOOL_TEMPLATE_NAME",
-        "wegent-sandbox-online-1.0.254",
-    )
-    executor = object.__new__(K8sExecutor)
-    mocker.patch.object(
-        executor,
-        "_resolve_own_release_instance",
-        return_value="wegent-executor-manager-web",
-    )
-    warm_pool_client = _mock_warmpool_client(
-        mocker,
-        [
-            _warmpool_cr(
-                "online-old",
-                "wegent-sandbox-online-1.0.253",
-                age_days=12,
-                release_instance="wegent-executor-manager-web",
-            ),
-            _warmpool_cr(
-                "preview-pool",
-                "wegent-sandbox-dev-1.0.254",
-                age_days=12,
-                release_instance="simulation-wegent-executor-manager-web",
-            ),
-        ],
-    )
-
-    result = executor.cleanup_stale_warmpools(grace_period_days=7)
-
-    warm_pool_client.delete_sandbox_warmpool.assert_called_once_with("online-old")
-    assert result["skipped"] == [
-        {
-            "name": "preview-pool",
-            "reason": "other_or_unlabeled_release",
-            "template": "wegent-sandbox-dev-1.0.254",
-        }
-    ]
-
-
-def test_cleanup_stale_warmpools_skips_when_release_cannot_be_resolved(mocker):
-    mocker.patch(
-        "executor_manager.wecode.executors.k8s.k8s_executor.WARMPOOL_TEMPLATE_NAME",
-        "wegent-sandbox-online-1.0.254",
-    )
-    executor = object.__new__(K8sExecutor)
-    mocker.patch.object(executor, "_resolve_own_release_instance", return_value="")
-    warm_pool_client = _mock_warmpool_client(
-        mocker,
-        [_warmpool_cr("online-old", "wegent-sandbox-online-1.0.253", age_days=12)],
-    )
-
-    result = executor.cleanup_stale_warmpools(grace_period_days=7)
-
-    assert result["status"] == "skipped"
-    assert result["reason"] == "release_instance_not_resolved"
-    warm_pool_client.delete_sandbox_warmpool.assert_not_called()
