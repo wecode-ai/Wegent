@@ -417,6 +417,9 @@ may reveal on hover/focus but must remain keyboard accessible.
   navigation rows. They use a `48px` minimum height so the title and `12px–14px`
   source metadata remain readable.
 - Hover and active states use subtle neutral surface changes, not colored fills.
+- Running-task indicators use the same neutral `16px` spinner in every state.
+  An active goal is distinguished by a small centered dot; do not replace the
+  neutral status with a larger or saturated target glyph.
 - Keep the sidebar base surface stable when the application window gains or
   loses focus. Window focus must not darken the task or work-items sidebar.
 - Sortable sidebar rows must keep the sortable container separate from the

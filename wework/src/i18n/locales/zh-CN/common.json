@@ -3970,7 +3970,6 @@
     "create_first_task": "创建第一个任务",
     "create_first_issue": "创建第一个 Issue",
     "create_task_in_pending": "创建到待开始",
-    "create_issue_in_pending": "创建 Issue 到待开始",
     "column_drag_hint_inbox": "移到这里：返回收集箱",
     "column_drag_hint_pending": "移到这里：等待开始",
     "column_drag_hint_in_progress": "移到这里：开始推进",

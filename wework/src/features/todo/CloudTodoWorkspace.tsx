@@ -4733,40 +4733,26 @@ export function CloudTodoWorkspace({
                             : issueColumnEmptyHints
                         )[status]
                         if (!hint) return undefined
-                        if (status !== 'inbox' && status !== 'pending') return { hint }
-                        const onClick = () => {
-                          if (!boardParent && status === 'pending')
-                            openIssueCreation('pending', '', 'popup')
-                          else setQuickCreateStatus(status)
-                        }
+                        const isTaskBoard = Boolean(boardParent) || isMyTasksBoard
+                        if (status !== 'inbox' && (status !== 'pending' || !isTaskBoard))
+                          return { hint }
                         return {
                           hint,
                           action: {
                             label:
                               status === 'inbox'
                                 ? t(
-                                    boardParent || isMyTasksBoard
+                                    isTaskBoard
                                       ? 'todo.create_first_task'
                                       : 'todo.create_first_issue',
-                                    boardParent || isMyTasksBoard
-                                      ? '创建第一个任务'
-                                      : '创建第一个 Issue'
+                                    isTaskBoard ? '创建第一个任务' : '创建第一个 Issue'
                                   )
-                                : t(
-                                    boardParent || isMyTasksBoard
-                                      ? 'todo.create_task_in_pending'
-                                      : 'todo.create_issue_in_pending',
-                                    boardParent || isMyTasksBoard
-                                      ? '创建到待开始'
-                                      : '创建 Issue 到待开始'
-                                  ),
+                                : t('todo.create_task_in_pending', '创建到待开始'),
                             ariaLabel: t(
-                              boardParent || isMyTasksBoard
-                                ? 'todo.new_task_in_column'
-                                : 'todo.new_issue_in_column',
+                              isTaskBoard ? 'todo.new_task_in_column' : 'todo.new_issue_in_column',
                               { column: column.label }
                             ),
-                            onClick,
+                            onClick: () => setQuickCreateStatus(status),
                           },
                         }
                       }}
