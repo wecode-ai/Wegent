@@ -165,10 +165,11 @@ class ExternalDocumentImportService:
 
         db.refresh(document)
         document.is_active = False
-        # Invalidate until the fetched body lands with its corresponding timestamp.
-        document.update_external_source_config(
-            **(external_meta or {}), source_update_time=None
-        )
+        # Invalidate until the fetched body lands with its corresponding
+        # timestamp. Overwrite the key first: the saved baseline may carry it.
+        refreshed_metadata = dict(external_meta or {})
+        refreshed_metadata["source_update_time"] = None
+        document.update_external_source_config(**refreshed_metadata)
         db.commit()
         db.refresh(document)
         self._dispatch_import_task(db, document)

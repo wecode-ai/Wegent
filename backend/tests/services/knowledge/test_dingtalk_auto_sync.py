@@ -25,6 +25,8 @@ from app.services.knowledge.external_document_import import (
 )
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
+    ExternalDocumentFetchError,
+    ExternalSourceUnavailableError,
     get_external_document_provider,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -770,3 +772,213 @@ def test_scan_dispatches_nothing_while_another_scan_holds_the_lock(
     )
 
     assert tasks.scan_dingtalk_copies(imported_copy.kind_id) == 0
+
+
+def _mock_index_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.index_document_task.delay",
+        MagicMock(return_value=SimpleNamespace(id="index-task")),
+    )
+
+
+def test_auto_sync_success_renames_the_copy_to_the_latest_source_name(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+) -> None:
+    """The daily sync lands the source's latest title on the copy."""
+    from app.models.subtask_context import SubtaskContext
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地旧名称"
+    test_db.commit()
+    live_update_time.return_value = 1789562645000
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name="最新来源名称",
+            file_extension="md",
+            content=b"new body",
+            metadata={"title": "最新来源名称", "source_update_time": 1789562645000},
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    _mock_index_task(monkeypatch)
+
+    assert refresh_dingtalk_copy(
+        test_db, imported_copy.id, imported_copy.index_generation
+    )
+    run_external_document_import(
+        test_db, imported_copy, test_user, generation=imported_copy.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "最新来源名称"
+    assert (
+        test_db.get(SubtaskContext, current.attachment_id).extracted_text == "new body"
+    )
+
+
+def test_manual_sync_success_renames_the_copy_to_the_latest_source_name(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    import_dispatches: list[dict],
+) -> None:
+    """The per-document manual trigger lands the source's latest title too."""
+    from app.models.subtask_context import SubtaskContext
+
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地旧名称"
+    test_db.commit()
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name="最新来源名称",
+            file_extension="md",
+            content=b"new body",
+            metadata={"title": "最新来源名称", "source_update_time": 1789562645000},
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    _mock_index_task(monkeypatch)
+
+    refreshed = external_document_import_service.request_source_refresh(
+        test_db, test_user, imported_copy.id
+    )
+    run_external_document_import(
+        test_db, refreshed, test_user, generation=refreshed.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "最新来源名称"
+    assert (
+        test_db.get(SubtaskContext, current.attachment_id).extracted_text == "new body"
+    )
+
+
+def test_manual_reimport_renames_the_copy_to_the_latest_source_name(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    import_dispatches: list[dict],
+) -> None:
+    """A repeated import resolves the node's current title and lands it."""
+    from app.models.dingtalk_doc import DingtalkSyncedNode
+    from app.models.subtask_context import SubtaskContext
+
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地旧名称"
+    test_db.commit()
+    node = (
+        test_db.query(DingtalkSyncedNode)
+        .filter(
+            DingtalkSyncedNode.user_id == test_user.id,
+            DingtalkSyncedNode.dingtalk_node_id == imported_copy.external_resource_id,
+        )
+        .first()
+    )
+    assert node is not None
+    node.name = "重命名的来源"
+    test_db.commit()
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name="重命名的来源",
+            file_extension="md",
+            content=b"new body",
+            metadata={"title": "重命名的来源", "source_update_time": 1789562645000},
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    _mock_index_task(monkeypatch)
+
+    external_document_import_service.import_document(
+        test_db,
+        test_user,
+        imported_copy.kind_id,
+        "dingtalk",
+        imported_copy.external_resource_id,
+    )
+    run_external_document_import(
+        test_db, imported_copy, test_user, generation=imported_copy.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "重命名的来源"
+    assert (
+        test_db.get(SubtaskContext, current.attachment_id).extracted_text == "new body"
+    )
+
+
+def test_unchanged_source_keeps_the_copy_name(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+) -> None:
+    """A probe that reports no change never reaches the body or the name."""
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地名称"
+    test_db.commit()
+    fetch = AsyncMock()
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+
+    assert (
+        refresh_dingtalk_copy(test_db, imported_copy.id, imported_copy.index_generation)
+        is False
+    )
+
+    fetch.assert_not_awaited()
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "本地名称"
+
+
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        ExternalDocumentFetchError("DingTalk metadata read timed out"),
+        ExternalSourceUnavailableError(
+            "钉钉源文档不存在或已被删除", error_code="external_source_missing"
+        ),
+    ],
+)
+def test_probe_failure_never_renames_the_copy(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+    probe_error: Exception,
+) -> None:
+    """A probe that cannot establish a change leaves the name untouched."""
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地名称"
+    test_db.commit()
+    live_update_time.side_effect = probe_error
+
+    assert (
+        refresh_dingtalk_copy(test_db, imported_copy.id, imported_copy.index_generation)
+        is False
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "本地名称"
