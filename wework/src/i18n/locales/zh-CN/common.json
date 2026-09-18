@@ -510,6 +510,8 @@
     "tasks": "任务",
     "pinned": "置顶",
     "priority_filter": "按优先级筛选",
+    "task_view_menu": "任务视图",
+    "conversation_scrollbar": "对话滚动条",
     "priority_filter_needs_attention": "按优先级筛选，需要关注",
     "priority_filter_turn_off": "关闭优先级筛选",
     "priority_filter_title": "优先级",

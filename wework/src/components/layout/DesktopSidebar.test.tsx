@@ -242,21 +242,48 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
-  test('renders Board as the selected default work-items view', async () => {
-    const onOpenMyWork = vi.fn()
+  test('changes the primary task view action and icon after selecting Board', async () => {
+    const onToggleMyWork = vi.fn()
 
+    renderSidebar({ onToggleMyWork })
+
+    expect(screen.queryByTestId('task-my-work-button')).not.toBeInTheDocument()
+    const primaryButton = screen.getByTestId('runtime-priority-filter-button')
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    const boardItem = screen.getByTestId('runtime-task-view-board')
+    expect(boardItem).toHaveTextContent('看板')
+
+    await userEvent.click(boardItem)
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
+
+    await userEvent.click(primaryButton)
+    expect(onToggleMyWork).toHaveBeenCalledTimes(2)
+  })
+
+  test('selects priority as the primary action and toggles it from the updated button', async () => {
     renderSidebar({
       taskView: 'default-work-items',
-      onOpenMyWork,
+      onToggleMyWork: vi.fn(),
     })
 
-    const myWorkButton = screen.getByTestId('task-my-work-button')
-    expect(myWorkButton).toHaveTextContent('看板')
-    expect(myWorkButton).toHaveAttribute('aria-current', 'page')
+    const primaryButton = screen.getByTestId('runtime-priority-filter-button')
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
 
-    await userEvent.click(myWorkButton)
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    const priorityItem = screen.getByTestId('runtime-task-view-priority')
 
-    expect(onOpenMyWork).toHaveBeenCalledOnce()
+    await userEvent.click(priorityItem)
+
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    expect(primaryButton.querySelector('.lucide-list-todo')).toBeInTheDocument()
+    expect(primaryButton).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(primaryButton)
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {

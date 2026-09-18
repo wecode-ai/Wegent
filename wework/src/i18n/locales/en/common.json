@@ -509,6 +509,8 @@
     "tasks": "Tasks",
     "pinned": "Pinned",
     "priority_filter": "Filter by priority",
+    "task_view_menu": "Task views",
+    "conversation_scrollbar": "Conversation scrollbar",
     "priority_filter_needs_attention": "Priority filter, needs attention",
     "priority_filter_turn_off": "Close priority filter",
     "priority_filter_title": "Priority",

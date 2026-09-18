@@ -16,18 +16,7 @@ async function waitForElementCount(control, selector, expected) {
 }
 
 export async function verifyLocalBoardUnread(control, taskTabTestId) {
-  const taskRowSelector = '[data-e2e-anchor-id="local-unread-runtime-task-row"]'
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-  await control.command(
-    'waitFor',
-    '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]'
-  )
-  await control.command('markElementWithText', '[data-testid^="runtime-local-task-row-"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    value: 'local-unread-runtime-task-row',
-    visible: true,
-  })
-  await control.command('click', '[data-testid="task-my-work-button"]')
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   await control.command('waitFor', '[data-testid="cloud-project-header-title"]', {
     text: '我的任务',
     visible: true,
@@ -60,12 +49,8 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await waitForElementCount(control, unreadSelector, 0)
   await captureVerificationScreenshot(control, 'local-board-unread-02-opened.png')
   await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
-  await control.command('click', taskRowSelector)
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-  })
-  await control.command('click', '[data-testid="task-my-work-button"]')
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   await control.command('markElementWithText', '[data-testid^="cloud-todo-card-drop-"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     value: 'local-unread-card',
@@ -78,11 +63,5 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   assert.equal(readClasses.split(' ').includes('bg-focus/10'), false)
   await control.command('scrollIntoView', cardSelector)
   await captureVerificationScreenshot(control, 'local-board-unread-03-returned.png')
-  await control.command('markElementWithText', '[data-testid^="runtime-local-task-row-"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    value: 'local-unread-runtime-task-row',
-    visible: true,
-  })
-  await control.command('click', taskRowSelector)
-  await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`)
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
 }
