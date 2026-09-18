@@ -11,6 +11,7 @@ import hashlib
 from collections.abc import Sequence
 from urllib.parse import quote
 
+from app.core.config import settings
 from app.services.wiki.connector import (
     StoredWikiResourceRef,
     WikiApiError,
@@ -170,11 +171,11 @@ class GitLabWikiConnector(WikiConnector):
         *,
         batch_size: int,
     ) -> dict[str, WikiPageProbe]:
-        client = GitLabExternalWikiClient(config)
         results: dict[str, WikiPageProbe] = {}
         by_project: dict[str, list[StoredWikiResourceRef]] = {}
         for resource in resources:
             by_project.setdefault(resource.project_path or "", []).append(resource)
+        valid_projects: dict[str, list[StoredWikiResourceRef]] = {}
         for project_path, group in by_project.items():
             if not project_path:
                 for resource in group:
@@ -183,72 +184,86 @@ class GitLabWikiConnector(WikiConnector):
                         error_message="GitLab Wiki 同步配置不完整",
                     )
                 continue
-            try:
-                pages = await client.list_project_wikis(project_path, with_content=True)
-                indexed = {
-                    str(page.get("slug") or ""): page
-                    for page in pages
-                    if page.get("slug")
-                }
-                for resource in group:
-                    node = indexed.get(resource.path)
-                    results[resource.identity] = (
-                        WikiPageProbe(page=self._meta(config, project_path, node))
-                        if node is not None
-                        else WikiPageProbe(confirmed_missing=True)
+            valid_projects[project_path] = group
+        if not valid_projects:
+            return results
+
+        async with GitLabExternalWikiClient(config) as client:
+            for project_path, group in valid_projects.items():
+                try:
+                    pages = await client.list_project_wikis(
+                        project_path, with_content=True
                     )
-                continue
-            except WikiApiError as exc:
-                if exc.error_code != "external_response_too_large":
+                    indexed = {
+                        str(page.get("slug") or ""): page
+                        for page in pages
+                        if page.get("slug")
+                    }
+                    for resource in group:
+                        node = indexed.get(resource.path)
+                        results[resource.identity] = (
+                            WikiPageProbe(page=self._meta(config, project_path, node))
+                            if node is not None
+                            else WikiPageProbe(confirmed_missing=True)
+                        )
+                    continue
+                except WikiApiError as exc:
+                    if exc.error_code != "external_response_too_large":
+                        for resource in group:
+                            results[resource.identity] = WikiPageProbe(
+                                error_code=exc.error_code,
+                                error_message=exc.message,
+                            )
+                        continue
+                try:
+                    listed_pages = await client.list_project_wikis(project_path)
+                except WikiApiError as exc:
                     for resource in group:
                         results[resource.identity] = WikiPageProbe(
                             error_code=exc.error_code,
                             error_message=exc.message,
                         )
                     continue
-            try:
-                listed_pages = await client.list_project_wikis(project_path)
-            except WikiApiError as exc:
+                available_slugs = {
+                    str(page.get("slug") or "")
+                    for page in listed_pages
+                    if page.get("slug")
+                }
+                existing_resources = []
                 for resource in group:
-                    results[resource.identity] = WikiPageProbe(
-                        error_code=exc.error_code,
-                        error_message=exc.message,
-                    )
-                continue
-            available_slugs = {
-                str(page.get("slug") or "") for page in listed_pages if page.get("slug")
-            }
-            existing_resources = []
-            for resource in group:
-                if resource.path not in available_slugs:
-                    results[resource.identity] = WikiPageProbe(confirmed_missing=True)
-                else:
-                    existing_resources.append(resource)
-            semaphore = asyncio.Semaphore(min(max(1, batch_size), 8))
-
-            async def inspect(resource: StoredWikiResourceRef) -> None:
-                try:
-                    async with semaphore:
-                        node = await client.get_project_wiki(
-                            project_path, slug=resource.path
+                    if resource.path not in available_slugs:
+                        results[resource.identity] = WikiPageProbe(
+                            confirmed_missing=True
                         )
-                    results[resource.identity] = WikiPageProbe(
-                        page=self._meta(config, project_path, node)
-                    )
-                except WikiApiError as exc:
-                    results[resource.identity] = WikiPageProbe(
-                        confirmed_missing=exc.error_code == "external_source_missing",
-                        error_code=(
-                            None
-                            if exc.error_code == "external_source_missing"
-                            else exc.error_code
-                        ),
-                        error_message=exc.message,
-                    )
+                    else:
+                        existing_resources.append(resource)
+                semaphore = asyncio.Semaphore(min(max(1, batch_size), 8))
 
-            await asyncio.gather(
-                *(inspect(resource) for resource in existing_resources)
-            )
+                async def inspect(resource: StoredWikiResourceRef) -> None:
+                    try:
+                        async with semaphore:
+                            node = await client.get_project_wiki(
+                                project_path, slug=resource.path
+                            )
+                        results[resource.identity] = WikiPageProbe(
+                            page=self._meta(config, project_path, node)
+                        )
+                    except WikiApiError as exc:
+                        results[resource.identity] = WikiPageProbe(
+                            confirmed_missing=(
+                                exc.error_code == "external_source_missing"
+                            ),
+                            error_code=(
+                                None
+                                if exc.error_code == "external_source_missing"
+                                else exc.error_code
+                            ),
+                            error_message=exc.message,
+                        )
+
+                await asyncio.gather(
+                    *(inspect(resource) for resource in existing_resources)
+                )
         return results
 
     async def fetch_resource(
@@ -271,5 +286,10 @@ class GitLabWikiConnector(WikiConnector):
         content = str(node.get("content") or "").encode("utf-8")
         if not content:
             raise WikiApiError("external_file_empty", "GitLab Wiki 页面为空")
+        if len(content) > settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024:
+            raise WikiApiError(
+                "external_file_too_large",
+                "GitLab Wiki 页面超过知识库上传大小限制",
+            )
         meta = self._meta(config, resource.project_path, node)
         return WikiResourceContent(meta, content, meta.file_extension)

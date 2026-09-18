@@ -4,11 +4,15 @@
 
 import logging
 
+from app.core.config import settings
 from app.services.knowledge.external_document_sync import (
     ConnectionSyncReport,
     SyncReport,
 )
-from app.tasks.external_document_sync_tasks import _log_sync_report
+from app.tasks.external_document_sync_tasks import (
+    _log_sync_report,
+    sync_external_documents_task,
+)
 
 
 def test_logs_global_and_per_connection_sync_summaries(caplog) -> None:
@@ -46,9 +50,24 @@ def test_logs_global_and_per_connection_sync_summaries(caplog) -> None:
     assert "connection_name='Primary Wiki'" in caplog.text
     assert "scanned=12" in caplog.text
     assert "updates_detected=4" in caplog.text
-    assert "refresh_queued=3" in caplog.text
+    assert "refresh_started=3" in caplog.text
     assert "reindex_queued=1" in caplog.text
     assert "source_missing=1" in caplog.text
     assert "failed=0" in caplog.text
     assert "[External Sync] total" in caplog.text
     assert "elapsed_seconds=1.234" in caplog.text
+
+
+def test_sync_task_uses_dedicated_time_limits() -> None:
+    assert sync_external_documents_task.soft_time_limit == (
+        settings.EXTERNAL_DOC_SYNC_TASK_SOFT_TIME_LIMIT_SECONDS
+    )
+    assert sync_external_documents_task.time_limit == (
+        settings.EXTERNAL_DOC_SYNC_TASK_TIME_LIMIT_SECONDS
+    )
+    assert (
+        settings.EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS
+        < sync_external_documents_task.soft_time_limit
+        < sync_external_documents_task.time_limit
+        < settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS
+    )

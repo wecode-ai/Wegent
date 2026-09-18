@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 from urllib.parse import quote
 
 import aiohttp
@@ -20,6 +22,9 @@ from app.services.wiki.connector import WikiApiError, WikiSiteConfig
 from shared.utils.url_util import build_url
 
 _MAX_ATTEMPTS = 3
+_GITLAB_MAX_PAGE_SIZE = 100
+_LEGACY_BASE64_LINE_LENGTH = 60
+_MAX_JSON_STRING_EXPANSION = 6
 GITLAB_WIKI_LIST_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
 
@@ -40,6 +45,38 @@ class GitLabExternalWikiClient:
         self.site_url = config.site_url.rstrip("/")
         self.api_url = build_url(self.site_url, "/api/v4")
         self.headers = {"PRIVATE-TOKEN": config.api_key}
+        self._session_manager: AsyncSessionManager | None = None
+        self._session: aiohttp.ClientSession | None = None
+
+    async def __aenter__(self) -> Self:
+        if self._session is not None:
+            raise RuntimeError("GitLab client context is already active")
+        manager = AsyncSessionManager(timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS)
+        self._session = await manager.__aenter__()
+        self._session_manager = manager
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        manager = self._session_manager
+        self._session = None
+        self._session_manager = None
+        if manager is not None:
+            await manager.__aexit__(exc_type, exc_value, traceback)
+
+    @asynccontextmanager
+    async def _session_scope(self) -> AsyncIterator[aiohttp.ClientSession]:
+        if self._session is not None:
+            yield self._session
+            return
+        async with AsyncSessionManager(
+            timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS
+        ) as session:
+            yield session
 
     @staticmethod
     def _project(project_path: str) -> str:
@@ -54,6 +91,11 @@ class GitLabExternalWikiClient:
         raw = str(headers.get("X-Next-Page") or "").strip()
         return (int(raw) - 1) * limit if raw.isdigit() and int(raw) > 0 else None
 
+    @staticmethod
+    def _pagination(limit: int, offset: int) -> tuple[int, int]:
+        page_size = min(max(1, limit), _GITLAB_MAX_PAGE_SIZE)
+        return page_size, offset // page_size + 1
+
     async def _request(
         self,
         method: str,
@@ -61,7 +103,7 @@ class GitLabExternalWikiClient:
         *,
         params: dict[str, Any] | None = None,
         not_found_code: str = "external_source_missing",
-        max_bytes: int | None = None,
+        max_bytes: int | None = GITLAB_WIKI_LIST_MAX_RESPONSE_BYTES,
         response_too_large_code: str = "external_response_too_large",
         response_too_large_message: str = "GitLab API 响应过大",
         headers_only: bool = False,
@@ -75,9 +117,7 @@ class GitLabExternalWikiClient:
         last_error: WikiApiError | None = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
-                async with AsyncSessionManager(
-                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS
-                ) as session:
+                async with self._session_scope() as session:
                     async with session.request(
                         method,
                         url,
@@ -141,6 +181,19 @@ class GitLabExternalWikiClient:
                             )
                         if headers_only:
                             return None, response.headers
+                        content_length = str(
+                            response.headers.get("Content-Length") or ""
+                        ).strip()
+                        if (
+                            max_bytes is not None
+                            and content_length.isdigit()
+                            and int(content_length) > max_bytes
+                        ):
+                            raise WikiApiError(
+                                response_too_large_code,
+                                response_too_large_message,
+                                retryable=False,
+                            )
                         body = bytearray()
                         async for chunk in response.content.iter_chunked(64 * 1024):
                             if (
@@ -185,7 +238,7 @@ class GitLabExternalWikiClient:
     async def list_projects(
         self, *, search: str = "", limit: int = 100, offset: int = 0
     ) -> GitLabPage:
-        page = offset // limit + 1
+        page_size, page = self._pagination(limit, offset)
         payload, headers = await self._request(
             "GET",
             "/projects",
@@ -195,13 +248,13 @@ class GitLabExternalWikiClient:
                 "order_by": "last_activity_at",
                 "sort": "desc",
                 "search": search or None,
-                "per_page": limit,
+                "per_page": page_size,
                 "page": page,
             },
         )
         if not isinstance(payload, list):
             raise WikiApiError("upstream_error", "GitLab 项目列表响应格式错误")
-        return GitLabPage(payload, self._next_offset(headers, limit))
+        return GitLabPage(payload, self._next_offset(headers, page_size))
 
     async def get_project(self, project_path: str) -> dict[str, Any]:
         payload, _ = await self._request(
@@ -216,16 +269,16 @@ class GitLabExternalWikiClient:
     async def list_branches(
         self, project_path: str, *, limit: int = 100, offset: int = 0
     ) -> GitLabPage:
-        page = offset // limit + 1
+        page_size, page = self._pagination(limit, offset)
         payload, headers = await self._request(
             "GET",
             f"/projects/{self._project(project_path)}/repository/branches",
-            params={"per_page": limit, "page": page},
+            params={"per_page": page_size, "page": page},
             not_found_code="external_scope_invalid",
         )
         if not isinstance(payload, list):
             raise WikiApiError("upstream_error", "GitLab 分支列表响应格式错误")
-        return GitLabPage(payload, self._next_offset(headers, limit))
+        return GitLabPage(payload, self._next_offset(headers, page_size))
 
     async def get_branch(self, project_path: str, branch: str) -> dict[str, Any]:
         payload, _ = await self._request(
@@ -247,7 +300,7 @@ class GitLabExternalWikiClient:
         limit: int = 100,
         offset: int = 0,
     ) -> GitLabPage:
-        page = offset // limit + 1
+        page_size, page = self._pagination(limit, offset)
         payload, headers = await self._request(
             "GET",
             f"/projects/{self._project(project_path)}/repository/tree",
@@ -255,20 +308,24 @@ class GitLabExternalWikiClient:
                 "ref": ref,
                 "path": path or None,
                 "recursive": "false",
-                "per_page": limit,
+                "per_page": page_size,
                 "page": page,
             },
             not_found_code="external_scope_invalid",
         )
         if not isinstance(payload, list):
             raise WikiApiError("upstream_error", "GitLab 文件树响应格式错误")
-        return GitLabPage(payload, self._next_offset(headers, limit))
+        return GitLabPage(payload, self._next_offset(headers, page_size))
 
     async def get_repository_file(
         self, project_path: str, *, path: str, ref: str
     ) -> dict[str, Any]:
         file_limit = settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
-        response_limit = ((file_limit + 2) // 3) * 4 + 1024 * 1024
+        encoded_limit = ((file_limit + 2) // 3) * 4
+        folded_line_count = (
+            encoded_limit + _LEGACY_BASE64_LINE_LENGTH - 1
+        ) // _LEGACY_BASE64_LINE_LENGTH
+        response_limit = encoded_limit + folded_line_count * 4 + 1024 * 1024
         payload, _ = await self._request(
             "GET",
             f"/projects/{self._project(project_path)}/repository/files/{self._path(path)}",
@@ -300,7 +357,7 @@ class GitLabExternalWikiClient:
             f"/projects/{self._project(project_path)}/wikis",
             params={"with_content": str(with_content).lower()},
             not_found_code="external_scope_invalid",
-            max_bytes=(GITLAB_WIKI_LIST_MAX_RESPONSE_BYTES if with_content else None),
+            max_bytes=GITLAB_WIKI_LIST_MAX_RESPONSE_BYTES,
             response_too_large_message="GitLab Wiki 页面列表响应过大",
         )
         if not isinstance(payload, list):
@@ -308,9 +365,13 @@ class GitLabExternalWikiClient:
         return payload
 
     async def get_project_wiki(self, project_path: str, *, slug: str) -> dict[str, Any]:
+        content_limit = settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
         payload, _ = await self._request(
             "GET",
             f"/projects/{self._project(project_path)}/wikis/{self._path(slug)}",
+            max_bytes=(content_limit * _MAX_JSON_STRING_EXPANSION + 1024 * 1024),
+            response_too_large_code="external_file_too_large",
+            response_too_large_message="GitLab Wiki 页面超过知识库上传大小限制",
         )
         if not isinstance(payload, dict):
             raise WikiApiError("upstream_error", "GitLab Wiki 页面响应格式错误")

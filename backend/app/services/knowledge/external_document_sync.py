@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ from typing import Any
 from sqlalchemy.orm import Session, contains_eager, load_only
 
 from app.core.cache import cache_manager
+from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.knowledge import (
     DocumentIndexStatus,
     DocumentSourceType,
@@ -24,6 +27,7 @@ from app.models.knowledge import (
 from app.models.user import User
 from app.services.knowledge.external_document_import import (
     external_document_import_service,
+    run_external_document_import_async,
 )
 from app.services.knowledge.external_sync_providers import (
     ExternalSyncLocator,
@@ -35,6 +39,7 @@ from app.services.knowledge.external_sync_providers import (
     get_external_sync_provider,
     list_external_sync_provider_ids,
 )
+from app.services.knowledge.index_state_machine import begin_external_import_attempt
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from shared.telemetry.decorators import trace_async
 
@@ -75,6 +80,24 @@ class SyncReport:
     failed: int = 0
     next_cursors: dict[str, int] = field(default_factory=dict)
     connection_summaries: dict[str, ConnectionSyncReport] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PendingExternalRefresh:
+    """One prepared refresh whose body will be fetched by the scan task."""
+
+    document_id: int
+    expected_generation: int
+    provider_id: str
+    connection_report: ConnectionSyncReport
+
+
+@dataclass(frozen=True)
+class RefreshExecutionResult:
+    """Outcome used to update scan counters after one bounded refresh."""
+
+    started: bool
+    failed: bool
 
 
 def _connection_summary_key(
@@ -193,7 +216,7 @@ class ExternalDocumentSyncModule:
                     )
                 )
                 self._apply_connection_names(report, provider_id, connection_names)
-                await self._apply_inspection_results(
+                pending_refreshes = await self._apply_inspection_results(
                     db,
                     candidates,
                     states,
@@ -201,6 +224,7 @@ class ExternalDocumentSyncModule:
                     report,
                 )
                 db.commit()
+                await self._run_pending_refreshes(pending_refreshes, report)
             await self._store_cursor(cursor_key, provider_id, cursor, report)
             if len(documents) < batch_size:
                 await self._store_cursor(cursor_key, provider_id, 0, report)
@@ -358,7 +382,8 @@ class ExternalDocumentSyncModule:
         states: dict[int, RemoteDocumentState | None],
         skipped_document_ids: frozenset[int],
         report: SyncReport,
-    ) -> None:
+    ) -> list[PendingExternalRefresh]:
+        pending_refreshes: list[PendingExternalRefresh] = []
         candidate_by_id = {candidate.document_id: candidate for candidate in candidates}
         documents = (
             db.query(KnowledgeDocument)
@@ -398,7 +423,12 @@ class ExternalDocumentSyncModule:
                     last_error_code="external_sync_result_missing",
                 )
                 continue
-            await self._apply_state(db, document, state, report, connection_report)
+            refresh = await self._apply_state(
+                db, document, state, report, connection_report
+            )
+            if refresh is not None:
+                pending_refreshes.append(refresh)
+        return pending_refreshes
 
     @staticmethod
     def _still_matches(document: KnowledgeDocument, candidate: SyncCandidate) -> bool:
@@ -424,7 +454,7 @@ class ExternalDocumentSyncModule:
         state: RemoteDocumentState,
         report: SyncReport,
         connection_report: ConnectionSyncReport,
-    ) -> None:
+    ) -> PendingExternalRefresh | None:
         now = _utc_iso()
         if state.error_code or not state.exists:
             if not state.exists and state.error_code == "external_source_missing":
@@ -446,7 +476,7 @@ class ExternalDocumentSyncModule:
                 last_checked_at=now,
                 last_error_code=state.error_code or "external_source_missing",
             )
-            return
+            return None
 
         sync = get_document_sync_config(document)
         metadata = dict(state.metadata or {})
@@ -468,15 +498,6 @@ class ExternalDocumentSyncModule:
             last_checked_at=now,
             last_error_code=None,
         )
-        if document.index_status in {
-            DocumentIndexStatus.QUEUED,
-            DocumentIndexStatus.PENDING_CONVERSION,
-            DocumentIndexStatus.CONVERTING,
-            DocumentIndexStatus.INDEXING,
-        }:
-            report.skipped += 1
-            connection_report.skipped += 1
-            return
         sync = get_document_sync_config(document)
         remote_version = state.remote_version
         if (
@@ -485,7 +506,7 @@ class ExternalDocumentSyncModule:
         ):
             report.unchanged += 1
             connection_report.unchanged += 1
-            return
+            return None
 
         report.updates_detected += 1
         connection_report.updates_detected += 1
@@ -516,16 +537,12 @@ class ExternalDocumentSyncModule:
         db.commit()
         try:
             if refresh_required:
-                refresh = external_document_import_service.queue_source_refresh(
-                    db, document
+                return PendingExternalRefresh(
+                    document_id=document.id,
+                    expected_generation=document.index_generation,
+                    provider_id=str(document.external_provider or ""),
+                    connection_report=connection_report,
                 )
-                if refresh.started:
-                    report.refreshed += 1
-                    connection_report.refresh_queued += 1
-                else:
-                    report.skipped += 1
-                    connection_report.skipped += 1
-                return
             owner = db.get(User, document.user_id)
             if owner is None:
                 raise ValueError("Document owner no longer exists")
@@ -543,6 +560,96 @@ class ExternalDocumentSyncModule:
                 document.id,
                 document.external_provider,
             )
+        return None
+
+    async def _run_pending_refreshes(
+        self,
+        refreshes: list[PendingExternalRefresh],
+        report: SyncReport,
+    ) -> None:
+        if not refreshes:
+            return
+        semaphore = asyncio.Semaphore(settings.WIKI_SYNC_DOWNLOAD_CONCURRENCY)
+
+        async def execute(refresh: PendingExternalRefresh) -> None:
+            async with semaphore:
+                result = await self._execute_refresh(refresh)
+            if result.started:
+                report.refreshed += 1
+                refresh.connection_report.refresh_queued += 1
+            elif not result.failed:
+                report.skipped += 1
+                refresh.connection_report.skipped += 1
+            if result.failed:
+                report.failed += 1
+                refresh.connection_report.failed += 1
+
+        await asyncio.gather(*(execute(refresh) for refresh in refreshes))
+
+    @staticmethod
+    async def _execute_refresh(
+        refresh: PendingExternalRefresh,
+    ) -> RefreshExecutionResult:
+        started = False
+        try:
+            with SessionLocal() as db:
+                document = db.get(KnowledgeDocument, refresh.document_id)
+                if document is None:
+                    return RefreshExecutionResult(started=False, failed=False)
+                prepared = external_document_import_service.prepare_source_refresh(
+                    db,
+                    document,
+                    expected_generation=refresh.expected_generation,
+                )
+                if not prepared.started:
+                    logger.info(
+                        "[External Sync] Refresh skipped document_id=%s "
+                        "generation=%s reason=%s",
+                        refresh.document_id,
+                        refresh.expected_generation,
+                        prepared.reason,
+                    )
+                    return RefreshExecutionResult(started=False, failed=False)
+                started = True
+                attempt = begin_external_import_attempt(
+                    db,
+                    refresh.document_id,
+                    prepared.document.index_generation,
+                )
+                if not attempt.should_execute:
+                    logger.info(
+                        "[External Sync] Refresh skipped document_id=%s "
+                        "generation=%s reason=%s",
+                        refresh.document_id,
+                        refresh.expected_generation,
+                        attempt.reason,
+                    )
+                    return RefreshExecutionResult(started=True, failed=True)
+                document = db.get(KnowledgeDocument, refresh.document_id)
+                if document is None:
+                    return RefreshExecutionResult(started=True, failed=True)
+                user = db.get(User, document.user_id)
+                logger.info(
+                    "[External Sync] Fetching body document_id=%s generation=%s "
+                    "provider=%s",
+                    refresh.document_id,
+                    attempt.generation,
+                    refresh.provider_id,
+                )
+                succeeded = await run_external_document_import_async(
+                    db,
+                    document,
+                    user,
+                    generation=attempt.generation,
+                )
+                return RefreshExecutionResult(started=True, failed=not succeeded)
+        except Exception:
+            logger.exception(
+                "[External Sync] Refresh execution failed document_id=%s provider=%s",
+                refresh.document_id,
+                refresh.provider_id,
+            )
+            return RefreshExecutionResult(started=started, failed=True)
 
 
 external_document_sync_module = ExternalDocumentSyncModule()

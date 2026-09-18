@@ -4,7 +4,9 @@
 
 """Tests for provider-neutral daily external document synchronization."""
 
+import asyncio
 import logging
+from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentIndexStatus,
@@ -20,7 +23,11 @@ from app.models.knowledge import (
 )
 from app.models.user import User
 from app.services.knowledge.external_document_sync import (
+    ConnectionSyncReport,
     ExternalDocumentSyncModule,
+    PendingExternalRefresh,
+    RefreshExecutionResult,
+    SyncReport,
 )
 from app.services.knowledge.external_sync_providers import (
     PreparedExternalSyncBatch,
@@ -137,11 +144,11 @@ async def test_daily_sync_skips_unchanged_indexed_document(
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.cache_manager.set", cache_set
     )
-    queue_refresh = MagicMock()
+    prepare_refresh = MagicMock()
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
-        "external_document_import_service.queue_source_refresh",
-        queue_refresh,
+        "external_document_import_service.prepare_source_refresh",
+        prepare_refresh,
     )
 
     report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
@@ -149,7 +156,7 @@ async def test_daily_sync_skips_unchanged_indexed_document(
     assert report.eligible == 1
     assert report.unchanged == 1
     assert report.refreshed == 0
-    queue_refresh.assert_not_called()
+    prepare_refresh.assert_not_called()
     assert cache_set.await_count == 2
     document = test_db.get(KnowledgeDocument, document.id)
     assert document is not None
@@ -189,20 +196,28 @@ async def test_daily_sync_queues_changed_remote_document(
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
     )
-    queue_refresh = MagicMock(return_value=SimpleNamespace(started=True))
+    dispatch_import = MagicMock()
     monkeypatch.setattr(
-        "app.services.knowledge.external_document_sync."
-        "external_document_import_service.queue_source_refresh",
-        queue_refresh,
+        "app.services.knowledge.external_document_import."
+        "external_document_import_service._dispatch_import_task",
+        dispatch_import,
+    )
+    execute_refresh = AsyncMock(
+        return_value=RefreshExecutionResult(started=True, failed=False)
+    )
+    sync_module = ExternalDocumentSyncModule()
+    monkeypatch.setattr(
+        sync_module,
+        "_execute_refresh",
+        execute_refresh,
+        raising=False,
     )
 
     with caplog.at_level(
         logging.INFO,
         logger="app.services.knowledge.external_document_sync",
     ):
-        report = await ExternalDocumentSyncModule().run_daily_sync(
-            test_db, scan_limit=100
-        )
+        report = await sync_module.run_daily_sync(test_db, scan_limit=100)
 
     document = test_db.get(KnowledgeDocument, document.id)
     assert document is not None
@@ -218,7 +233,8 @@ async def test_daily_sync_queues_changed_remote_document(
     assert document.source_config["external"]["sync"]["observed_version"] == (
         "2026-09-06T02:00:00Z"
     )
-    queue_refresh.assert_called_once()
+    dispatch_import.assert_not_called()
+    execute_refresh.assert_awaited_once()
     assert "[External Sync] update detected" in caplog.text
     assert f"document_id={document.id}" in caplog.text
     assert f"knowledge_base_id={document.kind_id}" in caplog.text
@@ -231,6 +247,143 @@ async def test_daily_sync_queues_changed_remote_document(
     assert "previous_version='2026-09-06T01:00:00Z'" in caplog.text
     assert "remote_version='2026-09-06T02:00:00Z'" in caplog.text
     assert "action=refresh" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_daily_sync_limits_parallel_source_downloads(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents = [
+        _create_synced_document(test_db, test_user, remote_version="v1")
+        for _ in range(6)
+    ]
+    provider = _provider(
+        {
+            document.id: RemoteDocumentState(True, f"v2-{document.id}")
+            for document in documents
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+    monkeypatch.setattr(settings, "WIKI_SYNC_DOWNLOAD_CONCURRENCY", 2)
+    active = 0
+    max_active = 0
+
+    async def execute_refresh(_refresh) -> RefreshExecutionResult:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return RefreshExecutionResult(started=True, failed=False)
+
+    sync_module = ExternalDocumentSyncModule()
+    monkeypatch.setattr(
+        sync_module,
+        "_execute_refresh",
+        execute_refresh,
+        raising=False,
+    )
+    dispatch_import = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import."
+        "external_document_import_service._dispatch_import_task",
+        dispatch_import,
+    )
+
+    report = await sync_module.run_daily_sync(test_db, scan_limit=100)
+
+    assert report.refreshed == len(documents)
+    assert max_active == 2
+    assert all(
+        test_db.get(KnowledgeDocument, document.id).index_status
+        == DocumentIndexStatus.SUCCESS
+        for document in documents
+    )
+    dispatch_import.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pending_refresh_failure_does_not_cancel_other_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_report = ConnectionSyncReport("wiki", 1, "conn-a", "Wiki A")
+    second_report = ConnectionSyncReport("wiki", 2, "conn-b", "Wiki B")
+    refreshes = [
+        PendingExternalRefresh(1, 1, "wiki", first_report),
+        PendingExternalRefresh(2, 1, "wiki", second_report),
+    ]
+    completed: list[int] = []
+
+    async def execute_refresh(
+        refresh: PendingExternalRefresh,
+    ) -> RefreshExecutionResult:
+        completed.append(refresh.document_id)
+        return RefreshExecutionResult(
+            started=True,
+            failed=refresh.document_id == 1,
+        )
+
+    sync_module = ExternalDocumentSyncModule()
+    monkeypatch.setattr(sync_module, "_execute_refresh", execute_refresh)
+    report = SyncReport()
+
+    await sync_module._run_pending_refreshes(refreshes, report)
+
+    assert completed == [1, 2]
+    assert report.failed == 1
+    assert first_report.failed == 1
+    assert second_report.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_refresh_claims_generation_before_async_download(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_document(test_db, test_user, remote_version="v1")
+
+    @contextmanager
+    def session_local():
+        yield test_db
+
+    run_import = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.SessionLocal",
+        session_local,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync."
+        "run_external_document_import_async",
+        run_import,
+    )
+    pending = PendingExternalRefresh(
+        document.id,
+        document.index_generation,
+        "wiki",
+        ConnectionSyncReport("wiki", test_user.id, "conn-primary", "Primary Wiki"),
+    )
+
+    result = await ExternalDocumentSyncModule._execute_refresh(pending)
+
+    assert result == RefreshExecutionResult(started=True, failed=False)
+    current = test_db.get(KnowledgeDocument, document.id)
+    assert current is not None
+    assert current.index_generation == pending.expected_generation + 2
+    run_import.assert_awaited_once()
+    assert run_import.await_args.kwargs["generation"] == current.index_generation
 
 
 @pytest.mark.asyncio
@@ -254,8 +407,13 @@ async def test_daily_sync_does_not_count_a_rejected_refresh_as_queued(
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
-        "external_document_import_service.queue_source_refresh",
-        MagicMock(return_value=SimpleNamespace(started=False)),
+        "external_document_import_service.prepare_source_refresh",
+        MagicMock(
+            return_value=SimpleNamespace(
+                started=False,
+                reason="already_in_progress",
+            )
+        ),
     )
 
     report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
@@ -297,12 +455,12 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
     )
-    queue_refresh = MagicMock()
+    prepare_refresh = MagicMock()
     reindex = MagicMock()
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
-        "external_document_import_service.queue_source_refresh",
-        queue_refresh,
+        "external_document_import_service.prepare_source_refresh",
+        prepare_refresh,
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
@@ -323,7 +481,7 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
     summary = next(iter(report.connection_summaries.values()))
     assert summary.updates_detected == 1
     assert summary.reindex_queued == 1
-    queue_refresh.assert_not_called()
+    prepare_refresh.assert_not_called()
     reindex.assert_called_once()
     assert reindex.call_args.kwargs["db"] is test_db
     assert reindex.call_args.kwargs["user"].id == test_user.id
@@ -457,11 +615,11 @@ async def test_daily_sync_skips_connector_without_scheduled_sync_support(
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
     )
-    queue_refresh = MagicMock()
+    prepare_refresh = MagicMock()
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
-        "external_document_import_service.queue_source_refresh",
-        queue_refresh,
+        "external_document_import_service.prepare_source_refresh",
+        prepare_refresh,
     )
 
     report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
@@ -486,7 +644,7 @@ async def test_daily_sync_skips_connector_without_scheduled_sync_support(
         "content_version": "v1",
         "indexed_version": "v1",
     }
-    queue_refresh.assert_not_called()
+    prepare_refresh.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -520,7 +678,7 @@ async def test_schedule_failure_does_not_rollback_prior_batch_metadata(
     )
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
-        "external_document_import_service.queue_source_refresh",
+        "external_document_import_service.prepare_source_refresh",
         MagicMock(side_effect=RuntimeError("broker unavailable")),
     )
 

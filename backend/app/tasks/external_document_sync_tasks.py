@@ -37,7 +37,7 @@ def _log_sync_report(report: SyncReport, elapsed_seconds: float) -> None:
         logger.info(
             "[External Sync] connection provider=%s owner_user_id=%s "
             "connection_name=%r connection_id=%r scanned=%s eligible=%s "
-            "updates_detected=%s update_tasks_queued=%s refresh_queued=%s "
+            "updates_detected=%s update_actions_started=%s refresh_started=%s "
             "reindex_queued=%s unchanged=%s source_missing=%s skipped=%s failed=%s",
             summary.provider_id,
             summary.owner_user_id,
@@ -56,7 +56,7 @@ def _log_sync_report(report: SyncReport, elapsed_seconds: float) -> None:
         )
     logger.info(
         "[External Sync] total scanned=%s eligible=%s updates_detected=%s "
-        "update_tasks_queued=%s refresh_queued=%s reindex_queued=%s "
+        "update_actions_started=%s refresh_started=%s reindex_queued=%s "
         "unchanged=%s source_missing=%s skipped=%s failed=%s next_cursors=%s "
         "elapsed_seconds=%.3f",
         report.scanned,
@@ -74,7 +74,11 @@ def _log_sync_report(report: SyncReport, elapsed_seconds: float) -> None:
     )
 
 
-@celery_app.task(name="app.tasks.external_document_sync_tasks.sync_external_documents")
+@celery_app.task(
+    name="app.tasks.external_document_sync_tasks.sync_external_documents",
+    soft_time_limit=settings.EXTERNAL_DOC_SYNC_TASK_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=settings.EXTERNAL_DOC_SYNC_TASK_TIME_LIMIT_SECONDS,
+)
 @trace_sync(
     span_name="knowledge.sync_external_documents",
     tracer_name="knowledge.tasks",

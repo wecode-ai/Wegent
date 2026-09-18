@@ -154,14 +154,35 @@ class ExternalDocumentImportService:
         *,
         expected_generation: int | None = None,
     ) -> ExternalDocumentRefreshResult:
-        """Queue a single-version refresh while preserving local organization.
+        """Queue a single-version refresh while preserving local organization."""
+        refresh = self.prepare_source_refresh(
+            db,
+            document,
+            external_meta,
+            expected_generation=expected_generation,
+        )
+        if not refresh.started:
+            return refresh
+        self._dispatch_import_task(db, refresh.document)
+        logger.info(
+            "[External Import] Refresh queued document_id=%s kb_id=%s generation=%s "
+            "previous_attachment_id=%s",
+            refresh.document.id,
+            refresh.document.kind_id,
+            refresh.document.index_generation,
+            refresh.document.attachment_id,
+        )
+        return refresh
 
-        Every caller — a manual reimport and an automatic refresh alike —
-        goes through the same dispatched task, so there is one way to start
-        an import attempt. ``external_meta`` refreshes the provider-owned
-        metadata a manual import just resolved; a caller that has none (an
-        automatic refresh holds only a resource id) passes nothing.
-        """
+    def prepare_source_refresh(
+        self,
+        db: Session,
+        document: KnowledgeDocument,
+        external_meta: dict | None = None,
+        *,
+        expected_generation: int | None = None,
+    ) -> ExternalDocumentRefreshResult:
+        """Prepare refresh state without choosing how the body fetch is executed."""
         decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
@@ -193,15 +214,6 @@ class ExternalDocumentImportService:
         document.update_external_source_config(**refreshed_metadata)
         db.commit()
         db.refresh(document)
-        self._dispatch_import_task(db, document)
-        logger.info(
-            "[External Import] Refresh queued document_id=%s kb_id=%s generation=%s "
-            "previous_attachment_id=%s",
-            document.id,
-            document.kind_id,
-            document.index_generation,
-            document.attachment_id,
-        )
         return ExternalDocumentRefreshResult(document, started=True)
 
     def import_resolved_documents(
@@ -748,6 +760,24 @@ def run_external_document_import(
     *,
     generation: int,
 ) -> None:
+    """Run one external import attempt from synchronous task code."""
+    asyncio.run(
+        run_external_document_import_async(
+            db,
+            document,
+            user,
+            generation=generation,
+        )
+    )
+
+
+async def run_external_document_import_async(
+    db: Session,
+    document: KnowledgeDocument,
+    user: User | None,
+    *,
+    generation: int,
+) -> bool:
     """
     Fetch the external body, attach it, and start indexing.
 
@@ -788,8 +818,8 @@ def run_external_document_import(
             # Wiki remote I/O must not hold a checked-out database connection.
             db.commit()
             db.close()
-            content: ExternalDocumentContent = asyncio.run(
-                provider.fetch_prepared_content(prepared)
+            content: ExternalDocumentContent = await provider.fetch_prepared_content(
+                prepared
             )
             document = db.get(KnowledgeDocument, document_id)
             user = db.get(User, owner_user_id)
@@ -798,7 +828,7 @@ def run_external_document_import(
                     "External document or owner disappeared during content fetch"
                 )
         else:
-            content = asyncio.run(provider.fetch_content(db, user, resource_id))
+            content = await provider.fetch_content(db, user, resource_id)
         knowledge_orchestrator.attach_external_document_content(
             db=db,
             document=document,
@@ -816,6 +846,7 @@ def run_external_document_import(
             len(content.content),
             (content.metadata or {}).get("source_update_time"),
         )
+        return True
     except (ExternalImportLostWriteError, ObjectDeletedError):
         logger.info(
             "[External Import] Attempt for document %s lost its write right at "
@@ -823,6 +854,7 @@ def run_external_document_import(
             document_id,
             generation,
         )
+        return False
     except ExternalSourceUnavailableError as exc:
         _mark_external_source_unavailable(
             db,
@@ -837,6 +869,7 @@ def run_external_document_import(
             document_id,
             exc,
         )
+        return False
     except Exception as exc:
         db.rollback()
         _mark_external_import_failed(
@@ -857,6 +890,7 @@ def run_external_document_import(
             exc,
             exc_info=True,
         )
+        return False
 
 
 def _mark_external_source_unavailable(

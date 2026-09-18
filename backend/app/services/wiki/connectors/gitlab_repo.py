@@ -154,11 +154,11 @@ class GitLabRepoConnector(WikiConnector):
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[WikiBranch], int | None]:
-        client = GitLabExternalWikiClient(config)
-        project, page = await asyncio.gather(
-            client.get_project(project_path),
-            client.list_branches(project_path, limit=limit, offset=offset),
-        )
+        async with GitLabExternalWikiClient(config) as client:
+            project, page = await asyncio.gather(
+                client.get_project(project_path),
+                client.list_branches(project_path, limit=limit, offset=offset),
+            )
         default_branch = str(project.get("default_branch") or "")
         return (
             [
@@ -240,65 +240,78 @@ class GitLabRepoConnector(WikiConnector):
         *,
         batch_size: int,
     ) -> dict[str, WikiPageProbe]:
-        client = GitLabExternalWikiClient(config)
         results: dict[str, WikiPageProbe] = {}
-        scopes = {
-            (resource.project_path or "", resource.branch or "")
-            for resource in resources
-        }
+        resources_by_scope: dict[tuple[str, str], list[StoredWikiResourceRef]] = {}
+        for resource in resources:
+            scope = (resource.project_path or "", resource.branch or "")
+            resources_by_scope.setdefault(scope, []).append(resource)
         invalid_scopes: set[tuple[str, str]] = set()
-        for project_path, branch in scopes:
+        valid_scopes: dict[tuple[str, str], list[StoredWikiResourceRef]] = {}
+        for (project_path, branch), scoped_resources in resources_by_scope.items():
             if not project_path or not branch:
                 invalid_scopes.add((project_path, branch))
+                for resource in scoped_resources:
+                    results[resource.identity] = WikiPageProbe(
+                        error_code="external_sync_config_invalid",
+                        error_message="GitLab 同步配置不完整",
+                    )
                 continue
-            try:
-                await client.get_branch(project_path, branch)
-            except WikiApiError as exc:
-                invalid_scopes.add((project_path, branch))
-                for resource in resources:
-                    if (resource.project_path, resource.branch) == (
-                        project_path,
-                        branch,
-                    ):
+            valid_scopes[(project_path, branch)] = scoped_resources
+        if not valid_scopes:
+            return results
+
+        async with GitLabExternalWikiClient(config) as client:
+            for (project_path, branch), scoped_resources in valid_scopes.items():
+                try:
+                    await client.get_branch(project_path, branch)
+                except WikiApiError as exc:
+                    invalid_scopes.add((project_path, branch))
+                    for resource in scoped_resources:
                         results[resource.identity] = WikiPageProbe(
                             error_code=exc.error_code,
                             error_message=exc.message,
                         )
-        semaphore = asyncio.Semaphore(min(max(1, batch_size), 8))
+            semaphore = asyncio.Semaphore(min(max(1, batch_size), 8))
 
-        async def inspect(resource: StoredWikiResourceRef) -> None:
-            scope = (resource.project_path or "", resource.branch or "")
-            if scope in invalid_scopes:
-                return
-            try:
-                async with semaphore:
-                    headers = await client.get_repository_file_metadata(
-                        scope[0], path=resource.path, ref=scope[1]
+            async def inspect(resource: StoredWikiResourceRef) -> None:
+                scope = (resource.project_path or "", resource.branch or "")
+                if scope in invalid_scopes:
+                    return
+                try:
+                    async with semaphore:
+                        headers = await client.get_repository_file_metadata(
+                            scope[0], path=resource.path, ref=scope[1]
+                        )
+                    meta = self._meta(
+                        config,
+                        scope[0],
+                        scope[1],
+                        {
+                            "type": "blob",
+                            "path": resource.path,
+                            "blob_id": headers.get("x-gitlab-blob-id", ""),
+                            "file_name": headers.get("x-gitlab-file-name", ""),
+                        },
                     )
-                meta = self._meta(
-                    config,
-                    scope[0],
-                    scope[1],
-                    {
-                        "type": "blob",
-                        "path": resource.path,
-                        "blob_id": headers.get("x-gitlab-blob-id", ""),
-                        "file_name": headers.get("x-gitlab-file-name", ""),
-                    },
-                )
-                results[resource.identity] = WikiPageProbe(page=meta)
-            except WikiApiError as exc:
-                results[resource.identity] = WikiPageProbe(
-                    confirmed_missing=exc.error_code == "external_source_missing",
-                    error_code=(
-                        None
-                        if exc.error_code == "external_source_missing"
-                        else exc.error_code
-                    ),
-                    error_message=exc.message,
-                )
+                    results[resource.identity] = WikiPageProbe(page=meta)
+                except WikiApiError as exc:
+                    results[resource.identity] = WikiPageProbe(
+                        confirmed_missing=exc.error_code == "external_source_missing",
+                        error_code=(
+                            None
+                            if exc.error_code == "external_source_missing"
+                            else exc.error_code
+                        ),
+                        error_message=exc.message,
+                    )
 
-        await asyncio.gather(*(inspect(resource) for resource in resources))
+            await asyncio.gather(
+                *(
+                    inspect(resource)
+                    for scoped_resources in valid_scopes.values()
+                    for resource in scoped_resources
+                )
+            )
         return results
 
     async def fetch_resource(
@@ -328,7 +341,8 @@ class GitLabRepoConnector(WikiConnector):
                 "GitLab 文件超过知识库上传大小限制",
             )
         try:
-            content = base64.b64decode(str(node.get("content") or ""), validate=True)
+            encoded_content = "".join(str(node.get("content") or "").split())
+            content = base64.b64decode(encoded_content, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise WikiApiError("upstream_error", "GitLab 文件内容无法解码") from exc
         if not content:

@@ -59,6 +59,7 @@ async def test_large_content_list_falls_back_to_slug_list_and_bound_pages() -> N
         "format": "markdown",
         "content": "# Hello",
     }
+    client.__aenter__.return_value = client
 
     with patch(
         "app.services.wiki.connectors.gitlab_wiki.GitLabExternalWikiClient",
@@ -76,3 +77,34 @@ async def test_large_content_list_falls_back_to_slug_list_and_bound_pages() -> N
         "group/project",
         slug="docs/runbook",
     )
+    client.__aenter__.assert_awaited_once()
+    client.__aexit__.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_resource_rejects_oversized_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.wiki.connectors.gitlab_wiki.settings.MAX_UPLOAD_FILE_SIZE_MB",
+        0,
+    )
+    client = AsyncMock()
+    client.get_project_wiki.return_value = {
+        "slug": "docs/runbook",
+        "title": "Runbook",
+        "format": "markdown",
+        "content": "# Hello",
+    }
+
+    with patch(
+        "app.services.wiki.connectors.gitlab_wiki.GitLabExternalWikiClient",
+        return_value=client,
+    ):
+        with pytest.raises(WikiApiError) as exc_info:
+            await GitLabWikiConnector().fetch_resource(
+                _config(),
+                _resource("existing-identity", "docs/runbook"),
+            )
+
+    assert exc_info.value.error_code == "external_file_too_large"
