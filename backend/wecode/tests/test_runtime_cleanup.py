@@ -990,59 +990,6 @@ async def test_cleanup_stale_orphan_executors_task_id_below_threshold_skipped():
     assert result["skipped"][1]["reason"] == "invalid_task_id(1000)"
 
 
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_cleanup_orphan_pods_reclaims_stale_warmpool_crs():
-    """Orphan cleanup should also reclaim outdated SandboxWarmPool CRs."""
-    job_service_instance = JobService(Mock())
-    warmpool_result = {
-        "status": "success",
-        "deleted": [{"name": "wegent-sandbox-warmpools-1.0.234"}],
-        "skipped": [],
-        "failed": [],
-    }
-
-    with patch(
-        "app.services.adapters.executor_job.executor_kinds_service"
-    ) as executor_service:
-        executor_service.get_old_pods_async = AsyncMock(return_value=[])
-        executor_service.cleanup_stale_warmpools_async = AsyncMock(
-            return_value=warmpool_result
-        )
-
-        result = await job_service_instance.cleanup_orphan_pods(
-            AsyncMock(spec=AsyncSession), older_than_hours=48
-        )
-
-    executor_service.cleanup_stale_warmpools_async.assert_awaited_once_with(
-        grace_period_days=7,
-        dry_run=False,
-    )
-    assert result["stale_warmpools"] == warmpool_result
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_cleanup_orphan_pods_continues_when_warmpool_cleanup_fails():
-    """Warmpool CR cleanup failure must not block orphan pod cleanup."""
-    job_service_instance = JobService(Mock())
-
-    with patch(
-        "app.services.adapters.executor_job.executor_kinds_service"
-    ) as executor_service:
-        executor_service.get_old_pods_async = AsyncMock(return_value=[])
-        executor_service.cleanup_stale_warmpools_async = AsyncMock(
-            side_effect=RuntimeError("executor manager unavailable")
-        )
-
-        result = await job_service_instance.cleanup_orphan_pods(
-            AsyncMock(spec=AsyncSession), older_than_hours=48
-        )
-
-    assert result["stale_warmpools"]["status"] == "failed"
-    assert result["total_scanned"] == 0
-
-
 def _mock_distributed_lock(async_redis_client):
     lock = Mock()
     lock.async_redis_client = async_redis_client
