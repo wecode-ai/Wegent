@@ -99,7 +99,7 @@ export async function applyWithDependencies(
     }
   }
 
-  function accept({ envelope, identity } = {}) {
+  async function accept({ envelope, identity } = {}) {
     if (!active || !enabled || !queue || !runtime) {
       return { accepted: false, reason: 'disabled' }
     }
@@ -107,8 +107,9 @@ export async function applyWithDependencies(
     metrics.received += 1
     let distinctId
     try {
+      const hostIdentity = await readCloudIdentity(ctx.weworkDesktop)
       distinctId = deriveDistinctId(
-        identity ?? envelope?.context?.user,
+        hostIdentity ?? identity ?? envelope?.context?.user,
         config.private.identityHmacKey
       )
     } catch {
@@ -152,6 +153,22 @@ export async function applyWithDependencies(
       rejected: metrics.rejected,
       ...queueStatus,
     }
+  }
+}
+
+async function readCloudIdentity(desktop) {
+  try {
+    const preferences = await desktop.preferences?.get?.()
+    const email = preferences?.cloudConnection?.user?.email
+    if (typeof email !== 'string') return undefined
+
+    const normalizedEmail = email.trim()
+    const separatorIndex = normalizedEmail.indexOf('@')
+    if (separatorIndex <= 0) return undefined
+
+    return { emailPrefix: normalizedEmail.slice(0, separatorIndex) }
+  } catch {
+    return undefined
   }
 }
 

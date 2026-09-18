@@ -100,8 +100,14 @@ test('composes enabled runtime dependencies and queues a projected event without
   })
 })
 
-test('uses the browser-provided cloud email prefix when the event has only a local user', async () => {
-  const runtime = createHostRuntime()
+test('uses the host cloud email prefix when the event has only a local user', async () => {
+  const runtime = createHostRuntime({
+    preferences: {
+      cloudConnection: {
+        user: { email: 'cloud-user@example.com' },
+      },
+    },
+  })
   const queuedEvents = []
 
   await applyWithDependencies(runtime.context, {
@@ -124,7 +130,6 @@ test('uses the browser-provided cloud email prefix when the event has only a loc
           },
         },
       }),
-      identity: { emailPrefix: 'cloud-user' },
     }),
     { accepted: true }
   )
@@ -192,7 +197,7 @@ test('disposes queue with a one-second budget and disables further accepts', asy
   })
 })
 
-function createHostRuntime({ version = '2.0.0' } = {}) {
+function createHostRuntime({ version = '2.0.0', preferences = {} } = {}) {
   const cleanups = []
   const runtime = {
     registration: null,
@@ -208,6 +213,11 @@ function createHostRuntime({ version = '2.0.0' } = {}) {
       app: {
         async getVersion() {
           return { version }
+        },
+      },
+      preferences: {
+        async get() {
+          return preferences
         },
       },
     },

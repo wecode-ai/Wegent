@@ -95,7 +95,7 @@ test('forwards accepted envelopes without leaking backend failures to the applic
   )
 })
 
-test('forwards the connected cloud email prefix without exposing the full email', async () => {
+test('does not read cloud identity from the plugin WebView storage', async () => {
   const client = await loadClient({
     'wework.cloudConnection': JSON.stringify({
       user: { email: 'cloud-user@example.com', id: 42, user_name: 'cloud-user' },
@@ -122,7 +122,7 @@ test('forwards the connected cloud email prefix without exposing the full email'
     JSON.stringify(runtime.calls),
     JSON.stringify([
       ['ready', {}],
-      ['accept', { envelope, identity: { emailPrefix: 'cloud-user' } }],
+      ['accept', { envelope }],
     ])
   )
 })
