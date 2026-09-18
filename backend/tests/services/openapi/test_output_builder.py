@@ -69,6 +69,16 @@ def test_sanitize_mcp_tool_output_omits_data_url_with_media_type_parameters():
     assert output["image_url"] == "<image/jpeg payload omitted: 1024 bytes>"
 
 
+def test_sanitize_mcp_tool_output_omits_media_base64_payload_with_mime_hint():
+    payload = base64.b64encode(b"\x00" * 4096).decode()
+
+    output = sanitize_mcp_tool_output(
+        {"type": "image", "mimeType": "image/jpeg", "data": payload}
+    )
+
+    assert output["data"] == "<image/jpeg payload omitted: 4096 bytes>"
+
+
 def test_sanitize_mcp_tool_output_keeps_long_text():
     text = "The image looks fine. " * 300
 
@@ -93,6 +103,30 @@ def test_sanitize_mcp_tool_output_keeps_base64_encoded_non_ascii_text():
     payload = base64.b64encode(text.encode()).decode()
 
     output = sanitize_mcp_tool_output({"type": "text", "data": payload})
+
+    assert output["data"] == payload
+
+
+def test_sanitize_mcp_tool_output_keeps_non_media_data_url_with_binary_payload():
+    payload = base64.b64encode(b"\x00" * 4096).decode()
+
+    output = sanitize_mcp_tool_output(
+        {
+            "type": "text",
+            "mimeType": "text/plain",
+            "data": f"data:text/plain;base64,{payload}",
+        }
+    )
+
+    assert output["data"] == f"data:text/plain;base64,{payload}"
+
+
+def test_sanitize_mcp_tool_output_keeps_non_media_base64_payload():
+    payload = base64.b64encode(b"\x00" * 4096).decode()
+
+    output = sanitize_mcp_tool_output(
+        {"type": "file", "mimeType": "application/pdf", "data": payload}
+    )
 
     assert output["data"] == payload
 

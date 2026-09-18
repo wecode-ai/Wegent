@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import re
 from datetime import timedelta
@@ -35,25 +33,20 @@ from app.services.openapi.helpers import subtask_status_to_message_status
 SHELL_TOOL_NAMES = {"exec", "command_tool"}
 VIDEO_DOWNLOAD_URL_EXPIRES_SECONDS = 3600
 
-# MCP tools that fetch media answer with base64 payloads. Forwarding them to
-# API clients bloats responses and breaks parsers, so they are replaced with a
-# compact placeholder while keeping the call itself visible.
-_MIN_BASE64_PAYLOAD_CHARS = 256
-_BASE64_PREVIEW_CHARS = 8192
-_PRINTABLE_RATIO = 0.9
-_BASE64_ALPHABET = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
-)
+# Media MCP tools answer with base64 payloads. Callers that opt in get a
+# compact placeholder instead of the raw media bytes.
 # Data URLs may carry media-type parameters before the base64 marker, for
 # example ``data:image/jpeg;charset=utf-8;base64,...``.
 _DATA_URL_PATTERN = re.compile(
-    r"^data:(?P<mime>[^;,]*)(?:;[^;,]*)*;base64,",
+    r"^data:(?P<mime>[^;,]*)(?:;[^;,]*)*;base64,(?P<payload>[A-Za-z0-9+/=\s]+)$",
     re.IGNORECASE,
 )
 _MIME_KEYS = ("mimeType", "mime_type", "mediaType", "media_type")
 _INTERNAL_OUTPUT_KEYS = ("pending_user_input", "pending_user_input_payload")
-_BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
-_BINARY_MIME_TYPES = {"application/octet-stream", "application/pdf"}
+_MEDIA_MIME_PREFIXES = ("image/", "audio/", "video/")
+_BASE64_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+)
 
 
 def build_video_download_url(attachment_id: int) -> str:
@@ -87,65 +80,38 @@ def _base64_payload_size(payload: str) -> int:
     return len(payload.rstrip("=")) * 3 // 4
 
 
-def _binary_placeholder(*, size_bytes: int, mime_type: str = "") -> str:
-    label = mime_type or "binary"
+def _is_base64_payload(payload: str) -> bool:
+    compact = "".join(payload.split())
+    return (
+        len(compact) >= 4
+        and not len(compact) % 4
+        and all(char in _BASE64_ALPHABET for char in compact)
+    )
+
+
+def _media_placeholder(*, size_bytes: int, mime_type: str = "") -> str:
+    label = mime_type or "media"
     return f"<{label} payload omitted: {size_bytes} bytes>"
 
 
-def _is_binary_mime(mime_type: str) -> bool:
+def _is_media_mime(mime_type: str) -> bool:
     normalized = mime_type.strip().lower()
-    return normalized.startswith(_BINARY_MIME_PREFIXES) or (
-        normalized in _BINARY_MIME_TYPES
-    )
-
-
-def _decoded_is_binary(compact: str) -> bool:
-    preview = compact[:_BASE64_PREVIEW_CHARS]
-    preview = preview[: len(preview) - len(preview) % 4]
-    if not preview:
-        return False
-    try:
-        decoded = base64.b64decode(preview)
-    except (binascii.Error, ValueError):
-        return False
-    if not decoded:
-        return False
-    # Decode as text so multi-byte content (for example Chinese) still counts
-    # as printable; the trailing partial character of a truncated preview
-    # becomes U+FFFD, which is negligible for the ratio below.
-    text = decoded.decode("utf-8", errors="replace")
-    unprintable = sum(
-        1
-        for char in text
-        if char == "\ufffd" or (not char.isprintable() and char not in "\n\r\t")
-    )
-    return (len(text) - unprintable) / len(text) < _PRINTABLE_RATIO
-
-
-def _is_binary_base64(payload: str) -> bool:
-    if " " in payload or "\t" in payload:
-        return False
-    compact = "".join(payload.split())
-    if len(compact) < _MIN_BASE64_PAYLOAD_CHARS or len(compact) % 4:
-        return False
-    if not all(char in _BASE64_ALPHABET for char in compact):
-        return False
-    return _decoded_is_binary(compact)
+    return normalized.startswith(_MEDIA_MIME_PREFIXES)
 
 
 def _sanitize_tool_output_text(value: str, mime_type: str = "") -> str:
     data_url = _DATA_URL_PATTERN.match(value)
     if data_url:
-        payload = "".join(value[data_url.end() :].split())
+        payload = "".join(data_url.group("payload").split())
         mime = data_url.group("mime") or mime_type
-        if _is_binary_mime(mime) or _decoded_is_binary(payload):
-            return _binary_placeholder(
+        if _is_media_mime(mime):
+            return _media_placeholder(
                 size_bytes=_base64_payload_size(payload),
                 mime_type=mime,
             )
         return value
-    if _is_binary_base64(value):
-        return _binary_placeholder(
+    if mime_type and _is_media_mime(mime_type) and _is_base64_payload(value):
+        return _media_placeholder(
             size_bytes=_base64_payload_size("".join(value.split())),
             mime_type=mime_type,
         )
@@ -186,10 +152,10 @@ def normalize_tool_output(value: Any) -> Any:
 
 
 def sanitize_mcp_tool_output(value: Any) -> Any:
-    """Replace binary payloads in MCP tool output with a compact placeholder.
+    """Replace media payloads in MCP tool output with a compact placeholder.
 
     Image-fetching MCP tools answer with base64 blobs. Callers that opt in get
-    a placeholder instead of the raw bytes; text output is passed through.
+    a placeholder instead of the raw bytes; non-media output is passed through.
     """
     return _sanitize_tool_output_value(normalize_tool_output(value))
 
