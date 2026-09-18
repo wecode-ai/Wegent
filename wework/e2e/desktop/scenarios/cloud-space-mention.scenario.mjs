@@ -76,6 +76,7 @@ const WEBSITE_TODO_SECOND = {
   title: '连续拖拽后保持任务状态',
   sort_order: 1,
 }
+const FIRST_REORDER_RESPONSE_TITLE = `${WEBSITE_TODO.title}（服务端已确认）`
 const WEBSITE_TASK_BINDINGS = [WEBSITE_TODO, WEBSITE_TODO_SECOND].map((todo, index) => ({
   id: `binding-${index + 1}`,
   cloud_project_id: WEBSITE_PROJECT.id,
@@ -273,7 +274,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         if (reorderRequestCount === 1) {
           resolveFirstReorderRequest()
           await firstReorderResponseRelease
-          json(response, 200, { items: lane })
+          const acknowledgedLane = lane.map(item => {
+            const todo = todos.find(candidate => candidate.id === item.id)
+            assert.ok(todo, `Unknown cloud Issue reorder response: ${item.id}`)
+            Object.assign(todo, {
+              title: FIRST_REORDER_RESPONSE_TITLE,
+              version: todo.version + 1,
+              updated_at: '2026-07-25T00:00:02',
+            })
+            return { ...todo }
+          })
+          json(response, 200, { items: acknowledgedLane })
           return true
         }
         for (const item of lane) {
@@ -434,8 +445,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       releaseFirstReorderResponse()
       await control.command('waitFor', runningColumn, {
-        text: WEBSITE_TODO_SECOND.title,
-        stableMs: 750,
+        text: FIRST_REORDER_RESPONSE_TITLE,
         timeoutMs: uiTimeoutMs,
       })
       assert.doesNotMatch(
