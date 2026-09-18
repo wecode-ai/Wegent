@@ -694,6 +694,13 @@ export function createWeworkPlatformApi(
   }
   const projectLocation = async (projectId: string) =>
     (await localProject(projectId)) ? 'local' : 'cloud'
+  const projectAutomations = async (projectId: string) => {
+    const target = (await projectLocation(projectId)) === 'local' ? localApi : cloudApi
+    if (!target.automations) {
+      throw new Error('Automation API is unavailable')
+    }
+    return target.automations
+  }
 
   return withoutDefaultWorkItemProject({
     ...cloudApi,
@@ -934,6 +941,43 @@ export function createWeworkPlatformApi(
         return (await projectLocation(projectId)) === 'local'
           ? localApi.agents.update(projectId, agentId, input)
           : cloudApi.agents.update(projectId, agentId, input)
+      },
+    },
+    automations: {
+      async list(projectId) {
+        return (await projectAutomations(projectId)).list(projectId)
+      },
+      async create(projectId, input) {
+        return (await projectAutomations(projectId)).create(projectId, input)
+      },
+      async migrateWorkflow(projectId, input) {
+        return (await projectAutomations(projectId)).migrateWorkflow(projectId, input)
+      },
+      async update(projectId, automationId, input) {
+        return (await projectAutomations(projectId)).update(projectId, automationId, input)
+      },
+      async remove(projectId, automationId) {
+        return (await projectAutomations(projectId)).remove(projectId, automationId)
+      },
+      async runNow(projectId, automationId) {
+        return (await projectAutomations(projectId)).runNow(projectId, automationId)
+      },
+      async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
+        return (await projectAutomations(projectId)).runWorkflowNode(
+          projectId,
+          issueId,
+          workflowNodeId,
+          automationId
+        )
+      },
+      async listRuns(projectId, automationId) {
+        return (await projectAutomations(projectId)).listRuns(projectId, automationId)
+      },
+      async cancelRun(projectId, runId) {
+        return (await projectAutomations(projectId)).cancelRun(projectId, runId)
+      },
+      async retryRun(projectId, runId) {
+        return (await projectAutomations(projectId)).retryRun(projectId, runId)
       },
     },
     issues: {
