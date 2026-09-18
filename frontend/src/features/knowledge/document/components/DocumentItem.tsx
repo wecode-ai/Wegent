@@ -223,13 +223,20 @@ export function DocumentItem({
   const isBackendIndexing = isDocumentIndexInFlight(document)
   const showIndexingState = isReindexing || isSyncing || isBackendIndexing
   const isExternal = document.source_type === 'external'
-  // External documents retry through the dedicated import-retry entry, which
-  // fetches the provider's latest body before replacing the attachment and
-  // reindexing. Regular documents reindex from failed or not-indexed states.
+  // A copy with its own source-refresh entry retries through that entry: for an
+  // external document a retry re-fetches the provider's latest body, so a
+  // separate import-retry control would repeat the same action under a second
+  // name.
+  const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
+  // Documents without such an entry keep the dedicated import-retry control,
+  // which fetches the provider's latest body before replacing the attachment
+  // and reindexing. Regular documents reindex from failed or not-indexed states.
   const canReindex =
     !!onReindex &&
     !showIndexingState &&
-    (isExternal ? isIndexFailed : ragConfigured && (isIndexFailed || isNotIndexed))
+    (isExternal
+      ? isIndexFailed && !canSyncDingtalkCopy
+      : ragConfigured && (isIndexFailed || isNotIndexed))
   // The same control serves as "retry import" for external documents; the
   // DocumentList handler routes external documents to the retry entry.
   const reindexActionLabel = isExternal
@@ -265,7 +272,6 @@ export function DocumentItem({
 
   // DingTalk copies sync through the shared source-refresh entry; the entry
   // stays visible while busy so the row can report "syncing".
-  const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
   const dingtalkSyncLabel = getDingtalkSyncLabel(document, showIndexingState)
 
   const showSelectionColumn = Boolean(onSelect)

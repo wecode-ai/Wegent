@@ -165,6 +165,41 @@ describe('DocumentItem DingTalk manual sync', () => {
     expect(onSync).not.toHaveBeenCalled()
   })
 
+  it('retries a failed DingTalk copy through sync, not a second entry', () => {
+    render(
+      <DocumentItem
+        document={createDocument({ index_status: 'failed', is_active: false })}
+        onSync={jest.fn()}
+        onReindex={jest.fn()}
+      />
+    )
+
+    // The sync entry carries the retry: an import-retry control would queue the
+    // same source refresh again under a second name.
+    expect(screen.getByTestId('sync-dingtalk-document-88')).toHaveAttribute(
+      'aria-label',
+      'document.document.syncRetry'
+    )
+    expect(screen.queryByTestId('retry-import-document-88')).not.toBeInTheDocument()
+  })
+
+  it('keeps the import retry for an external copy without a sync entry', () => {
+    render(
+      <DocumentItem
+        document={createDocument({
+          index_status: 'failed',
+          is_active: false,
+          source_config: {
+            external: { provider: 'wiki', title: 'Synchronized Wiki' },
+          },
+        })}
+        onReindex={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('retry-import-document-88')).toBeInTheDocument()
+  })
+
   it('keeps the entry out of the table row when no sync handler is provided', () => {
     render(<DocumentItem document={createDocument()} />)
 

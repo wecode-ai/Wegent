@@ -502,6 +502,18 @@ describe('KnowledgeDocumentTreeGrid DingTalk manual sync', () => {
     expect(screen.queryByTestId('quick-sync-dingtalk-document-30')).not.toBeInTheDocument()
   })
 
+  it('retries a failed DingTalk copy through sync, not a second entry', () => {
+    renderDocumentRow(createDingtalkCopy({ index_status: 'failed', is_active: false }), {
+      onReindex: jest.fn(),
+    })
+
+    expect(screen.queryByTestId('retry-import-document-30')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sync-dingtalk-document-30')).toHaveAttribute(
+      'aria-label',
+      'document.document.syncRetry'
+    )
+  })
+
   it('synchronizes the DingTalk copy without opening the document preview', () => {
     const onSync = jest.fn()
     const onViewDetail = jest.fn()

@@ -23,9 +23,11 @@ export function useDingtalkSyncLabel() {
   return useCallback(
     (document: KnowledgeDocument, busy: boolean): string => {
       if (busy) return t('document.document.syncing')
-      return isExternalSourceUnavailable(document)
-        ? t('document.document.syncRetry')
-        : t('document.document.syncNow')
+      // The control doubles as the retry entry: a copy whose index failed needs
+      // the same source refresh again, so it must not read as a first-time
+      // action.
+      const retryable = isExternalSourceUnavailable(document) || document.index_status === 'failed'
+      return retryable ? t('document.document.syncRetry') : t('document.document.syncNow')
     },
     [t]
   )

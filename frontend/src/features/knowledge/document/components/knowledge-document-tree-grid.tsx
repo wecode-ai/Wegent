@@ -769,12 +769,14 @@ export function KnowledgeDocumentTreeGrid({
           const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
           const dingtalkSyncLabel = getDingtalkSyncLabel(document, showIndexingState)
           // One retry control whose identity depends on the document: failed
-          // external documents fetch the provider's latest body through the
-          // import-retry entry, while regular documents reindex their content.
+          // external documents without a source-refresh entry fetch the
+          // provider's latest body through the import-retry entry, while
+          // regular documents reindex their content. A copy that can refresh
+          // itself retries through that entry instead of a second control.
           let retryAction: { testId: string; label: string } | null = null
           if (onReindex && !showIndexingState) {
             if (isExternal) {
-              if (isIndexFailed) {
+              if (isIndexFailed && !canSyncDingtalkCopy) {
                 retryAction = {
                   testId: `retry-import-document-${document.id}`,
                   label: t('document.document.retryImport'),
