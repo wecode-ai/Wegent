@@ -585,6 +585,14 @@ function byTestId(testId: string): HTMLElement {
   return element!;
 }
 
+function portalByTestId(testId: string): HTMLElement {
+  const element = document.body.querySelector<HTMLElement>(
+    `[data-testid="${testId}"]`,
+  );
+  expect(element, `Missing portal data-testid=${testId}`).not.toBeNull();
+  return element!;
+}
+
 function buttonWithText(text: string): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find((candidate) =>
     candidate.textContent?.includes(text),
@@ -1689,9 +1697,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       issue.id,
       `@${member.user_name} 请处理交互设计`,
     );
-    await change(
-      byTestId("cloud-todo-detail-assignee") as HTMLSelectElement,
-      `user:${member.user_id}`,
+    await click(byTestId("cloud-todo-detail-assignee"));
+    await click(
+      portalByTestId(
+        `cloud-todo-detail-assignee-option-user:${member.user_id}`,
+      ),
     );
     expect(
       container.querySelector(
@@ -1714,9 +1724,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       issue.id,
       `@${agent.name} 请开始实现`,
     );
-    await change(
-      byTestId("cloud-todo-detail-assignee") as HTMLSelectElement,
-      `agent:${agent.id}`,
+    await click(byTestId("cloud-todo-detail-assignee"));
+    await click(
+      portalByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`),
     );
     await click(byTestId("cloud-todo-save"));
     expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
