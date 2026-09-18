@@ -59,6 +59,14 @@ pub use codex::{
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
 
+/// Terminates every agent process owned by this executor.
+///
+/// Call this when the executor's owner goes away, so the agents it was driving
+/// cannot outlive it. Returns the number of terminated agents.
+pub async fn terminate_agent_processes() -> usize {
+    codex::terminate_shared_codex_app_servers().await
+}
+
 const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
 const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
     "/Applications/ChatGPT.app/Contents/Resources/codex",

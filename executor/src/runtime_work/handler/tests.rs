@@ -2426,6 +2426,9 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
             response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: Some("complete".to_owned()),
             goal_status_observed: true,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
         }),
     );
 
@@ -2527,6 +2530,9 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
             response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: None,
             goal_status_observed: false,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
         }),
     );
 
@@ -3256,6 +3262,9 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 response_value_origin: value_origin,
                 goal_status: None,
                 goal_status_observed: false,
+                started_at_ms: Some(1_780_000_000_000),
+                completed_at_ms: Some(1_780_000_018_250),
+                duration_ms: Some(18_250),
             }),
         );
 
@@ -3265,6 +3274,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+        assert_eq!(event["payload"]["data"]["durationMs"], 18_250, "{case}");
         assert_eq!(
             event["payload"]["data"]["valueOrigin"],
             value_origin.as_str(),
@@ -3278,6 +3288,60 @@ fn completed_responses_use_the_active_codex_turn_id() {
 
         let _ = fs::remove_file(index_path);
     }
+}
+
+#[test]
+fn failed_responses_emit_runtime_turn_duration() {
+    let (event_tx, mut event_rx) = broadcast::channel(1);
+    let index_path = temp_runtime_work_index_path("failed-turn-duration");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "task-failed-duration";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "subtask-failed-duration".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    let execution_id = start_test_execution(&handler, local_task_id);
+
+    handler.handle_turn_result(
+        local_task_id,
+        execution_id,
+        &request,
+        Some(&ActiveCodexTurn {
+            execution_id,
+            thread_id: "thread-failed-duration".to_owned(),
+            turn_id: "turn-failed-duration".to_owned(),
+        }),
+        Ok(crate::agents::CodexAppServerTurn {
+            thread_id: "thread-failed-duration".to_owned(),
+            outcome: ExecutionOutcome::Failed {
+                message: "upstream failed".to_owned(),
+            },
+            response_item_id: None,
+            response_value_origin: crate::agents::CodexResponseValueOrigin::Empty,
+            goal_status: None,
+            goal_status_observed: false,
+            started_at_ms: Some(1_780_000_000_000),
+            completed_at_ms: Some(1_780_000_002_500),
+            duration_ms: Some(2_500),
+        }),
+    );
+
+    let event = event_rx
+        .try_recv()
+        .expect("failed response should be emitted");
+    assert_eq!(event["event"], "response.failed");
+    assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
+    assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
+    assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
+
+    let _ = fs::remove_file(index_path);
 }
 
 #[tokio::test]
@@ -5067,7 +5131,7 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "local-task-1".to_owned(),
         runtime: "claude".to_owned(),
-        workspace_path: "/tmp/cached-project".to_owned(),
+        workspace_path: "/tmp/Codex/cached-task".to_owned(),
         title: "Cached task".to_owned(),
         status: "active".to_owned(),
         ..RuntimeTaskLink::default()
@@ -5088,6 +5152,47 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     assert!(tasks
         .iter()
         .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn cached_task_list_keeps_tasks_linked_to_cloud_issues() {
+    let (handler, root) = isolated_runtime_work_handler("cached-cloud-issue-task-list");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "cloud-issue-task-1".to_owned(),
+        runtime: "claude".to_owned(),
+        workspace_path: "/tmp/Codex/cloud-issue-task".to_owned(),
+        title: "Cloud issue task".to_owned(),
+        status: "active".to_owned(),
+        runtime_handle: json!({
+            "cloudProjectId": "project-1",
+            "origin": {
+                "type": "board_comment",
+                "cloudProjectId": "project-1",
+                "loopItemId": "issue-1"
+            }
+        }),
+        ..RuntimeTaskLink::default()
+    });
+
+    let response = handler
+        .list_tasks(&json!({ "preferCached": true }))
+        .await
+        .expect("cached task list should keep cloud issue tasks");
+    let tasks = response["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array")
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(tasks.iter().any(|task| {
+        task["taskId"] == "cloud-issue-task-1"
+            && task["runtimeHandle"]["cloudProjectId"] == "project-1"
+            && task["runtimeHandle"]["origin"]["loopItemId"] == "issue-1"
+    }));
 
     let _ = fs::remove_dir_all(root);
 }

@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::future::BoxFuture;
@@ -254,6 +254,9 @@ pub struct CodexAppServerTurn {
     pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
     pub goal_status_observed: bool,
+    pub started_at_ms: Option<i64>,
+    pub completed_at_ms: Option<i64>,
+    pub duration_ms: Option<i64>,
 }
 
 #[path = "codex/interaction.rs"]
@@ -1148,10 +1151,15 @@ impl Drop for CodexThreadUnsubscribeObservation {
     }
 }
 
-fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+fn shared_codex_app_server_states(
+) -> &'static StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>> {
     static STATES: OnceLock<StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>>> =
         OnceLock::new();
-    let states = STATES.get_or_init(|| StdMutex::new(HashMap::new()));
+    STATES.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+    let states = shared_codex_app_server_states();
     let mut states = states
         .lock()
         .expect("Codex app-server shared state registry should not be poisoned");
@@ -1159,6 +1167,35 @@ fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerShared
         .entry(binary.to_owned())
         .or_insert_with(|| Arc::new(Mutex::new(CodexAppServerSharedState::default())))
         .clone()
+}
+
+/// Terminates every shared Codex app-server owned by this executor.
+///
+/// The desktop app owns this executor process: once its sidecar stops, the
+/// agents it was driving must stop with it. Leaving them alive also strands a
+/// parked stdio read on the blocking pool, and Tokio's runtime shutdown waits
+/// for blocking tasks without a timeout.
+pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
+    let states = {
+        let states = shared_codex_app_server_states()
+            .lock()
+            .expect("Codex app-server shared state registry should not be poisoned");
+        states.values().cloned().collect::<Vec<_>>()
+    };
+    let mut terminated = 0;
+    for state in states {
+        let mut state = state.lock().await;
+        if state.process.take().is_some() {
+            terminated += 1;
+        }
+    }
+    if terminated > 0 {
+        log_executor_event(
+            "codex app-server processes terminated",
+            &[("count", terminated.to_string())],
+        );
+    }
+    terminated
 }
 
 #[allow(dead_code)]
@@ -1920,6 +1957,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 ),
             }
         }
+        state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -1929,6 +1967,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         let response_item_id = state.response_item_id().map(str::to_owned);
         let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
@@ -1936,6 +1975,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             response_value_origin,
             goal_status,
             goal_status_observed,
+            started_at_ms,
+            completed_at_ms,
+            duration_ms,
         })
     }
     .await;
@@ -2193,6 +2235,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?
         };
+        state.finish_turn_timing(current_epoch_millis());
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -2202,6 +2245,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         let response_item_id = state.response_item_id().map(str::to_owned);
         let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
@@ -2209,6 +2253,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
             response_value_origin,
             goal_status,
             goal_status_observed,
+            started_at_ms,
+            completed_at_ms,
+            duration_ms,
         })
     }
     .await;
@@ -3217,6 +3264,14 @@ fn signal_codex_app_server_child(child: &mut Child) {
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
         }
+        return;
+    }
+
+    // Windows has no graceful signal for a windowless console child, so take the
+    // whole tree down: the app-server owns tool subprocesses of its own.
+    #[cfg(windows)]
+    if let Some(process_id) = child.id() {
+        crate::process::kill_windows_process_tree(process_id);
         return;
     }
 
@@ -6414,6 +6469,13 @@ fn mcp_elicitation_enum_value(property: &Value, label: &str) -> String {
 
 fn mcp_server_elicitation_decline_result() -> Value {
     json!({"action": "decline", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn current_epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 fn mcp_server_elicitation_cancel_result() -> Value {

@@ -288,6 +288,7 @@ import {
 import {
   captureVerificationScreenshot,
   enrichTrackedDefaultIssueTitle,
+  reloadMainWindow,
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
@@ -2647,6 +2648,33 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
         assertDefaultIssueContextInjected(enrichedIssueRequest)
+        phase = 'cloud-issue-task-sidebar-restored'
+        await reloadMainWindow(
+          control,
+          'The Wework WebView did not reconnect while restoring a cloud Issue task'
+        )
+        await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+          visible: true,
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        })
+        await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        const restoredTaskId = taskRowTestId.replace('runtime-local-task-row-', '')
+        await waitForWorkbenchTask(
+          control,
+          restoredTaskId,
+          'The cloud Issue task row did not become the current runtime task'
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="work-item-guide-summary-title"]`,
+          {
+            text: `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`,
+            visible: true,
+            timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+          }
+        )
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })

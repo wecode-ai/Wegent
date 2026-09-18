@@ -6,6 +6,7 @@ import type {
   WorkbenchMessage,
   ProcessingBlock,
   RuntimeAssistantDisplayItem,
+  RuntimeConversationTurn,
 } from "@wegent/chat-core/runtime-conversation";
 import {
   isContextCompactionToolName,
@@ -57,9 +58,16 @@ export function formatCompactDuration(durationMs: number): string {
 
 export function getStoppedElapsedDuration(
   message: WorkbenchMessage,
+  turn?: RuntimeConversationTurn,
 ): string | null {
-  const startedAt =
-    message.runtimeTurnStartedAt ?? getTurnStartMs(message.createdAt);
+  if (turn?.durationMs !== undefined) {
+    return turn.durationMs >= 1000
+      ? formatCompactDuration(turn.durationMs)
+      : null;
+  }
+  if (turn) return null;
+
+  const startedAt = getTurnStartMs(message.createdAt);
   if (startedAt === undefined) return null;
 
   const completedAt = getMessageTimestampMs(message.completedAt);

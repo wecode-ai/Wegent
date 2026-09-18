@@ -65,12 +65,24 @@ import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+// The desktop stop budget is five seconds; a runtime that can exit on its own
+// must beat it, otherwise the app force-kills the tree and the window hangs.
+const RUNTIME_SELF_EXIT_TIMEOUT_MS = 4_000
 
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     if (!processIsAlive(processId)) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForProcessExitWithin(processId, timeoutMs, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!processIsAlive(processId)) return Date.now() - startedAt
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
   throw new Error(message)
 }
@@ -856,6 +868,57 @@ async function verifyBackgroundTaskWindowLifecycle({
       )}\n`
     )
     await restartDesktopApp()
+  } else {
+    setPhase('quit-with-close-to-tray-disabled')
+    const quitAppPid = activeApp.pid
+    const quitDiagnostics = JSON.parse(
+      await control.command('getDesktopRuntimeDiagnostics', 'body')
+    )
+    const quitExecutorPid = Number(quitDiagnostics.executorPid)
+    assert.ok(quitExecutorPid > 0, 'Executor PID was unavailable before quitting Wework')
+    assert.equal(
+      processIsAlive(quitExecutorPid),
+      true,
+      'The executor process was not alive before quitting Wework'
+    )
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ closeToTrayEnabled: false }),
+    })
+
+    await control.command('requestMainWindowClose', 'body')
+    const executorExitMs = await waitForProcessExitWithin(
+      quitExecutorPid,
+      RUNTIME_SELF_EXIT_TIMEOUT_MS,
+      'The executor did not exit on its own after its Wework owner quit; it had to be force-killed'
+    )
+    const appExitMs = await waitForProcessExitWithin(
+      quitAppPid,
+      DEFAULT_STEP_TIMEOUT_MS,
+      'Wework remained alive after quitting with close-to-tray disabled'
+    )
+    assert.equal(
+      processIsAlive(quitExecutorPid),
+      false,
+      'The executor outlived its Wework owner after quit'
+    )
+    await writeFile(
+      join(resultDir, 'quit-runtime-lifecycle.json'),
+      `${JSON.stringify(
+        {
+          appProcessId: quitAppPid,
+          executorProcessId: quitExecutorPid,
+          executorExitMs,
+          appExitMs,
+          runtimeSelfExitTimeoutMs: RUNTIME_SELF_EXIT_TIMEOUT_MS,
+        },
+        null,
+        2
+      )}\n`
+    )
+    await restartDesktopApp()
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ closeToTrayEnabled: true }),
+    })
   }
   return taskRowTestId
 }

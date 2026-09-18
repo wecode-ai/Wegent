@@ -247,6 +247,26 @@ async function waitForRuntimeTaskOrder(control, listSelector, expectedTaskRowTes
   throw new Error(`The runtime chat task order did not become ${expectedOrder}`)
 }
 
+async function assertRuntimeTaskOrderRemainsStable(
+  control,
+  listSelector,
+  expectedTaskRowTestIds,
+  stableMs = COMPOSER_READY_STABILITY_MS
+) {
+  const expectedOrder = expectedTaskRowTestIds.join(',')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < stableMs) {
+    const testIdOrder = JSON.parse(await control.command('getTestIdOrder', listSelector))
+    const actualOrder = testIdOrder.filter(testId => expectedTaskRowTestIds.includes(testId))
+    assert.equal(
+      actualOrder.join(','),
+      expectedOrder,
+      'Selecting an idle conversation changed the sidebar recency order'
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+}
+
 function findRuntimeWorkTask(runtimeWork, taskId) {
   const workspaces = Array.isArray(runtimeWork.workspaces)
     ? runtimeWork.workspaces
@@ -302,6 +322,13 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
   const sourceTaskDebug = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
   ).workbench
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE',
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertRuntimeTaskOrderRemainsStable(control, sortableListSelector, initialOrder)
   await control.command('click', `[data-testid="${targetTaskRowTestId}"]`)
   const targetTaskDebug = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')

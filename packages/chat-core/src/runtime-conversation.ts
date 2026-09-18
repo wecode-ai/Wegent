@@ -68,7 +68,6 @@ export type WorkbenchMessage = Omit<
   runtimeDisplayItems?: RuntimeAssistantDisplayItem[];
   runtimeMessageIndex?: number | null;
   turnId?: string | null;
-  runtimeTurnStartedAt?: number;
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null;
   completedAt?: string | number | null;
   stoppedNotice?: boolean | null;
@@ -100,6 +99,7 @@ export interface RuntimeConversationTurn {
   items: RuntimeConversationItem[];
   status: RuntimeWorkbenchMessageStatus;
   startedAt?: number;
+  durationMs?: number;
   completedAt?: string | number | null;
   error?: string;
   errorType?: string;
