@@ -100,7 +100,7 @@ def test_commits_native_object_metadata_and_structured_summary(
     retry = _upload(test_client, test_token, request)
     assert retry.json() == {"currentSequence": 1, "appended": 0}
     assert uploads[0][1:] == (SEGMENT_BODY, len(SEGMENT_BODY))
-    assert len(uploads) == 1
+    assert uploads[1] == uploads[0]
 
     transcript = test_db.query(WeworkTranscript).one()
     archive = test_db.query(WeworkTranscriptArchive).one()

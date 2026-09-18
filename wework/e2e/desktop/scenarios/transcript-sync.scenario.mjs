@@ -196,6 +196,7 @@ export function createDesktopScenario({
 
   const transcripts = new Map()
   const objects = new Map()
+  const segmentUploadCounts = new Map()
   const requestLog = []
   const modelRequests = []
   let activeTranscriptId = null
@@ -312,7 +313,6 @@ export function createDesktopScenario({
         const upload = await multipartUpload(request)
         const body = upload.metadata
         const transcript = transcripts.get(transcriptId)
-        assert.equal(body.baseSequence, transcript.currentSequence)
         assert.deepEqual(
           { clientId: body.clientId, fencingToken: body.fencingToken },
           leases.get(transcriptId)
@@ -320,9 +320,38 @@ export function createDesktopScenario({
         const objectId = `${transcriptId}-${body.sequence}-${body.sha256}`
         assert.equal(upload.file.byteLength, body.sizeBytes)
         assert.equal(createHash('sha256').update(upload.file).digest('hex'), body.sha256)
-        objects.set(objectId, upload.file)
         const existing = transcript.archives.find(archive => archive.toSequence === body.sequence)
         const existingTurn = transcript.turns.find(turn => turn.sequence === body.sequence)
+        if (!existing) assert.equal(body.baseSequence, transcript.currentSequence)
+        if (
+          existing &&
+          (existing.sha256 !== body.sha256 ||
+            existing.sizeBytes !== body.sizeBytes ||
+            existing.format !== body.format)
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'segment_conflict',
+              message: 'A different native segment already exists at this sequence',
+            },
+          })
+          return true
+        }
+        if (
+          existingTurn &&
+          (existingTurn.turnId !== body.turnId ||
+            JSON.stringify(existingTurn.payload) !== JSON.stringify(body.summary))
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'turn_conflict',
+              message: 'A different transcript summary already exists for this turn or sequence',
+            },
+          })
+          return true
+        }
+        objects.set(objectId, upload.file)
+        segmentUploadCounts.set(objectId, (segmentUploadCounts.get(objectId) ?? 0) + 1)
         assert.equal(typeof body.turnId, 'string')
         assert.equal(typeof body.summary, 'object')
         if (!existing) {
@@ -343,12 +372,10 @@ export function createDesktopScenario({
             createdAt: '2026-09-08T00:00:00.000Z',
           })
           transcript.currentSequence = body.sequence
-        } else {
-          assert.equal(existingTurn.turnId, body.turnId)
-          assert.deepEqual(existingTurn.payload, body.summary)
         }
         if (body.sequence === 1 && !firstCommitResponseDropped) {
           firstCommitResponseDropped = true
+          objects.delete(objectId)
           response.destroy()
           return true
         }
@@ -454,9 +481,10 @@ export function createDesktopScenario({
           activeTranscriptId &&
           activeTranscript()?.currentSequence === 1 &&
           firstCommitResponseDropped &&
+          objects.size === 0 &&
           sqliteOutboxCount(deviceAOutboxPath) === 1,
         uiTimeoutMs,
-        'Native snapshot was not retained after losing the commit response'
+        'Native snapshot was not retained after its object disappeared with the commit response'
       )
       assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
@@ -468,6 +496,9 @@ export function createDesktopScenario({
       )
       assert.equal(activeTranscript().archives[0].format, 'codex-snapshot.v1.tgz.aes256gcm')
       assert.equal(activeTranscript().turns[0].payload.assistantMessage, FIRST_COMPLETION)
+      const repairedSnapshotObjectId = activeTranscript().archives[0].objectId
+      assert.equal(segmentUploadCounts.get(repairedSnapshotObjectId), 2)
+      assert.ok(objects.get(repairedSnapshotObjectId)?.byteLength > 0)
       await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
 
       await writeFile(
@@ -887,6 +918,7 @@ export function createDesktopScenario({
         modelRequests,
         objectSizes: Object.fromEntries([...objects].map(([key, value]) => [key, value.length])),
         requestLog,
+        segmentUploadCounts: Object.fromEntries(segmentUploadCounts),
         transcripts: Object.fromEntries(transcripts),
       }
     },

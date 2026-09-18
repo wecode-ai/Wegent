@@ -241,44 +241,26 @@ def upload_segment(
     from_sequence = 0 if "snapshot" in request.format else request.sequence
     object_key = _segment_object_key(user_id, transcript_id, request)
     if existing_archive is not None or existing_turn is not None:
-        if _segment_matches(
+        archive_matches = _segment_matches(
             existing_archive,
             from_sequence=from_sequence,
             object_key=object_key,
             request=request,
-        ) and _turn_matches(existing_turn, request):
-            return transcript, False
-        if existing_archive is not None and not _segment_matches(
-            existing_archive,
-            from_sequence=from_sequence,
-            object_key=object_key,
-            request=request,
-        ):
+        )
+        if existing_archive is not None and not archive_matches:
             raise WeworkTranscriptError(
                 "segment_conflict",
                 "A different native segment already exists at this sequence",
             )
-        raise WeworkTranscriptError(
-            "turn_conflict",
-            "A different transcript summary already exists for this turn or sequence",
-        )
+        if existing_archive is None or not _turn_matches(existing_turn, request):
+            raise WeworkTranscriptError(
+                "turn_conflict",
+                "A different transcript summary already exists for this turn or sequence",
+            )
+        _store_segment(source, object_key, request)
+        return transcript, False
     _validate_segment_write(transcript, request)
-    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as staged:
-        stored_size, stored_sha256 = _stage_segment(source, staged, request.size_bytes)
-        if stored_size != request.size_bytes:
-            raise WeworkTranscriptError(
-                "segment_size_mismatch",
-                "Uploaded transcript segment size does not match its manifest",
-                status_code=422,
-            )
-        if stored_sha256 != request.sha256:
-            raise WeworkTranscriptError(
-                "segment_digest_mismatch",
-                "Uploaded transcript segment digest does not match its manifest",
-                status_code=422,
-            )
-        staged.seek(0)
-        wework_transcript_storage.put_stream(object_key, staged, stored_size)
+    _store_segment(source, object_key, request)
     db.add(
         WeworkTranscriptArchive(
             transcript_db_id=transcript.id,
@@ -325,6 +307,29 @@ def upload_segment(
     db.refresh(transcript)
     _prune_obsolete_segments(db, transcript.id)
     return transcript, True
+
+
+def _store_segment(
+    source: BinaryIO,
+    object_key: str,
+    request: TranscriptSegmentCommitRequest,
+) -> None:
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as staged:
+        stored_size, stored_sha256 = _stage_segment(source, staged, request.size_bytes)
+        if stored_size != request.size_bytes:
+            raise WeworkTranscriptError(
+                "segment_size_mismatch",
+                "Uploaded transcript segment size does not match its manifest",
+                status_code=422,
+            )
+        if stored_sha256 != request.sha256:
+            raise WeworkTranscriptError(
+                "segment_digest_mismatch",
+                "Uploaded transcript segment digest does not match its manifest",
+                status_code=422,
+            )
+        staged.seek(0)
+        wework_transcript_storage.put_stream(object_key, staged, stored_size)
 
 
 def list_archives(

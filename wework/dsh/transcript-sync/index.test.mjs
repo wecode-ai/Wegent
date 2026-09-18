@@ -166,6 +166,71 @@ test('uploads a native snapshot and persists only its locator', async () => {
   assert.equal(upload.fileContent, 'native-codex-state')
 })
 
+test('reuploads the same native segment when its commit was already recorded', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    transcriptId: 'shared',
+    taskId: 'shared',
+    baseSequence: 0,
+    cloudSequence: 1,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const requests = []
+  const acknowledgements = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source,
+    state: state(),
+    target: {
+      async acknowledge(value) {
+        acknowledgements.push(value)
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.file) {
+            request.fileContent = await readFile(request.file.path, 'utf8')
+          }
+          requests.push(request)
+          if (request.path.endsWith('/lease')) {
+            return { status: 200, body: { fencingToken: 2, currentSequence: 1 } }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.endsWith('/segments')) {
+            return { status: 200, body: { currentSequence: 1, appended: 0 } }
+          }
+          return { status: 200, body: { released: true } }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  assert.equal(acknowledgements.length, 1)
+  const upload = requests.find(request => request.path.endsWith('/segments'))
+  assert.equal(upload.body.turnId, pending.turnId)
+  assert.equal(upload.body.sequence, 1)
+  assert.equal(upload.fileContent, 'native-codex-state')
+  assert.equal(
+    requests.some(
+      request =>
+        request.path === '/wework-transcripts/shared' ||
+        request.path.startsWith('/wework-transcripts/shared/turns')
+    ),
+    false
+  )
+})
+
 test('restores the latest snapshot and contiguous native deltas', async () => {
   const restored = []
   const downloadPaths = []
@@ -299,6 +364,17 @@ test('branches deterministically when the cloud causal head changed', async () =
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
             }
           }
+          if (request.path.includes('/shared/') && request.path.endsWith('/segments')) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'segment_conflict',
+                  message: 'A different native segment already exists at this sequence',
+                },
+              },
+            }
+          }
           return { status: 200, body: {} }
         },
       },
@@ -348,6 +424,17 @@ test('branches from the available cloud head when the cached causal base is newe
             return {
               status: 200,
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.includes('/shared/') && request.path.endsWith('/segments')) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'segment_conflict',
+                  message: 'A different native segment already exists at this sequence',
+                },
+              },
             }
           }
           return { status: 200, body: {} }
