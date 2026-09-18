@@ -147,6 +147,31 @@ describe('ToolBlocksDisplay', () => {
     vi.useRealTimers()
   })
 
+  test('keeps tool output truncation invisible while rendering the retained output', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...completedCommandBlock,
+            toolOutput: 'latest retained shell output',
+            toolOutputTruncated: true,
+            toolOutputOriginalChars: 120_001,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByText('运行 pwd'))
+
+    expect(screen.getByTestId('shell-tool-output')).toHaveTextContent(
+      'latest retained shell output'
+    )
+    expect(screen.queryByText(/早期输出.*卸载/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载完整输出/)).not.toBeInTheDocument()
+  })
+
   test('renders concrete tool rows without a second aggregation inside the summary', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 

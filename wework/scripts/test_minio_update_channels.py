@@ -614,6 +614,7 @@ def test_minio_windows_build_uses_native_electron_release() -> None:
     assert '--release-kind) RELEASE_KIND="$2"' in script
     assert '"$notes_path" "$SOURCE_SHA"' in script
     assert 'WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL"' in script
+    assert 'CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"' in script
     assert 'WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET"' in script
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script

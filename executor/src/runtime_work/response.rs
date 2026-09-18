@@ -65,6 +65,7 @@ pub(crate) struct RuntimeTaskLink {
     pub thread_status: String,
     pub turn_status: Option<String>,
     pub goal_status: Option<String>,
+    pub goal_execution_status: Option<String>,
     pub supervisor: Option<RuntimeSupervisorState>,
     #[serde(skip)]
     pub git_info: Option<Value>,
@@ -86,6 +87,8 @@ pub(crate) struct RuntimeTaskLink {
     pub group_workspace_path: Option<String>,
     #[serde(skip)]
     pub group_project_key: Option<String>,
+    #[serde(skip)]
+    pub preserve_execution_path: bool,
     #[serde(skip)]
     pub pinned: bool,
     #[serde(skip)]
@@ -116,6 +119,7 @@ impl RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            goal_execution_status: None,
             supervisor: None,
             git_info: None,
             created_at: now_ms(),
@@ -132,6 +136,7 @@ impl RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -157,6 +162,7 @@ impl RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            goal_execution_status: None,
             supervisor: None,
             git_info: None,
             created_at: now_ms(),
@@ -173,6 +179,7 @@ impl RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -255,6 +262,9 @@ impl RuntimeTaskLink {
             thread_status,
             turn_status,
             goal_status,
+            goal_execution_status: local_link
+                .as_ref()
+                .and_then(|link| link.goal_execution_status.clone()),
             supervisor,
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
@@ -297,6 +307,7 @@ impl RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -315,6 +326,7 @@ impl RuntimeTaskLink {
             thread_status: self.thread_status.clone(),
             turn_status: self.turn_status.clone(),
             goal_status: self.goal_status.clone(),
+            goal_execution_status: self.goal_execution_status.clone(),
             supervisor: self.supervisor.clone(),
             git_info: self.git_info.clone(),
             created_at: self.created_at,
@@ -331,6 +343,7 @@ impl RuntimeTaskLink {
             sidebar_order: self.sidebar_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
+            preserve_execution_path: self.preserve_execution_path,
             pinned: self.pinned,
             pinned_order: self.pinned_order,
         }
@@ -436,6 +449,7 @@ impl Default for RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            goal_execution_status: None,
             supervisor: None,
             git_info: None,
             created_at: now_ms(),
@@ -452,6 +466,7 @@ impl Default for RuntimeTaskLink {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }
@@ -546,7 +561,12 @@ pub(crate) fn workspace_response(
             .find(|root| path_is_within(root, &normalized_link_path))
             .cloned()
             .unwrap_or(normalized_link_path);
-        link.workspace_path = workspace_task_path(&link.workspace_path, &group_path);
+        let execution_group = if link.preserve_execution_path {
+            workspace_group_path(&link.workspace_path)
+        } else {
+            group_path.clone()
+        };
+        link.workspace_path = workspace_task_path(&link.workspace_path, &execution_group);
         groups
             .entry(group_path)
             .or_insert_with(|| (None, Vec::new()))

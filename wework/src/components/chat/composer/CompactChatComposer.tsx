@@ -50,6 +50,10 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import {
+  primaryComposerSubmitOptions,
+  type ComposerFollowUpBehavior,
+} from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import {
@@ -104,6 +108,8 @@ interface CompactChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   projectPhrases?: QuickPhrase[]
+  sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
 }
 
 export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactChatComposerProps>(
@@ -155,6 +161,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       isStreaming = false,
       onPause,
       projectPhrases = [],
+      sendKey = 'enter',
+      followUpBehavior = 'queue',
     },
     ref
   ) {
@@ -210,8 +218,16 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const activeModelLabel = activeModel?.displayName || activeModel?.name
     const selectedModelLabel =
       selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+    const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+    const primaryBusyLabel =
+      followUpBehavior === 'guide'
+        ? t('workbench.guide_current_turn', '引导当前回复')
+        : t('workbench.send_after_turn', '当前回复结束后发送')
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const explicitLineCount = value.split('\n').length
 
     useEffect(() => {
@@ -355,7 +371,14 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               codeCommentsCount: codeComments.length,
               disabled,
             })
-            if (canSend) onSubmit(submittedValue)
+            if (canSend) {
+              const options = primaryComposerSubmitOptions(isStreaming, followUpBehavior)
+              if (options) {
+                onSubmit(submittedValue, options)
+              } else {
+                onSubmit(submittedValue)
+              }
+            }
           }}
         >
           <button
@@ -421,6 +444,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               onSelectModel={onSelectModel}
               onBlockedModelSelect={onBlockedModelSelect}
               isModelSelectionReady={isModelSelectionReady}
+              sendKey={sendKey}
+              followUpBehavior={followUpBehavior}
+              isStreaming={isStreaming}
             />
             {canExpandInput && (
               <button
@@ -449,7 +475,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   type="submit"
                   data-testid={submitButtonTestId}
                   className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
-                  aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+                  aria-label={primaryBusyLabel}
                 >
                   <ArrowUp className="h-5 w-5" />
                 </button>
@@ -464,7 +490,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                       icon: Clock3,
                       testId: 'send-after-turn-option',
                       onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
-                      shortcut: 'Enter',
+                      shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
                     },
                     {
                       label:
@@ -479,7 +505,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                       testId: 'guide-current-turn-option',
                       onSelect: () =>
                         onSubmit(composerRef.current?.getValue() ?? value, { guideWhenBusy: true }),
-                      shortcut: 'Command+Enter',
+                      shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
                     },
                     {
                       label:
@@ -635,6 +661,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 onSelectModel={onSelectModel}
                 onBlockedModelSelect={onBlockedModelSelect}
                 isModelSelectionReady={isModelSelectionReady}
+                sendKey={sendKey}
+                followUpBehavior={followUpBehavior}
+                isStreaming={isStreaming}
               />
             </div>
           </div>

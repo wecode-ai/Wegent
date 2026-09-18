@@ -26,6 +26,34 @@ describe('resourceLibraryApi', () => {
     jest.clearAllMocks()
   })
 
+  it('searches managed agents with scope, cursor and cancellation', async () => {
+    const controller = new AbortController()
+    mockedApiClient.get.mockResolvedValue({
+      items: [],
+      has_more: false,
+      next_cursor: null,
+      limit: 50,
+    })
+
+    await resourceLibraryApi.searchResources(
+      {
+        keyword: '开发 %_',
+        resourceType: 'agent',
+        ownedOnly: true,
+        scope: 'group',
+        groupName: 'parent/child',
+        cursor: 'next-page',
+        limit: 50,
+      },
+      controller.signal
+    )
+
+    expect(mockedApiClient.get).toHaveBeenCalledWith(
+      '/resource-library/search?keyword=%E5%BC%80%E5%8F%91+%25_&resource_type=agent&scope=group&owned_only=true&group_name=parent%2Fchild&cursor=next-page&limit=50',
+      { signal: controller.signal }
+    )
+  })
+
   it('lists listings with resource type, keyword, and pagination query params', async () => {
     mockedApiClient.get.mockResolvedValue({
       items: [],

@@ -214,9 +214,10 @@ function streamingMarkdownReport() {
   return `${Array.from({ length: sectionCount }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
 }
 
-function streamingTextEvents(id, text) {
+function streamingTextEvents(id, text, phase) {
   const itemId = `${id}-message`
   const chunks = text.match(/[\s\S]{1,48}/g) ?? []
+  const phaseFields = phase ? { phase } : {}
   return {
     chunks,
     start: [
@@ -230,6 +231,7 @@ function streamingTextEvents(id, text) {
           status: 'in_progress',
           role: 'assistant',
           content: [],
+          ...phaseFields,
         },
       },
       {
@@ -257,6 +259,7 @@ function streamingTextEvents(id, text) {
           status: 'completed',
           role: 'assistant',
           content: [{ type: 'output_text', text, annotations: [] }],
+          ...phaseFields,
         },
       },
       responseCompleted(id),
@@ -412,6 +415,7 @@ function requestContainsToolOutput(request, callId) {
     const type = value.type
     const isToolOutput =
       type === 'function_call_output' ||
+      type === 'mcp_tool_call_output' ||
       type === 'custom_tool_call_output' ||
       type === 'tool_search_output'
     if (isToolOutput && (!callId || value.call_id === callId)) return true

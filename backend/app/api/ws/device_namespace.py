@@ -2101,16 +2101,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id=user_id,
                     device_id=device_id,
                 )
-                payload = device_capability_sync_service.build_desired_capabilities(
-                    db,
+            result = (
+                await device_capability_sync_service.sync_current_device_capabilities(
                     user_id=user_id,
                     device_id=device_id,
+                    timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
                 )
-            result = await device_capability_sync_service.sync_device_payload(
-                user_id=user_id,
-                device_id=device_id,
-                payload=payload,
-                timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
             )
             with _db_session() as db:
                 plugin_device_installation_service.record_device_sync_result(

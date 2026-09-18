@@ -13,8 +13,9 @@ use wegent_executor::{
     runner::ExecutionOutcome,
     services::turn_file_changes::ClaudeToolFileChangeTracker,
     stream::{
-        collect_ndjson_outcome, extract_claude_session_id, extract_claude_tool_results,
-        extract_claude_tool_uses, extract_reasoning,
+        collect_ndjson_outcome, extract_claude_message_blocks, extract_claude_session_id,
+        extract_claude_tool_results, extract_claude_tool_uses, extract_reasoning, ClaudeChildBlock,
+        ClaudeMessageBlock, ClaudeRootBlock, ClaudeToolUse,
     },
 };
 
@@ -74,6 +75,104 @@ fn claude_assistant_thinking_blocks_are_reasoning_chunks() {
     assert_eq!(
         extract_reasoning(&event),
         Some("checking cwd before answering".to_owned())
+    );
+}
+
+#[test]
+fn claude_root_message_blocks_preserve_content_order() {
+    let event = json!({
+        "type": "assistant",
+        "message": {
+            "id": "message-1",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "plan first"},
+                {"type": "text", "text": " before tool\n"},
+                {
+                    "type": "tool_use",
+                    "id": "Read_0",
+                    "name": "Read",
+                    "input": {"file_path": "README.md"}
+                },
+                {"type": "text", "text": "after tool"}
+            ]
+        }
+    });
+
+    assert_eq!(
+        extract_claude_message_blocks(&event),
+        vec![
+            ClaudeMessageBlock::Root(ClaudeRootBlock {
+                id: Some("message-1:thinking:0".to_owned()),
+                block_type: "thinking".to_owned(),
+                process_kind: "reasoning".to_owned(),
+                content: "plan first".to_owned(),
+            }),
+            ClaudeMessageBlock::Root(ClaudeRootBlock {
+                id: Some("message-1:text:1".to_owned()),
+                block_type: "text".to_owned(),
+                process_kind: "assistant_message".to_owned(),
+                content: " before tool\n".to_owned(),
+            }),
+            ClaudeMessageBlock::ToolUse(ClaudeToolUse {
+                id: "Read_0".to_owned(),
+                name: "Read".to_owned(),
+                input: json!({"file_path": "README.md"}),
+                parent_tool_use_id: None,
+            }),
+            ClaudeMessageBlock::Root(ClaudeRootBlock {
+                id: Some("message-1:text:3".to_owned()),
+                block_type: "text".to_owned(),
+                process_kind: "assistant_message".to_owned(),
+                content: "after tool".to_owned(),
+            }),
+        ]
+    );
+}
+
+#[test]
+fn claude_child_message_blocks_preserve_content_order() {
+    let event = json!({
+        "type": "assistant",
+        "parent_tool_use_id": "Task_0",
+        "message": {
+            "id": "child-message-1",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "before child tool"},
+                {
+                    "type": "tool_use",
+                    "id": "Read_child",
+                    "name": "Read",
+                    "input": {"file_path": "src/lib.rs"}
+                },
+                {"type": "thinking", "thinking": "checking result"}
+            ]
+        }
+    });
+
+    assert_eq!(
+        extract_claude_message_blocks(&event),
+        vec![
+            ClaudeMessageBlock::Child(ClaudeChildBlock {
+                id: "child-message-1:text:0".to_owned(),
+                block_type: "text".to_owned(),
+                parent_tool_use_id: "Task_0".to_owned(),
+                content: "before child tool".to_owned(),
+            }),
+            ClaudeMessageBlock::ToolUse(ClaudeToolUse {
+                id: "Read_child".to_owned(),
+                name: "Read".to_owned(),
+                input: json!({"file_path": "src/lib.rs"}),
+                parent_tool_use_id: Some("Task_0".to_owned()),
+            }),
+            ClaudeMessageBlock::Child(ClaudeChildBlock {
+                id: "child-message-1:thinking:2".to_owned(),
+                block_type: "thinking".to_owned(),
+                parent_tool_use_id: "Task_0".to_owned(),
+                content: "checking result".to_owned(),
+            }),
+        ]
     );
 }
 

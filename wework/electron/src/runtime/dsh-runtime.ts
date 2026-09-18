@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 
+const LOCAL_READINESS_RETRY_INTERVAL_MS = 25
+
 export interface DshRuntimeOptions {
   url: string
   name?: string
@@ -106,7 +108,7 @@ async function waitForHttp(url: string, signal: AbortSignal): Promise<void> {
       if (signal.aborted) break
       lastError = error
     }
-    await abortableDelay(250, signal)
+    await abortableDelay(LOCAL_READINESS_RETRY_INTERVAL_MS, signal)
   }
   if (signal.reason instanceof Error) throw signal.reason
   throw new Error(`DSH did not become reachable at ${url}`, {

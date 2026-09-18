@@ -124,6 +124,9 @@
   "storyboard_page_no_task_error": "无法发送消息，缺少任务信息",
   "storyboard_page_loading": "加载分镜中...",
   "storyboard_page_back": "返回",
+  "highlightActions": {
+    "renderRequest": "基于时间线编辑器中已保存的最新剪辑，重新生成最终视频"
+  },
   "highlight_result": {
     "title": "AI高光剪辑",
     "completed": "已为你剪辑3条高光视频",
@@ -230,8 +233,16 @@
       "keepAudio": "保留素材原声",
       "subtitle": "字幕 {{index}}",
       "musicPrompt": "背景音乐 {{index}}",
-      "openCut": "使用 OpenCut 精修",
-      "openCutTitle": "OpenCut 时间线编辑器",
+      "openCut": "去剪辑",
+      "saveAndRender": "保存并渲染视频",
+      "saving": "保存中...",
+      "savingAndRendering": "保存并渲染中...",
+      "hostNotReady": "等待时间线编辑器连接...",
+      "saveCancelled": "时间线编辑器已关闭或切换",
+      "saveTimeout": "保存时间线超时，请检查网络后重试",
+      "renderSubmitFailed": "时间线已保存，但渲染提交失败，请重试",
+      "savedAndRendering": "时间线已保存，正在提交渲染",
+      "openCutTitle": "时间线编辑",
       "openCutDescription": "在 OpenCut 中精修并保存视频时间线",
       "openCutLoading": "正在加载 OpenCut...",
       "openCutLoadFailed": "OpenCut 时间线加载失败，请稍后重试",

@@ -597,15 +597,11 @@ class SessionManager:
 
         Returns:
             Tuple of (Redis client, PubSub object) or (None, None)
-            Caller is responsible for closing the client when done.
+            Caller is responsible for closing both objects when done.
         """
         try:
             channel = self._get_channel_key(subtask_id)
-            redis_client = await self._cache._get_client()
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(channel)
-            # Return both client and pubsub so caller can close client when done
-            return redis_client, pubsub
+            return await self._cache.subscribe(channel)
         except Exception as e:
             logger.error(
                 f"Error subscribing to streaming channel for subtask {subtask_id}: {e}"
@@ -650,7 +646,7 @@ class SessionManager:
         """Subscribe to the callback event channel for a subtask.
 
         Returns (redis_client, pubsub) so the caller can poll with
-        pubsub.get_message() and close the client when done.
+        pubsub.get_message() and close both objects when done.
 
         Args:
             subtask_id: Subtask ID
@@ -660,10 +656,7 @@ class SessionManager:
         """
         try:
             channel = self._get_callback_channel_key(subtask_id)
-            redis_client = await self._cache._get_client()
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(channel)
-            return redis_client, pubsub
+            return await self._cache.subscribe(channel)
         except Exception as e:
             logger.error(
                 f"[SessionManager] subscribe_callback_channel failed for subtask {subtask_id}: {e}"
@@ -1080,8 +1073,23 @@ class SessionManager:
                     # Update existing block
                     block_to_store = block.copy()
                     content_key = (existing_block or {}).get(BLOCK_CONTENT_KEY_FIELD)
+                    # `content_delta` carries an incremental text append, not a
+                    # full replacement. Accumulate it onto the block content so
+                    # streamed text blocks keep their full text instead of only
+                    # the initial `block.created` content.
+                    content_delta = block_to_store.pop("content_delta", None)
                     async with redis_client.pipeline(transaction=False) as pipe:
-                        if isinstance(content_key, str):
+                        if content_delta:
+                            if isinstance(content_key, str):
+                                pipe.append(content_key, content_delta)
+                                pipe.expire(content_key, STREAMING_TTL)
+                                block_to_store[BLOCK_CONTENT_KEY_FIELD] = content_key
+                                block_to_store["content"] = ""
+                            else:
+                                block_to_store["content"] = (existing_block or {}).get(
+                                    "content", ""
+                                ) + content_delta
+                        elif isinstance(content_key, str):
                             content_value = block_to_store.get("content", "")
                             block_to_store[BLOCK_CONTENT_KEY_FIELD] = content_key
                             block_to_store["content"] = ""

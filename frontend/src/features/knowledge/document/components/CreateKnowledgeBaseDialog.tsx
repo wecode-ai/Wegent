@@ -42,6 +42,7 @@ import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTask
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useVideoTimestampPromptGuard } from '@/features/knowledge/multimodal/hooks/useVideoTimestampPromptGuard'
@@ -144,6 +145,7 @@ export function CreateKnowledgeBaseDialog({
     ] as const
   ).filter(Boolean) as ReadonlyArray<readonly [KnowledgeBaseKind, typeof FileText, string]>
   const [source, setSource] = useState<CodeWikiSource>(createEmptySource)
+  const [dingtalkAutoSyncEnabled, setDingtalkAutoSyncEnabled] = useState(false)
   // Default enable summary for all KB types
   const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
@@ -185,6 +187,7 @@ export function CreateKnowledgeBaseDialog({
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name
       : groupName
+  const effectiveAllowDocumentDownload = allowDocumentDownload ?? effectiveScope !== 'organization'
 
   // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
@@ -194,7 +197,7 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
-      setAllowDocumentDownload(true)
+      setAllowDocumentDownload(undefined)
       setRetrievalConfig(createDefaultRetrievalConfig())
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
@@ -285,12 +288,13 @@ export function CreateKnowledgeBaseDialog({
           name: name.trim(),
           description: description.trim() || undefined,
           direct_access_requirement: directAccessRequirement,
-          allow_document_download: allowDocumentDownload,
+          allow_document_download: effectiveAllowDocumentDownload,
           retrieval_config:
             ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
               ? undefined
               : retrievalConfig,
           rag_config_mode: ragConfigMode,
+          dingtalk_auto_sync_enabled: kind !== 'code' && dingtalkAutoSyncEnabled,
           summary_enabled: summaryEnabled,
           summary_model_ref: summaryEnabled ? summaryModelRef : null,
           ...multimodalFields,
@@ -321,11 +325,12 @@ export function CreateKnowledgeBaseDialog({
         setName('')
         setDescription('')
         setDirectAccessRequirement('read')
-        setAllowDocumentDownload(true)
+        setAllowDocumentDownload(undefined)
         // Reset selectedKbType and keep summaryEnabled as true
         setSelectedKbType(initialKbType)
         setKind('document')
         setSource(createEmptySource())
+        setDingtalkAutoSyncEnabled(false)
         setSummaryEnabled(true)
         setSummaryModelRef(null)
         setExecutionModelRef(null)
@@ -356,6 +361,7 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
+      setDingtalkAutoSyncEnabled(false)
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
@@ -446,7 +452,12 @@ export function CreateKnowledgeBaseDialog({
                     onChange={checked => setSource({ ...source, show_generation_task: checked })}
                   />
                 </>
-              ) : undefined
+              ) : (
+                <DingtalkAutoSyncSetting
+                  checked={dingtalkAutoSyncEnabled}
+                  onCheckedChange={setDingtalkAutoSyncEnabled}
+                />
+              )
             }
             nameRequired={kind !== 'code'}
             namePlaceholder={
@@ -571,7 +582,7 @@ export function CreateKnowledgeBaseDialog({
             onDescriptionChange={value => setDescription(value)}
             directAccessRequirement={directAccessRequirement}
             onDirectAccessRequirementChange={setDirectAccessRequirement}
-            allowDocumentDownload={allowDocumentDownload}
+            allowDocumentDownload={effectiveAllowDocumentDownload}
             onAllowDocumentDownloadChange={setAllowDocumentDownload}
             summaryEnabled={summaryEnabled}
             onSummaryEnabledChange={checked => {

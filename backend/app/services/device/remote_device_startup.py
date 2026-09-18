@@ -28,6 +28,12 @@ DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = (
     "local_executor_install.sh"
 )
 DEVICE_SESSION_GATEWAY_PORT = 17888
+# The executor home identity is consumed by the container image entrypoint,
+# which refuses to reuse a volume recorded under a different device. Host
+# processes keep no such marker, so the key stays container-only. Worktree
+# persistence is declared for both variants: the container pins a named volume
+# and the process script pins a stable EXECUTOR_HOME under $HOME.
+CONTAINER_ONLY_ENV_KEYS = frozenset({"WEGENT_EXECUTOR_HOME_ID"})
 
 
 @dataclass(frozen=True)
@@ -294,11 +300,7 @@ class DefaultRemoteDeviceCommandProvider:
         process_env = {
             key: value
             for key, value in env.items()
-            if key
-            not in {
-                "WEGENT_EXECUTOR_HOME_ID",
-                "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED",
-            }
+            if key not in CONTAINER_ONLY_ENV_KEYS
         }
         process_command = _build_process_start_command(
             process_env,

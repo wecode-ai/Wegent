@@ -112,12 +112,12 @@ export async function searchGroupsApi(query: string): Promise<SearchResultItem[]
 
 export async function searchDepartmentsApi(query: string): Promise<SearchResultItem[]> {
   const res = await client.get<{
-    departments: { id: string; name: string; label?: string; employee_count?: number }[]
+    departments: { id: string; name: string; label?: string }[]
   }>(`/internal/departments/search?q=${encodeURIComponent(query)}`)
   return res.departments.map(d => ({
     id: d.id,
     name: d.name,
     type: 'department' as const,
-    metadata: { label: d.label, memberCount: d.employee_count },
+    metadata: { label: d.label },
   }))
 }

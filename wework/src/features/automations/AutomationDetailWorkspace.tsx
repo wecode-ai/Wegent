@@ -16,6 +16,14 @@ import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import {
+  canUseForProjectCreation,
+  isCloudDevice,
+  isDeviceBelowWeWorkVersion,
+  isRemoteDevice,
+  WEWORK_MIN_EXECUTOR_VERSION,
+} from '@/lib/device-capabilities'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
+import {
   MenuSelect,
   PopupMenu,
   TimeMenu,
@@ -96,7 +104,26 @@ export function AutomationDetailWorkspace({
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
   const [actionsOpen, setActionsOpen] = useState(false)
-  const taskOptions = buildAutomationTaskOptions(runtimeWork, new Set(localDeviceIds))
+  const localDeviceIdSet = new Set(localDeviceIds)
+  const taskOptions: AutomationTaskMenuOption[] = buildAutomationTaskOptions(runtimeWork).map(
+    option => {
+      const device = findWorkbenchDevice(devices, option.address.deviceId)
+      return {
+        ...option,
+        label: `${option.label} · ${
+          device
+            ? deviceOptionLabel(device, localDeviceIds, t)
+            : t('workbench.environment_device_unknown', '未知设备')
+        }`,
+        disabled: !device || !canUseForProjectCreation(device),
+      }
+    }
+  )
+  const sourceDevices = devices.filter(device =>
+    draft.source === 'cloud'
+      ? isCloudDevice(device) || isRemoteDevice(device)
+      : !isCloudDevice(device) && !isRemoteDevice(device)
+  )
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
   const selectedModel = models.find(
     model =>
@@ -250,10 +277,15 @@ export function AutomationDetailWorkspace({
                 if (mode === 'continue_thread' && !draft.continuationAddress) {
                   const currentKey = automationTaskKey(currentRuntimeTask)
                   const target =
-                    taskOptions.find(option => option.key === currentKey) ?? taskOptions[0] ?? null
+                    taskOptions.find(option => option.key === currentKey && !option.disabled) ??
+                    taskOptions.find(option => !option.disabled) ??
+                    null
                   onChange('continuationAddress', target?.address ?? null)
-                  onChange('source', 'local')
                   if (target) {
+                    onChange(
+                      'source',
+                      localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
+                    )
                     onChange('deviceId', target.address.deviceId)
                     onChange('workspacePath', target.address.workspacePath ?? '')
                   }
@@ -276,12 +308,14 @@ export function AutomationDetailWorkspace({
               <AutomationTaskSelect
                 value={automationTaskKey(draft.continuationAddress)}
                 onChange={value => {
-                  const target = taskOptions.find(option => option.key === value)
+                  const target = taskOptions.find(
+                    option => option.key === value && !option.disabled
+                  )
                   onChange('continuationAddress', target?.address ?? null)
                   if (target) {
                     onChange(
                       'source',
-                      localDeviceIds.includes(target.address.deviceId) ? 'local' : 'cloud'
+                      localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
                     )
                     onChange('deviceId', target.address.deviceId)
                     onChange('workspacePath', target.address.workspacePath ?? '')
@@ -329,9 +363,10 @@ export function AutomationDetailWorkspace({
                       value: '',
                       label: t('workbench.automation_select_device', '选择设备'),
                     },
-                    ...devices.map(device => ({
+                    ...sourceDevices.map(device => ({
                       value: device.device_id,
-                      label: deviceDisplayName(device, localDeviceIds, t),
+                      label: deviceOptionLabel(device, localDeviceIds, t),
+                      disabled: !canUseForProjectCreation(device),
                     })),
                   ]}
                 />
@@ -443,10 +478,34 @@ function deviceDisplayName(
   localDeviceIds: string[],
   t: (key: string, fallback: string) => string
 ): string {
-  if (isCurrentAppDevice(device, localDeviceIds)) {
-    return t('workbench.automation_this_computer', '此电脑')
+  const name = isCurrentAppDevice(device, localDeviceIds)
+    ? t('workbench.automation_this_computer', '此电脑')
+    : device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
+  return isRemoteDevice(device)
+    ? `${name} · ${t('workbench.remote_host_docker_group', '远程 Docker 设备')}`
+    : name
+}
+
+function deviceOptionLabel(
+  device: DeviceInfo,
+  localDeviceIds: string[],
+  t: (key: string, fallback: string, options?: Record<string, string>) => string
+): string {
+  const name = deviceDisplayName(device, localDeviceIds, t)
+  if (device.status === 'offline') {
+    return `${name} · ${t('workbench.project_device_status_offline', '离线')}`
   }
-  return device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
+  if (isDeviceBelowWeWorkVersion(device)) {
+    return `${name} · ${t(
+      'workbench.remote_host_upgrade_required',
+      `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+      { version: WEWORK_MIN_EXECUTOR_VERSION }
+    )}`
+  }
+  if (!canUseForProjectCreation(device)) {
+    return `${name} · ${t('workbench.project_device_status_unavailable', '不可用')}`
+  }
+  return name
 }
 
 function FrequencySettings({
@@ -618,7 +677,7 @@ function AutomationTaskSelect({
 }: {
   value: string
   onChange: (value: string) => void
-  options: ReturnType<typeof buildAutomationTaskOptions>
+  options: AutomationTaskMenuOption[]
 }) {
   const { t } = useTranslation('common')
   const selected = options.find(option => option.key === value)
@@ -646,11 +705,13 @@ function AutomationTaskSelect({
                 key={option.key}
                 type="button"
                 data-testid={`automation-target-task-select-option-${option.key}`}
+                disabled={option.disabled}
                 onClick={() => {
+                  if (option.disabled) return
                   onChange(option.key)
                   close()
                 }}
-                className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
+                className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
                 {option.key === value ? <Check className="h-4 w-4 shrink-0" /> : null}
@@ -660,7 +721,7 @@ function AutomationTaskSelect({
             <p className="whitespace-normal px-3 pb-2 text-sm font-medium leading-6 text-text-primary">
               {t(
                 'workbench.automation_pin_local_task_first',
-                '请先置顶一个本地任务，再使用已安排任务'
+                '请先置顶一个可用设备上的任务，再使用已安排任务'
               )}
             </p>
           )}
@@ -668,6 +729,10 @@ function AutomationTaskSelect({
       )}
     </PopupMenu>
   )
+}
+
+type AutomationTaskMenuOption = ReturnType<typeof buildAutomationTaskOptions>[number] & {
+  disabled: boolean
 }
 
 function RunHistory({ runs, locale }: { runs: AutomationRun[]; locale: string }) {

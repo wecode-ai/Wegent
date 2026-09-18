@@ -43,6 +43,8 @@ export class IdleTaskScheduler {
   private idleHandle: number | null = null
   private timerHandle: number | null = null
   private lastUserActivityAt: number
+  private lastPressure: IdleSystemPressure | null = null
+  private lastProbeError: string | null = null
 
   constructor(host: IdleTaskSchedulerHost) {
     this.host = host
@@ -78,6 +80,17 @@ export class IdleTaskScheduler {
       if (this.tasks.get(normalizedId)?.token === token) {
         this.tasks.delete(normalizedId)
       }
+    }
+  }
+
+  diagnostics() {
+    return {
+      started: this.started,
+      running: this.running,
+      pendingTaskIds: this.pendingTaskIds(),
+      userIdleMs: this.host.now() - this.lastUserActivityAt,
+      lastPressure: this.lastPressure,
+      lastProbeError: this.lastProbeError,
     }
   }
 
@@ -118,9 +131,12 @@ export class IdleTaskScheduler {
 
     const activitySnapshot = this.lastUserActivityAt
     const pressure = await this.host.probeSystemPressure().catch(error => {
+      this.lastProbeError = error instanceof Error ? error.message : String(error)
       console.warn('[IdleTasks] Failed to inspect system pressure', error)
       return null
     })
+    this.lastPressure = pressure
+    if (pressure) this.lastProbeError = null
     if (
       !this.started ||
       this.running ||
@@ -211,4 +227,8 @@ export function recordIdleTaskUserActivity(): void {
 
 export function scheduleIdleTask(id: string, run: IdleTask): () => void {
   return idleTaskScheduler.schedule(id, run)
+}
+
+export function getIdleTaskSchedulerDiagnostics() {
+  return idleTaskScheduler.diagnostics()
 }

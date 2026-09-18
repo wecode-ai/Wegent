@@ -520,14 +520,16 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_rejects_incomplete_existing_git_workspace() {
+async fn agent_process_engine_reclones_incomplete_existing_git_workspace() {
     let _lock = env_lock().lock().await;
     let workspace_root = unique_dir("claude-incomplete-git-workspace-root");
     let bin_dir = unique_dir("claude-incomplete-git-bin");
     let git_marker = unique_dir("claude-incomplete-git-marker").join("git-args.txt");
     let claude_marker = unique_dir("claude-incomplete-git-claude").join("ran.txt");
     let project_path = workspace_root.join("88/Wegent");
+    // An interrupted clone leaves a `.git` that cannot resolve HEAD^{commit}.
     fs::create_dir_all(project_path.join(".git")).unwrap();
+    fs::write(project_path.join("partial.txt"), "interrupted clone").unwrap();
     fs::create_dir_all(&bin_dir).unwrap();
     write_fake_git(&bin_dir, &git_marker);
     let fake_claude = write_fake_executable(
@@ -565,21 +567,23 @@ touch '{}'
     let outcome = engine.run(request).await;
 
     assert!(
-        matches!(
-            outcome,
-            ExecutionOutcome::Failed { ref message }
-                if message.contains("incomplete or invalid repository")
-        ),
+        matches!(outcome, ExecutionOutcome::Completed { .. }),
         "{outcome:?}"
     );
-    assert!(project_path.exists());
-    assert!(!claude_marker.exists());
-    assert!(fs::read_to_string(git_marker).unwrap().contains("-C "));
+    assert!(claude_marker.exists());
+    // The interrupted clone is discarded and replaced by a fresh clone.
+    assert!(!project_path.join("partial.txt").exists());
+    assert!(fs::read_to_string(project_path.join("source.txt"))
+        .unwrap()
+        .contains("https://github.com/wecode-ai/Wegent.git"));
+    let git_args = fs::read_to_string(git_marker).unwrap();
+    assert!(git_args.contains("clone"));
+    assert!(git_args.contains("https://github.com/wecode-ai/Wegent.git"));
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_downloads_claude_attachments_to_local_task_workspace() {
+async fn agent_process_engine_downloads_claude_attachments_to_device_private_workspace() {
     let _lock = env_lock().lock().await;
     let executor_home = unique_dir("claude-local-attachment-home");
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -636,15 +640,14 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
         other => panic!("unexpected outcome: {other:?}"),
     };
     let local_path = executor_home
-        .join("workspace/2201/2201:executor:attachments/3212/image.png")
+        .join("workspace/attachments/runtime/2201/3212/image.png")
         .display()
         .to_string();
 
     assert!(content.contains(&local_path), "{content}");
     assert!(!content.contains("/home/user/2201:executor:attachments/3212/image.png"));
     assert_eq!(
-        fs::read(executor_home.join("workspace/2201/2201:executor:attachments/3212/image.png"))
-            .unwrap(),
+        fs::read(executor_home.join("workspace/attachments/runtime/2201/3212/image.png")).unwrap(),
         b"fake-image"
     );
     let request = requests.lock().unwrap().first().cloned().unwrap();
@@ -798,7 +801,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
 
 #[cfg(unix)]
 #[tokio::test]
-async fn agent_process_engine_refreshes_existing_bot_skills_for_regular_claude_tasks() {
+async fn agent_process_engine_isolates_bot_skills_for_regular_claude_tasks() {
     let _lock = env_lock().lock().await;
     let home = unique_dir("claude-refresh-bot-skill-home");
     let workspace_root = unique_dir("claude-refresh-bot-skill-workspace");
@@ -854,6 +857,10 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     );
     assert_eq!(
         fs::read_to_string(existing_skill.join("SKILL.md")).unwrap(),
+        "# Old Agent Skill\n"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace_root.join("88/.claude/skills/agent-skill/SKILL.md")).unwrap(),
         "# Task Skill"
     );
     assert_eq!(requests.lock().unwrap().len(), 1);

@@ -218,6 +218,22 @@ test.each(['', 'true'])(
   }
 )
 
+test('builds the macOS installer without unused DMG update metadata', () => {
+  const config = JSON.parse(
+    execFileSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', builderConfigPath],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, WEWORK_ONLINE_UPDATE_BUILD: '' },
+      }
+    )
+  )
+
+  expect(config.mac.target).toEqual(['dmg', 'zip'])
+  expect(config.dmg.writeUpdateInfo).toBe(false)
+})
+
 test('builds a slim Host update without managed components', () => {
   const config = JSON.parse(
     execFileSync(

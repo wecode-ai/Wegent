@@ -439,6 +439,15 @@ may reveal on hover/focus but must remain keyboard accessible.
   not duplicate Search as a primary-navigation list row.
 - Secondary row actions can appear on hover/focus but must not steal the row's
   primary click and must have a keyboard path.
+- Overflowing sidebar lists keep an overlay scrollbar visible at every scroll
+  position. Use a transparent `8px` track and a quiet theme-aware `4px` thumb;
+  scrollbars must not change the content width or inherit the content-edge mask.
+- Task titles use a `12px` edge fade instead of ellipsis. After `600ms` of hover
+  or keyboard focus, scroll at `30px/s`, decelerating continuously over the final
+  `40px` to rest. Keep the end visible until pointer exit or blur, then return to
+  the start over `150ms`. Respect reduced motion and stop during dragging.
+- Trailing task actions overlay the row without changing its layout width. Clip
+  and measure the title against the visible actions before starting its motion.
 - Collapse or float the sidebar before the main work area becomes unusable.
 
 The audited shell changes behavior around `960px` and again around `720px`.
@@ -669,6 +678,9 @@ must not discard entered data without warning. Do not stack modal dialogs.
   HTML `title` attribute. Icon-only controls must keep a localized
   `aria-label`; controls that currently have neither a visible label nor a
   tooltip must add both where applicable.
+- Shared icon-only menu triggers should add their tooltip inside the menu
+  abstraction. Context-menu-only triggers that are visually hidden must opt out
+  so a tooltip wrapper cannot create layout space for the hidden control.
 - Tooltips inside clipped sidebars, cards, tables, and panels must render
   through the shared portal-based layer so ancestor `overflow` rules cannot
   hide them.

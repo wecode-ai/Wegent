@@ -121,12 +121,6 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
                     </span>
                   )}
                 </div>
-                {typeof dept.employee_count === 'number' && (
-                  <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-muted text-text-muted border border-border">
-                    {dept.employee_count}
-                    {t('document.permission.members')}
-                  </span>
-                )}
               </button>
             ))
           )}

@@ -191,6 +191,77 @@ describe('CloudTodoBoardCard', () => {
     expect(screen.getByTestId('cloud-todo-card-more-WEG-85')).toBeInTheDocument()
   })
 
+  it('closes the card menu when clicking outside of it', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-more-WEG-85'))
+    expect(screen.getByTestId('cloud-todo-card-menu-WEG-85')).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByTestId('cloud-todo-card-menu-WEG-85')).not.toBeInTheDocument()
+  })
+
+  it('keeps the card menu open when clicking inside it', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-more-WEG-85'))
+    const menu = screen.getByTestId('cloud-todo-card-menu-WEG-85')
+    fireEvent.mouseDown(menu)
+    expect(screen.getByTestId('cloud-todo-card-menu-WEG-85')).toBeInTheDocument()
+  })
+
+  it('toggles the card menu from its trigger button', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const trigger = screen.getByTestId('cloud-todo-card-more-WEG-85')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('cloud-todo-card-menu-WEG-85')).toBeInTheDocument()
+    await userEvent.click(trigger)
+    expect(screen.queryByTestId('cloud-todo-card-menu-WEG-85')).not.toBeInTheDocument()
+  })
+
   it('opens execution configuration from the blocking card action', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()
@@ -621,7 +692,6 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
     expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
-    expect(conversation).toHaveAttribute('data-scroll-origin', 'bottom')
   })
 
   it('does not show an older response while a new task turn is starting', () => {

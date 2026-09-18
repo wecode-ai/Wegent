@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.endpoints.adapter import attachments
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.user import User
 from app.services.context import context_service
 
@@ -66,6 +67,65 @@ def _create_kb_document_attachment(
     return knowledge_base, context.id
 
 
+def _create_kb_document_attachment_row(
+    test_db: Session,
+    *,
+    user_id: int,
+    filename: str,
+    extension: str,
+    mime_type: str,
+) -> tuple[Kind, int]:
+    """Create a download-disabled KB with a document-backed attachment row.
+
+    Builds the SubtaskContext row directly so non-text originals (PDF, ZIP)
+    skip the upload-time parser, which cannot decode the placeholder bytes.
+    """
+    knowledge_base = Kind(
+        user_id=user_id,
+        kind="KnowledgeBase",
+        name=f"policy-routes-kb-{extension}",
+        namespace="default",
+        json={"spec": {"allowDocumentDownload": False}},
+        is_active=True,
+    )
+    test_db.add(knowledge_base)
+    test_db.flush()
+
+    context = SubtaskContext(
+        subtask_id=0,
+        user_id=user_id,
+        context_type=ContextType.ATTACHMENT.value,
+        name=filename,
+        status="ready",
+        binary_data=b"",
+        image_base64="",
+        extracted_text="",
+        text_length=0,
+        type_data={
+            "original_filename": filename,
+            "file_extension": extension,
+            "file_size": len(ORIGINAL_BYTES),
+            "mime_type": mime_type,
+            "storage_backend": "mysql",
+            "storage_key": f"attachments/{filename}",
+        },
+    )
+    test_db.add(context)
+    test_db.flush()
+    test_db.add(
+        KnowledgeDocument(
+            kind_id=knowledge_base.id,
+            attachment_id=context.id,
+            name=filename,
+            file_extension=extension,
+            file_size=len(ORIGINAL_BYTES),
+            user_id=user_id,
+        )
+    )
+    test_db.commit()
+    return knowledge_base, context.id
+
+
 def _protect(knowledge_base: Kind, test_db: Session) -> None:
     """Flip an existing KB to download-disabled and persist it."""
     knowledge_base.json = {
@@ -90,6 +150,96 @@ def test_download_rejected_for_protected_kb_document(
         user_id=test_user.id,
         filename="protected.txt",
         allow_document_download=False,
+    )
+
+    response = test_client.get(
+        f"/api/attachments/{attachment_id}/download",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    _assert_download_disabled(response)
+
+
+@pytest.mark.parametrize(
+    ("filename", "extension", "mime_type"),
+    [
+        ("protected.pdf", "pdf", "application/pdf"),
+        (
+            "protected.docx",
+            "docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+    ],
+)
+def test_preview_purpose_allows_previewable_originals_for_protected_kb(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    extension: str,
+    mime_type: str,
+) -> None:
+    _, attachment_id = _create_kb_document_attachment_row(
+        test_db,
+        user_id=test_user.id,
+        filename=filename,
+        extension=extension,
+        mime_type=mime_type,
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_load_stored_attachment_binary_data",
+        lambda attachment_id: ORIGINAL_BYTES,
+    )
+
+    response = test_client.get(
+        f"/api/attachments/{attachment_id}/download",
+        params={"purpose": "preview"},
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == ORIGINAL_BYTES
+    assert response.headers["content-disposition"].startswith("inline")
+
+
+def test_preview_purpose_still_rejected_for_non_previewable_originals(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    _, attachment_id = _create_kb_document_attachment_row(
+        test_db,
+        user_id=test_user.id,
+        filename="protected.zip",
+        extension="zip",
+        mime_type="application/zip",
+    )
+
+    response = test_client.get(
+        f"/api/attachments/{attachment_id}/download",
+        params={"purpose": "preview"},
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    _assert_download_disabled(response)
+
+
+def test_download_purpose_still_rejected_for_previewable_originals(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    _, attachment_id = _create_kb_document_attachment_row(
+        test_db,
+        user_id=test_user.id,
+        filename="protected.pdf",
+        extension="pdf",
+        mime_type="application/pdf",
     )
 
     response = test_client.get(

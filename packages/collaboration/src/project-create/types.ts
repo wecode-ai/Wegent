@@ -120,6 +120,10 @@ export interface ProjectCreateDialogProps {
   defaultLocation: ProjectCreateLocation;
   allowDingTalkAITable: boolean;
   labels: ProjectCreateLabels;
+  workspaceContext?: {
+    name: string;
+    owner: string;
+  };
   resourceSetup?: ProjectCreateResourceSetup;
   testIds?: {
     name?: string;

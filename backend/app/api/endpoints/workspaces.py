@@ -15,6 +15,11 @@ from app.schemas.cloud_project import (
     CloudProjectResponse,
 )
 from app.schemas.workspace import (
+    CollaborationGroupCreate,
+    CollaborationGroupListResponse,
+    CollaborationGroupResponse,
+    CollaborationGroupUpdate,
+    ExecutionEnvironmentInitialize,
     PersonalResourcesResponse,
     WorkspaceAgentCreate,
     WorkspaceAgentListResponse,
@@ -73,12 +78,12 @@ def _project_response(
 
 
 @resources_router.get("", response_model=PersonalResourcesResponse)
-def list_personal_resources(
+async def list_personal_resources(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> PersonalResourcesResponse:
     return PersonalResourcesResponse.model_validate(
-        workspace_service.list_personal_resources(db, current_user.id)
+        await workspace_service.list_personal_resources(db, current_user.id)
     )
 
 
@@ -272,10 +277,80 @@ def remove_workspace_agent(
 
 
 @router.get(
+    "/{workspace_id}/collaboration-groups",
+    response_model=CollaborationGroupListResponse,
+)
+def list_workspace_collaboration_groups(
+    workspace_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> CollaborationGroupListResponse:
+    return CollaborationGroupListResponse(
+        items=[
+            CollaborationGroupResponse.model_validate(group)
+            for group in workspace_service.list_collaboration_groups(
+                db, workspace_id, current_user.id
+            )
+        ]
+    )
+
+
+@router.post(
+    "/{workspace_id}/collaboration-groups",
+    response_model=CollaborationGroupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_workspace_collaboration_group(
+    workspace_id: int,
+    values: CollaborationGroupCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> CollaborationGroupResponse:
+    return CollaborationGroupResponse.model_validate(
+        workspace_service.create_collaboration_group(
+            db, workspace_id, current_user.id, values
+        )
+    )
+
+
+@router.patch(
+    "/{workspace_id}/collaboration-groups/{group_id}",
+    response_model=CollaborationGroupResponse,
+)
+def update_workspace_collaboration_group(
+    workspace_id: int,
+    group_id: int,
+    values: CollaborationGroupUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> CollaborationGroupResponse:
+    return CollaborationGroupResponse.model_validate(
+        workspace_service.update_collaboration_group(
+            db, workspace_id, group_id, current_user.id, values
+        )
+    )
+
+
+@router.delete(
+    "/{workspace_id}/collaboration-groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_workspace_collaboration_group(
+    workspace_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> None:
+    workspace_service.remove_collaboration_group(
+        db, workspace_id, group_id, current_user.id
+    )
+
+
+@router.get(
     "/{workspace_id}/execution-environments",
     response_model=WorkspaceExecutionEnvironmentListResponse,
 )
-def list_workspace_execution_environments(
+async def list_workspace_execution_environments(
     workspace_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
@@ -283,7 +358,7 @@ def list_workspace_execution_environments(
     return WorkspaceExecutionEnvironmentListResponse(
         items=[
             WorkspaceExecutionEnvironmentResponse.model_validate(environment)
-            for environment in workspace_service.list_execution_environments(
+            for environment in await workspace_service.list_execution_environments(
                 db, workspace_id, current_user.id
             )
         ]
@@ -295,14 +370,14 @@ def list_workspace_execution_environments(
     response_model=WorkspaceExecutionEnvironmentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def add_workspace_execution_environment(
+async def add_workspace_execution_environment(
     workspace_id: int,
     values: WorkspaceExecutionEnvironmentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkspaceExecutionEnvironmentResponse:
     return WorkspaceExecutionEnvironmentResponse.model_validate(
-        workspace_service.add_execution_environment(
+        await workspace_service.add_execution_environment(
             db, workspace_id, current_user.id, values
         )
     )
@@ -321,6 +396,26 @@ def remove_workspace_execution_environment(
     workspace_service.remove_execution_environment(
         db, workspace_id, device_id, current_user.id
     )
+
+
+@router.post(
+    "/{workspace_id}/execution-environment/initialize",
+    response_model=WorkspaceResponse,
+)
+async def initialize_workspace_execution_environment(
+    workspace_id: int,
+    values: ExecutionEnvironmentInitialize,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkspaceResponse:
+    workspace = await workspace_service.initialize_execution_environment(
+        db,
+        workspace_id,
+        values.device_id,
+        current_user.id,
+        values.version,
+    )
+    return _response(db, workspace, current_user)
 
 
 @router.get(

@@ -289,6 +289,7 @@ function MessagesArea({
   } = useTaskSession()
   const { theme } = useTheme()
   const { user } = useUser()
+  const isAdmin = user?.role === 'admin'
   const { traceAction } = useTraceAction()
   const { registerCorrectionHandlers } = useSocket()
   const isMobile = useIsMobile()
@@ -1040,6 +1041,7 @@ function MessagesArea({
             <Button
               variant="outline"
               size="sm"
+              data-testid="message-export-menu"
               className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
               <Download className="h-3.5 w-3.5" />
@@ -1406,7 +1408,7 @@ function MessagesArea({
                   onReEdit={onReEdit}
                   waitingMessage={waitingMessage}
                   taskType={selectedTaskDetail?.task_type}
-                  onForwardClick={handleForwardClick}
+                  onForwardClick={isAdmin ? handleForwardClick : undefined}
                   onSaveToKnowledge={
                     user ? content => handleSaveToKnowledge(index, content) : undefined
                   }
@@ -1482,7 +1484,7 @@ function MessagesArea({
       )}
 
       {/* Send Message to Collaboration */}
-      {selectedTaskDetail?.id && (
+      {isAdmin && selectedTaskDetail?.id && (
         <SendToCollaborationDialog
           taskId={selectedTaskDetail.id}
           subtaskIds={forwardInitialSubtaskId ? [forwardInitialSubtaskId] : undefined}

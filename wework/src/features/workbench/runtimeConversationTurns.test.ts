@@ -35,6 +35,71 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('projects stable turn start and completion timestamps through streaming and transcript restore', () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = Date.parse('2026-09-16T10:00:00Z')
+      vi.setSystemTime(startedAt + 3000)
+      const user = {
+        ...userMessage('user-timer', 'Check the code'),
+        createdAt: new Date(startedAt).toISOString(),
+      }
+      let turns: RuntimeConversationTurn[] = [
+        {
+          id: 'turn-timer',
+          status: 'streaming',
+          items: [
+            { id: user.id, type: 'user_message', message: user },
+            {
+              id: 'tool-timer',
+              type: 'block',
+              block: {
+                id: 'tool-timer',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'done',
+                createdAt: startedAt + 1000,
+                completedAt: startedAt + 2000,
+              },
+            },
+          ],
+        },
+      ]
+      const running = projectRuntimeConversationTurns(turns).find(
+        message => message.role === 'assistant'
+      )!
+      expect(running.runtimeTurnStartedAt).toBe(startedAt)
+      expect(running.completedAt).toBeUndefined()
+
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-timer',
+        itemId: 'final-timer',
+        content: 'Done',
+      })
+      vi.setSystemTime(startedAt + 10000)
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-timer',
+        itemId: 'final-timer',
+        content: '.',
+      })
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_done',
+        subtaskId: 'turn-timer',
+      })
+      const snapshot = JSON.parse(JSON.stringify(turns)) as RuntimeConversationTurn[]
+      const restored = projectRuntimeConversationTurns(snapshot).find(
+        message => message.role === 'assistant'
+      )!
+      expect(restored.runtimeTurnStartedAt).toBe(startedAt)
+      expect(restored.completedAt).toBe(new Date(startedAt + 10000).toISOString())
+      expect(restored.status).toBe('done')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('bounds processing blocks retained by a continuously streaming turn', () => {
     let turns: RuntimeConversationTurn[] = [
       {
@@ -1003,6 +1068,78 @@ describe('runtimeConversationTurns', () => {
     )
 
     expect(turns[0].items.map(item => item.id)).toEqual(['file-changes-1', 'assistant-item-1'])
+  })
+
+  test('places a delayed subagent block before later streaming parent activity', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'tool-before-spawn',
+              type: 'block',
+              block: {
+                id: 'tool-before-spawn',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'done',
+                createdAt: 1000,
+              },
+            },
+            {
+              id: 'parent-progress',
+              type: 'block',
+              block: {
+                id: 'parent-progress',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: '父代理继续处理。',
+                status: 'streaming',
+                createdAt: 3000,
+              },
+            },
+            {
+              id: 'tool-after-spawn',
+              type: 'block',
+              block: {
+                id: 'tool-after-spawn',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'streaming',
+                createdAt: 4000,
+              },
+            },
+          ],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'subagent-agent-1',
+          subtaskId: 'turn-1',
+          type: 'subagent',
+          agentThreadId: 'agent-1',
+          title: 'Explorer',
+          status: 'streaming',
+          createdAt: 2000,
+        },
+      }
+    )
+
+    expect(turns[0].items.map(item => item.id)).toEqual([
+      'tool-before-spawn',
+      'subagent-agent-1',
+      'parent-progress',
+      'tool-after-spawn',
+    ])
+    expect(
+      projectRuntimeConversationTurns(turns)[0].runtimeDisplayItems?.map(item => item.id)
+    ).toEqual(['tool-before-spawn', 'subagent-agent-1', 'parent-progress', 'tool-after-spawn'])
   })
 
   test('reopens a stale transcript turn when a live tool starts', () => {

@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronDown,
   MessageSquare,
+  Monitor,
   Plus,
   Undo2,
   X,
@@ -21,6 +22,7 @@ import {
   withoutRuntimeTaskWorkspaceBinding,
 } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
+import { findWorkbenchDevice, getWorkbenchDeviceDisplayName } from '@/lib/workbench-device'
 import type {
   ProjectExecutionMode,
   ProjectWithTasks,
@@ -150,6 +152,13 @@ export function AiChatModal({
     () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
     [project, task, workflowNodeId]
   )
+  const executionDeviceName = useMemo(() => {
+    const deviceId = initialAddress?.deviceId ?? null
+    return getWorkbenchDeviceDisplayName(
+      findWorkbenchDevice(state?.devices ?? [], deviceId),
+      deviceId
+    )
+  }, [initialAddress?.deviceId, state?.devices])
 
   // The task detail modal stays open underneath; Escape only closes the chat
   // first so the user never loses the task context in one keystroke.
@@ -302,6 +311,16 @@ export function AiChatModal({
                 {' · '}
                 {t('workbench.task_conversation', '任务对话')}
               </span>
+              {executionDeviceName ? (
+                <span
+                  data-testid="ai-chat-execution-device"
+                  title={`${t('workbench.task_activity_execution_device', '执行设备')}: ${executionDeviceName}`}
+                  className="flex h-7 max-w-[160px] shrink-0 items-center gap-1 rounded-lg px-1.5 text-xs text-text-muted"
+                >
+                  <Monitor className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{executionDeviceName}</span>
+                </span>
+              ) : null}
               {onOpenRuntimeTask ? (
                 <button
                   type="button"
@@ -399,7 +418,9 @@ export function AiChatModal({
                 <dt className="text-text-muted">{t('workbench.runtime_task', '执行任务')}</dt>
                 <dd className="truncate text-text-primary">{taskTitle || initialAddress.taskId}</dd>
                 <dt className="text-text-muted">{t('workbench.device', '设备')}</dt>
-                <dd className="truncate text-text-primary">{initialAddress.deviceId}</dd>
+                <dd className="truncate text-text-primary" data-testid="ai-chat-execution-device">
+                  {executionDeviceName || initialAddress.deviceId}
+                </dd>
               </dl>
             </div>
           </aside>

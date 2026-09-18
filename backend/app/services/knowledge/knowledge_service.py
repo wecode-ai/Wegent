@@ -315,6 +315,7 @@ class KnowledgeService:
                 data.kb_type or KnowledgeBaseType.NOTEBOOK
             ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
+            "dingtalkAutoSyncEnabled": data.dingtalk_auto_sync_enabled,
             "summaryEnabled": data.summary_enabled,
         }
         if data.allow_document_download is not None:
@@ -357,6 +358,7 @@ class KnowledgeService:
         # Build resource data
         resource_data = kb_crd.model_dump()
         if data.allow_document_download is None:
+            # The download policy treats an absent setting as allowed.
             resource_data["spec"].pop("allowDocumentDownload", None)
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}
@@ -949,6 +951,9 @@ class KnowledgeService:
                         data.retrieval_config.hybrid_weights.model_dump()
                     )
                 spec["retrievalConfig"] = current_retrieval_config
+
+        if data.dingtalk_auto_sync_enabled is not None:
+            spec["dingtalkAutoSyncEnabled"] = data.dingtalk_auto_sync_enabled
 
         # Update summary_enabled if provided
         if data.summary_enabled is not None:

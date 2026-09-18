@@ -1530,7 +1530,7 @@ async def _create_streaming_response_unified(
         finally:
             if pubsub_obj is not None:
                 try:
-                    await pubsub_obj.unsubscribe()
+                    await pubsub_obj.aclose()
                 except Exception:
                     pass
             if pubsub_redis_client is not None:

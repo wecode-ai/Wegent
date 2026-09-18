@@ -1,0 +1,46 @@
+[package]
+name = "wegent-backend-rs-intra"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.23.1"
+# Keep every Wegent Rust component on the registry-owning metrics revision:
+# brz-http, brz-http-server, brz-logs, and brz-mysql all pin
+# `brz-metrics = "=0.0.5"` at these releases. Every dependency that gates
+# metrics behind a feature has that feature enabled.
+brz-http = { version = "=0.0.5", features = ["json", "gzip", "metrics"] }
+brz-http-server = { version = "=0.0.13", features = ["macros", "metrics"] }
+brz-logs = { version = "=0.0.6", features = ["metrics"] }
+brz-metrics = "=0.0.5"
+brz-mysql = "=0.0.10"
+brz-redis = { version = "=0.0.8", features = ["metrics"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hmac = "0.12"
+jsonwebtoken = { version = "9.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+sha1 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tracing = "0.1"
+url = "2"
+wegent-backend-rs = { path = "../backend-rs" }
+
+[dev-dependencies]
+flate2 = { version = "1", default-features = false, features = ["zlib"] }
+http = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[[bin]]
+name = "wegent-backend-rs"
+path = "src/main.rs"

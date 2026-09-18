@@ -38,7 +38,55 @@ const MAX_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 3_600;
 const GIT_REPOSITORY_VALIDATION_TIMEOUT_SECONDS: u64 = 10;
 const GIT_CLONE_TERMINATION_GRACE_SECONDS: u64 = 1;
 
-pub async fn prepare_git_workspace(
+pub async fn prepare_git_workspace(request: ExecutionRequest) -> Result<ExecutionRequest, String> {
+    let repositories = execution_repositories(&request)?;
+    if repositories.is_empty() {
+        return prepare_single_git_workspace(request).await;
+    }
+    let environment_root = resolve_environment_root(&request, &repositories);
+    let mut primary_path = None;
+    for repository in &repositories {
+        let repository_path = environment_root.join(&repository.path);
+        let mut repository_request = request.clone();
+        repository_request.project_workspace_path = Some(repository_path.display().to_string());
+        repository_request.extra.insert(
+            "git_url".to_owned(),
+            Value::String(repository.git_url.clone()),
+        );
+        if repository.branch_name.is_empty() {
+            repository_request.extra.remove("git_branch");
+        } else {
+            repository_request.extra.insert(
+                "git_branch".to_owned(),
+                Value::String(repository.branch_name.clone()),
+            );
+        }
+        prepare_single_git_workspace(repository_request).await?;
+        if repository.primary {
+            primary_path = Some(repository_path.clone());
+        }
+    }
+    let primary_path =
+        primary_path.ok_or_else(|| "Execution environment has no primary repository".to_owned())?;
+    let mut prepared = request;
+    prepared.project_workspace_path = Some(primary_path.display().to_string());
+    prepared.runtime_workspace_roots = repositories
+        .iter()
+        .map(|repository| {
+            environment_root
+                .join(&repository.path)
+                .display()
+                .to_string()
+        })
+        .collect();
+    prepared.extra.insert(
+        "environment_root".to_owned(),
+        Value::String(environment_root.display().to_string()),
+    );
+    Ok(prepared)
+}
+
+async fn prepare_single_git_workspace(
     mut request: ExecutionRequest,
 ) -> Result<ExecutionRequest, String> {
     let Some(git_url) = request.git_url() else {
@@ -65,7 +113,19 @@ pub async fn prepare_git_workspace(
 
     match classify_project_path(&project_path) {
         ProjectPathState::GitRepository => {
-            validate_existing_git_repository(&project_path).await?;
+            if let Err(validation_error) = validate_existing_git_repository(&project_path).await {
+                // A `.git` directory without a valid HEAD commit is provably an
+                // interrupted clone (real user data never carries a `.git`), so
+                // heal the workspace by recloning instead of failing forever.
+                fields.push(("validation_error", validation_error));
+                log_executor_event("git workspace invalid repository", &fields);
+                cleanup_incomplete_clone(&project_path)?;
+                clone_repo(&request, &git_url, &project_path).await?;
+                setup_git_config(&request, &project_path).await;
+                fields.push(("status", "recloned".to_owned()));
+                log_executor_event("git workspace prepared", &fields);
+                return Ok(request);
+            }
             fields.push(("reason", "existing_git_repository".to_owned()));
             log_executor_event("git workspace clone skipped", &fields);
             setup_git_config(&request, &project_path).await;
@@ -87,6 +147,129 @@ pub async fn prepare_git_workspace(
             project_path.display()
         )),
     }
+}
+
+struct ExecutionRepository {
+    git_url: String,
+    branch_name: String,
+    path: PathBuf,
+    primary: bool,
+}
+
+fn execution_repositories(request: &ExecutionRequest) -> Result<Vec<ExecutionRepository>, String> {
+    let Some(values) = request
+        .extra
+        .get("execution")
+        .and_then(|execution| execution.get("workspace"))
+        .and_then(|workspace| workspace.get("repositories"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    let mut repositories = Vec::with_capacity(values.len());
+    for value in values {
+        let git_url = value
+            .get("url")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Execution repository URL is required".to_owned())?;
+        let path = value
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Execution repository path is required".to_owned())?;
+        let path = safe_relative_path(path)?;
+        repositories.push(ExecutionRepository {
+            git_url: git_url.to_owned(),
+            branch_name: value
+                .get("ref")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_owned(),
+            path,
+            primary: value
+                .get("primary")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+    if repositories
+        .iter()
+        .filter(|repository| repository.primary)
+        .count()
+        != 1
+    {
+        return Err("Execution environment must have exactly one primary repository".to_owned());
+    }
+    for (index, left) in repositories.iter().enumerate() {
+        for right in repositories.iter().skip(index + 1) {
+            if left.path.starts_with(&right.path) || right.path.starts_with(&left.path) {
+                return Err(format!(
+                    "Execution repository paths must not overlap: {} and {}",
+                    left.path.display(),
+                    right.path.display()
+                ));
+            }
+        }
+    }
+    Ok(repositories)
+}
+
+fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "Execution repository path must be a normalized relative path: {value}"
+        ));
+    }
+    Ok(path)
+}
+
+fn resolve_environment_root(
+    request: &ExecutionRequest,
+    repositories: &[ExecutionRepository],
+) -> PathBuf {
+    if let Some(path) = request
+        .extra
+        .get("environment_root")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return resolve_workspace_path(path);
+    }
+    if let (Some(primary), Some(workspace_path)) = (
+        repositories.iter().find(|repository| repository.primary),
+        request
+            .project_workspace_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    ) {
+        let workspace_path = resolve_workspace_path(workspace_path);
+        if workspace_path.ends_with(&primary.path) {
+            let mut root = workspace_path;
+            for _ in primary.path.components() {
+                root.pop();
+            }
+            return root;
+        }
+    }
+    let project_id = crate::local::capabilities::get_project_id(request);
+    if !project_id.is_empty() {
+        return workspace_root()
+            .join("projects")
+            .join(project_id)
+            .join("environment");
+    }
+    workspace_root().join(&request.task_id).join("environment")
 }
 
 fn resolve_git_project_path(request: &ExecutionRequest, repo_name: &str) -> PathBuf {
@@ -663,7 +846,28 @@ fn truncate_summary(value: &str, max_chars: usize) -> String {
 
 fn workspace_root() -> PathBuf {
     env::var_os("WORKSPACE_ROOT")
+        .or_else(|| env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR"))
         .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("WEGENT_EXECUTOR_HOME")
+                .map(PathBuf::from)
+                .map(|root| root.join("workspace").join("projects"))
+        })
+        .or_else(|| {
+            env::var_os("WECODE_HOME").map(PathBuf::from).map(|root| {
+                root.join("wegent-executor")
+                    .join("workspace")
+                    .join("projects")
+            })
+        })
+        .or_else(|| {
+            home_dir().map(|home| {
+                home.join(".wecode")
+                    .join("wegent-executor")
+                    .join("workspace")
+                    .join("projects")
+            })
+        })
         .unwrap_or_else(|| PathBuf::from("/workspace"))
 }
 
@@ -673,8 +877,307 @@ fn home_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::process::{Command as StdCommand, Output};
+
     use super::*;
     use serde_json::json;
+
+    fn run_test_git(command: &mut StdCommand) -> Output {
+        command
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .output()
+            .unwrap()
+    }
+
+    fn assert_test_git_success(description: &str, command: &mut StdCommand) {
+        let output = run_test_git(command);
+        assert!(
+            output.status.success(),
+            "{description} failed with status {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    fn create_local_repository(
+        root: &Path,
+        name: &str,
+        file_name: &str,
+        contents: &str,
+    ) -> PathBuf {
+        let repository = root.join(name);
+        fs::create_dir_all(&repository).unwrap();
+        assert_test_git_success(
+            "git init",
+            StdCommand::new("git").arg("init").arg(&repository),
+        );
+        fs::write(repository.join(file_name), contents).unwrap();
+        assert_test_git_success(
+            "git add",
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["add", "."]),
+        );
+        assert_test_git_success(
+            "git commit",
+            StdCommand::new("git").arg("-C").arg(&repository).args([
+                "-c",
+                "user.name=Wegent Test",
+                "-c",
+                "user.email=wegent@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ]),
+        );
+        repository
+    }
+
+    #[test]
+    fn reads_multiple_execution_repositories_and_primary_workspace() {
+        let mut request = ExecutionRequest {
+            project_workspace_path: Some("/workspace/environments/project-1/wegent".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "name": "Wegent",
+                            "url": "https://github.com/wecode-ai/Wegent.git",
+                            "ref": "main",
+                            "path": "wegent",
+                            "primary": true
+                        },
+                        {
+                            "name": "SDK",
+                            "url": "https://github.com/example/sdk.git",
+                            "ref": "v2",
+                            "path": "deps/sdk",
+                            "primary": false
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let repositories = execution_repositories(&request).unwrap();
+
+        assert_eq!(repositories.len(), 2);
+        assert_eq!(repositories[0].path, PathBuf::from("wegent"));
+        assert_eq!(repositories[1].path, PathBuf::from("deps/sdk"));
+        assert_eq!(
+            resolve_environment_root(&request, &repositories),
+            PathBuf::from("/workspace/environments/project-1")
+        );
+    }
+
+    #[test]
+    fn rejects_execution_repositories_without_exactly_one_primary() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": "https://github.com/example/one.git",
+                            "path": "one",
+                            "primary": false
+                        },
+                        {
+                            "url": "https://github.com/example/two.git",
+                            "path": "two",
+                            "primary": false
+                        }
+                    ]
+                }
+            }),
+        );
+
+        assert!(execution_repositories(&request).is_err());
+    }
+
+    #[test]
+    fn rejects_overlapping_execution_repository_paths() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": "https://github.com/example/one.git",
+                            "path": "source",
+                            "primary": true
+                        },
+                        {
+                            "url": "https://github.com/example/two.git",
+                            "path": "source/dependencies/two",
+                            "primary": false
+                        }
+                    ]
+                }
+            }),
+        );
+
+        assert!(execution_repositories(&request).is_err());
+    }
+
+    #[test]
+    fn ignores_a_prepared_workspace_path_that_is_not_the_primary_repository() {
+        let mut request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            project_workspace_path: Some("/tmp/unrelated-workspace".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": "https://github.com/example/one.git",
+                            "path": "source",
+                            "primary": true
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let repositories = execution_repositories(&request).unwrap();
+
+        assert_eq!(
+            resolve_environment_root(&request, &repositories),
+            workspace_root().join("task-1").join("environment")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepares_multiple_local_repositories_in_one_environment() {
+        let directory = tempfile::tempdir().unwrap();
+        let sources = directory.path().join("sources");
+        let environment_root = directory.path().join("environment");
+        let primary = create_local_repository(&sources, "application", "app.txt", "application");
+        let dependency = create_local_repository(&sources, "shared-sdk", "sdk.txt", "shared sdk");
+        let mut request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "environment_root".to_owned(),
+            Value::String(environment_root.display().to_string()),
+        );
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": primary.display().to_string(),
+                            "path": "application",
+                            "primary": true
+                        },
+                        {
+                            "url": dependency.display().to_string(),
+                            "path": "dependencies/shared-sdk",
+                            "primary": false
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let prepared = prepare_git_workspace(request).await.unwrap();
+
+        assert_eq!(
+            prepared.project_workspace_path.as_deref(),
+            Some(environment_root.join("application").to_str().unwrap())
+        );
+        assert_eq!(
+            prepared.runtime_workspace_roots,
+            vec![
+                environment_root.join("application").display().to_string(),
+                environment_root
+                    .join("dependencies/shared-sdk")
+                    .display()
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(environment_root.join("application/app.txt")).unwrap(),
+            "application"
+        );
+        assert_eq!(
+            fs::read_to_string(environment_root.join("dependencies/shared-sdk/sdk.txt")).unwrap(),
+            "shared sdk"
+        );
+    }
+
+    #[tokio::test]
+    async fn reclones_a_workspace_left_behind_by_an_interrupted_clone() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = create_local_repository(
+            &directory.path().join("sources"),
+            "application",
+            "app.txt",
+            "application",
+        );
+        let environment_root = directory.path().join("environment");
+        let target = environment_root.join("application");
+        // Mimic a clone interrupted right after `git init`: `.git` exists but
+        // holds no commits, so HEAD^{commit} can never resolve.
+        fs::create_dir_all(&target).unwrap();
+        assert_test_git_success("git init", StdCommand::new("git").arg("init").arg(&target));
+        let mut request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "environment_root".to_owned(),
+            Value::String(environment_root.display().to_string()),
+        );
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": source.display().to_string(),
+                            "path": "application",
+                            "primary": true
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let prepared = prepare_git_workspace(request).await.unwrap();
+
+        assert_eq!(
+            prepared.project_workspace_path.as_deref(),
+            Some(target.to_str().unwrap())
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("app.txt")).unwrap(),
+            "application"
+        );
+        assert_test_git_success(
+            "git rev-parse",
+            StdCommand::new("git").arg("-C").arg(&target).args([
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            ]),
+        );
+    }
 
     #[test]
     fn repo_name_supports_https_and_ssh_urls() {

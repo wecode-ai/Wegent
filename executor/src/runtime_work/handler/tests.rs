@@ -10,12 +10,88 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+/// Restores one environment variable when a test finishes.
+struct ScalarEnv {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScalarEnv {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScalarEnv {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+#[path = "task_project_move_tests.rs"]
+mod task_project_move_tests;
+
+#[path = "message_presentation_tests.rs"]
+mod message_presentation_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
 
     assert!(config.initialized);
     assert_eq!(config.proxy_url, None);
+}
+
+#[test]
+fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
+    assert!(!should_resume_persisted_turns_before_rpc(
+        "runtime.codex.runtime_config.update"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.ensure_started"
+    ));
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.codex.models.list"
+    ));
+}
+
+#[tokio::test]
+async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
+    let (event_tx, _) = broadcast::channel(1);
+    let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "device-1",
+        "/bin/false",
+        event_tx,
+    );
+    assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
+
+    handler
+        .dispatch(
+            "runtime.codex.runtime_config.update",
+            json!({"proxyUrl": "http://127.0.0.1:7890"}),
+        )
+        .await
+        .expect("runtime proxy configuration should succeed before recovery");
+
+    let config = handler.codex_runtime_proxy_config.lock().await;
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+    drop(config);
+    assert!(
+        handler.worktree_reconciliation_state.lock().await.completed,
+        "successful runtime proxy configuration should release deferred recovery"
+    );
+    assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
 }
 
 #[test]
@@ -1309,6 +1385,47 @@ fn skips_backend_connection_without_a_configured_connection() {
 }
 
 #[test]
+fn rewrites_loopback_gateway_from_the_payload_backend_url() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({
+        "base_url": "http://localhost:8000/api/runtime-work/llm-responses-proxy",
+    });
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["base_url"],
+        json!("http://backend.example.com:8000/api/runtime-work/llm-responses-proxy")
+    );
+}
+
+#[test]
+fn rewrites_loopback_gateway_when_no_connection_snapshot_exists() {
+    let _lock = crate::test_env::lock();
+    let _backend = ScalarEnv::remove("WEGENT_BACKEND_URL");
+    let _mode = ScalarEnv::set("EXECUTOR_MODE", "local");
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> = Arc::new(Mutex::new(None));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({"baseUrl": "http://127.0.0.1:8000/api/work"});
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["baseUrl"],
+        json!("http://backend.example.com:8000/api/work")
+    );
+}
+
+#[test]
 fn codex_cached_transcripts_never_expose_offset_pagination() {
     let pagination = transcript_pagination(
         "codex",
@@ -1542,6 +1659,91 @@ fn active_codex_items_replace_stale_paginated_items() {
 }
 
 #[test]
+fn active_codex_plan_deltas_restore_complete_streaming_content() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "plan-1",
+                "delta": "# Plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "plan-1",
+                "delta": "\n- Inspect the repo."
+            }
+        }),
+    );
+
+    let messages = handler.active_codex_transcript_messages("task-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["id"], "plan-plan-1");
+    assert_eq!(messages[0]["blocks"][0]["type"], "plan");
+    assert_eq!(
+        messages[0]["blocks"][0]["content"],
+        "# Plan\n\n- Inspect the repo."
+    );
+    assert_eq!(messages[0]["blocks"][0]["status"], "streaming");
+}
+
+#[test]
+fn completed_codex_plan_replaces_active_delta_snapshot() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "itemId": "plan-1",
+                "delta": "# Plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "plan-1",
+                    "type": "plan",
+                    "text": "# Plan\n\n- Inspect the repo."
+                }
+            }
+        }),
+    );
+
+    let messages = handler.active_codex_transcript_messages("task-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        messages[0]["blocks"][0]["content"],
+        "# Plan\n\n- Inspect the repo."
+    );
+    assert_eq!(messages[0]["blocks"][0]["status"], "done");
+}
+
+#[test]
 fn late_codex_items_do_not_recreate_cleared_active_transcript() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
@@ -1673,6 +1875,32 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
             }
         }),
     );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-live",
+                "itemId": "plan-live",
+                "delta": "# Quicksort plan\n"
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/plan/delta",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-live",
+                "itemId": "plan-live",
+                "delta": "\n- Partition the input."
+            }
+        }),
+    );
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -1701,6 +1929,19 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         transcript["messages"][4]["blocks"][0]["content"],
         "Writing quicksort"
     );
+    let plan = transcript["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .find(|block| block["id"] == "plan-plan-live")
+        .expect("running transcript should include the active plan");
+    assert_eq!(plan["type"], "plan");
+    assert_eq!(
+        plan["content"],
+        "# Quicksort plan\n\n- Partition the input."
+    );
+    assert_eq!(plan["status"], "streaming");
     let _ = fs::remove_dir_all(root);
 }
 
@@ -2084,6 +2325,18 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     source.runtime_project_key = Some("project-1".to_owned());
     source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+    source.runtime_handle = json!({
+        "executionRequest": {
+            "model_config": {
+                "model": "openai",
+                "model_id": "gpt-5.6-sol",
+            },
+        },
+        "modelSelection": {
+            "modelName": "gpt-5.6-sol",
+            "modelType": "codex-official",
+        },
+    });
 
     let forked = forked_task_link(
         &source,
@@ -2100,6 +2353,14 @@ fn forked_task_inherits_project_routing_metadata() {
     );
     assert_eq!(forked.workspace_path, source.workspace_path);
     assert_eq!(forked.runtime, source.runtime);
+    assert_eq!(
+        forked.runtime_handle["executionRequest"],
+        source.runtime_handle["executionRequest"]
+    );
+    assert_eq!(
+        forked.runtime_handle["modelSelection"],
+        source.runtime_handle["modelSelection"]
+    );
 }
 
 #[test]
@@ -4402,6 +4663,278 @@ fn spawned_child_thread_inherits_parent_event_route_and_mapper() {
 }
 
 #[test]
+fn spawned_child_notifications_wait_for_parent_route_registration() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("pending-spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "child output before parent spawn completion"
+        }
+    }));
+
+    assert!(!handler.thread_event_route_exists("thread-child"));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "prompt": "Inspect the child route",
+                "receiverThreadIds": ["thread-child"],
+                "agentsStates": {
+                    "thread-child": {
+                        "status": "pendingInit",
+                        "message": null
+                    }
+                },
+                "status": "completed"
+            }
+        }
+    }));
+
+    assert!(handler.thread_event_route_exists("thread-child"));
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.subagent.activity"
+    );
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.block.created"
+    );
+    let child_event = event_rx
+        .try_recv()
+        .expect("pending child output should replay through the inherited route");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(child_event["payload"]["taskId"], local_task_id);
+    assert_eq!(child_event["payload"]["subtaskId"], "turn-root");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "child output before parent spawn completion"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn child_notifications_remain_ordered_while_pending_notifications_replay() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("replaying-spawned-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "id": "spawn-call",
+                "type": "collabAgentToolCall",
+                "tool": "spawnAgent",
+                "receiverThreadIds": ["thread-child"],
+                "status": "completed"
+            }
+        }
+    }));
+    while event_rx.try_recv().is_ok() {}
+
+    let child_started = json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    });
+    let pending_replay = {
+        let mut routing = handler
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned");
+        let generation = routing
+            .routes
+            .get("thread-child")
+            .expect("child route should exist")
+            .generation;
+        assert!(routing
+            .replaying_route_generations
+            .insert("thread-child".to_owned(), generation)
+            .is_none());
+        Some(PendingCodexNotificationReplay {
+            route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
+            notifications: vec![PendingCodexNotification {
+                thread_id: "thread-child".to_owned(),
+                message: child_started,
+            }],
+        })
+    };
+
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "ordered child output"
+        }
+    }));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.replay_codex_notifications(pending_replay);
+
+    let child_event = event_rx
+        .try_recv()
+        .expect("child delta should follow its pending start notification");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "ordered child output"
+    );
+    assert!(event_rx.try_recv().is_err());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn pending_notifications_do_not_cross_thread_route_generations() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("replaced-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let old_task_id = "runtime-task-old";
+    let new_task_id = "runtime-task-new";
+    for local_task_id in [old_task_id, new_task_id] {
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-child".to_owned());
+        handler.upsert_local_task(link);
+    }
+    handler.register_thread_event_route(
+        "thread-child",
+        old_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: old_task_id.to_owned(),
+            subtask_id: "turn-old".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+
+    let old_replay = {
+        let mut routing = handler
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned");
+        let generation = routing
+            .routes
+            .get("thread-child")
+            .expect("old route should exist")
+            .generation;
+        routing
+            .replaying_route_generations
+            .insert("thread-child".to_owned(), generation);
+        Some(PendingCodexNotificationReplay {
+            route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
+            notifications: vec![PendingCodexNotification {
+                thread_id: "thread-child".to_owned(),
+                message: json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": "thread-child",
+                        "turnId": "turn-old",
+                        "itemId": "child-message",
+                        "delta": "stale child output"
+                    }
+                }),
+            }],
+        })
+    };
+
+    handler.register_thread_event_route(
+        "thread-child",
+        new_task_id.to_owned(),
+        ExecutionRequest {
+            task_id: new_task_id.to_owned(),
+            subtask_id: "turn-new".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        false,
+    );
+    handler.replay_codex_notifications(old_replay);
+
+    assert!(
+        event_rx.try_recv().is_err(),
+        "old replay must not reach the replacement route"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn active_parent_registers_child_route_before_skipping_its_own_notification() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-spawned-child-thread-route");
@@ -4523,6 +5056,37 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 
     let discovered_thread_ids = HashSet::from(["thread-1".to_owned()]);
     assert!(is_cached_codex_link_hidden(&link, &discovered_thread_ids));
+}
+
+#[tokio::test]
+async fn cached_task_list_uses_the_existing_runtime_work_store() {
+    let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "local-task-1".to_owned(),
+        runtime: "claude".to_owned(),
+        workspace_path: "/tmp/cached-project".to_owned(),
+        title: "Cached task".to_owned(),
+        status: "active".to_owned(),
+        ..RuntimeTaskLink::default()
+    });
+
+    let response = handler
+        .list_tasks(&json!({ "preferCached": true }))
+        .await
+        .expect("cached task list should be available");
+    let tasks = response["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array")
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(tasks
+        .iter()
+        .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -5497,6 +6061,10 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         .collect::<Vec<_>>();
 
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+    assert!(target_paths.iter().any(|path| {
+        path.ends_with("/workspace/attachments/runtime/task-1")
+            || path.ends_with("\\workspace\\attachments\\runtime\\task-1")
+    }));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
     let _ = fs::remove_dir_all(root);

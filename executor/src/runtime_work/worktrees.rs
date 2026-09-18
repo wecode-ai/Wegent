@@ -3188,6 +3188,7 @@ mod tests {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            goal_execution_status: None,
             supervisor: None,
             git_info: None,
             created_at: 0,
@@ -3204,6 +3205,7 @@ mod tests {
             sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
+            preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
         }

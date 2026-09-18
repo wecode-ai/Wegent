@@ -438,6 +438,7 @@ def _require_attachment_download_allowed(
             db,
             attachment_id=context.id,
             mime_type=getattr(context, "mime_type", None),
+            file_extension=getattr(context, "file_extension", None),
             purpose=purpose,
         )
     except DocumentDownloadDisabledError as exc:
@@ -1104,6 +1105,9 @@ async def download_attachment(
     download_token: Optional[str] = Query(
         None, description="Short-lived token for browser-native download"
     ),
+    purpose: Optional[str] = Query(
+        None, description="Access purpose override; only 'preview' is honoured"
+    ),
     range_header: Optional[str] = Header(None, alias="Range"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(security.get_current_user_optional),
@@ -1148,7 +1152,7 @@ async def download_attachment(
     # Method 3: JWT token authentication (existing logic)
     elif current_user:
         context = _get_attachment_context(db, attachment_id, current_user)
-        download_purpose = "download"
+        download_purpose = "preview" if purpose == "preview" else "download"
         has_access = True
 
     # Method 4: No authentication - redirect to login for browser access
@@ -1176,7 +1180,9 @@ async def download_attachment(
     external_response = await _stream_external_attachment(
         context,
         range_header=range_header,
-        disposition="inline" if download_purpose == "playback" else "attachment",
+        disposition=(
+            "inline" if download_purpose in ("playback", "preview") else "attachment"
+        ),
     )
     if external_response is not None:
         return external_response
@@ -1200,13 +1206,17 @@ async def download_attachment(
                     default_media_type=context.mime_type or "video/mp4",
                     range_header=range_header,
                     disposition=(
-                        "inline" if download_purpose == "playback" else "attachment"
+                        "inline"
+                        if download_purpose in ("playback", "preview")
+                        else "attachment"
                     ),
                 )
 
     return await _stream_stored_attachment(
         context,
-        disposition="inline" if download_purpose == "playback" else "attachment",
+        disposition=(
+            "inline" if download_purpose in ("playback", "preview") else "attachment"
+        ),
     )
 
 

@@ -48,6 +48,7 @@ import {
   projectSpaceRefFromRoute,
   projectSpaceRouteParam,
   projectSpaceRouteRequestsDefaultProject,
+  projectSpaceRouteTargetsDefaultWorkItems,
 } from '@/features/todo/projectSpaceRoute'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
@@ -154,6 +155,7 @@ export function DesktopWorkbenchLayout({
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
+    cancelRuntimeTask: onCancelRuntimeTask,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
@@ -235,7 +237,13 @@ export function DesktopWorkbenchLayout({
   const [taskView, setTaskView] = useState<'workbench' | 'default-work-items'>('workbench')
   const routeWorkItemsOpen =
     surfaceKind === 'board' || (surfaceKind === undefined && currentPath === '/todo')
-  const defaultWorkItemsOpen = taskView === 'default-work-items'
+  const activeProjectSpaceContentRoute =
+    ownedWorkspaceTab?.kind === 'board'
+      ? ownedWorkspaceTab.contentRoute
+      : `${currentPath}${window.location.search}`
+  const defaultWorkItemsOpen =
+    taskView === 'default-work-items' ||
+    (routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute))
   const workItemSurfaceOpen = routeWorkItemsOpen || defaultWorkItemsOpen
   const workItemUser = state.user ?? (defaultWorkItemsOpen ? LOCAL_USER : null)
   const workItemServicesReady = defaultWorkItemsOpen
@@ -1171,6 +1179,7 @@ export function DesktopWorkbenchLayout({
                   startupActive={routeActive && routeWorkItemsOpen}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
+                  onCancelRuntimeTask={onCancelRuntimeTask}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}
                   activeProjectRef={
@@ -1210,7 +1219,7 @@ export function DesktopWorkbenchLayout({
                     }
                     if (!project) {
                       workspaceTabs.updateActiveTab({
-                        title: t('workbench.workspace_tab_board', '协作'),
+                        title: t('workbench.workspace_tab_board', '协作 (Beta)'),
                         contentRoute: '/todo',
                       })
                       return

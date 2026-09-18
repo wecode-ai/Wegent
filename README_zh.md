@@ -142,6 +142,7 @@ pnpm --filter wework dev:mac
 | `executor/`                | 本地与远程的智能体任务执行环境          |
 | `frontend/`                | Wegent 平台 Web 管理界面                |
 | `backend/`                 | REST API 和核心业务逻辑                 |
+| `backend-rs/`              | Rust API 渐进迁移网关与已迁移处理器     |
 | `executor_manager/`        | 执行器调度与编排                        |
 | `chat_shell/`              | 对话运行时                              |
 | `knowledge_runtime/`       | 知识检索服务                            |

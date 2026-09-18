@@ -1,4 +1,6 @@
+import { RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
+import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
   useCallback,
   useContext,
@@ -35,6 +37,7 @@ import {
   Grid3X3,
   HardDrive,
   ListTodo,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -58,6 +61,11 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   CollaborationSettings,
   CollaborationProjectViewShell,
+  ProjectCollaborationParticipants,
+  ProjectAutomaticProcessing,
+  ProjectBoardSettingsDialog,
+  ProjectCollaborationGroups,
+  ProjectExecutionEnvironments,
   ProjectIssueTable,
   ProjectCreateDialog,
   ProjectSpaceSidebar,
@@ -71,7 +79,7 @@ import {
   type CollaborationProjectView,
   type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
-import { ProjectDispatchSettings, ProjectSettingsShell } from '@wegent/collaboration/project-manage'
+import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
 import {
   createStandardCloudBoardColumns,
   executeStandardCloudBoardMutation,
@@ -164,7 +172,6 @@ import {
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
-import { ProjectAutomationView } from './ProjectAutomationView'
 import {
   canEditProjectSpaceIssue,
   type LocatedProjectSpace,
@@ -212,10 +219,7 @@ import {
   runtimeMyWorkItems,
   runtimeWorkItemReference,
 } from './runtimeMyWork'
-type ProjectView = Extract<
-  CollaborationProjectView,
-  'board' | 'table' | 'files' | 'automation' | 'manage'
->
+type ProjectView = Extract<CollaborationProjectView, 'board' | 'table' | 'files' | 'manage'>
 type WeworkStandardBoardUpdate = Omit<StandardCloudBoardMutationUpdate, 'priority'> & {
   priority?: CollaborationIssue['priority']
 } & Partial<IssueExecutionConfigResult> & {
@@ -721,6 +725,26 @@ function CloudTodoBoardSkeleton() {
   )
 }
 
+function CloudTodoStartupAnimation({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="cloud-todo-startup-animation"
+      aria-busy="true"
+      aria-label={label}
+      className="flex h-full min-h-0 items-center justify-center"
+    >
+      <div className="flex flex-col items-center gap-3 text-text-secondary">
+        <div className="relative flex h-12 w-12 items-center justify-center">
+          <div className="absolute inset-0 rounded-full border border-border" />
+          <LoaderCircle className="h-12 w-12 animate-spin text-text-primary" strokeWidth={1.25} />
+          <Bot className="absolute h-5 w-5 text-text-primary" />
+        </div>
+        <span className="text-sm">{label}</span>
+      </div>
+    </div>
+  )
+}
+
 function cloudProjectRequestError(cause: unknown): string {
   if (!(cause instanceof ApiError)) {
     return cause instanceof Error ? cause.message : '创建项目空间失败'
@@ -809,6 +833,10 @@ export function CloudTodoWorkspace({
     [changeRequestStatusEnabled, services.deviceApi]
   )
   const cloudWorkspaceApi = services.sharedWorkspaceApi
+  const projectAgentConfigurationHost = useMemo(
+    () => createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
+    [services.agentResourceApi]
+  )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)
   const requestedProjectRef =
@@ -821,6 +849,7 @@ export function CloudTodoWorkspace({
         : null
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [projectSettingsSectionId, setProjectSettingsSectionId] = useState('project')
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const cloudWorkspaceMessages = useMemo(
@@ -839,14 +868,7 @@ export function CloudTodoWorkspace({
           ? String(requestedProjectRef.projectId)
           : null,
       issueId: selectedItem?.project_store === 'backend' ? selectedItem.id : null,
-      view:
-        projectView === 'files'
-          ? 'files'
-          : projectView === 'automation'
-            ? 'automation'
-            : projectView === 'manage'
-              ? 'manage'
-              : 'board',
+      view: projectView === 'files' ? 'files' : projectView === 'manage' ? 'manage' : 'board',
       rootView: 'home',
     },
     messages: cloudWorkspaceMessages,
@@ -1396,14 +1418,6 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
-  const selectedProjectManagerName = selectedProject
-    ? (collaborationProjectMembers[selectedProjectKey ?? '']?.find(
-        member => member.user_id === selectedProject.created_by_user_id
-      )?.user_name ??
-      (selectedProject.created_by_user_id === user.id
-        ? user.user_name
-        : `#${selectedProject.created_by_user_id}`))
-    : user.user_name
   const activeItemTaskBindings = useMemo(() => {
     const refreshedBindings =
       itemTaskBindingsProjectKey === selectedProjectKey
@@ -1965,9 +1979,8 @@ export function CloudTodoWorkspace({
     !boardItemsLoading &&
     startupFocusedItemReady
   useEffect(() => {
-    if (!startupBoardReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
-      return
-    }
+    if (!startupBoardReady) return
+    if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
       console.error('[Wework] Failed to reveal the ready project space', error)
     })
@@ -4150,1834 +4163,1926 @@ export function CloudTodoWorkspace({
   }, [backgroundTaskItemId, closeIssuePanelStack, selectedItem])
 
   return (
-    <div
-      className={cn(
-        'z-content flex min-h-0 min-w-0 overflow-hidden bg-background text-text-primary',
-        embedded ? 'relative flex-1' : 'absolute inset-0 w-full'
-      )}
-      data-testid="cloud-todo-workspace"
-      data-embedded={embedded}
-      data-sidebar-collapsed={embedded || sidebarCollapsed}
+    <RuntimeConfigurationProvider
+      api={cloudWorkspaceApi}
+      project={
+        selectedProject?.location === 'cloud' ? (selectedProject as CollaborationProject) : null
+      }
+      locale={i18n.language}
     >
-      {notificationChoice.dialog}
-      {(selectedProject?.location === 'cloud'
-        ? cloudWorkspace.state.project?.id === String(selectedProject.id)
-        : selectedProjectKey === itemTaskBindingsProjectKey) &&
-      selectedProject?.pull_request_automation?.enabled &&
-      changeRequestMonitor
-        ? Object.entries(boardTaskBindings).map(([itemId, bindings]) => {
-            const binding = bindings.find(candidate => candidate.running) ?? bindings[0]
-            return binding?.changeRequestTarget ? (
-              <ProjectChangeRequestAutoRepairObserver
-                key={`${itemId}:${binding.device_id}:${binding.task_id}`}
-                itemId={itemId}
-                binding={binding}
-                monitor={changeRequestMonitor}
-                statuses={selectedProject.pull_request_automation!.statuses}
-                onRepair={continueChangeRequestRepair}
-              />
-            ) : null
-          })
-        : null}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {!embedded ? (
-          <aside
-            className={cn(
-              'relative shrink-0 overflow-hidden border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-200',
-              sidebarCollapsed ? 'w-0 border-r-0' : 'w-[240px]'
-            )}
-          >
-            <ProjectSpaceSidebar
-              header={
-                <DesktopSidebarHeader
-                  actionsTestId="cloud-todo-sidebar-chrome-controls"
-                  actions={
-                    <>
-                      <DesktopWindowControls
-                        sidebarCollapsed={false}
-                        onToggleSidebar={() => setSidebarCollapsed(true)}
-                        className="gap-0"
-                        toggleTestId="cloud-todo-collapse-sidebar"
-                      />
-                      <Tooltip label={t('workbench.search')} side="bottom" align="end">
-                        <button
-                          type="button"
-                          data-testid="cloud-search-toggle"
-                          onClick={() => setGlobalSearchOpen(true)}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                          aria-label={t('workbench.search')}
-                        >
-                          <Search className="h-4 w-4" />
-                        </button>
-                      </Tooltip>
-                    </>
-                  }
+      <div
+        className={cn(
+          'z-content flex min-h-0 min-w-0 overflow-hidden bg-background text-text-primary',
+          embedded ? 'relative flex-1' : 'absolute inset-0 w-full'
+        )}
+        data-testid="cloud-todo-workspace"
+        data-embedded={embedded}
+        data-sidebar-collapsed={embedded || sidebarCollapsed}
+      >
+        {notificationChoice.dialog}
+        {(selectedProject?.location === 'cloud'
+          ? cloudWorkspace.state.project?.id === String(selectedProject.id)
+          : selectedProjectKey === itemTaskBindingsProjectKey) &&
+        selectedProject?.pull_request_automation?.enabled &&
+        changeRequestMonitor
+          ? Object.entries(boardTaskBindings).map(([itemId, bindings]) => {
+              const binding = bindings.find(candidate => candidate.running) ?? bindings[0]
+              return binding?.changeRequestTarget ? (
+                <ProjectChangeRequestAutoRepairObserver
+                  key={`${itemId}:${binding.device_id}:${binding.task_id}`}
+                  itemId={itemId}
+                  binding={binding}
+                  monitor={changeRequestMonitor}
+                  statuses={selectedProject.pull_request_automation!.statuses}
+                  onRepair={continueChangeRequestRepair}
                 />
-              }
-              navItems={[
-                {
-                  icon: <Plus className="h-4 w-4 text-current" />,
-                  label: isMyTasksBoard
-                    ? t('todo.new_task', '新建任务')
-                    : t('todo.new_issue', '新建 Issue'),
-                  testId: 'cloud-create-issue',
-                  selected: issueComposerOpen || createTodoOpen,
-                  onClick: () => openIssueCreation(),
-                },
-              ]}
-              sectionLabel={t('todo.boards', '看板')}
-              addLabel={t('todo.new_project_space', '新建项目空间')}
-              addIcon={<Plus className="mx-auto h-3.5 w-3.5" />}
-              onAdd={() => setCreateProjectOpen(true)}
-              onSelectProject={spaceKey => {
-                const project = projects.find(
-                  candidate => projectSpaceKey(projectSpaceRef(candidate)) === spaceKey
-                )
-                if (!project) return
-                setIssueComposerOpen(false)
-                setCreateTodoOpen(false)
-                selectProject(project)
-                setProjectView('board')
-                setSelectedItem(null)
-              }}
-              labels={{
-                actions: t('todo.project_actions', '项目操作'),
-                archive: '归档项目',
-                copied: t('todo.project_id_copied', '项目 ID 已复制'),
-                copyId: t('todo.copy_project_id', '复制项目 ID'),
-                rename: '修改项目名称',
-              }}
-              moreIcon={<Ellipsis className="h-3.5 w-3.5" />}
-              checkIcon={<Check className="h-3.5 w-3.5 text-green-600" />}
-              copyIcon={<Copy className="h-3.5 w-3.5" />}
-              projects={projects.map(project => {
-                const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
-                const spaceKey = projectSpaceKey(projectSpaceRef(project))
-                return {
-                  actionsAvailable: !isDefaultWorkItemProject(project),
-                  canManage:
-                    !isDefaultWorkItemProject(project) &&
-                    (project.created_by_user_id === user.id ||
-                      project.access_role === 'Owner' ||
-                      project.access_role === 'Maintainer'),
-                  count: collaborationProjectCounts[spaceKey],
-                  icon: (
-                    <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
-                  ),
-                  id: String(project.id),
-                  key: spaceKey,
-                  name: project.name,
-                  selected: sameProjectSpace(selectedProjectRef, projectSpaceRef(project)),
-                  onArchive: () => {
-                    setArchiveError(null)
-                    setArchiveProject(project)
-                  },
-                  onCopyId: () => copyTextToClipboard(String(project.id)),
-                  onRename: () => {
-                    setRenameProject(project)
-                    setRenameProjectName(project.name)
-                    setRenameError(null)
-                  },
-                }
-              })}
-              renderTooltip={({ align, children, className, label, side }) => (
-                <Tooltip label={label} side={side} align={align} className={className}>
-                  {children}
-                </Tooltip>
+              ) : null
+            })
+          : null}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          {!embedded ? (
+            <aside
+              className={cn(
+                'relative shrink-0 overflow-hidden border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-200',
+                sidebarCollapsed ? 'w-0 border-r-0' : 'w-[240px]'
               )}
-              account={
-                onOpenSettings && onLogout ? (
-                  <DesktopSidebarAccount
-                    user={user}
-                    onOpenSettings={onOpenSettings}
-                    onLogout={onLogout}
+            >
+              <ProjectSpaceSidebar
+                header={
+                  <DesktopSidebarHeader
+                    actionsTestId="cloud-todo-sidebar-chrome-controls"
+                    actions={
+                      <>
+                        <DesktopWindowControls
+                          sidebarCollapsed={false}
+                          onToggleSidebar={() => setSidebarCollapsed(true)}
+                          className="gap-0"
+                          toggleTestId="cloud-todo-collapse-sidebar"
+                        />
+                        <Tooltip label={t('workbench.search')} side="bottom" align="end">
+                          <button
+                            type="button"
+                            data-testid="cloud-search-toggle"
+                            onClick={() => setGlobalSearchOpen(true)}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                            aria-label={t('workbench.search')}
+                          >
+                            <Search className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
+                      </>
+                    }
                   />
-                ) : null
-              }
-            />
-          </aside>
-        ) : null}
-        <main
-          className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-          data-testid="cloud-todo-main"
-        >
-          {!embedded && !selectedProject && (
-            <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
-          )}
-          {!embedded && sidebarCollapsed && (
-            <div
-              data-testid="cloud-todo-collapsed-chrome-controls"
-              className="electron-titlebar-interactive-region pointer-events-auto absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
-            >
-              <DesktopWindowControls
-                sidebarCollapsed
-                onToggleSidebar={() => setSidebarCollapsed(false)}
-                className="gap-1"
-                toggleTestId="cloud-todo-expand-sidebar"
-              />
-            </div>
-          )}
-          {!selectedProject && projects.length > 0 && localProjectsError ? (
-            <div
-              data-testid="local-project-spaces-error"
-              className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
-            >
-              <span>本地项目空间加载失败：{localProjectsError}</span>
-              <button
-                type="button"
-                data-testid="local-project-spaces-retry"
-                onClick={retryLocalProjects}
-                className="h-7 shrink-0 rounded-md border border-destructive/30 px-2 text-xs font-medium hover:bg-destructive/10"
-              >
-                {t('common.retry', '重试')}
-              </button>
-            </div>
-          ) : null}
-          {issueComposerOpen ? (
-            <IssueComposer
-              key={`${issueComposerBoardKey}:${issueComposerStatus}:${issueComposerInitialContent}`}
-              projects={projects}
-              initialBoardKey={issueComposerBoardKey}
-              initialStartExecution={isProcessingStatus(issueComposerStatus)}
-              initialContent={issueComposerInitialContent}
-              localProjects={localProjectOptions}
-              projectMembers={collaborationProjectMembers}
-              initialLocalProjectId={selectedLocalProject?.id ?? null}
-              presentation={issueComposerPresentation}
-              busy={issueComposerBusy}
-              error={issueComposerError}
-              onCancel={() => setIssueComposerOpen(false)}
-              onCreate={createIssueFromComposer}
-            />
-          ) : !selectedProject && localProjectsError ? (
-            <div
-              data-testid="local-project-spaces-error"
-              className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-destructive"
-            >
-              <span>本地项目空间加载失败：{localProjectsError}</span>
-              <button
-                type="button"
-                data-testid="local-project-spaces-retry"
-                onClick={retryLocalProjects}
-                className="h-8 rounded-lg border border-destructive/30 px-3 text-sm font-medium hover:bg-destructive/10"
-              >
-                {t('common.retry', '重试')}
-              </button>
-            </div>
-          ) : (projectSpaceApis.local ? localProjectsLoading : cloudWorkspace.state.loading) ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
-              正在加载项目…
-            </div>
-          ) : !selectedProject ? (
-            <div
-              data-testid="cloud-project-unavailable"
-              className="flex flex-1 items-center justify-center text-sm text-text-muted"
-            >
-              未找到要打开的项目
-            </div>
-          ) : (
-            <CollaborationProjectViewShell
-              project={selectedProjectForViewAccess ?? selectedProject}
-              view={projectView}
-              labels={{
-                board: t('todo.board_view', '看板'),
-                table: t('todo.issue_table', '表格'),
-                files: t('todo.files_title', '文件'),
-                automation: t('todo.assignment_dispatch', '分配与调度'),
-                manage: t('todo.project_settings', '项目设置'),
-              }}
-              testIds={{
-                board: 'cloud-project-board-view',
-                table: 'cloud-project-table-view',
-                files: 'cloud-project-files-view',
-                automation: 'cloud-project-automation-view',
-                manage: 'cloud-project-manage-view',
-              }}
-              automationSupported={selectedProjectAutomationSupported}
-              enabledStandardViews={isMyTasksBoard ? ['board'] : undefined}
-              compactSwitcherIcon={<ChevronDown className="h-3 w-3" />}
-              onViewChange={view => setProjectView(view as ProjectView)}
-              assistantAction={{
-                icon: <Bot className="h-3.5 w-3.5" />,
-                label: t('workbench.project_chat'),
-                onClick: openProjectAssistant,
-                renderTooltip: (children, label) => (
-                  <Tooltip label={label} side="bottom" align="end">
+                }
+                navItems={[
+                  {
+                    icon: <Plus className="h-4 w-4 text-current" />,
+                    label: isMyTasksBoard
+                      ? t('todo.new_task', '新建任务')
+                      : t('todo.new_issue', '新建 Issue'),
+                    testId: 'cloud-create-issue',
+                    selected: issueComposerOpen || createTodoOpen,
+                    onClick: () => openIssueCreation(),
+                  },
+                ]}
+                sectionLabel={t('todo.boards', '看板')}
+                addLabel={t('todo.new_project_space', '新建项目空间')}
+                addIcon={<Plus className="mx-auto h-3.5 w-3.5" />}
+                onAdd={() => setCreateProjectOpen(true)}
+                onSelectProject={spaceKey => {
+                  const project = projects.find(
+                    candidate => projectSpaceKey(projectSpaceRef(candidate)) === spaceKey
+                  )
+                  if (!project) return
+                  setIssueComposerOpen(false)
+                  setCreateTodoOpen(false)
+                  selectProject(project)
+                  setProjectView('board')
+                  setSelectedItem(null)
+                }}
+                labels={{
+                  actions: t('todo.project_actions', '项目操作'),
+                  archive: '归档项目',
+                  copied: t('todo.project_id_copied', '项目 ID 已复制'),
+                  copyId: t('todo.copy_project_id', '复制项目 ID'),
+                  rename: '修改项目名称',
+                }}
+                moreIcon={<Ellipsis className="h-3.5 w-3.5" />}
+                checkIcon={<Check className="h-3.5 w-3.5 text-green-600" />}
+                copyIcon={<Copy className="h-3.5 w-3.5" />}
+                projects={projects.map(project => {
+                  const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+                  const spaceKey = projectSpaceKey(projectSpaceRef(project))
+                  return {
+                    actionsAvailable: !isDefaultWorkItemProject(project),
+                    canManage:
+                      !isDefaultWorkItemProject(project) &&
+                      (project.created_by_user_id === user.id ||
+                        project.access_role === 'Owner' ||
+                        project.access_role === 'Maintainer'),
+                    count: collaborationProjectCounts[spaceKey],
+                    icon: (
+                      <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    ),
+                    id: String(project.id),
+                    key: spaceKey,
+                    name: project.name,
+                    selected: sameProjectSpace(selectedProjectRef, projectSpaceRef(project)),
+                    onArchive: () => {
+                      setArchiveError(null)
+                      setArchiveProject(project)
+                    },
+                    onCopyId: () => copyTextToClipboard(String(project.id)),
+                    onRename: () => {
+                      setRenameProject(project)
+                      setRenameProjectName(project.name)
+                      setRenameError(null)
+                    },
+                  }
+                })}
+                renderTooltip={({ align, children, className, label, side }) => (
+                  <Tooltip label={label} side={side} align={align} className={className}>
                     {children}
                   </Tooltip>
-                ),
-              }}
-              assistantOpen={projectAssistantOpen}
-              dragRegion={
-                !embedded ? (
-                  <MacOSTitleBarDragRegion
-                    className={cn(
-                      'absolute right-0 top-0 z-0 h-full',
-                      sidebarCollapsed ? 'left-12' : 'left-0'
-                    )}
-                  />
-                ) : null
-              }
-              embedded={embedded}
-              hasCreateAction={canCreateBoardTask}
-              renderRightActions={({ actionRefs, level, showLabels }) => (
-                <>
-                  {projectView === 'board' && level < 2 ? (
-                    <>
-                      <Tooltip
-                        label={
-                          boardParent || isMyTasksBoard
-                            ? t('todo.search_tasks', '搜索任务')
-                            : t('todo.search_issues', '搜索 Issue')
-                        }
-                        side="bottom"
-                        align="end"
-                      >
-                        <button
-                          ref={actionRefs.search}
-                          type="button"
-                          data-testid="cloud-project-task-search-toggle"
-                          aria-label={
-                            boardParent || isMyTasksBoard
-                              ? t('todo.search_tasks', '搜索任务')
-                              : t('todo.search_issues', '搜索 Issue')
-                          }
-                          onClick={() => setProjectSearchOpen(current => !current)}
-                          className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
-                        >
-                          <Search className="h-3.5 w-3.5" />
-                          {showLabels
-                            ? boardParent || isMyTasksBoard
-                              ? t('todo.search_tasks', '搜索任务')
-                              : t('todo.search_issues', '搜索 Issue')
-                            : null}
-                        </button>
-                      </Tooltip>
-                      {canCreateBoardTask ? (
+                )}
+                account={
+                  onOpenSettings && onLogout ? (
+                    <DesktopSidebarAccount
+                      user={user}
+                      onOpenSettings={onOpenSettings}
+                      onLogout={onLogout}
+                    />
+                  ) : null
+                }
+              />
+            </aside>
+          ) : null}
+          <main
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            data-testid="cloud-todo-main"
+          >
+            {!embedded && !selectedProject && (
+              <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+            )}
+            {!embedded && sidebarCollapsed && (
+              <div
+                data-testid="cloud-todo-collapsed-chrome-controls"
+                className="electron-titlebar-interactive-region pointer-events-auto absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
+              >
+                <DesktopWindowControls
+                  sidebarCollapsed
+                  onToggleSidebar={() => setSidebarCollapsed(false)}
+                  className="gap-1"
+                  toggleTestId="cloud-todo-expand-sidebar"
+                />
+              </div>
+            )}
+            {!selectedProject && projects.length > 0 && localProjectsError ? (
+              <div
+                data-testid="local-project-spaces-error"
+                className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
+              >
+                <span>本地项目空间加载失败：{localProjectsError}</span>
+                <button
+                  type="button"
+                  data-testid="local-project-spaces-retry"
+                  onClick={retryLocalProjects}
+                  className="h-7 shrink-0 rounded-md border border-destructive/30 px-2 text-xs font-medium hover:bg-destructive/10"
+                >
+                  {t('common.retry', '重试')}
+                </button>
+              </div>
+            ) : null}
+            {issueComposerOpen ? (
+              <IssueComposer
+                key={`${issueComposerBoardKey}:${issueComposerStatus}:${issueComposerInitialContent}`}
+                projects={projects}
+                initialBoardKey={issueComposerBoardKey}
+                initialStartExecution={isProcessingStatus(issueComposerStatus)}
+                initialContent={issueComposerInitialContent}
+                localProjects={localProjectOptions}
+                projectMembers={collaborationProjectMembers}
+                initialLocalProjectId={selectedLocalProject?.id ?? null}
+                presentation={issueComposerPresentation}
+                busy={issueComposerBusy}
+                error={issueComposerError}
+                onCancel={() => setIssueComposerOpen(false)}
+                onCreate={createIssueFromComposer}
+              />
+            ) : !selectedProject && localProjectsError ? (
+              <div
+                data-testid="local-project-spaces-error"
+                className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-destructive"
+              >
+                <span>本地项目空间加载失败：{localProjectsError}</span>
+                <button
+                  type="button"
+                  data-testid="local-project-spaces-retry"
+                  onClick={retryLocalProjects}
+                  className="h-8 rounded-lg border border-destructive/30 px-3 text-sm font-medium hover:bg-destructive/10"
+                >
+                  {t('common.retry', '重试')}
+                </button>
+              </div>
+            ) : (projectSpaceApis.local ? localProjectsLoading : cloudWorkspace.state.loading) ? (
+              <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
+                正在加载项目…
+              </div>
+            ) : !selectedProject ? (
+              <div
+                data-testid="cloud-project-unavailable"
+                className="flex flex-1 items-center justify-center text-sm text-text-muted"
+              >
+                未找到要打开的项目
+              </div>
+            ) : (
+              <CollaborationProjectViewShell
+                project={selectedProjectForViewAccess ?? selectedProject}
+                view={projectView}
+                labels={{
+                  board: t('todo.board_view', '看板'),
+                  table: t('todo.issue_table', '表格'),
+                  files: t('todo.files_title', '文件'),
+                  manage: t('todo.project_settings', '项目设置'),
+                }}
+                testIds={{
+                  board: 'cloud-project-board-view',
+                  table: 'cloud-project-table-view',
+                  files: 'cloud-project-files-view',
+                  manage: 'cloud-project-manage-view',
+                }}
+                enabledStandardViews={isMyTasksBoard ? ['board'] : undefined}
+                compactSwitcherIcon={<ChevronDown className="h-3 w-3" />}
+                onViewChange={view => setProjectView(view as ProjectView)}
+                assistantAction={{
+                  icon: <Bot className="h-3.5 w-3.5" />,
+                  label: t('workbench.project_chat'),
+                  onClick: openProjectAssistant,
+                  renderTooltip: (children, label) => (
+                    <Tooltip label={label} side="bottom" align="end">
+                      {children}
+                    </Tooltip>
+                  ),
+                }}
+                assistantOpen={projectAssistantOpen}
+                dragRegion={
+                  !embedded ? (
+                    <MacOSTitleBarDragRegion
+                      className={cn(
+                        'absolute right-0 top-0 z-0 h-full',
+                        sidebarCollapsed ? 'left-12' : 'left-0'
+                      )}
+                    />
+                  ) : null
+                }
+                embedded={embedded}
+                hasCreateAction={canCreateBoardTask}
+                renderRightActions={({ actionRefs, level, showLabels }) => (
+                  <>
+                    {projectView === 'board' && level < 2 ? (
+                      <>
                         <Tooltip
                           label={
                             boardParent || isMyTasksBoard
-                              ? t('todo.new_task', '新建任务')
-                              : t('todo.new_issue', '新建 Issue')
+                              ? t('todo.search_tasks', '搜索任务')
+                              : t('todo.search_issues', '搜索 Issue')
                           }
                           side="bottom"
                           align="end"
                         >
                           <button
-                            ref={actionRefs.add}
+                            ref={actionRefs.search}
                             type="button"
-                            data-testid="cloud-todo-add"
+                            data-testid="cloud-project-task-search-toggle"
                             aria-label={
+                              boardParent || isMyTasksBoard
+                                ? t('todo.search_tasks', '搜索任务')
+                                : t('todo.search_issues', '搜索 Issue')
+                            }
+                            onClick={() => setProjectSearchOpen(current => !current)}
+                            className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                          >
+                            <Search className="h-3.5 w-3.5" />
+                            {showLabels
+                              ? boardParent || isMyTasksBoard
+                                ? t('todo.search_tasks', '搜索任务')
+                                : t('todo.search_issues', '搜索 Issue')
+                              : null}
+                          </button>
+                        </Tooltip>
+                        {canCreateBoardTask ? (
+                          <Tooltip
+                            label={
                               boardParent || isMyTasksBoard
                                 ? t('todo.new_task', '新建任务')
                                 : t('todo.new_issue', '新建 Issue')
                             }
-                            onClick={() =>
-                              boardParent ? openTodoCreation(boardParent) : openIssueCreation()
-                            }
-                            className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                            side="bottom"
+                            align="end"
                           >
-                            <Plus className="h-3.5 w-3.5" />
-                            {showLabels
-                              ? boardParent || isMyTasksBoard
-                                ? t('todo.new_task', '新建任务')
-                                : t('todo.new_issue', '新建 Issue')
-                              : null}
-                          </button>
-                        </Tooltip>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {level >= 2 && (!projectAssistantOpen || projectView === 'board') ? (
-                    <ActionMenu
-                      ariaLabel={t('workbench.more', '更多')}
-                      testId="cloud-project-header-more"
-                      icon={Ellipsis}
-                      placement="bottom-end"
-                      triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                      items={[
-                        ...(!projectAssistantOpen
-                          ? [
-                              {
-                                label: t('workbench.project_chat'),
-                                icon: Bot,
-                                testId: 'cloud-project-header-more-ask-ai',
-                                onSelect: openProjectAssistant,
-                              },
-                            ]
-                          : []),
-                        ...(projectView === 'board'
-                          ? [
-                              {
-                                label:
-                                  boardParent || isMyTasksBoard
-                                    ? t('todo.search_tasks', '搜索任务')
-                                    : t('todo.search_issues', '搜索 Issue'),
-                                icon: Search,
-                                testId: 'cloud-project-header-more-search',
-                                onSelect: () => setProjectSearchOpen(true),
-                              },
-                            ]
-                          : []),
-                      ]}
-                    />
-                  ) : null}
-                  {projectView === 'board' && level >= 2 && canCreateBoardTask ? (
-                    <Tooltip
-                      label={
-                        boardParent || isMyTasksBoard
-                          ? t('todo.new_task', '新建任务')
-                          : t('todo.new_issue', '新建 Issue')
-                      }
-                      side="bottom"
-                      align="end"
-                    >
-                      <button
-                        ref={actionRefs.add}
-                        type="button"
-                        data-testid="cloud-todo-add"
-                        aria-label={
+                            <button
+                              ref={actionRefs.add}
+                              type="button"
+                              data-testid="cloud-todo-add"
+                              aria-label={
+                                boardParent || isMyTasksBoard
+                                  ? t('todo.new_task', '新建任务')
+                                  : t('todo.new_issue', '新建 Issue')
+                              }
+                              onClick={() =>
+                                boardParent ? openTodoCreation(boardParent) : openIssueCreation()
+                              }
+                              className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              {showLabels
+                                ? boardParent || isMyTasksBoard
+                                  ? t('todo.new_task', '新建任务')
+                                  : t('todo.new_issue', '新建 Issue')
+                                : null}
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                      </>
+                    ) : null}
+                    {level >= 2 && (!projectAssistantOpen || projectView === 'board') ? (
+                      <ActionMenu
+                        ariaLabel={t('workbench.more', '更多')}
+                        testId="cloud-project-header-more"
+                        icon={Ellipsis}
+                        placement="bottom-end"
+                        triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                        items={[
+                          ...(!projectAssistantOpen
+                            ? [
+                                {
+                                  label: t('workbench.project_chat'),
+                                  icon: Bot,
+                                  testId: 'cloud-project-header-more-ask-ai',
+                                  onSelect: openProjectAssistant,
+                                },
+                              ]
+                            : []),
+                          ...(projectView === 'board'
+                            ? [
+                                {
+                                  label:
+                                    boardParent || isMyTasksBoard
+                                      ? t('todo.search_tasks', '搜索任务')
+                                      : t('todo.search_issues', '搜索 Issue'),
+                                  icon: Search,
+                                  testId: 'cloud-project-header-more-search',
+                                  onSelect: () => setProjectSearchOpen(true),
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
+                    ) : null}
+                    {projectView === 'board' && level >= 2 && canCreateBoardTask ? (
+                      <Tooltip
+                        label={
                           boardParent || isMyTasksBoard
                             ? t('todo.new_task', '新建任务')
                             : t('todo.new_issue', '新建 Issue')
                         }
-                        onClick={() =>
-                          boardParent ? openTodoCreation(boardParent) : openIssueCreation()
-                        }
-                        className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                        side="bottom"
+                        align="end"
                       >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                </>
-              )}
-              searchPanel={
-                projectView === 'board' && projectSearchOpen ? (
-                  <TaskSearchPanel
-                    items={boardItems}
-                    members={
-                      selectedProjectKey
-                        ? (collaborationProjectMembers[selectedProjectKey] ?? [])
-                        : []
-                    }
-                    query={projectSearchQuery}
-                    filters={projectSearchFilters}
-                    tags={availableTags}
-                    onQueryChange={setProjectSearchQuery}
-                    onFiltersChange={setProjectSearchFilters}
-                    onSelect={item => {
-                      openBoardItem(item)
-                      setProjectSearchOpen(false)
-                    }}
-                  />
-                ) : null
-              }
-              sidebarCollapsed={sidebarCollapsed}
-              title={
-                embedded && embeddedTitle === 'workspace'
-                  ? t('workbench.workspace_tab_board', '协作')
-                  : selectedProject.name
-              }
-              titleIcon={
-                embedded ? (
-                  <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />
-                ) : selectedProject.location === 'local' ? (
-                  <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
-                ) : (
-                  <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
-                )
-              }
-              slots={{
-                table:
-                  isAITableProject && aitableApi ? (
-                    <AITableView api={aitableApi} project={selectedProject} />
-                  ) : (
-                    <ProjectIssueTable
-                      issues={selectedProjectBoardItems}
-                      assignmentsByIssueId={issueTableAssignmentsByIssue}
-                      emptyLabel={t('todo.issue_table_empty', '暂无 Issue')}
-                      issueLabel={t('todo.issue_column', 'Issue')}
-                      statusLabel={t('todo.status', '状态')}
-                      assignmentsLabel={t('todo.assignments', '分配')}
-                      assignmentSourceLabel={t('todo.assignment_source', '分配来源')}
-                      executionLabel={t('todo.execution_status', '执行状态')}
-                      updatedLabel={t('todo.updated_at', '更新时间')}
-                      projectKey={selectedProject.project_key}
-                      searchPlaceholder={t('todo.search_issues', '搜索 Issue')}
-                      createLabel={t('todo.new_issue', '新建 Issue')}
-                      statusName={status =>
-                        nativeStatuses.find(candidate => candidate.id === status)?.name ?? status
+                        <button
+                          ref={actionRefs.add}
+                          type="button"
+                          data-testid="cloud-todo-add"
+                          aria-label={
+                            boardParent || isMyTasksBoard
+                              ? t('todo.new_task', '新建任务')
+                              : t('todo.new_issue', '新建 Issue')
+                          }
+                          onClick={() =>
+                            boardParent ? openTodoCreation(boardParent) : openIssueCreation()
+                          }
+                          className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
+                    ) : null}
+                  </>
+                )}
+                searchPanel={
+                  projectView === 'board' && projectSearchOpen ? (
+                    <TaskSearchPanel
+                      items={boardItems}
+                      members={
+                        selectedProjectKey
+                          ? (collaborationProjectMembers[selectedProjectKey] ?? [])
+                          : []
                       }
-                      onCreate={() => openTodoCreation(null, nativeStatuses[0]?.id ?? 'inbox')}
-                      onOpen={item => {
-                        if (item.can_view_detail !== false) {
-                          setSelectedItem(item as LocatedLoopItem)
-                        }
+                      query={projectSearchQuery}
+                      filters={projectSearchFilters}
+                      tags={availableTags}
+                      onQueryChange={setProjectSearchQuery}
+                      onFiltersChange={setProjectSearchFilters}
+                      onSelect={item => {
+                        openBoardItem(item)
+                        setProjectSearchOpen(false)
                       }}
                     />
-                  ),
-                files: (
-                  selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
-                ) ? (
-                  selectedProject.location === 'cloud' ? (
-                    <CloudFilesView api={cloudWorkspaceApi!} project={selectedProject} />
+                  ) : null
+                }
+                sidebarCollapsed={sidebarCollapsed}
+                title={
+                  embedded && embeddedTitle === 'workspace'
+                    ? t('workbench.workspace_tab_board', '协作 (Beta)')
+                    : selectedProject.name
+                }
+                titleIcon={
+                  embedded ? (
+                    <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />
+                  ) : selectedProject.location === 'local' ? (
+                    <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
                   ) : (
-                    <LocalFilesView api={selectedProjectApi!} project={selectedProject} />
+                    <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
                   )
-                ) : null,
-                automation: null,
-                manage: (
-                  selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
-                ) ? (
-                  <ProjectSettingsShell
-                    ariaLabel={t('todo.project_settings', '项目设置')}
-                    selectedSectionId={projectSettingsSectionId}
-                    onSectionChange={setProjectSettingsSectionId}
-                    sections={[
-                      {
-                        id: 'project',
-                        label: t('todo.project_configuration', '项目配置'),
-                        testId: 'cloud-project-settings-project',
-                        content:
-                          selectedProject.location === 'cloud' ? (
-                            <CloudProjectManageView
-                              api={cloudWorkspaceApi!}
-                              aitableApi={aitableApi}
-                              dwsApi={services.dwsApi}
-                              project={selectedProject}
-                              boardCardDisplay={boardCardDisplay}
-                              onProjectUpdated={updated => replaceProject(selectedProject, updated)}
-                            />
-                          ) : (
-                            <CloudProjectManageView
-                              api={localProjectManageApi!}
-                              aitableApi={aitableApi}
-                              dwsApi={services.dwsApi}
-                              project={selectedProject}
-                              boardCardDisplay={boardCardDisplay}
-                              onProjectUpdated={updated => replaceProject(selectedProject, updated)}
-                            />
-                          ),
-                      },
-                      {
-                        id: 'files',
-                        label: t('todo.project_files', '文件与产物'),
-                        testId: 'cloud-project-settings-files',
-                        content:
-                          selectedProject.location === 'cloud' ? (
-                            <CloudFilesView api={cloudWorkspaceApi!} project={selectedProject} />
-                          ) : (
-                            <LocalFilesView api={selectedProjectApi!} project={selectedProject} />
-                          ),
-                      },
-                      {
-                        id: 'agents',
-                        label: t('todo.project_agents', '智能体'),
-                        testId: 'cloud-project-settings-agents',
-                        content: (
-                          <CollaborationSettings
-                            api={
-                              selectedProject.location === 'cloud'
-                                ? cloudWorkspaceApi!
-                                : localProjectManageApi!
-                            }
-                            project={selectedProject}
-                            section="agents"
-                            onChange={updated =>
-                              replaceProject(selectedProject, updated as CloudProject)
-                            }
-                            onError={() =>
-                              setBoardError(
-                                t('todo.project_agents_save_failed', '项目智能体保存失败')
-                              )
-                            }
-                            onAgentsChange={() => {
-                              if (selectedProject.location === 'cloud') {
-                                void cloudWorkspace.commands.refreshProjectAgents(
-                                  String(selectedProject.id)
-                                )
-                                return
+                }
+                slots={{
+                  table:
+                    isAITableProject && aitableApi ? (
+                      <AITableView api={aitableApi} project={selectedProject} />
+                    ) : (
+                      <ProjectIssueTable
+                        issues={selectedProjectBoardItems}
+                        assignmentsByIssueId={issueTableAssignmentsByIssue}
+                        emptyLabel={t('todo.issue_table_empty', '暂无 Issue')}
+                        issueLabel={t('todo.issue_column', 'Issue')}
+                        statusLabel={t('todo.status', '状态')}
+                        assignmentsLabel={t('todo.assignments', '分配')}
+                        assignmentSourceLabel={t('todo.assignment_source', '分配来源')}
+                        executionLabel={t('todo.execution_status', '执行状态')}
+                        updatedLabel={t('todo.updated_at', '更新时间')}
+                        projectKey={selectedProject.project_key}
+                        searchPlaceholder={t('todo.search_issues', '搜索 Issue')}
+                        createLabel={t('todo.new_issue', '新建 Issue')}
+                        statusName={status =>
+                          nativeStatuses.find(candidate => candidate.id === status)?.name ?? status
+                        }
+                        onCreate={() => openTodoCreation(null, nativeStatuses[0]?.id ?? 'inbox')}
+                        onOpen={item => {
+                          if (item.can_view_detail !== false) {
+                            setSelectedItem(item as LocatedLoopItem)
+                          }
+                        }}
+                      />
+                    ),
+                  files: (
+                    selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
+                  ) ? (
+                    selectedProject.location === 'cloud' ? (
+                      <CloudFilesView api={cloudWorkspaceApi!} project={selectedProject} />
+                    ) : (
+                      <LocalFilesView api={selectedProjectApi!} project={selectedProject} />
+                    )
+                  ) : null,
+                  manage: (
+                    selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
+                  ) ? (
+                    <ProjectSettingsShell
+                      ariaLabel={t('todo.project_settings', '项目设置')}
+                      selectedSectionId={projectSettingsSectionId}
+                      onSectionChange={setProjectSettingsSectionId}
+                      sections={[
+                        {
+                          id: 'project',
+                          label: t('todo.basic_information', '基本信息'),
+                          testId: 'cloud-project-settings-project',
+                          content:
+                            selectedProject.location === 'cloud' ? (
+                              <CloudProjectManageView
+                                api={cloudWorkspaceApi!}
+                                aitableApi={aitableApi}
+                                dwsApi={services.dwsApi}
+                                project={selectedProject}
+                                boardCardDisplay={boardCardDisplay}
+                                section="overview"
+                                onProjectUpdated={updated =>
+                                  replaceProject(selectedProject, updated)
+                                }
+                              />
+                            ) : (
+                              <CloudProjectManageView
+                                api={localProjectManageApi!}
+                                aitableApi={aitableApi}
+                                dwsApi={services.dwsApi}
+                                project={selectedProject}
+                                boardCardDisplay={boardCardDisplay}
+                                section="overview"
+                                onProjectUpdated={updated =>
+                                  replaceProject(selectedProject, updated)
+                                }
+                              />
+                            ),
+                        },
+                        {
+                          id: 'collaboration-participants',
+                          label: t('todo.collaboration_participants', '协作成员'),
+                          testId: 'cloud-project-settings-participants',
+                          content: (
+                            <ProjectCollaborationParticipants
+                              translate={(key, fallback, options) =>
+                                fallback === undefined ? t(key, options) : t(key, fallback, options)
                               }
-                              setBoardRefreshNonce(value => value + 1)
-                            }}
-                            translate={(key, fallback, options) =>
-                              fallback === undefined ? t(key, options) : t(key, fallback, options)
-                            }
-                          />
-                        ),
-                      },
-                      ...(selectedProjectAutomationSupported &&
-                      (selectedProject.location === 'cloud'
-                        ? Boolean(cloudWorkspaceApi)
-                        : Boolean(selectedProjectServices))
-                        ? [
-                            {
-                              id: 'dispatch',
-                              label: t('todo.assignment_dispatch', '分配与调度'),
-                              testId: 'cloud-project-settings-dispatch',
-                              content: (
-                                <ProjectDispatchSettings
-                                  canManage={['Owner', 'Maintainer'].includes(
-                                    selectedProject.access_role ?? 'Owner'
-                                  )}
-                                  managerName={selectedProjectManagerName}
-                                  onConfigureAgents={() => setProjectSettingsSectionId('agents')}
-                                  onContinueManualAssignment={() => setProjectView('board')}
+                              membersContent={
+                                <CollaborationSettings
+                                  api={
+                                    selectedProject.location === 'cloud'
+                                      ? cloudWorkspaceApi!
+                                      : localProjectManageApi!
+                                  }
+                                  embedded
+                                  project={selectedProject}
+                                  section="members"
+                                  onChange={updated =>
+                                    replaceProject(selectedProject, updated as CloudProject)
+                                  }
+                                  onError={() =>
+                                    setBoardError(
+                                      t('todo.project_members_save_failed', '项目成员保存失败')
+                                    )
+                                  }
                                   translate={(key, fallback, options) =>
                                     fallback === undefined
                                       ? t(key, options)
                                       : t(key, fallback, options)
                                   }
-                                  automationContent={
-                                    selectedProjectAgents.length > 0 ? (
-                                      <ProjectAutomationView
-                                        key={selectedProject.id}
-                                        api={
-                                          selectedProject.location === 'local'
-                                            ? selectedProjectApi
-                                            : undefined
-                                        }
-                                        workspaceApi={
-                                          selectedProject.location === 'cloud'
-                                            ? cloudWorkspaceApi
-                                            : undefined
-                                        }
-                                        projectAutomationApi={
-                                          selectedProject.location === 'local'
-                                            ? selectedProjectServices?.projectAutomationApi
-                                            : undefined
-                                        }
-                                        projectIncomingHookApi={
-                                          selectedProject.location === 'local'
-                                            ? selectedProjectServices?.projectIncomingHookApi
-                                            : undefined
-                                        }
-                                        project={selectedProject}
-                                        projectAgents={selectedProjectAgents.map(agent => ({
-                                          id: agent.id,
-                                          name: agent.name,
-                                        }))}
-                                        currentUserId={selectedProject.current_user_id}
-                                        canManageAgents={['Owner', 'Maintainer'].includes(
-                                          selectedProject.access_role ?? 'Owner'
-                                        )}
-                                        onProjectUpdated={updated =>
-                                          replaceProject(selectedProject, updated)
-                                        }
-                                        onOpenIssue={issueId => {
-                                          const existing = selectedProjectBoardItems.find(
-                                            item => item.id === issueId
-                                          )
-                                          if (existing) {
-                                            setSelectedItem(existing)
-                                            return
-                                          }
-                                          const issueRequest =
-                                            selectedProject.location === 'cloud'
-                                              ? cloudWorkspaceApi?.issues.get(issueId)
-                                              : selectedProjectApi
-                                                ? selectedProjectApi.getLoopItem(issueId)
-                                                : null
-                                          if (!issueRequest) return
-                                          void issueRequest
-                                            .then(issue =>
-                                              setSelectedItem({
-                                                ...(issue as LocatedLoopItem),
-                                                project_store: selectedProject.project_store,
-                                              })
-                                            )
-                                            .catch(cause =>
-                                              setBoardError(
-                                                cause instanceof Error
-                                                  ? cause.message
-                                                  : t('todo.work_item_detail_load_failed')
-                                              )
-                                            )
-                                        }}
-                                      />
-                                    ) : undefined
+                                />
+                              }
+                              agentsContent={
+                                <CollaborationSettings
+                                  agentConfigurationHost={projectAgentConfigurationHost}
+                                  api={
+                                    selectedProject.location === 'cloud'
+                                      ? cloudWorkspaceApi!
+                                      : localProjectManageApi!
+                                  }
+                                  embedded
+                                  project={selectedProject}
+                                  section="agents"
+                                  onChange={updated =>
+                                    replaceProject(selectedProject, updated as CloudProject)
+                                  }
+                                  onError={() =>
+                                    setBoardError(
+                                      t('todo.project_agents_save_failed', '项目智能体保存失败')
+                                    )
+                                  }
+                                  onAgentsChange={() => {
+                                    if (selectedProject.location === 'cloud') {
+                                      void cloudWorkspace.commands.refreshProjectAgents(
+                                        String(selectedProject.id)
+                                      )
+                                      return
+                                    }
+                                    setBoardRefreshNonce(value => value + 1)
+                                  }}
+                                  translate={(key, fallback, options) =>
+                                    fallback === undefined
+                                      ? t(key, options)
+                                      : t(key, fallback, options)
                                   }
                                 />
-                              ),
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
-                ) : null,
-                board: (
-                  <ProjectBoardBody<LocatedLoopItem>
-                    state={boardState}
-                    activeDragItemId={activeDragItemId}
-                    boardError={boardError}
-                    boardItemsLoading={boardItemsLoading}
-                    breadcrumb={boardBreadcrumb}
-                    columns={boardColumns as ProjectBoardColumn[]}
-                    currentParent={boardParent}
-                    currentParentId={boardParentId}
-                    dnd={{ DndContext, DragOverlay, useDroppable }}
-                    dndContextProps={{
-                      sensors: boardSensors,
-                      collisionDetection: boardCollisionDetection,
-                      onDragStart: (event: DragStartEvent) => {
-                        setPinnedBoardPreview(null)
-                        setActiveDragItemId(String(event.active.id))
-                      },
-                      onDragCancel: () => setActiveDragItemId(null),
-                      onDragEnd: finishBoardDrop,
-                    }}
-                    externalGroupLabel={selectedGroupField?.name ?? '记录'}
-                    externalGroupValues={aitableGroupValues}
-                    externalManagedLabel="数据由钉钉托管 · AI 可直接管理"
-                    externalSearchPlaceholder="搜索记录"
-                    focusLabels={{
-                      enter: t('todo.focus_view_description', '展开进行中与待确认列'),
-                      exit: t('todo.exit_focus_view_description', '退出执行阶段专注视图'),
-                      title: t('todo.focus_view', '专注视图'),
-                    }}
-                    getColumnDragHint={column =>
-                      activeDragItemId && nativeGroupBy === 'status'
-                        ? columnDragHints[column.status as CloudLoopItem['status']]
-                        : undefined
-                    }
-                    getColumnEmptyState={column => {
-                      const status = column.status as CloudLoopItem['status']
-                      const hint = (
-                        boardParent || isMyTasksBoard ? taskColumnEmptyHints : issueColumnEmptyHints
-                      )[status]
-                      if (!hint) return undefined
-                      if (status !== 'inbox' && status !== 'pending') return { hint }
-                      const onClick = () => {
-                        if (!boardParent && status === 'pending')
-                          openIssueCreation('pending', '', 'popup')
-                        else setQuickCreateStatus(status)
-                      }
-                      return {
-                        hint,
-                        action: {
-                          label:
-                            status === 'inbox'
-                              ? t(
-                                  boardParent || isMyTasksBoard
-                                    ? 'todo.create_first_task'
-                                    : 'todo.create_first_issue',
-                                  boardParent || isMyTasksBoard
-                                    ? '创建第一个任务'
-                                    : '创建第一个 Issue'
+                              }
+                              groupsContent={
+                                (
+                                  selectedProject.location === 'cloud'
+                                    ? cloudWorkspaceApi?.projects.listCollaborationGroups
+                                    : localProjectManageApi?.projects.listCollaborationGroups
+                                ) ? (
+                                  <ProjectCollaborationGroups
+                                    key={selectedProject.id}
+                                    api={
+                                      selectedProject.location === 'cloud'
+                                        ? cloudWorkspaceApi!
+                                        : localProjectManageApi!
+                                    }
+                                    projectId={String(selectedProject.id)}
+                                    workspaceId={
+                                      selectedProject.workspace_id
+                                        ? String(selectedProject.workspace_id)
+                                        : null
+                                    }
+                                    locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                                    members={
+                                      collaborationProjectMembers[selectedProjectKey ?? ''] ?? []
+                                    }
+                                    agents={selectedProjectAgents.map(agent => ({
+                                      id: String(agent.id),
+                                      name: agent.name,
+                                      agent_id: String(agent.id),
+                                      ...(agent.wegentTeamId == null
+                                        ? {}
+                                        : { team_id: agent.wegentTeamId }),
+                                    }))}
+                                    canManage={['Owner', 'Maintainer'].includes(
+                                      selectedProject.access_role ?? 'Owner'
+                                    )}
+                                  />
+                                ) : (
+                                  <div
+                                    className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
+                                    data-testid="cloud-project-groups-unavailable"
+                                  >
+                                    {t(
+                                      'todo.collaboration_groups_unavailable',
+                                      '协作小组服务当前不可用。'
+                                    )}
+                                  </div>
                                 )
-                              : t(
-                                  boardParent || isMyTasksBoard
-                                    ? 'todo.create_task_in_pending'
-                                    : 'todo.create_issue_in_pending',
-                                  boardParent || isMyTasksBoard
-                                    ? '创建到待开始'
-                                    : '创建 Issue 到待开始'
-                                ),
-                          ariaLabel: t(
-                            boardParent || isMyTasksBoard
-                              ? 'todo.new_task_in_column'
-                              : 'todo.new_issue_in_column',
-                            { column: column.label }
+                              }
+                            />
                           ),
-                          onClick,
                         },
+                        {
+                          id: 'environments',
+                          label: t('todo.project_execution_environments', '执行环境'),
+                          testId: 'cloud-project-settings-environments',
+                          content: (
+                            <ProjectExecutionEnvironments
+                              api={
+                                selectedProject.location === 'cloud'
+                                  ? cloudWorkspaceApi!
+                                  : localProjectManageApi!
+                              }
+                              project={selectedProject}
+                              translate={(key, fallback, options) =>
+                                fallback === undefined ? t(key, options) : t(key, fallback, options)
+                              }
+                            />
+                          ),
+                        },
+                        ...(selectedProjectAutomationSupported &&
+                        (selectedProject.location === 'cloud'
+                          ? Boolean(cloudWorkspaceApi?.automations)
+                          : Boolean(localProjectManageApi?.automations))
+                          ? [
+                              {
+                                id: 'automatic-processing',
+                                label: t('todo.automatic_processing', '自动处理'),
+                                testId: 'cloud-project-settings-automatic-processing',
+                                content: (
+                                  <ProjectAutomaticProcessing
+                                    api={
+                                      selectedProject.location === 'cloud'
+                                        ? cloudWorkspaceApi!
+                                        : localProjectManageApi!
+                                    }
+                                    project={selectedProject}
+                                    members={
+                                      collaborationProjectMembers[selectedProjectKey ?? ''] ?? []
+                                    }
+                                    agents={selectedProjectAgents.map(agent => ({
+                                      id: String(agent.id),
+                                      name: agent.name,
+                                      agent_id: String(agent.id),
+                                      ...(agent.wegentTeamId == null
+                                        ? {}
+                                        : { team_id: agent.wegentTeamId }),
+                                    }))}
+                                    locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                                    translate={(key, fallback, options) =>
+                                      fallback === undefined
+                                        ? t(key, options)
+                                        : t(key, fallback, options)
+                                    }
+                                  />
+                                ),
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
+                  ) : null,
+                  board: (
+                    <ProjectBoardBody<LocatedLoopItem>
+                      state={boardState}
+                      activeDragItemId={activeDragItemId}
+                      boardError={boardError}
+                      boardItemsLoading={boardItemsLoading}
+                      breadcrumb={boardBreadcrumb}
+                      columns={boardColumns as ProjectBoardColumn[]}
+                      currentParent={boardParent}
+                      currentParentId={boardParentId}
+                      dnd={{ DndContext, DragOverlay, useDroppable }}
+                      dndContextProps={{
+                        sensors: boardSensors,
+                        collisionDetection: boardCollisionDetection,
+                        onDragStart: (event: DragStartEvent) => {
+                          setPinnedBoardPreview(null)
+                          setActiveDragItemId(String(event.active.id))
+                        },
+                        onDragCancel: () => setActiveDragItemId(null),
+                        onDragEnd: finishBoardDrop,
+                      }}
+                      externalGroupLabel={selectedGroupField?.name ?? '记录'}
+                      externalGroupValues={aitableGroupValues}
+                      externalManagedLabel="数据由钉钉托管 · AI 可直接管理"
+                      externalSearchPlaceholder="搜索记录"
+                      focusLabels={{
+                        enter: t('todo.focus_view_description', '展开进行中与待确认列'),
+                        exit: t('todo.exit_focus_view_description', '退出执行阶段专注视图'),
+                        title: t('todo.focus_view', '专注视图'),
+                      }}
+                      getColumnDragHint={column =>
+                        activeDragItemId && nativeGroupBy === 'status'
+                          ? columnDragHints[column.status as CloudLoopItem['status']]
+                          : undefined
                       }
-                    }}
-                    getColumnItems={(column, state) => {
-                      const standardItems = isAITableProject
-                        ? boardItems
-                        : standardBoardController.getColumnItems(column, state)
-                      return standardItems.filter(
-                        item =>
-                          (isAITableProject
-                            ? item.parent_id === boardParentId &&
-                              (!column.groupValue ||
-                                (column.groupValue === '未设置'
-                                  ? !aitableCellLabels(item.source_cells?.[aitableGroupFieldId])
-                                      .length
-                                  : aitableCellLabels(
-                                      item.source_cells?.[aitableGroupFieldId]
-                                    ).includes(column.groupValue)))
-                            : true) &&
-                          (!isMyTasksBoard ||
-                            activeLocalProjectFilter === 'all' ||
-                            !selectedLocalProject ||
-                            localProjectIdForItem(item) === selectedLocalProject.id ||
-                            (item.status === 'inbox' && localProjectIdForItem(item) === null)) &&
-                          (!state.externalGroupFilter ||
-                            column.groupValue === state.externalGroupFilter) &&
-                          (!state.externalQuery.trim() ||
-                            `${item.title} ${item.description ?? ''}`
-                              .toLowerCase()
-                              .includes(state.externalQuery.trim().toLowerCase()))
-                      )
-                    }}
-                    getItemKey={item => item.id}
-                    groupFields={
-                      nativeBoardGroupFields as Array<{ id: ProjectBoardGroupBy; name: string }>
-                    }
-                    isExternalBoard={isAITableProject}
-                    isMyTasksBoard={isMyTasksBoard}
-                    layerCount={boardLayerCount}
-                    localProjectFilter={
-                      isMyTasksBoard
-                        ? {
-                            activeId: activeLocalProjectFilter,
-                            allLabel: t('todo.all_local_projects', '全部项目'),
-                            ariaLabel: t('todo.local_project_filter', '本地项目'),
-                            label: t('todo.project_with_name', '项目：{{project}}', {
-                              project: '{{project}}',
-                            }),
-                            options: localProjectOptions,
-                            selectedName:
-                              activeLocalProjectFilter === 'all'
-                                ? t('todo.all_local_projects', '全部项目')
-                                : (selectedLocalProject?.name ??
-                                  t('todo.select_local_project', '选择项目')),
-                            onChange: setLocalProjectFilter,
-                          }
-                        : undefined
-                    }
-                    onBreadcrumbSelect={setBoardParentId}
-                    onSaveGlobalGroupBy={saveGlobalGroupBy}
-                    renderAddIcon={() => <Plus className="h-5 w-5" />}
-                    renderChevronDown={className => <ChevronDown className={className} />}
-                    renderChevronRight={className => <ChevronRight className={className} />}
-                    renderColumnFooter={(column, _items, state) => {
-                      const status = column.status as CloudLoopItem['status']
-                      return canCreateBoardTask &&
-                        !isAITableProject &&
-                        state.groupBy === 'status' &&
-                        status === 'inbox' &&
-                        state.quickCreateStatus === status ? (
-                        <BoardQuickCreate
-                          key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}
-                          columnKey={column.key}
-                          columnLabel={column.label}
-                          localProjects={isMyTasksBoard ? localProjectOptions : undefined}
-                          localProjectId={selectedLocalProject?.id}
-                          onLocalProjectChange={
-                            isMyTasksBoard ? id => setLocalProjectFilter(String(id)) : undefined
-                          }
-                          onCancel={() => setQuickCreateStatus(null)}
-                          onCreate={title => createTodoInBoardColumn(status, title)}
-                          onOpenFull={title =>
-                            boardParent
-                              ? openTodoCreation(boardParent, status, title)
-                              : openIssueCreation(status, title, 'popup')
-                          }
-                        />
-                      ) : null
-                    }}
-                    renderColumnHeaderActions={(column, columnItems, state) => {
-                      const status = column.status as CloudLoopItem['status']
-                      const open = () =>
-                        !boardParent && status === 'pending'
-                          ? openIssueCreation('pending', '', 'popup')
-                          : setQuickCreateStatus(status)
-                      return (
-                        <>
-                          {isMyTasksBoard &&
-                          state.groupBy === 'status' &&
-                          status === 'completed' &&
-                          columnItems.length > 0 &&
-                          onArchiveRuntimeTasks ? (
-                            <Tooltip
-                              label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
-                              side="bottom"
-                              align="end"
-                            >
-                              <button
-                                type="button"
-                                data-testid="cloud-my-tasks-archive-completed"
-                                onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
-                                className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
-                              >
-                                <Archive className="h-3.5 w-3.5" />
-                              </button>
-                            </Tooltip>
-                          ) : null}
-                          {canCreateBoardTask &&
+                      getColumnEmptyState={column => {
+                        const status = column.status as CloudLoopItem['status']
+                        const hint = (
+                          boardParent || isMyTasksBoard
+                            ? taskColumnEmptyHints
+                            : issueColumnEmptyHints
+                        )[status]
+                        if (!hint) return undefined
+                        if (status !== 'inbox' && status !== 'pending') return { hint }
+                        const onClick = () => {
+                          if (!boardParent && status === 'pending')
+                            openIssueCreation('pending', '', 'popup')
+                          else setQuickCreateStatus(status)
+                        }
+                        return {
+                          hint,
+                          action: {
+                            label:
+                              status === 'inbox'
+                                ? t(
+                                    boardParent || isMyTasksBoard
+                                      ? 'todo.create_first_task'
+                                      : 'todo.create_first_issue',
+                                    boardParent || isMyTasksBoard
+                                      ? '创建第一个任务'
+                                      : '创建第一个 Issue'
+                                  )
+                                : t(
+                                    boardParent || isMyTasksBoard
+                                      ? 'todo.create_task_in_pending'
+                                      : 'todo.create_issue_in_pending',
+                                    boardParent || isMyTasksBoard
+                                      ? '创建到待开始'
+                                      : '创建 Issue 到待开始'
+                                  ),
+                            ariaLabel: t(
+                              boardParent || isMyTasksBoard
+                                ? 'todo.new_task_in_column'
+                                : 'todo.new_issue_in_column',
+                              { column: column.label }
+                            ),
+                            onClick,
+                          },
+                        }
+                      }}
+                      getColumnItems={(column, state) => {
+                        const standardItems = isAITableProject
+                          ? boardItems
+                          : standardBoardController.getColumnItems(column, state)
+                        return standardItems.filter(
+                          item =>
+                            (isAITableProject
+                              ? item.parent_id === boardParentId &&
+                                (!column.groupValue ||
+                                  (column.groupValue === '未设置'
+                                    ? !aitableCellLabels(item.source_cells?.[aitableGroupFieldId])
+                                        .length
+                                    : aitableCellLabels(
+                                        item.source_cells?.[aitableGroupFieldId]
+                                      ).includes(column.groupValue)))
+                              : true) &&
+                            (!isMyTasksBoard ||
+                              activeLocalProjectFilter === 'all' ||
+                              !selectedLocalProject ||
+                              localProjectIdForItem(item) === selectedLocalProject.id ||
+                              (item.status === 'inbox' && localProjectIdForItem(item) === null)) &&
+                            (!state.externalGroupFilter ||
+                              column.groupValue === state.externalGroupFilter) &&
+                            (!state.externalQuery.trim() ||
+                              `${item.title} ${item.description ?? ''}`
+                                .toLowerCase()
+                                .includes(state.externalQuery.trim().toLowerCase()))
+                        )
+                      }}
+                      getItemKey={item => item.id}
+                      groupFields={
+                        nativeBoardGroupFields as Array<{ id: ProjectBoardGroupBy; name: string }>
+                      }
+                      isExternalBoard={isAITableProject}
+                      isMyTasksBoard={isMyTasksBoard}
+                      layerCount={boardLayerCount}
+                      localProjectFilter={
+                        isMyTasksBoard
+                          ? {
+                              activeId: activeLocalProjectFilter,
+                              allLabel: t('todo.all_local_projects', '全部项目'),
+                              ariaLabel: t('todo.local_project_filter', '本地项目'),
+                              label: t('todo.project_with_name', '项目：{{project}}', {
+                                project: '{{project}}',
+                              }),
+                              options: localProjectOptions,
+                              selectedName:
+                                activeLocalProjectFilter === 'all'
+                                  ? t('todo.all_local_projects', '全部项目')
+                                  : (selectedLocalProject?.name ??
+                                    t('todo.select_local_project', '选择项目')),
+                              onChange: setLocalProjectFilter,
+                            }
+                          : undefined
+                      }
+                      onBreadcrumbSelect={setBoardParentId}
+                      onSaveGlobalGroupBy={saveGlobalGroupBy}
+                      renderAddIcon={() => <Plus className="h-5 w-5" />}
+                      renderChevronDown={className => <ChevronDown className={className} />}
+                      renderChevronRight={className => <ChevronRight className={className} />}
+                      renderColumnFooter={(column, _items, state) => {
+                        const status = column.status as CloudLoopItem['status']
+                        return canCreateBoardTask &&
                           !isAITableProject &&
                           state.groupBy === 'status' &&
-                          (status === 'inbox' || status === 'pending') ? (
-                            <Tooltip
-                              label={t(
-                                boardParent || isMyTasksBoard
-                                  ? 'todo.new_task_in_column'
-                                  : 'todo.new_issue_in_column',
-                                boardParent || isMyTasksBoard
-                                  ? '在{{column}}中新建任务'
-                                  : '在{{column}}中新建 Issue',
-                                { column: column.label }
-                              )}
-                              side="bottom"
-                              align="end"
-                            >
-                              <button
-                                type="button"
-                                data-testid={`cloud-todo-column-add-${column.key}`}
-                                onClick={open}
-                                className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                aria-label={t(
+                          status === 'inbox' &&
+                          state.quickCreateStatus === status ? (
+                          <BoardQuickCreate
+                            key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}
+                            columnKey={column.key}
+                            columnLabel={column.label}
+                            localProjects={isMyTasksBoard ? localProjectOptions : undefined}
+                            localProjectId={selectedLocalProject?.id}
+                            onLocalProjectChange={
+                              isMyTasksBoard ? id => setLocalProjectFilter(String(id)) : undefined
+                            }
+                            onCancel={() => setQuickCreateStatus(null)}
+                            onCreate={title => createTodoInBoardColumn(status, title)}
+                            onOpenFull={title =>
+                              boardParent
+                                ? openTodoCreation(boardParent, status, title)
+                                : openIssueCreation(status, title, 'popup')
+                            }
+                          />
+                        ) : null
+                      }}
+                      renderColumnHeaderActions={(column, columnItems, state) => {
+                        const status = column.status as CloudLoopItem['status']
+                        const open = () =>
+                          !boardParent && status === 'pending'
+                            ? openIssueCreation('pending', '', 'popup')
+                            : setQuickCreateStatus(status)
+                        return (
+                          <>
+                            {isMyTasksBoard &&
+                            state.groupBy === 'status' &&
+                            status === 'completed' &&
+                            columnItems.length > 0 &&
+                            onArchiveRuntimeTasks ? (
+                              <Tooltip
+                                label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
+                                side="bottom"
+                                align="end"
+                              >
+                                <button
+                                  type="button"
+                                  data-testid="cloud-my-tasks-archive-completed"
+                                  onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                  aria-label={t(
+                                    'todo.archive_completed_tasks',
+                                    '批量归档已完成任务'
+                                  )}
+                                >
+                                  <Archive className="h-3.5 w-3.5" />
+                                </button>
+                              </Tooltip>
+                            ) : null}
+                            {canCreateBoardTask &&
+                            !isAITableProject &&
+                            state.groupBy === 'status' &&
+                            (status === 'inbox' || status === 'pending') ? (
+                              <Tooltip
+                                label={t(
                                   boardParent || isMyTasksBoard
                                     ? 'todo.new_task_in_column'
                                     : 'todo.new_issue_in_column',
+                                  boardParent || isMyTasksBoard
+                                    ? '在{{column}}中新建任务'
+                                    : '在{{column}}中新建 Issue',
                                   { column: column.label }
                                 )}
+                                side="bottom"
+                                align="end"
                               >
-                                <Plus className="h-3.5 w-3.5" />
+                                <button
+                                  type="button"
+                                  data-testid={`cloud-todo-column-add-${column.key}`}
+                                  onClick={open}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                  aria-label={t(
+                                    boardParent || isMyTasksBoard
+                                      ? 'todo.new_task_in_column'
+                                      : 'todo.new_issue_in_column',
+                                    { column: column.label }
+                                  )}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              </Tooltip>
+                            ) : null}
+                          </>
+                        )
+                      }}
+                      renderDragOverlay={() =>
+                        activeDragItemId ? (
+                          <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
+                            <CloudTodoCardContent
+                              item={
+                                activeBoardSourceItems.find(item => item.id === activeDragItemId)!
+                              }
+                              display={boardCardDisplay}
+                              processingStatus={isProcessingStatus(
+                                activeBoardSourceItems.find(item => item.id === activeDragItemId)!
+                                  .status
+                              )}
+                              agentNames={agentNameById}
+                            />
+                          </div>
+                        ) : null
+                      }
+                      renderExternalGroupPicker={() => (
+                        <AITableGroupFieldPicker
+                          fields={aitableFields}
+                          value={aitableGroupFieldId}
+                          onChange={id => {
+                            setAitableGroupFieldId(id)
+                            setAitableGroupFilter('')
+                          }}
+                        />
+                      )}
+                      renderFocusIcon={focused =>
+                        focused ? (
+                          <Minimize2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        )
+                      }
+                      renderGroupPicker={(value, onChange) => (
+                        <AITableGroupFieldPicker
+                          fields={nativeBoardGroupFields}
+                          value={value}
+                          testIdPrefix="cloud-board-group"
+                          searchPlaceholder="搜索分组字段"
+                          onChange={id => onChange(id as NativeBoardGroupBy)}
+                        />
+                      )}
+                      renderBoardSettingsAction={
+                        isMyTasksBoard
+                          ? undefined
+                          : () => (
+                              <button
+                                type="button"
+                                className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                                data-testid="cloud-board-settings"
+                                onClick={() => setBoardSettingsOpen(true)}
+                              >
+                                {t('todo.board_settings', '看板设置')}
                               </button>
-                            </Tooltip>
-                          ) : null}
-                        </>
-                      )
-                    }}
-                    renderDragOverlay={() =>
-                      activeDragItemId ? (
-                        <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
-                          <CloudTodoCardContent
-                            item={
-                              activeBoardSourceItems.find(item => item.id === activeDragItemId)!
+                            )
+                      }
+                      renderItem={(item, column, state) => {
+                        const progressDisplay: BoardCardProgressDisplay =
+                          state.focusExecutionColumns &&
+                          state.groupBy === 'status' &&
+                          (column.status === 'in_progress' || column.status === 'in_review')
+                            ? 'focused'
+                            : 'compact'
+                        return (
+                          <CloudTodoBoardCard
+                            item={item}
+                            processingStatus={isProcessingStatus(item.status)}
+                            taskBindings={
+                              (
+                                selectedProject.location === 'cloud'
+                                  ? cloudWorkspace.state.project?.id === String(selectedProject.id)
+                                  : itemTaskBindingsProjectKey === selectedProjectKey
+                              )
+                                ? (boardTaskBindings[item.id] ?? []).map(binding =>
+                                    withBoardTaskModelSelection(item, binding, runtimeWork)
+                                  )
+                                : []
                             }
+                            onClick={() => {
+                              openBoardItem(item)
+                            }}
+                            onConfigureExecution={() =>
+                              openExecutionConfiguration({ item, continuation: { type: 'save' } })
+                            }
+                            onArchive={() => {
+                              setArchiveError(null)
+                              setArchiveItem(item)
+                            }}
+                            previewPinned={pinnedBoardPreviewItemId === item.id}
+                            onPreviewPinnedChange={pinned =>
+                              setPinnedBoardPreview(
+                                pinned
+                                  ? { contextKey: boardPreviewContextKey, itemId: item.id }
+                                  : null
+                              )
+                            }
+                            onMarkRead={markItemRead}
+                            onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
+                            onOpenRuntimeTask={openBoardRuntimeTask}
                             display={boardCardDisplay}
-                            processingStatus={isProcessingStatus(
-                              activeBoardSourceItems.find(item => item.id === activeDragItemId)!
-                                .status
-                            )}
                             agentNames={agentNameById}
+                            dragDisabled={isAITableProject}
+                            previewDisabled={
+                              selectedItem !== null ||
+                              activeDragItemId !== null ||
+                              (pinnedBoardPreviewItemId !== null &&
+                                pinnedBoardPreviewItemId !== item.id)
+                            }
+                            archiveDisabled={isAITableProject}
+                            progressDisplay={progressDisplay}
+                            changeRequestMonitor={changeRequestMonitor}
+                            onContinueChangeRequestRepair={
+                              workbench ? continueChangeRequestRepair : undefined
+                            }
                           />
-                        </div>
-                      ) : null
-                    }
-                    renderExternalGroupPicker={() => (
-                      <AITableGroupFieldPicker
-                        fields={aitableFields}
-                        value={aitableGroupFieldId}
-                        onChange={id => {
-                          setAitableGroupFieldId(id)
-                          setAitableGroupFilter('')
-                        }}
-                      />
-                    )}
-                    renderFocusIcon={focused =>
-                      focused ? (
-                        <Minimize2 className="h-3.5 w-3.5" />
-                      ) : (
-                        <Maximize2 className="h-3.5 w-3.5" />
-                      )
-                    }
-                    renderGroupPicker={(value, onChange) => (
-                      <AITableGroupFieldPicker
-                        fields={nativeBoardGroupFields}
-                        value={value}
-                        testIdPrefix="cloud-board-group"
-                        searchPlaceholder="搜索分组字段"
-                        onChange={id => onChange(id as NativeBoardGroupBy)}
-                      />
-                    )}
-                    renderItem={(item, column, state) => {
-                      const progressDisplay: BoardCardProgressDisplay =
-                        state.focusExecutionColumns &&
-                        state.groupBy === 'status' &&
-                        (column.status === 'in_progress' || column.status === 'in_review')
-                          ? 'focused'
-                          : 'compact'
-                      return (
-                        <CloudTodoBoardCard
-                          item={item}
-                          processingStatus={isProcessingStatus(item.status)}
-                          taskBindings={
-                            (
-                              selectedProject.location === 'cloud'
-                                ? cloudWorkspace.state.project?.id === String(selectedProject.id)
-                                : itemTaskBindingsProjectKey === selectedProjectKey
-                            )
-                              ? (boardTaskBindings[item.id] ?? []).map(binding =>
-                                  withBoardTaskModelSelection(item, binding, runtimeWork)
-                                )
-                              : []
-                          }
-                          onClick={() => {
-                            openBoardItem(item)
-                          }}
-                          onConfigureExecution={() =>
-                            openExecutionConfiguration({ item, continuation: { type: 'save' } })
-                          }
-                          onArchive={() => {
-                            setArchiveError(null)
-                            setArchiveItem(item)
-                          }}
-                          previewPinned={pinnedBoardPreviewItemId === item.id}
-                          onPreviewPinnedChange={pinned =>
-                            setPinnedBoardPreview(
-                              pinned
-                                ? { contextKey: boardPreviewContextKey, itemId: item.id }
-                                : null
-                            )
-                          }
-                          onMarkRead={markItemRead}
-                          onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
-                          onOpenRuntimeTask={openBoardRuntimeTask}
-                          display={boardCardDisplay}
-                          agentNames={agentNameById}
-                          dragDisabled={isAITableProject}
-                          previewDisabled={
-                            selectedItem !== null ||
-                            activeDragItemId !== null ||
-                            (pinnedBoardPreviewItemId !== null &&
-                              pinnedBoardPreviewItemId !== item.id)
-                          }
-                          archiveDisabled={isAITableProject}
-                          progressDisplay={progressDisplay}
-                          changeRequestMonitor={changeRequestMonitor}
-                          onContinueChangeRequestRepair={
-                            workbench ? continueChangeRequestRepair : undefined
-                          }
-                        />
-                      )
-                    }}
-                    renderItemsFooter={column =>
-                      isExternalGitBoard &&
-                      activeExternalPageCursors[column.status as CloudLoopItem['status']] ? (
-                        <button
-                          type="button"
-                          data-testid={`cloud-todo-column-load-more-${column.key}`}
-                          disabled={
-                            activeExternalPageLoading[column.status as CloudLoopItem['status']]
-                          }
-                          onClick={() =>
-                            void loadMoreExternalColumn(column.status as CloudLoopItem['status'])
-                          }
-                          className="flex h-8 w-full items-center justify-center rounded-lg border border-border bg-background text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
-                        >
-                          {activeExternalPageLoading[column.status as CloudLoopItem['status']]
-                            ? t('todo.loading_more_issues')
-                            : t('todo.load_more_issues')}
-                        </button>
-                      ) : null
-                    }
-                    renderQuickStart={() =>
-                      quickStartStorageKey ? (
-                        <BoardQuickStartGuide
-                          key={quickStartStorageKey}
-                          storageKey={quickStartStorageKey}
-                          itemKind={isMyTasksBoard ? 'task' : 'issue'}
-                          hasCreatedItem={rootBoardItems.length > 0}
-                          hasAdvancedItem={rootBoardItems.some(item => item.status !== 'inbox')}
-                          detailOpened={quickStartDetailOpened}
-                          onCreateItem={() => openIssueCreation()}
-                          onOpenFirstItem={() => {
-                            if (firstRootBoardItem) openBoardItem(firstRootBoardItem)
-                          }}
-                        />
-                      ) : null
-                    }
-                    renderSearchIcon={() => <Search className="h-3.5 w-3.5" />}
-                    renderSkeleton={() => <CloudTodoBoardSkeleton />}
-                    renderStatus={() =>
-                      isAITableProject && dingtalkAuthPrompt ? (
-                        <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
-                          <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
+                        )
+                      }}
+                      renderItemsFooter={column =>
+                        isExternalGitBoard &&
+                        activeExternalPageCursors[column.status as CloudLoopItem['status']] ? (
                           <button
                             type="button"
-                            data-testid="aitable-board-dws-login"
-                            disabled={dingtalkAuthBusy}
-                            onClick={() => void connectDingTalkBoard()}
-                            className="h-7 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition hover:bg-muted disabled:opacity-50"
+                            data-testid={`cloud-todo-column-load-more-${column.key}`}
+                            disabled={
+                              activeExternalPageLoading[column.status as CloudLoopItem['status']]
+                            }
+                            onClick={() =>
+                              void loadMoreExternalColumn(column.status as CloudLoopItem['status'])
+                            }
+                            className="flex h-8 w-full items-center justify-center rounded-lg border border-border bg-background text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
                           >
-                            {dingtalkAuthBusy
-                              ? t('todo.dingtalk_board_connecting')
-                              : t('todo.dingtalk_board_connect')}
+                            {activeExternalPageLoading[column.status as CloudLoopItem['status']]
+                              ? t('todo.loading_more_issues')
+                              : t('todo.load_more_issues')}
                           </button>
-                        </div>
-                      ) : boardError ? (
-                        <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-                          {boardError}
-                        </p>
-                      ) : null
-                    }
-                    renderTooltip={(label, child) => <Tooltip label={label}>{child}</Tooltip>}
-                    rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
-                    rootUnitLabel={
-                      isMyTasksBoard ? '个任务' : isAITableProject ? '条记录' : '个 Issue'
-                    }
-                    saveGlobalDisabled={
-                      groupScopeBusy ||
-                      !['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner')
-                    }
-                    saveGlobalLabel="应用到全局"
-                    searchPlaceholder={
-                      boardParent
-                        ? t('todo.search_tasks', '搜索任务')
-                        : t('todo.search_issues', '搜索 Issue')
-                    }
-                    showQuickStart={Boolean(
-                      quickStartStorageKey &&
-                      !boardItemsLoading &&
-                      !isAITableProject &&
-                      !boardParent &&
-                      nativeGroupBy === 'status' &&
-                      !nativeGroupFilter &&
-                      !nativeBoardQuery.trim()
-                    )}
-                    showSaveGlobal={Boolean(
-                      personalGroupKey && localStorage.getItem(personalGroupKey)
-                    )}
-                  />
-                ),
+                        ) : null
+                      }
+                      renderQuickStart={() =>
+                        quickStartStorageKey ? (
+                          <BoardQuickStartGuide
+                            key={quickStartStorageKey}
+                            storageKey={quickStartStorageKey}
+                            itemKind={isMyTasksBoard ? 'task' : 'issue'}
+                            hasCreatedItem={rootBoardItems.length > 0}
+                            hasAdvancedItem={rootBoardItems.some(item => item.status !== 'inbox')}
+                            detailOpened={quickStartDetailOpened}
+                            onCreateItem={() => openIssueCreation()}
+                            onOpenFirstItem={() => {
+                              if (firstRootBoardItem) openBoardItem(firstRootBoardItem)
+                            }}
+                          />
+                        ) : null
+                      }
+                      renderSearchIcon={() => <Search className="h-3.5 w-3.5" />}
+                      renderSkeleton={() =>
+                        startupActive ? (
+                          <CloudTodoStartupAnimation
+                            label={t('todo.startup_loading', '正在准备项目空间…')}
+                          />
+                        ) : (
+                          <CloudTodoBoardSkeleton />
+                        )
+                      }
+                      renderStatus={() =>
+                        isAITableProject && dingtalkAuthPrompt ? (
+                          <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
+                            <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
+                            <button
+                              type="button"
+                              data-testid="aitable-board-dws-login"
+                              disabled={dingtalkAuthBusy}
+                              onClick={() => void connectDingTalkBoard()}
+                              className="h-7 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition hover:bg-muted disabled:opacity-50"
+                            >
+                              {dingtalkAuthBusy
+                                ? t('todo.dingtalk_board_connecting')
+                                : t('todo.dingtalk_board_connect')}
+                            </button>
+                          </div>
+                        ) : boardError ? (
+                          <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
+                            {boardError}
+                          </p>
+                        ) : null
+                      }
+                      renderTooltip={(label, child) => <Tooltip label={label}>{child}</Tooltip>}
+                      rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
+                      rootUnitLabel={
+                        isMyTasksBoard ? '个任务' : isAITableProject ? '条记录' : '个 Issue'
+                      }
+                      saveGlobalDisabled={
+                        groupScopeBusy ||
+                        !['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner')
+                      }
+                      saveGlobalLabel="应用到全局"
+                      searchPlaceholder={
+                        boardParent
+                          ? t('todo.search_tasks', '搜索任务')
+                          : t('todo.search_issues', '搜索 Issue')
+                      }
+                      showQuickStart={Boolean(
+                        quickStartStorageKey &&
+                        !boardItemsLoading &&
+                        !isAITableProject &&
+                        !boardParent &&
+                        nativeGroupBy === 'status' &&
+                        !nativeGroupFilter &&
+                        !nativeBoardQuery.trim()
+                      )}
+                      showSaveGlobal={Boolean(
+                        personalGroupKey && localStorage.getItem(personalGroupKey)
+                      )}
+                    />
+                  ),
+                }}
+              />
+            )}
+          </main>
+          {pendingAutomationSelection ? (
+            <AutomationSelectionDialog
+              candidates={pendingAutomationSelection.candidates}
+              onCancel={pendingAutomationSelection.onCancel}
+              onConfirm={pendingAutomationSelection.onConfirm}
+            />
+          ) : null}
+          {boardSettingsOpen && selectedProject ? (
+            <ProjectBoardSettingsDialog
+              title={t('todo.board_settings', '看板设置')}
+              closeLabel={t('common.close', '关闭')}
+              onClose={() => setBoardSettingsOpen(false)}
+            >
+              <CloudProjectManageView
+                api={
+                  selectedProject.location === 'cloud' ? cloudWorkspaceApi! : localProjectManageApi!
+                }
+                aitableApi={aitableApi}
+                dwsApi={services.dwsApi}
+                embedded
+                project={selectedProject}
+                boardCardDisplay={boardCardDisplay}
+                section="board"
+                onProjectUpdated={updated => replaceProject(selectedProject, updated)}
+              />
+            </ProjectBoardSettingsDialog>
+          ) : null}
+          {pendingExecutionConfiguration && pendingExecutionServices ? (
+            <IssueExecutionConfigDialog
+              item={pendingExecutionConfiguration.item}
+              projectChatAgentApi={
+                pendingExecutionServices?.projectChatAgentApi ?? services.projectChatAgentApi
+              }
+              runtimeProfileApi={
+                pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
+              }
+              modelApi={services.modelApi}
+              deviceApi={pendingExecutionServices.deviceApi}
+              localProjects={localProjects}
+              onClose={() => setPendingExecutionConfiguration(null)}
+              onConfirm={async result => {
+                const pending = pendingExecutionConfiguration
+                if (pending.continuation.type === 'move') {
+                  await performStandardBoardMove(
+                    pending.item,
+                    pending.continuation.column,
+                    pending.continuation.beforeItemId,
+                    pending.continuation.mutation,
+                    result
+                  )
+                } else {
+                  const updated = await saveExecutionConfiguration(pending.item, result)
+                  pending.continuation.afterSave?.(updated)
+                }
+                setPendingExecutionConfiguration(null)
               }}
             />
-          )}
-        </main>
-        {pendingAutomationSelection ? (
-          <AutomationSelectionDialog
-            candidates={pendingAutomationSelection.candidates}
-            onCancel={pendingAutomationSelection.onCancel}
-            onConfirm={pendingAutomationSelection.onConfirm}
-          />
-        ) : null}
-        {pendingExecutionConfiguration && pendingExecutionServices ? (
-          <IssueExecutionConfigDialog
-            item={pendingExecutionConfiguration.item}
-            projectChatAgentApi={
-              pendingExecutionServices?.projectChatAgentApi ?? services.projectChatAgentApi
-            }
-            runtimeProfileApi={
-              pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
-            }
-            modelApi={services.modelApi}
-            deviceApi={pendingExecutionServices.deviceApi}
-            localProjects={localProjects}
-            onClose={() => setPendingExecutionConfiguration(null)}
-            onConfirm={async result => {
-              const pending = pendingExecutionConfiguration
-              if (pending.continuation.type === 'move') {
-                await performStandardBoardMove(
-                  pending.item,
-                  pending.continuation.column,
-                  pending.continuation.beforeItemId,
-                  pending.continuation.mutation,
-                  result
-                )
-              } else {
-                const updated = await saveExecutionConfiguration(pending.item, result)
-                pending.continuation.afterSave?.(updated)
-              }
-              setPendingExecutionConfiguration(null)
-            }}
-          />
-        ) : null}
-        {selectedItem && backgroundTaskItemId !== selectedItem.id ? (
-          <button
-            type="button"
-            data-testid="cloud-todo-detail-dismiss-layer"
-            aria-label={taskPanelOpen ? '关闭任务对话' : '关闭 Issue 详情'}
-            onClick={closeTopPanel}
-            className="todo-panel-backdrop"
-          />
-        ) : null}
-        {selectedItem && !taskStartingInBackground ? (
-          <div
-            data-testid="cloud-todo-panel-stack"
-            data-conversation-open={taskPanelOpen ? 'true' : 'false'}
-            className={cn('todo-panel-stack', taskPanelOpen && 'has-conversation')}
-          >
-            {taskPanelOpen && backgroundTaskItemId !== selectedItem.id ? (
-              <aside
-                data-testid="cloud-todo-compact-issue"
-                className="task-conversation-issue-context flex min-h-0 flex-col bg-background"
-              >
-                <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-compact-issue-back"
-                    onClick={closeTaskPanel}
-                    aria-label="返回 Issue 详情"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </button>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
-                    {selectedItem.id} · Issue 附件
-                  </span>
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-panel-close"
-                    onClick={closeIssuePanelStack}
-                    aria-label="关闭"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </header>
-                <div className="min-h-0 flex-1 overflow-y-auto py-2">
-                  <IssueResourceSection
-                    icon={<File className="h-3.5 w-3.5" />}
-                    title="文件附件"
-                    count={issueResourceAttachments.length}
-                    empty={issueResourceAttachmentsLoading ? '正在加载…' : '暂无文件附件'}
-                  >
-                    {issueResourceAttachments.map(attachment => (
-                      <button
-                        key={attachment.id}
-                        type="button"
-                        data-testid={`cloud-todo-resource-attachment-${attachment.id}`}
-                        onClick={() =>
-                          void selectedItemApi?.downloadLoopItemAttachment(
-                            attachment.id,
-                            attachment.display_name
-                          )
-                        }
-                        className="task-conversation-resource-row"
-                      >
-                        <File className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="min-w-0 flex-1 truncate">{attachment.display_name}</span>
-                        <span className="shrink-0 text-xs text-text-muted">
-                          {formatCompactFileSize(attachment.size_bytes)}
-                        </span>
-                      </button>
-                    ))}
-                  </IssueResourceSection>
-
-                  <IssueResourceSection
-                    icon={<MessageSquare className="h-3.5 w-3.5" />}
-                    title="任务会话"
-                    count={(activeItemTaskBindings[selectedItem.id] ?? []).length}
-                    empty="暂无任务会话"
-                  >
-                    {(activeItemTaskBindings[selectedItem.id] ?? []).map(binding => {
-                      const selected = selectedTaskBinding?.id === binding.id
-                      return (
+          ) : null}
+          {selectedItem && backgroundTaskItemId !== selectedItem.id ? (
+            <button
+              type="button"
+              data-testid="cloud-todo-detail-dismiss-layer"
+              aria-label={taskPanelOpen ? '关闭任务对话' : '关闭 Issue 详情'}
+              onClick={closeTopPanel}
+              className="todo-panel-backdrop"
+            />
+          ) : null}
+          {selectedItem && !taskStartingInBackground ? (
+            <div
+              data-testid="cloud-todo-panel-stack"
+              data-conversation-open={taskPanelOpen ? 'true' : 'false'}
+              className={cn('todo-panel-stack', taskPanelOpen && 'has-conversation')}
+            >
+              {taskPanelOpen && backgroundTaskItemId !== selectedItem.id ? (
+                <aside
+                  data-testid="cloud-todo-compact-issue"
+                  className="task-conversation-issue-context flex min-h-0 flex-col bg-background"
+                >
+                  <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+                    <button
+                      type="button"
+                      data-testid="cloud-todo-compact-issue-back"
+                      onClick={closeTaskPanel}
+                      aria-label="返回 Issue 详情"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
+                      {selectedItem.id} · Issue 附件
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="cloud-todo-panel-close"
+                      onClick={closeIssuePanelStack}
+                      aria-label="关闭"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </header>
+                  <div className="min-h-0 flex-1 overflow-y-auto py-2">
+                    <IssueResourceSection
+                      icon={<File className="h-3.5 w-3.5" />}
+                      title="文件附件"
+                      count={issueResourceAttachments.length}
+                      empty={issueResourceAttachmentsLoading ? '正在加载…' : '暂无文件附件'}
+                    >
+                      {issueResourceAttachments.map(attachment => (
                         <button
-                          key={binding.id}
+                          key={attachment.id}
                           type="button"
-                          data-testid={`cloud-todo-resource-conversation-${binding.id}`}
-                          data-selected={selected ? 'true' : 'false'}
-                          onClick={() => {
-                            openTaskBinding({
-                              ...binding,
-                              work_item_id: selectedItem.id,
-                            })
-                          }}
-                          className={cn(
-                            'task-conversation-resource-row',
-                            selected && 'is-selected'
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              'h-2 w-2 shrink-0 rounded-full',
-                              selected ? 'bg-primary' : 'bg-text-muted/50'
-                            )}
-                          />
-                          <span className="min-w-0 flex-1 truncate">
-                            {binding.task_title || binding.task_id}
-                          </span>
-                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                        </button>
-                      )
-                    })}
-                  </IssueResourceSection>
-
-                  <IssueResourceSection
-                    icon={<ListTodo className="h-3.5 w-3.5" />}
-                    title="子 Issue"
-                    count={
-                      detailAllItems.filter(candidate => candidate.parent_id === selectedItem.id)
-                        .length
-                    }
-                    empty="暂无子 Issue"
-                  >
-                    {detailAllItems
-                      .filter(candidate => candidate.parent_id === selectedItem.id)
-                      .map(child => (
-                        <button
-                          key={child.id}
-                          type="button"
-                          data-testid={`cloud-todo-resource-child-${child.id}`}
-                          onClick={() => {
-                            closeTaskPanel()
-                            setSelectedItem(child)
-                          }}
+                          data-testid={`cloud-todo-resource-attachment-${attachment.id}`}
+                          onClick={() =>
+                            void selectedItemApi?.downloadLoopItemAttachment(
+                              attachment.id,
+                              attachment.display_name
+                            )
+                          }
                           className="task-conversation-resource-row"
                         >
-                          <span
-                            className={cn(
-                              'h-2 w-2 shrink-0 rounded-full',
-                              columnDotClasses[child.status]
-                            )}
-                          />
-                          <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                          <File className="h-4 w-4 shrink-0 text-text-muted" />
+                          <span className="min-w-0 flex-1 truncate">{attachment.display_name}</span>
+                          <span className="shrink-0 text-xs text-text-muted">
+                            {formatCompactFileSize(attachment.size_bytes)}
+                          </span>
                         </button>
                       ))}
-                  </IssueResourceSection>
-                </div>
-              </aside>
-            ) : null}
-            {backgroundTaskItemId !== selectedItem.id &&
-            selectedItem.can_view_detail !== false &&
-            selectedItem.detail_loaded !== false &&
-            (selectedItemProject?.location === 'cloud' ? cloudWorkspaceApi : selectedItemApi) ? (
-              <TodoEditor
-                key={selectedItem.id}
-                mode="edit"
-                presentation="workspace-panel"
-                selectedTaskId={
-                  selectedTaskBinding?.work_item_id === selectedItem.id
-                    ? selectedTaskBinding.task_id
-                    : null
-                }
-                {...(selectedItemProject?.location === 'cloud'
-                  ? { sharedApi: cloudWorkspaceApi! }
-                  : { api: selectedItemApi! })}
-                projectChatAgentApi={selectedProjectAgentApi}
-                projectAutomationApi={
-                  selectedItemProject?.location === 'local'
-                    ? selectedItemServices?.projectAutomationApi
-                    : undefined
-                }
-                teamApi={services.teamApi}
-                projectChatClient={selectedProjectChatClient}
-                selfManagedExecution={selectedProjectSelfManagedExecution}
-                currentUserId={user.id}
-                localProjects={localProjects}
-                aitableApi={
-                  selectedItemProject?.task_provider === 'dingtalk_aitable'
-                    ? services.aitableApi
-                    : undefined
-                }
-                item={selectedItem}
-                project={selectedItemProject}
-                allItems={detailAllItems}
-                showChildren={false}
-                showAdditionalTaskAction={
-                  (activeItemTaskBindings[selectedItem.id]?.length ?? 0) > 0 &&
-                  selectedItem.workflow?.advancement_policy !== 'ai' &&
-                  !selectedItem.workflow?.nodes.length
-                }
-                initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
-                taskRefreshKey={boardRefreshNonce}
-                onWorkflowPlanChanged={() => {
-                  setBoardRefreshNonce(value => value + 1)
-                }}
-                onOpenChildTask={child => {
-                  const locatedChild = {
-                    ...child,
-                    project_store: selectedItem.project_store,
-                  }
-                  closeTaskPanel()
-                  setSelectedItem(locatedChild)
-                }}
-                onCreateTask={async workflowNodeId => {
-                  setSelectedTaskBinding(null)
-                  setBackgroundTaskItemId(null)
-                  if (!selectedItemProject) return
-                  const sharedApi =
-                    selectedItemProject.location === 'cloud' ? cloudWorkspaceApi : undefined
-                  let inheritFromTask: RuntimeTaskAddress | null = null
-                  const workflowNode = selectedItem.workflow?.nodes.find(
-                    node => node.id === workflowNodeId
-                  )
-                  const stageContext = workflowNode
-                    ? sharedApi
-                      ? await sharedApi.workflowPlans.getStageContext(
-                          selectedItem.id,
-                          workflowNode.id
+                    </IssueResourceSection>
+
+                    <IssueResourceSection
+                      icon={<MessageSquare className="h-3.5 w-3.5" />}
+                      title="任务会话"
+                      count={(activeItemTaskBindings[selectedItem.id] ?? []).length}
+                      empty="暂无任务会话"
+                    >
+                      {(activeItemTaskBindings[selectedItem.id] ?? []).map(binding => {
+                        const selected = selectedTaskBinding?.id === binding.id
+                        return (
+                          <button
+                            key={binding.id}
+                            type="button"
+                            data-testid={`cloud-todo-resource-conversation-${binding.id}`}
+                            data-selected={selected ? 'true' : 'false'}
+                            onClick={() => {
+                              openTaskBinding({
+                                ...binding,
+                                work_item_id: selectedItem.id,
+                              })
+                            }}
+                            className={cn(
+                              'task-conversation-resource-row',
+                              selected && 'is-selected'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'h-2 w-2 shrink-0 rounded-full',
+                                selected ? 'bg-primary' : 'bg-text-muted/50'
+                              )}
+                            />
+                            <span className="min-w-0 flex-1 truncate">
+                              {binding.task_title || binding.task_id}
+                            </span>
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                          </button>
                         )
-                      : await selectedItemApi!.getWorkflowStageContext(
-                          selectedItem.id,
-                          workflowNode.id
-                        )
-                    : null
-                  if (
-                    workflowNode?.workspace_policy === 'inherit' &&
-                    workflowNode.depends_on.length > 0
-                  ) {
-                    const bindings = sharedApi
-                      ? await sharedApi.taskBindings.list(
-                          selectedItem.id,
-                          String(selectedItemProject.id)
-                        )
-                      : await selectedItemApi!.listTaskBindings(selectedItem.id)
-                    const predecessor = bindings.find(binding =>
-                      workflowNode.depends_on.includes(taskBindingWorkflowNodeId(binding) ?? '')
-                    )
-                    if (predecessor) {
-                      inheritFromTask = hydrateRuntimeTaskAddress(
-                        runtimeWork,
-                        taskBindingAddress(predecessor)
-                      )
-                    }
-                  }
-                  setBackgroundTaskItemId(null)
-                  openTaskComposer({
-                    workItemId: selectedItem.id,
-                    initialInput: workflowStageInstruction(stageContext),
-                    backgroundAfterSend: false,
-                    workflowNodeId,
-                    inheritFromTask,
-                  })
-                }}
-                onClose={closeIssuePanelStack}
-                onOpenTaskConversation={task => {
-                  openTaskBinding({
-                    ...task,
-                    work_item_id: selectedItem.id,
-                  })
-                }}
-                onUpdated={updated => {
-                  const locatedUpdated = {
-                    ...updated,
-                    project_store: selectedItem.project_store,
-                  }
-                  if (selectedItemProject?.location === 'cloud') {
-                    cloudWorkspace.commands.replaceIssue(updated as CollaborationIssue)
-                  } else if (selectedItemProject?.location === 'local') {
-                    setItems(current =>
-                      current.map(item => (item.id === updated.id ? locatedUpdated : item))
-                    )
-                  }
-                  if (selectedItemProject?.location === 'local') {
-                    setDetailItems(current =>
-                      current.map(item => (item.id === updated.id ? locatedUpdated : item))
-                    )
-                  }
-                  setSelectedItem(locatedUpdated)
-                  track('feature_action_completed', { domain: 'board_item', action: 'update' })
-                }}
-              />
-            ) : selectedItem.detail_loaded === false ? (
-              <div
-                data-testid="cloud-todo-detail-loading"
-                className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-muted"
-              >
-                {t('todo.loading_work_item_detail')}
-              </div>
-            ) : null}
-            {taskPanelOpen && aiChatProject ? (
-              <AiChatModal
-                key={
-                  selectedTaskBinding?.work_item_id === selectedItem.id
-                    ? `ai-chat-${selectedItem.id}:${selectedTaskBinding.device_id}:${selectedTaskBinding.task_id}`
-                    : `ai-chat-new-${selectedItem.id}`
-                }
-                project={aiChatProject}
-                localProjects={localProjects}
-                task={selectedItem}
-                initialLocalProjectId={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? runtimeTaskProjectUiId(runtimeWork, taskComposerRequest.taskRequest)
-                    : (localProjectIdForItem(selectedItem) ??
-                      (isMyTasksBoard ? selectedLocalProject?.id : null))
-                }
-                initialTaskRequest={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? taskComposerRequest.taskRequest
-                    : undefined
-                }
-                inheritFromTask={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? taskComposerRequest.inheritFromTask
-                    : null
-                }
-                initialAddress={
-                  selectedTaskBinding?.work_item_id === selectedItem.id
-                    ? {
-                        deviceId: selectedTaskBinding.device_id,
-                        taskId: selectedTaskBinding.task_id,
+                      })}
+                    </IssueResourceSection>
+
+                    <IssueResourceSection
+                      icon={<ListTodo className="h-3.5 w-3.5" />}
+                      title="子 Issue"
+                      count={
+                        detailAllItems.filter(candidate => candidate.parent_id === selectedItem.id)
+                          .length
                       }
-                    : null
-                }
-                taskTitle={
-                  selectedTaskBinding?.work_item_id === selectedItem.id
-                    ? selectedTaskBinding.task_title
-                    : null
-                }
-                open={
-                  selectedTaskBinding?.work_item_id !== selectedItem.id ||
-                  backgroundTaskItemId !== selectedItem.id
-                }
-                embedded
-                initialTaskInput={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? taskComposerRequest.initialInput
-                    : ''
-                }
-                workflowNodeId={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? taskComposerRequest.workflowNodeId
-                    : undefined
-                }
-                onClose={closeIssuePanelStack}
-                onBack={closeTaskPanel}
-                onAddressChange={address => {
-                  if (taskPanelSessionId !== taskPanelSessionIdRef.current) return
-                  const activeTaskComposerRequest =
-                    taskComposerRequest?.workItemId === selectedItem.id ? taskComposerRequest : null
-                  if (!activeTaskComposerRequest) return
-                  advanceTaskPanelSession()
-                  if (activeTaskComposerRequest.backgroundAfterSend) {
-                    setBackgroundTaskItemId(null)
-                    setSelectedItem(null)
+                      empty="暂无子 Issue"
+                    >
+                      {detailAllItems
+                        .filter(candidate => candidate.parent_id === selectedItem.id)
+                        .map(child => (
+                          <button
+                            key={child.id}
+                            type="button"
+                            data-testid={`cloud-todo-resource-child-${child.id}`}
+                            onClick={() => {
+                              closeTaskPanel()
+                              setSelectedItem(child)
+                            }}
+                            className="task-conversation-resource-row"
+                          >
+                            <span
+                              className={cn(
+                                'h-2 w-2 shrink-0 rounded-full',
+                                columnDotClasses[child.status]
+                              )}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                          </button>
+                        ))}
+                    </IssueResourceSection>
+                  </div>
+                </aside>
+              ) : null}
+              {backgroundTaskItemId !== selectedItem.id &&
+              selectedItem.can_view_detail !== false &&
+              selectedItem.detail_loaded !== false &&
+              (selectedItemProject?.location === 'cloud' ? cloudWorkspaceApi : selectedItemApi) ? (
+                <TodoEditor
+                  key={selectedItem.id}
+                  mode="edit"
+                  presentation="workspace-panel"
+                  selectedTaskId={
+                    selectedTaskBinding?.work_item_id === selectedItem.id
+                      ? selectedTaskBinding.task_id
+                      : null
+                  }
+                  {...(selectedItemProject?.location === 'cloud'
+                    ? { sharedApi: cloudWorkspaceApi! }
+                    : { api: selectedItemApi! })}
+                  projectChatAgentApi={selectedProjectAgentApi}
+                  projectAutomationApi={
+                    selectedItemProject?.location === 'local'
+                      ? selectedItemServices?.projectAutomationApi
+                      : undefined
+                  }
+                  teamApi={services.teamApi}
+                  projectChatClient={selectedProjectChatClient}
+                  selfManagedExecution={selectedProjectSelfManagedExecution}
+                  currentUserId={user.id}
+                  localProjects={localProjects}
+                  aitableApi={
+                    selectedItemProject?.task_provider === 'dingtalk_aitable'
+                      ? services.aitableApi
+                      : undefined
+                  }
+                  item={selectedItem}
+                  project={selectedItemProject}
+                  allItems={detailAllItems}
+                  showChildren={false}
+                  showAdditionalTaskAction={
+                    (activeItemTaskBindings[selectedItem.id]?.length ?? 0) > 0 &&
+                    selectedItem.workflow?.advancement_policy !== 'ai' &&
+                    !selectedItem.workflow?.nodes.length
+                  }
+                  initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
+                  taskRefreshKey={boardRefreshNonce}
+                  onWorkflowPlanChanged={() => {
+                    setBoardRefreshNonce(value => value + 1)
+                  }}
+                  onOpenChildTask={child => {
+                    const locatedChild = {
+                      ...child,
+                      project_store: selectedItem.project_store,
+                    }
+                    closeTaskPanel()
+                    setSelectedItem(locatedChild)
+                  }}
+                  onCreateTask={async workflowNodeId => {
                     setSelectedTaskBinding(null)
-                  } else {
-                    setSelectedTaskBinding({
-                      id: -Date.now(),
-                      device_id: address.deviceId,
-                      task_id: address.taskId,
-                      task_title: null,
+                    setBackgroundTaskItemId(null)
+                    if (!selectedItemProject) return
+                    const sharedApi =
+                      selectedItemProject.location === 'cloud' ? cloudWorkspaceApi : undefined
+                    let inheritFromTask: RuntimeTaskAddress | null = null
+                    const workflowNode = selectedItem.workflow?.nodes.find(
+                      node => node.id === workflowNodeId
+                    )
+                    const stageContext = workflowNode
+                      ? sharedApi
+                        ? await sharedApi.workflowPlans.getStageContext(
+                            selectedItem.id,
+                            workflowNode.id
+                          )
+                        : await selectedItemApi!.getWorkflowStageContext(
+                            selectedItem.id,
+                            workflowNode.id
+                          )
+                      : null
+                    if (
+                      workflowNode?.workspace_policy === 'inherit' &&
+                      workflowNode.depends_on.length > 0
+                    ) {
+                      const bindings = sharedApi
+                        ? await sharedApi.taskBindings.list(
+                            selectedItem.id,
+                            String(selectedItemProject.id)
+                          )
+                        : await selectedItemApi!.listTaskBindings(selectedItem.id)
+                      const predecessor = bindings.find(binding =>
+                        workflowNode.depends_on.includes(taskBindingWorkflowNodeId(binding) ?? '')
+                      )
+                      if (predecessor) {
+                        inheritFromTask = hydrateRuntimeTaskAddress(
+                          runtimeWork,
+                          taskBindingAddress(predecessor)
+                        )
+                      }
+                    }
+                    setBackgroundTaskItemId(null)
+                    openTaskComposer({
+                      workItemId: selectedItem.id,
+                      initialInput: workflowStageInstruction(stageContext),
+                      backgroundAfterSend: false,
+                      workflowNodeId,
+                      inheritFromTask,
+                    })
+                  }}
+                  onClose={closeIssuePanelStack}
+                  onOpenTaskConversation={task => {
+                    openTaskBinding({
+                      ...task,
                       work_item_id: selectedItem.id,
                     })
-                  }
-                  setTaskComposerRequest(null)
-                  setBoardRefreshNonce(value => value + 1)
-                }}
-                prepareTask={prepareSelectedItemTask}
-                onTaskCreated={handleSelectedItemTaskCreated}
-                onOpenRuntimeTask={onOpenRuntimeTask}
-              />
-            ) : null}
-          </div>
-        ) : null}
-        {selectedItem &&
-        aiChatProject &&
-        taskStartingInBackground &&
-        taskComposerRequest?.workItemId === selectedItem.id ? (
-          <BackgroundTaskStarter
-            project={aiChatProject}
-            localProjects={localProjects}
-            task={selectedItem}
-            input={taskComposerRequest.initialInput}
-            initialLocalProjectId={
-              localProjectIdForItem(selectedItem) ??
-              (isMyTasksBoard ? selectedLocalProject?.id : null)
-            }
-            taskRequest={taskComposerRequest.taskRequest}
-            inheritFromTask={taskComposerRequest.inheritFromTask}
-            workflowNodeId={taskComposerRequest.workflowNodeId}
-            onAddressChange={() => {
-              closeIssuePanelStack()
-              setBoardRefreshNonce(value => value + 1)
-            }}
-            prepareTask={prepareSelectedItemTask}
-            onTaskCreated={handleSelectedItemTaskCreated}
-            onError={setBoardError}
-          />
-        ) : null}
-        {selectedProject && projectAssistantOpen && !selectedItem ? (
-          <ProjectSpaceChatSidebar
-            key={`${selectedProject.id}:project`}
-            project={selectedProject}
-            localProjects={localProjects}
-            onClose={() => {
-              setProjectAssistantOpen(false)
-            }}
-          />
-        ) : null}
-      </div>
-
-      {globalSearchOpen && (
-        <GlobalTodoSearch
-          projects={projects}
-          projectItems={collaborationProjectItems}
-          projectMembers={collaborationProjectMembers}
-          query={globalSearchQuery}
-          onQueryChange={setGlobalSearchQuery}
-          onClose={() => setGlobalSearchOpen(false)}
-          onSelectProject={project => {
-            selectProject(project)
-            setProjectView('board')
-            setSelectedItem(null)
-            setGlobalSearchOpen(false)
-          }}
-          onSelectItem={(project, item) => {
-            if (item.can_view_detail === false) return
-            selectProject(project)
-            setProjectView('board')
-            setSelectedItem({ ...item, project_store: project.project_store })
-            setGlobalSearchOpen(false)
-          }}
-        />
-      )}
-      {createProjectOpen && (
-        <ProjectCreateDialog
-          targets={availableProjectSpaceApis}
-          defaultLocation={projectSpaceApis.defaultLocation}
-          allowDingTalkAITable
-          labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
-          host={{
-            renderModal: ({ title, children, onClose }) => (
-              <Modal title={title} width="wide" onClose={onClose}>
-                {children}
-              </Modal>
-            ),
-            parseDingTalkAITableLink,
-            formatError: cloudProjectRequestError,
-            track: event => {
-              if (event === 'created') {
-                track('feature_action_completed', {
-                  domain: 'project_space',
-                  action: 'create',
-                })
-              } else {
-                track('operation_failed', { operation: 'project_space_action' })
-              }
-            },
-          }}
-          onClose={() => setCreateProjectOpen(false)}
-          onCreated={(project, location) => {
-            const weworkProject = toWeworkCloudProject(project)
-            const locatedProject: LocatedCloudProject = {
-              ...weworkProject,
-              project_store: location === 'local' ? 'local' : 'backend',
-              location,
-            }
-            prependProject(locatedProject)
-            const membersRequest =
-              location === 'local'
-                ? projectSpaceApis.local?.listCloudProjectMembers(weworkProject.id)
-                : undefined
-            if (membersRequest) {
-              const spaceKey = projectSpaceKey(projectSpaceRef(locatedProject))
-              void membersRequest.then(members =>
-                setLocalProjectMembers(current => ({ ...current, [spaceKey]: members }))
-              )
-            }
-            applyProjectSelection(locatedProject)
-            onActiveProjectChange?.(locatedProject)
-            setCreateProjectOpen(false)
-          }}
-        />
-      )}
-      {createTodoOpen &&
-        createTodoProject &&
-        (createTodoProject.location === 'cloud' ? cloudWorkspaceApi : createTodoApi) && (
-          <TodoEditor
-            key={`${projectSpaceKey(projectSpaceRef(createTodoProject))}:${createTodoNonce}`}
-            mode="create"
-            {...(createTodoProject.location === 'cloud'
-              ? { sharedApi: cloudWorkspaceApi! }
-              : { api: createTodoApi! })}
-            projectChatAgentApi={selectedProjectAgentApi}
-            teamApi={services.teamApi}
-            project={createTodoProject}
-            initialParent={createTodoParent}
-            initialStatus={createTodoStatus}
-            initialTitle={createTodoInitialTitle}
-            allItems={createTodoParent ? detailAllItems : items}
-            createOptions={
-              createTodoProject.location === 'cloud' && !createTodoParent ? (
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-text-secondary">
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      data-testid="cloud-todo-create-runtime-option"
-                      checked={createTodoStartRuntime}
-                      onChange={event => setCreateTodoStartRuntime(event.target.checked)}
-                    />
-                    {t('todo.create_runtime_task_after_issue', '创建后启动 Runtime 任务')}
-                  </label>
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      data-testid="cloud-todo-continue-creating-option"
-                      checked={createTodoContinueCreating}
-                      onChange={event => setCreateTodoContinueCreating(event.target.checked)}
-                    />
-                    {t('todo.continue_creating', '继续创建')}
-                  </label>
+                  }}
+                  onUpdated={updated => {
+                    const locatedUpdated = {
+                      ...updated,
+                      project_store: selectedItem.project_store,
+                    }
+                    if (selectedItemProject?.location === 'cloud') {
+                      cloudWorkspace.commands.replaceIssue(updated as CollaborationIssue)
+                    } else if (selectedItemProject?.location === 'local') {
+                      setItems(current =>
+                        current.map(item => (item.id === updated.id ? locatedUpdated : item))
+                      )
+                    }
+                    if (selectedItemProject?.location === 'local') {
+                      setDetailItems(current =>
+                        current.map(item => (item.id === updated.id ? locatedUpdated : item))
+                      )
+                    }
+                    setSelectedItem(locatedUpdated)
+                    track('feature_action_completed', { domain: 'board_item', action: 'update' })
+                  }}
+                />
+              ) : selectedItem.detail_loaded === false ? (
+                <div
+                  data-testid="cloud-todo-detail-loading"
+                  className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-muted"
+                >
+                  {t('todo.loading_work_item_detail')}
                 </div>
-              ) : undefined
-            }
-            onClose={() => {
-              setCreateTodoOpen(false)
-              setCreateTodoParent(null)
-              setCreateTodoInitialTitle(undefined)
+              ) : null}
+              {taskPanelOpen && aiChatProject ? (
+                <AiChatModal
+                  key={
+                    selectedTaskBinding?.work_item_id === selectedItem.id
+                      ? `ai-chat-${selectedItem.id}:${selectedTaskBinding.device_id}:${selectedTaskBinding.task_id}`
+                      : `ai-chat-new-${selectedItem.id}`
+                  }
+                  project={aiChatProject}
+                  localProjects={localProjects}
+                  task={selectedItem}
+                  initialLocalProjectId={
+                    taskComposerRequest?.workItemId === selectedItem.id
+                      ? runtimeTaskProjectUiId(runtimeWork, taskComposerRequest.taskRequest)
+                      : (localProjectIdForItem(selectedItem) ??
+                        (isMyTasksBoard ? selectedLocalProject?.id : null))
+                  }
+                  initialTaskRequest={
+                    taskComposerRequest?.workItemId === selectedItem.id
+                      ? taskComposerRequest.taskRequest
+                      : undefined
+                  }
+                  inheritFromTask={
+                    taskComposerRequest?.workItemId === selectedItem.id
+                      ? taskComposerRequest.inheritFromTask
+                      : null
+                  }
+                  initialAddress={
+                    selectedTaskBinding?.work_item_id === selectedItem.id
+                      ? {
+                          deviceId: selectedTaskBinding.device_id,
+                          taskId: selectedTaskBinding.task_id,
+                        }
+                      : null
+                  }
+                  taskTitle={
+                    selectedTaskBinding?.work_item_id === selectedItem.id
+                      ? selectedTaskBinding.task_title
+                      : null
+                  }
+                  open={
+                    selectedTaskBinding?.work_item_id !== selectedItem.id ||
+                    backgroundTaskItemId !== selectedItem.id
+                  }
+                  embedded
+                  initialTaskInput={
+                    taskComposerRequest?.workItemId === selectedItem.id
+                      ? taskComposerRequest.initialInput
+                      : ''
+                  }
+                  workflowNodeId={
+                    taskComposerRequest?.workItemId === selectedItem.id
+                      ? taskComposerRequest.workflowNodeId
+                      : undefined
+                  }
+                  onClose={closeIssuePanelStack}
+                  onBack={closeTaskPanel}
+                  onAddressChange={address => {
+                    if (taskPanelSessionId !== taskPanelSessionIdRef.current) return
+                    const activeTaskComposerRequest =
+                      taskComposerRequest?.workItemId === selectedItem.id
+                        ? taskComposerRequest
+                        : null
+                    if (!activeTaskComposerRequest) return
+                    advanceTaskPanelSession()
+                    if (activeTaskComposerRequest.backgroundAfterSend) {
+                      setBackgroundTaskItemId(null)
+                      setSelectedItem(null)
+                      setSelectedTaskBinding(null)
+                    } else {
+                      setSelectedTaskBinding({
+                        id: -Date.now(),
+                        device_id: address.deviceId,
+                        task_id: address.taskId,
+                        task_title: null,
+                        work_item_id: selectedItem.id,
+                      })
+                    }
+                    setTaskComposerRequest(null)
+                    setBoardRefreshNonce(value => value + 1)
+                  }}
+                  prepareTask={prepareSelectedItemTask}
+                  onTaskCreated={handleSelectedItemTaskCreated}
+                  onOpenRuntimeTask={onOpenRuntimeTask}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {selectedItem &&
+          aiChatProject &&
+          taskStartingInBackground &&
+          taskComposerRequest?.workItemId === selectedItem.id ? (
+            <BackgroundTaskStarter
+              project={aiChatProject}
+              localProjects={localProjects}
+              task={selectedItem}
+              input={taskComposerRequest.initialInput}
+              initialLocalProjectId={
+                localProjectIdForItem(selectedItem) ??
+                (isMyTasksBoard ? selectedLocalProject?.id : null)
+              }
+              taskRequest={taskComposerRequest.taskRequest}
+              inheritFromTask={taskComposerRequest.inheritFromTask}
+              workflowNodeId={taskComposerRequest.workflowNodeId}
+              onAddressChange={() => {
+                closeIssuePanelStack()
+                setBoardRefreshNonce(value => value + 1)
+              }}
+              prepareTask={prepareSelectedItemTask}
+              onTaskCreated={handleSelectedItemTaskCreated}
+              onError={setBoardError}
+            />
+          ) : null}
+          {selectedProject && projectAssistantOpen && !selectedItem ? (
+            <ProjectSpaceChatSidebar
+              key={`${selectedProject.id}:project`}
+              project={selectedProject}
+              localProjects={localProjects}
+              onClose={() => {
+                setProjectAssistantOpen(false)
+              }}
+            />
+          ) : null}
+        </div>
+
+        {globalSearchOpen && (
+          <GlobalTodoSearch
+            projects={projects}
+            projectItems={collaborationProjectItems}
+            projectMembers={collaborationProjectMembers}
+            query={globalSearchQuery}
+            onQueryChange={setGlobalSearchQuery}
+            onClose={() => setGlobalSearchOpen(false)}
+            onSelectProject={project => {
+              selectProject(project)
+              setProjectView('board')
+              setSelectedItem(null)
+              setGlobalSearchOpen(false)
             }}
-            onCreateError={(cause, retry) => {
-              const candidates = automationSelectionCandidates(cause)
-              if (!candidates) return false
-              setPendingAutomationSelection({
-                candidates,
-                onCancel: () => setPendingAutomationSelection(null),
-                onConfirm: async automationId => {
-                  await retry({ automation_rule_id: automationId })
-                  setPendingAutomationSelection(null)
-                },
-              })
-              return true
-            }}
-            onCreated={item => {
-              const locatedItem = addCreatedTodo(item, createTodoProject)
-              if (createTodoProject.location === 'cloud') {
-                cloudWorkspace.commands.appendIssue(item as CollaborationIssue)
-              }
-              const openRuntime = (configuredItem: LocatedLoopItem) =>
-                openCreatedItemRuntimeTask(configuredItem, createTodoProject)
-              const executionConfigurationResult = requestCreatedItemExecutionConfiguration(
-                locatedItem,
-                createTodoStartRuntime ? openRuntime : undefined
-              )
-              if (createTodoStartRuntime && executionConfigurationResult === 'not-needed') {
-                openRuntime(locatedItem)
-              } else if (!createTodoContinueCreating) {
-                setSelectedItem(locatedItem)
-              }
-              if (createTodoContinueCreating && !createTodoParent) {
-                setCreateTodoInitialTitle(undefined)
-                setCreateTodoNonce(current => current + 1)
-              } else {
-                setCreateTodoOpen(false)
-                setCreateTodoParent(null)
-                setCreateTodoInitialTitle(undefined)
-              }
+            onSelectItem={(project, item) => {
+              if (item.can_view_detail === false) return
+              selectProject(project)
+              setProjectView('board')
+              setSelectedItem({ ...item, project_store: project.project_store })
+              setGlobalSearchOpen(false)
             }}
           />
         )}
-      {renameProject && (
-        <Modal title="修改项目名称" onClose={() => !renameBusy && setRenameProject(null)}>
-          <div className="px-5 pb-5 pt-4">
-            <label className="block text-sm font-medium text-text-secondary">
-              项目名称
-              <input
-                data-testid="cloud-project-rename-input"
-                value={renameProjectName}
-                autoFocus
-                onFocus={event => event.currentTarget.select()}
-                onChange={event => {
-                  setRenameProjectName(event.target.value)
-                  setRenameError(null)
-                }}
-                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
-              />
-            </label>
-            <p className="mt-2 text-xs text-text-muted">新名称会显示在项目空间和看板侧栏中。</p>
-            {renameError ? <p className="mt-3 text-xs text-red-600">{renameError}</p> : null}
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRenameProject(null)}
-                disabled={renameBusy}
-                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                data-testid="cloud-project-rename-confirm"
-                disabled={!renameProjectName.trim() || renameBusy}
-                onClick={() => void renameSelectedProject()}
-                className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
-              >
-                {renameBusy ? '保存中…' : '保存'}
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-      {runtimeBatchArchiveItems && (
-        <Modal
-          title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
-          onClose={() => {
-            if (archiveBusy) return
-            setRuntimeBatchArchiveItems(null)
-            setArchiveError(null)
-          }}
-        >
-          <div className="px-5 pb-5 pt-4">
-            <p className="text-sm leading-5 text-text-secondary">
-              {t(
-                'todo.archive_completed_tasks_description',
-                '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
-                { count: runtimeBatchArchiveItems.length }
-              )}
-            </p>
-            {archiveError ? (
-              <p className="mt-3 text-xs text-destructive" role="alert">
-                {archiveError}
-              </p>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                data-testid="cloud-my-tasks-archive-completed-cancel"
-                disabled={archiveBusy}
-                onClick={() => {
-                  setRuntimeBatchArchiveItems(null)
-                  setArchiveError(null)
-                }}
-                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
-              >
-                {t('common.cancel', '取消')}
-              </button>
-              <button
-                type="button"
-                data-testid="cloud-my-tasks-archive-completed-confirm"
-                disabled={archiveBusy}
-                onClick={() => void archiveCompletedItems(runtimeBatchArchiveItems)}
-                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                {archiveBusy
-                  ? t('todo.archiving', '归档中…')
-                  : t('todo.confirm_archive', '确认归档')}
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-      {(archiveProject || archiveItem) && (
-        <Modal
-          title={archiveProject ? '归档项目？' : '归档任务？'}
-          onClose={() => {
-            if (archiveBusy) return
-            setArchiveProject(null)
-            setArchiveItem(null)
-            setArchiveError(null)
-          }}
-        >
-          <div className="px-5 pb-5 pt-4">
-            <p className="text-sm leading-5 text-text-secondary">
-              {archiveProject
-                ? `“${archiveProject.name}”及其中任务将从项目列表中隐藏。`
-                : `“${archiveItem?.title}”${items.some(item => item.parent_id === archiveItem?.id) ? '及其子任务' : ''}将从看板中隐藏。`}
-            </p>
-            <p className="mt-2 text-xs text-text-muted">归档数据会保留，不会立即永久删除。</p>
-            {archiveError ? <p className="mt-3 text-xs text-red-600">{archiveError}</p> : null}
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                data-testid="cloud-archive-cancel"
-                disabled={archiveBusy}
-                onClick={() => {
-                  setArchiveProject(null)
-                  setArchiveItem(null)
-                  setArchiveError(null)
-                }}
-                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                data-testid={
-                  archiveProject ? 'cloud-project-archive-confirm' : 'cloud-todo-archive-confirm'
+        {createProjectOpen && (
+          <ProjectCreateDialog
+            targets={availableProjectSpaceApis}
+            defaultLocation={projectSpaceApis.defaultLocation}
+            allowDingTalkAITable
+            labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
+            host={{
+              renderModal: ({ title, children, onClose }) => (
+                <Modal title={title} width="wide" onClose={onClose}>
+                  {children}
+                </Modal>
+              ),
+              parseDingTalkAITableLink,
+              formatError: cloudProjectRequestError,
+              track: event => {
+                if (event === 'created') {
+                  track('feature_action_completed', {
+                    domain: 'project_space',
+                    action: 'create',
+                  })
+                } else {
+                  track('operation_failed', { operation: 'project_space_action' })
                 }
-                disabled={archiveBusy}
-                onClick={() => {
-                  void (archiveProject ? confirmArchiveProject() : confirmArchiveItem())
-                }}
-                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                {archiveBusy ? '归档中…' : '确认归档'}
-              </button>
+              },
+            }}
+            onClose={() => setCreateProjectOpen(false)}
+            onCreated={(project, location) => {
+              const weworkProject = toWeworkCloudProject(project)
+              const locatedProject: LocatedCloudProject = {
+                ...weworkProject,
+                project_store: location === 'local' ? 'local' : 'backend',
+                location,
+              }
+              prependProject(locatedProject)
+              const membersRequest =
+                location === 'local'
+                  ? projectSpaceApis.local?.listCloudProjectMembers(weworkProject.id)
+                  : undefined
+              if (membersRequest) {
+                const spaceKey = projectSpaceKey(projectSpaceRef(locatedProject))
+                void membersRequest.then(members =>
+                  setLocalProjectMembers(current => ({ ...current, [spaceKey]: members }))
+                )
+              }
+              applyProjectSelection(locatedProject)
+              onActiveProjectChange?.(locatedProject)
+              setCreateProjectOpen(false)
+            }}
+          />
+        )}
+        {createTodoOpen &&
+          createTodoProject &&
+          (createTodoProject.location === 'cloud' ? cloudWorkspaceApi : createTodoApi) && (
+            <TodoEditor
+              key={`${projectSpaceKey(projectSpaceRef(createTodoProject))}:${createTodoNonce}`}
+              mode="create"
+              {...(createTodoProject.location === 'cloud'
+                ? { sharedApi: cloudWorkspaceApi! }
+                : { api: createTodoApi! })}
+              projectChatAgentApi={selectedProjectAgentApi}
+              teamApi={services.teamApi}
+              project={createTodoProject}
+              initialParent={createTodoParent}
+              initialStatus={createTodoStatus}
+              initialTitle={createTodoInitialTitle}
+              allItems={createTodoParent ? detailAllItems : items}
+              createOptions={
+                createTodoProject.location === 'cloud' && !createTodoParent ? (
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-text-secondary">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        data-testid="cloud-todo-create-runtime-option"
+                        checked={createTodoStartRuntime}
+                        onChange={event => setCreateTodoStartRuntime(event.target.checked)}
+                      />
+                      {t('todo.create_runtime_task_after_issue', '创建后启动 Runtime 任务')}
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        data-testid="cloud-todo-continue-creating-option"
+                        checked={createTodoContinueCreating}
+                        onChange={event => setCreateTodoContinueCreating(event.target.checked)}
+                      />
+                      {t('todo.continue_creating', '继续创建')}
+                    </label>
+                  </div>
+                ) : undefined
+              }
+              onClose={() => {
+                setCreateTodoOpen(false)
+                setCreateTodoParent(null)
+                setCreateTodoInitialTitle(undefined)
+              }}
+              onCreateError={(cause, retry) => {
+                const candidates = automationSelectionCandidates(cause)
+                if (!candidates) return false
+                setPendingAutomationSelection({
+                  candidates,
+                  onCancel: () => setPendingAutomationSelection(null),
+                  onConfirm: async automationId => {
+                    await retry({ automation_rule_id: automationId })
+                    setPendingAutomationSelection(null)
+                  },
+                })
+                return true
+              }}
+              onCreated={item => {
+                const locatedItem = addCreatedTodo(item, createTodoProject)
+                if (createTodoProject.location === 'cloud') {
+                  cloudWorkspace.commands.appendIssue(item as CollaborationIssue)
+                }
+                const openRuntime = (configuredItem: LocatedLoopItem) =>
+                  openCreatedItemRuntimeTask(configuredItem, createTodoProject)
+                const executionConfigurationResult = requestCreatedItemExecutionConfiguration(
+                  locatedItem,
+                  createTodoStartRuntime ? openRuntime : undefined
+                )
+                if (createTodoStartRuntime && executionConfigurationResult === 'not-needed') {
+                  openRuntime(locatedItem)
+                } else if (!createTodoContinueCreating) {
+                  setSelectedItem(locatedItem)
+                }
+                if (createTodoContinueCreating && !createTodoParent) {
+                  setCreateTodoInitialTitle(undefined)
+                  setCreateTodoNonce(current => current + 1)
+                } else {
+                  setCreateTodoOpen(false)
+                  setCreateTodoParent(null)
+                  setCreateTodoInitialTitle(undefined)
+                }
+              }}
+            />
+          )}
+        {renameProject && (
+          <Modal title="修改项目名称" onClose={() => !renameBusy && setRenameProject(null)}>
+            <div className="px-5 pb-5 pt-4">
+              <label className="block text-sm font-medium text-text-secondary">
+                项目名称
+                <input
+                  data-testid="cloud-project-rename-input"
+                  value={renameProjectName}
+                  autoFocus
+                  onFocus={event => event.currentTarget.select()}
+                  onChange={event => {
+                    setRenameProjectName(event.target.value)
+                    setRenameError(null)
+                  }}
+                  className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                />
+              </label>
+              <p className="mt-2 text-xs text-text-muted">新名称会显示在项目空间和看板侧栏中。</p>
+              {renameError ? <p className="mt-3 text-xs text-red-600">{renameError}</p> : null}
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRenameProject(null)}
+                  disabled={renameBusy}
+                  className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  data-testid="cloud-project-rename-confirm"
+                  disabled={!renameProjectName.trim() || renameBusy}
+                  onClick={() => void renameSelectedProject()}
+                  className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+                >
+                  {renameBusy ? '保存中…' : '保存'}
+                </button>
+              </div>
             </div>
-          </div>
-        </Modal>
-      )}
-    </div>
+          </Modal>
+        )}
+        {runtimeBatchArchiveItems && (
+          <Modal
+            title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
+            onClose={() => {
+              if (archiveBusy) return
+              setRuntimeBatchArchiveItems(null)
+              setArchiveError(null)
+            }}
+          >
+            <div className="px-5 pb-5 pt-4">
+              <p className="text-sm leading-5 text-text-secondary">
+                {t(
+                  'todo.archive_completed_tasks_description',
+                  '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
+                  { count: runtimeBatchArchiveItems.length }
+                )}
+              </p>
+              {archiveError ? (
+                <p className="mt-3 text-xs text-destructive" role="alert">
+                  {archiveError}
+                </p>
+              ) : null}
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="cloud-my-tasks-archive-completed-cancel"
+                  disabled={archiveBusy}
+                  onClick={() => {
+                    setRuntimeBatchArchiveItems(null)
+                    setArchiveError(null)
+                  }}
+                  className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+                >
+                  {t('common.cancel', '取消')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="cloud-my-tasks-archive-completed-confirm"
+                  disabled={archiveBusy}
+                  onClick={() => void archiveCompletedItems(runtimeBatchArchiveItems)}
+                  className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {archiveBusy
+                    ? t('todo.archiving', '归档中…')
+                    : t('todo.confirm_archive', '确认归档')}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+        {(archiveProject || archiveItem) && (
+          <Modal
+            title={archiveProject ? '归档项目？' : '归档任务？'}
+            onClose={() => {
+              if (archiveBusy) return
+              setArchiveProject(null)
+              setArchiveItem(null)
+              setArchiveError(null)
+            }}
+          >
+            <div className="px-5 pb-5 pt-4">
+              <p className="text-sm leading-5 text-text-secondary">
+                {archiveProject
+                  ? `“${archiveProject.name}”及其中任务将从项目列表中隐藏。`
+                  : `“${archiveItem?.title}”${items.some(item => item.parent_id === archiveItem?.id) ? '及其子任务' : ''}将从看板中隐藏。`}
+              </p>
+              <p className="mt-2 text-xs text-text-muted">归档数据会保留，不会立即永久删除。</p>
+              {archiveError ? <p className="mt-3 text-xs text-red-600">{archiveError}</p> : null}
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="cloud-archive-cancel"
+                  disabled={archiveBusy}
+                  onClick={() => {
+                    setArchiveProject(null)
+                    setArchiveItem(null)
+                    setArchiveError(null)
+                  }}
+                  className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  data-testid={
+                    archiveProject ? 'cloud-project-archive-confirm' : 'cloud-todo-archive-confirm'
+                  }
+                  disabled={archiveBusy}
+                  onClick={() => {
+                    void (archiveProject ? confirmArchiveProject() : confirmArchiveItem())
+                  }}
+                  className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {archiveBusy ? '归档中…' : '确认归档'}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </div>
+    </RuntimeConfigurationProvider>
   )
 }

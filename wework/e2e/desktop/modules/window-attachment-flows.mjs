@@ -1,3 +1,5 @@
+import { readdir } from 'node:fs/promises'
+
 import {
   distanceFromBottom,
   distanceFromTop,
@@ -42,6 +44,7 @@ import {
   WINDOW_LIFECYCLE_SCROLL_MARKER,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  commandOutput,
   ensureModelOptionVisible,
   join,
   processIsAlive,
@@ -861,6 +864,10 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
   await control.command('showPopoutWindow', 'body', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const initialPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+  assert.equal(initialPopout.popoutVisible, true, 'Popout Window did not become visible')
+  assert.ok(initialPopout.popoutWindowId, 'Popout Window identity was unavailable')
+  assert.ok(initialPopout.popoutWebContentsId, 'Popout Window WebContents identity was unavailable')
   try {
     if (process.platform === 'darwin') {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
@@ -876,15 +883,33 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
   } finally {
     await control.command('dismissPopoutWindow', 'body')
   }
-  const reopenStartedAt = Date.now()
+  const hiddenPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+  assert.equal(hiddenPopout.popoutVisible, false, 'Dismissed Popout Window remained visible')
+  assert.equal(
+    hiddenPopout.popoutWindowId,
+    initialPopout.popoutWindowId,
+    'Dismissing the Popout Window replaced its native window'
+  )
+  assert.equal(
+    hiddenPopout.popoutWebContentsId,
+    initialPopout.popoutWebContentsId,
+    'Dismissing the Popout Window replaced its WebContents'
+  )
   await control.command('showPopoutWindow', 'body', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const reopenDurationMs = Date.now() - reopenStartedAt
+  const reopenedPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
   try {
-    assert.ok(
-      reopenDurationMs < 2_000,
-      `Warm Popout Window reopen took ${reopenDurationMs}ms instead of reusing the hidden WebView`
+    assert.equal(reopenedPopout.popoutVisible, true, 'Reopened Popout Window was not visible')
+    assert.equal(
+      reopenedPopout.popoutWindowId,
+      initialPopout.popoutWindowId,
+      'Reopened Popout Window did not reuse its hidden native window'
+    )
+    assert.equal(
+      reopenedPopout.popoutWebContentsId,
+      initialPopout.popoutWebContentsId,
+      'Reopened Popout Window did not reuse its hidden WebContents'
     )
     if (process.platform === 'darwin') {
       const dataUrl = await control.command('capturePopoutWindow', 'body', {
@@ -961,6 +986,33 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
+async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    if (attachments.length >= expectedCount) return attachments
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The remote device did not persist attachments in its private runtime root')
+}
+
+async function findAttachmentFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const files = await Promise.all(
+    entries.map(entry => {
+      const path = join(directory, entry.name)
+      return entry.isDirectory() ? findAttachmentFiles(path) : [path]
+    })
+  )
+  return files.flat().filter(path => path.endsWith(ATTACHMENT_ONLY_FILENAME))
+}
+
+function readGitStatus(workspacePath) {
+  return commandOutput('git', ['status', '--porcelain', '--untracked-files=all'], {
+    cwd: workspacePath,
+  })
+}
+
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
   appBundlePath,
@@ -968,7 +1020,10 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
+  runtimeAttachmentRoot,
+  workspacePath,
 }) {
+  const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
   control.setScenario('attachment_only')
   const rowsBeforeAttachmentOnly = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -1009,6 +1064,16 @@ async function verifyAttachmentOnlySidebarLifecycle({
   })
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
+  }
+  if (runtimeAttachmentRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  }
+  if (workspacePath) {
+    assert.equal(
+      readGitStatus(workspacePath),
+      gitStatusBefore,
+      'Uploading remote device attachments changed the project Git status'
+    )
   }
 
   const twoTaskSnapshot = await waitForSnapshot(

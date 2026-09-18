@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -53,7 +53,7 @@ export default function DeviceChatPage() {
   const isMobile = useIsMobile()
 
   // Team state from context (centralized to avoid duplicate API calls)
-  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
@@ -110,6 +110,12 @@ export default function DeviceChatPage() {
 
   // VNC fullscreen state
   const [isVncFullscreen, setIsVncFullscreen] = useState(false)
+
+  // Share and export actions rendered by MessagesArea inside ChatArea
+  const [shareButton, setShareButton] = useState<ReactNode>(null)
+  const handleShareButtonRender = useCallback((button: ReactNode) => {
+    setShareButton(button)
+  }, [])
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -280,6 +286,7 @@ export default function DeviceChatPage() {
           {isCloudDevice && sandboxId && (
             <CloudDeviceVncPanel isVncOpen={isVncOpen} onToggleVnc={handleToggleVnc} />
           )}
+          {shareButton}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
@@ -298,9 +305,12 @@ export default function DeviceChatPage() {
               <ChatArea
                 teams={teams}
                 isTeamsLoading={isTeamsLoading}
+                loadError={teams.length === 0 ? loadError : null}
+                rawTeamsEmpty={teams.length === 0}
                 showRepositorySelector={false}
                 taskType="task"
                 onRefreshTeams={handleRefreshTeams}
+                onShareButtonRender={handleShareButtonRender}
                 disabledReason={
                   !selectedDevice || selectedDevice.status === 'offline'
                     ? t('device_offline_cannot_send')

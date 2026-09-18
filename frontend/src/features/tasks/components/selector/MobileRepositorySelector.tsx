@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, FolderGit2, GitBranch, Loader2 } from 'lucide-react'
+import { Check, ChevronLeft, FolderGit2, FolderX, GitBranch, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 import { githubApis } from '@/apis/github'
@@ -33,6 +33,8 @@ interface MobileRepositorySelectorProps {
   handleBranchChange: (branch: GitBranchType | null) => void
   disabled: boolean
   selectedTaskDetail?: TaskDetail | null
+  requiresWorkspace?: boolean
+  onRequiresWorkspaceChange?: (value: boolean) => void
   onSelectorOpenChange?: (open: boolean) => void
 }
 
@@ -43,6 +45,8 @@ export default function MobileRepositorySelector({
   handleBranchChange,
   disabled,
   selectedTaskDetail,
+  requiresWorkspace = true,
+  onRequiresWorkspaceChange,
   onSelectorOpenChange,
 }: MobileRepositorySelectorProps) {
   const { t } = useTranslation('chat')
@@ -72,6 +76,7 @@ export default function MobileRepositorySelector({
     handleRepoChange,
     disabled,
     selectedTaskDetail,
+    autoRestore: requiresWorkspace,
   })
 
   const prevReposRef = useRef(repos)
@@ -211,6 +216,10 @@ export default function MobileRepositorySelector({
   )
 
   const handleRepositorySelect = (repo: GitRepoInfo) => {
+    if (!requiresWorkspace) {
+      onRequiresWorkspaceChange?.(true)
+    }
+
     const repositoryChanged =
       !selectedRepo || getRepositoryIdentity(selectedRepo) !== getRepositoryIdentity(repo)
 
@@ -232,14 +241,23 @@ export default function MobileRepositorySelector({
     handleOpenChange(false)
   }
 
+  const handleClearSelection = () => {
+    onRequiresWorkspaceChange?.(false)
+    handleRepoChange(null)
+    handleBranchChange(null)
+    handleOpenChange(false)
+  }
+
   const handleIntegrationClick = () => {
     handleOpenChange(false)
     router.push(paths.settings.integrations.getHref())
   }
 
-  const selectedWorkspace = selectedRepo
-    ? `${selectedRepo.git_repo}${selectedBranch ? ` · ${selectedBranch.name}` : ''}`
-    : t('mobile_composer.not_selected')
+  const selectedWorkspace = !requiresWorkspace
+    ? t('common:repos.no_workspace_needed')
+    : selectedRepo
+      ? `${selectedRepo.git_repo}${selectedBranch ? ` · ${selectedBranch.name}` : ''}`
+      : t('mobile_composer.not_selected')
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange} shouldScaleBackground={false}>
@@ -249,7 +267,7 @@ export default function MobileRepositorySelector({
           disabled={disabled || loading}
           data-testid="mobile-repository-selector-trigger"
           className={cn(
-            'flex w-full items-center justify-between px-3 py-2.5 text-left',
+            'flex min-h-11 w-full items-center justify-between px-3 py-2.5 text-left',
             'transition-colors hover:bg-hover active:bg-hover',
             'disabled:cursor-not-allowed disabled:opacity-50',
             loading && 'animate-pulse'
@@ -400,6 +418,18 @@ export default function MobileRepositorySelector({
         {step === 'repository' && (
           <div className="px-4 pb-4 pt-3">
             <div className="overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
+              {requiresWorkspace && onRequiresWorkspaceChange && (
+                <button
+                  type="button"
+                  data-testid="mobile-workspace-clear-selection"
+                  onClick={handleClearSelection}
+                  disabled={disabled}
+                  className="flex min-h-11 w-full items-center gap-3 px-3 py-2.5 text-sm text-text-muted transition-colors hover:bg-hover active:bg-hover disabled:opacity-50"
+                >
+                  <FolderX className="h-4 w-4 shrink-0" />
+                  <span>{t('common:repos.no_workspace_needed')}</span>
+                </button>
+              )}
               <RepositorySelectorFooter
                 onConfigureClick={handleIntegrationClick}
                 onRefreshClick={handleRefreshCache}

@@ -55,6 +55,7 @@ async fn codex_app_server_includes_pasted_zip_in_model_input() {
             "model_id": "gpt-5",
             "protocol": "openai-responses"
         }),
+        new_session: true,
         ..ExecutionRequest::default()
     };
     request.extra.insert(
@@ -115,6 +116,7 @@ async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
             "wework_model_kind": "codex-official",
             "protocol": "openai-responses"
         }),
+        new_session: true,
         ..ExecutionRequest::default()
     };
     request.extra.insert(
@@ -182,6 +184,7 @@ async fn codex_app_server_keeps_failed_download_placeholder_order() {
             "wework_model_kind": "codex-official",
             "protocol": "openai-responses"
         }),
+        new_session: true,
         ..ExecutionRequest::default()
     };
     request.extra.insert(
@@ -256,6 +259,7 @@ async fn codex_app_server_cleans_generated_model_input_images() {
             "wework_model_kind": "codex-provider",
             "protocol": "openai-responses"
         }),
+        new_session: true,
         ..ExecutionRequest::default()
     };
     request.extra.insert(
@@ -325,6 +329,7 @@ async fn codex_app_server_keeps_official_model_images_at_original_size() {
             "wework_model_kind": "codex-official",
             "protocol": "openai-responses"
         }),
+        new_session: true,
         ..ExecutionRequest::default()
     };
     request.extra.insert(

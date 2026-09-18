@@ -39,7 +39,23 @@ jest.mock('next/dynamic', () => () => {
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    // Resolve against the real zh-CN knowledge namespace the way i18next does:
+    // a missing key surfaces as the raw key, so a regression is visible here
+    // instead of shipping untranslated keys into the watermark canvas.
+    t: (key: string) => {
+      const locale = jest.requireActual('@/i18n/locales/zh-CN/knowledge.json') as Record<
+        string,
+        unknown
+      >
+      const value = key
+        .split('.')
+        .reduce<unknown>(
+          (node, part) =>
+            node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined,
+          locale
+        )
+      return typeof value === 'string' ? value : key
+    },
     getCurrentLanguage: () => 'en',
   }),
 }))
@@ -51,6 +67,21 @@ jest.mock('@/features/theme/ThemeProvider', () => ({
 }))
 
 const mockListKnowledgeBases = jest.fn()
+
+const mockProtectionExtension = {
+  renderBoundary: jest.fn(({ children }: { children: React.ReactNode }) => (
+    <div data-testid="mock-extension-boundary">{children}</div>
+  )),
+  renderProtectedPreview: jest.fn(({ children }: { children: React.ReactNode }) => children),
+}
+let mockExtensionRegistered = false
+
+jest.mock('@/features/knowledge/document/document-protection-registry', () => ({
+  subscribeKnowledgeDocumentProtectionExtension: () => () => undefined,
+  getKnowledgeDocumentProtectionExtension: () =>
+    mockExtensionRegistered ? mockProtectionExtension : null,
+  isKnowledgeDocumentProtectionRequired: () => false,
+}))
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeConfig: jest.fn().mockResolvedValue({
@@ -162,6 +193,8 @@ beforeEach(() => {
   mockDownloadDocument.mockReset()
   mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
+  mockExtensionRegistered = false
+  mockProtectionExtension.renderBoundary.mockClear()
 })
 
 const baseDocument: KnowledgeDocument = {
@@ -184,6 +217,75 @@ const baseDocument: KnowledgeDocument = {
 }
 
 describe('DocumentDetailDialog permissions', () => {
+  it('falls back to the translated watermark label when no server watermark text is provided', async () => {
+    const canvasContext = {
+      scale: jest.fn(),
+      translate: jest.fn(),
+      rotate: jest.fn(),
+      fillText: jest.fn(),
+      font: '',
+      fillStyle: '',
+      textAlign: 'start',
+      textBaseline: 'alphabetic',
+    } as unknown as CanvasRenderingContext2D
+    const getContext = jest
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(canvasContext)
+    const toDataURL = jest
+      .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,watermark')
+
+    try {
+      render(
+        <DocumentDetailDialog
+          open={true}
+          onOpenChange={jest.fn()}
+          document={baseDocument}
+          knowledgeBaseId={21}
+          allowDownload={false}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('knowledge-document-watermark').style.backgroundImage).toContain(
+          'data:image/png'
+        )
+      })
+      // The fallback key must resolve to the translated label, never render as
+      // the raw key string in the tiled watermark.
+      expect(canvasContext.fillText).toHaveBeenCalledWith('受保护知识库', 0, 0)
+    } finally {
+      getContext.mockRestore()
+      toDataURL.mockRestore()
+    }
+  })
+
+  it('delegates the parsed-content watermark to the deployment extension for any protected knowledge base', () => {
+    mockExtensionRegistered = true
+    try {
+      render(
+        <DocumentDetailDialog
+          open={true}
+          onOpenChange={jest.fn()}
+          document={baseDocument}
+          knowledgeBaseId={21}
+          allowDownload={false}
+        />
+      )
+
+      // Non-organization protected knowledge bases must use the extension's
+      // watermark identity (name + employee id / uid), matching the source
+      // preview, instead of the username-only open-source fallback.
+      expect(screen.getByTestId('mock-extension-boundary')).toBeInTheDocument()
+      expect(screen.queryByTestId('knowledge-protected-content')).not.toBeInTheDocument()
+      expect(mockProtectionExtension.renderBoundary).toHaveBeenCalledWith(
+        expect.objectContaining({ knowledgeBaseId: 21 })
+      )
+    } finally {
+      mockExtensionRegistered = false
+    }
+  })
+
   it('renders the protected watermark inside the scrollable content so it covers scrolled sections', async () => {
     const canvasContext = {
       scale: jest.fn(),
@@ -220,8 +322,10 @@ describe('DocumentDetailDialog permissions', () => {
       })
       expect(watermark).toHaveClass('absolute', 'inset-0')
       expect(watermark).toHaveAttribute('data-watermark-pattern', 'tiled')
-      // Match the internal build: no forced background-size, so tile/text size is identical
-      expect(watermark.style.backgroundSize).toBe('')
+      // The tile is pinned to its logical size so high-DPI screens keep the
+      // same small, dense watermark instead of scaling it into large sparse
+      // text that clashes with dense document content.
+      expect(watermark.style.backgroundSize).toBe('280px 180px')
 
       // The boundary grows with the content inside the scroller, so the watermark
       // stays over every scrolled section instead of only the first screen.
@@ -255,7 +359,7 @@ describe('DocumentDetailDialog permissions', () => {
       />
     )
 
-    expect(screen.queryByText('document.document.detail.edit')).not.toBeInTheDocument()
+    expect(screen.queryByText('编辑')).not.toBeInTheDocument()
   })
 
   it('shows the edit button when the user can manage the document', () => {
@@ -270,7 +374,7 @@ describe('DocumentDetailDialog permissions', () => {
       />
     )
 
-    expect(screen.getByText('document.document.detail.edit')).toBeInTheDocument()
+    expect(screen.getByText('编辑')).toBeInTheDocument()
   })
 })
 
@@ -304,7 +408,7 @@ describe('DocumentDetailDialog external source info', () => {
     const info = screen.getByTestId('external-source-info')
     expect(info).toHaveTextContent('dingtalk')
     expect(info).toHaveTextContent('Spec Doc')
-    expect(info).toHaveTextContent('document.document.externalSource.lastImportedAt')
+    expect(info).toHaveTextContent('最近导入')
     const link = screen.getByTestId('external-source-link')
     expect(link).toHaveAttribute('href', 'https://alidocs.dingtalk.com/i/nodes/node-1')
     expect(link).toHaveClass('min-h-[44px]', 'min-w-[44px]', 'md:min-h-0', 'md:min-w-0')
@@ -496,7 +600,7 @@ describe('DocumentDetailDialog original file preview', () => {
   })
 
   it.each(['file', 'external'] as const)(
-    'hides the original-file preview when download is disabled for %s documents',
+    'previews the original file without download entries when download is disabled for %s documents',
     sourceType => {
       render(
         <DocumentDetailDialog
@@ -509,11 +613,17 @@ describe('DocumentDetailDialog original file preview', () => {
         />
       )
 
-      expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
+      // The source tab stays available for protected knowledge bases; the
+      // original renders inline behind the watermark boundary.
+      expect(screen.getByTestId('knowledge-document-source-tab')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-protected-knowledge-base-id',
+        '21'
+      )
+      // Download entries disappear while the fullscreen toggle stays.
       expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('knowledge-source-preview-fullscreen')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
-      expect(screen.getByText('plain text content')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
     }
   )
 
@@ -546,13 +656,12 @@ describe('DocumentDetailDialog original file preview', () => {
         'data-active',
         'false'
       )
-      expect(
-        screen.queryByRole('button', { name: 'document.document.detail.edit' })
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
     }
   )
 
-  it('shows derived summaries while protecting download-disabled document content', () => {
+  it('shows derived summaries while protecting download-disabled document content', async () => {
+    const user = userEvent.setup()
     mockDocumentSummary = {
       status: 'completed',
       short_summary: 'Organization document summary',
@@ -570,11 +679,14 @@ describe('DocumentDetailDialog original file preview', () => {
     )
 
     expect(screen.getByTestId('knowledge-document-summary-toggle')).toBeInTheDocument()
-    expect(screen.getByText('document.document.detail.statusValues.completed')).toBeInTheDocument()
+    expect(screen.getByText('已完成')).toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
 
+    // A protected knowledge base opens on the source tab; the derived summary
+    // becomes visible after switching to the parsed view.
+    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
     expect(screen.getByText('Organization document summary')).toBeInTheDocument()
-    expect(screen.queryByText('document.document.detail.copy')).not.toBeInTheDocument()
+    expect(screen.queryByText('复制')).not.toBeInTheDocument()
   })
 
   it('hides the source preview tab for non-file documents', () => {
@@ -607,7 +719,7 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
     expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toHaveAttribute(
       'aria-label',
-      'document.document.detail.exitFullscreen'
+      '退出全屏'
     )
   })
 
@@ -718,9 +830,7 @@ describe('DocumentDetailDialog original file preview', () => {
     await user.click(screen.getByTestId('knowledge-source-preview-download'))
 
     expect(mockDownloadDocument).toHaveBeenCalledWith(22, 'report.docx')
-    expect(toast.error).toHaveBeenCalledWith(
-      'document.document.detail.sourcePreview.downloadFailed'
-    )
+    expect(toast.error).toHaveBeenCalledWith('原文件下载失败')
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
   })
 })

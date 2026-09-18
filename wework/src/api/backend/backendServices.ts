@@ -1,4 +1,5 @@
 import { getToken } from '@/api/auth'
+import { createAgentResourceApi } from '@/api/agentResources'
 import { createAttachmentApi } from '@/api/attachments'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
@@ -59,6 +60,7 @@ export function createBackendWorkbenchServices(
     redirectOnUnauthorized: options.redirectOnUnauthorized,
   })
   const deviceApi = createDeviceApi(client)
+  const agentResourceApi = createAgentResourceApi(client)
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
@@ -101,6 +103,7 @@ export function createBackendWorkbenchServices(
   }
 
   return {
+    agentResourceApi,
     teamApi,
     modelApi,
     skillApi: createSkillApi(client),

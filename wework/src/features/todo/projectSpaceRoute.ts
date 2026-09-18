@@ -22,6 +22,10 @@ export function projectSpaceRouteRequestsDefaultProject(contentRoute: string): b
   )
 }
 
+export function projectSpaceRouteTargetsDefaultWorkItems(contentRoute: string): boolean {
+  return projectSpaceRouteParam(contentRoute, 'projectId') === DEFAULT_WORK_ITEM_PROJECT_ID
+}
+
 export function projectSpaceRouteMatchesProject(
   contentRoute: string,
   project: RuntimeProjectSpaceRef

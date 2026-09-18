@@ -79,7 +79,7 @@ class TestKnowledgeServiceReadUserResolution:
 
 @pytest.mark.unit
 class TestKnowledgeServiceCreateKnowledgeBase:
-    def test_create_keeps_document_download_setting_absent_when_not_provided(
+    def test_create_leaves_download_setting_absent_when_not_provided(
         self, test_db, test_user
     ) -> None:
         knowledge_base_id = KnowledgeService.create_knowledge_base(
@@ -112,7 +112,7 @@ class TestKnowledgeServiceCreateKnowledgeBase:
             is allow_document_download
         )
 
-    def test_update_null_removes_document_download_setting(
+    def test_update_null_resets_document_download_to_allowed_default(
         self, test_db, test_user
     ) -> None:
         knowledge_base_id = KnowledgeService.create_knowledge_base(

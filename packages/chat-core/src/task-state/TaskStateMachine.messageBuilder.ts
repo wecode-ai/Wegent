@@ -151,8 +151,15 @@ export function buildMessagesFromSubtasks({
         bestContent = streamRecovery.cached_content
       }
 
+      // Use the emitted placeholder before synthesizing one from generation settings.
+      const recoveredBlocks =
+        streamRecovery?.subtask_id === subtask.id ? streamRecovery.blocks : undefined
+      const resultWithRecoveredBlocks =
+        !subtaskResult?.blocks?.length && recoveredBlocks?.length
+          ? { ...subtaskResult, blocks: recoveredBlocks }
+          : subtaskResult
       const runningResult = ensureRunningImagePlaceholder(
-        subtaskResult,
+        resultWithRecoveredBlocks,
         findImageConfigForAssistantSubtask(subtasks, subtaskIndex),
         subtask.id,
         subtask.created_at

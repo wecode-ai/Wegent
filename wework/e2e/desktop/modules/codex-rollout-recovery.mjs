@@ -178,8 +178,14 @@ export function createCodexRolloutRecovery({ chatWorkspacePath, executorHome, ui
   async function wait(predicate, description) {
     const deadline = Date.now() + Math.max(uiTimeoutMs, TIMEOUT_FLOOR_MS)
     while (Date.now() < deadline) {
-      const value = await predicate()
-      if (value) return value
+      try {
+        const value = await predicate()
+        if (value) return value
+      } catch (error) {
+        // node:sqlite reports SQLITE_BUSY (5) and SQLITE_CANTOPEN (14) via errcode.
+        const primaryCode = typeof error?.errcode === 'number' ? error.errcode & 0xff : null
+        if (error?.code !== 'ERR_SQLITE_ERROR' || ![5, 14].includes(primaryCode)) throw error
+      }
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
     }
     throw new Error(

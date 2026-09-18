@@ -119,6 +119,8 @@ import {
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  beginRuntimeGoalSnapshot,
+  isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
   runtimeConversationKey,
@@ -196,7 +198,6 @@ export function WorkbenchProvider({
   debugSnapshotEnabled = true,
   consumePluginTrials = true,
   loadTaskComposerCatalogs = true,
-  prewarmComposerApps = true,
   publishDebugSnapshots = true,
   syncCoreDshModels = false,
   syncRemoteProjects = true,
@@ -365,6 +366,25 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
+  const updateUserPreferences = useCallback(
+    async (patch: UserPreferences): Promise<UserPreferences> => {
+      const userApi = resolvedServices.userApi
+      if (!userApi) {
+        throw new Error('User preferences are unavailable')
+      }
+      const previousPreferences = latestUserPreferencesRef.current ?? {}
+      const updatedUser = await userApi.updateCurrentUser({ preferences: patch })
+      const preferences = {
+        ...previousPreferences,
+        ...patch,
+        ...(updatedUser.preferences ?? {}),
+      }
+      latestUserPreferencesRef.current = preferences
+      dispatch({ type: 'user_preferences_updated', preferences })
+      return preferences
+    },
+    [resolvedServices.userApi]
+  )
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
     devices: state.devices,
@@ -881,7 +901,8 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
-  const taskComposerCatalogsEnabled = loadTaskComposerCatalogs || taskComposerCatalogsRequested
+  const taskComposerCatalogsEnabled =
+    taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
     setTaskComposerCatalogsRequested(true)
   }, [])
@@ -1887,14 +1908,14 @@ export function WorkbenchProvider({
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
 
+    const snapshotVersion = beginRuntimeGoalSnapshot(address)
     void runtimeTasks
       .getRuntimeGoal(address)
       .then(response => {
-        if (!response.accepted) return
-        const goal = response.goal
-        if (!goal) return
+        if (!response.accepted || !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)) return
+        const goal = response.goal ?? null
         setRuntimeConversationGoal(address, goal)
-        lifecycleStore.goalStatusReceived(address, goal.status)
+        lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
       })
       .catch(error => {
         console.warn('[Wework] Runtime Goal snapshot sync failed', {
@@ -2364,8 +2385,6 @@ export function WorkbenchProvider({
     ]
   )
 
-  const localAppsPrewarmSourceRef = useRef<typeof listLocalApps | null>(null)
-
   const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
   useEffect(() => {
     if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
@@ -2385,27 +2404,7 @@ export function WorkbenchProvider({
     })
   }, [listLocalApps, projectPluginNamesKey])
 
-  // Warm the shared composer app cache once the startup project context is
-  // stable. Composer controls consume this snapshot instead of issuing their
-  // own mount requests.
   useEffect(() => {
-    if (
-      prewarmComposerApps &&
-      isWorkbenchShellReady &&
-      localAppsPrewarmSourceRef.current !== listLocalApps
-    ) {
-      localAppsPrewarmSourceRef.current = listLocalApps
-      if (localAppsRefreshTimerRef.current !== null) {
-        window.clearTimeout(localAppsRefreshTimerRef.current)
-        localAppsRefreshTimerRef.current = null
-      }
-      localSkillsCacheRef.current.clear()
-      localAppsCacheRef.current = null
-      localAppsInflightRef.current = null
-      localAppsLoadGenerationRef.current += 1
-      void listLocalApps()
-    }
-
     const clearLocalSkillCache = () => {
       const shouldRefreshApps = localAppsRequestedRef.current
       localSkillsCacheRef.current.clear()
@@ -2435,7 +2434,7 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
       }
     }
-  }, [isWorkbenchShellReady, listLocalApps, prewarmComposerApps])
+  }, [listLocalApps])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
   // onto composer apps when the cache arrives after the warm path.
@@ -2727,6 +2726,7 @@ export function WorkbenchProvider({
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    updateUserPreferences,
     setWorkbenchError,
     projectWorktreeBranch,
     setProjectWorktreeBranch,

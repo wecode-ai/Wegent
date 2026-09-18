@@ -34,28 +34,10 @@ import { RichSkillSelector } from '@/features/settings/components/skills/RichSki
 import { RichKnowledgeBaseSelector } from '../RichKnowledgeBaseSelector'
 import { CollapsibleSection } from '@/components/common/CollapsibleSection'
 import type { SendAreaSectionProps } from './types'
-import type { DeviceInfo } from '@/apis/devices'
 import type { SubscriptionExecutionTargetType } from '@/types/subscription'
 import type { CompatibleProvider } from '@/utils/modelCompatibility'
 import { getSubscriptionTeamDisplayName } from './team-selection'
-
-type SubscriptionDeviceType = Extract<DeviceInfo['device_type'], SubscriptionExecutionTargetType>
-type SubscriptionDeviceInfo = DeviceInfo & { device_type: SubscriptionDeviceType }
-
-function isSubscriptionDevice(device: DeviceInfo): device is SubscriptionDeviceInfo {
-  return device.device_type === 'local' || device.device_type === 'cloud'
-}
-
-const sortDevicesForSelection = (devices: DeviceInfo[]): SubscriptionDeviceInfo[] =>
-  devices.filter(isSubscriptionDevice).sort((left, right) => {
-    if (left.device_type !== right.device_type) {
-      return left.device_type === 'local' ? -1 : 1
-    }
-    if (left.is_default !== right.is_default) {
-      return left.is_default ? -1 : 1
-    }
-    return left.name.localeCompare(right.name)
-  })
+import { sortDevicesForSelection } from './device-selection'
 
 export function SendAreaSection({
   executionTarget,

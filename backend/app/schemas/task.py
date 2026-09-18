@@ -16,11 +16,9 @@ from app.schemas.user import UserInDB
 
 
 class SkillRef(BaseModel):
-    """Skill reference with full identification info.
+    """Skill reference retaining the canonical ID across shared bindings."""
 
-    Backend needs name + namespace + is_public to uniquely identify a skill.
-    """
-
+    skill_id: Optional[int] = Field(default=None, gt=0)
     name: str
     namespace: str
     is_public: bool

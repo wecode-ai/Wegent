@@ -574,6 +574,25 @@ Skill locator or content enters runtime
 
 其中“禁用终端/IDE”是能力上报的边界验证，不代替任务执行验证。
 
+### `collaboration-agent-automation-chain`
+
+该 checkpoint 还必须覆盖 Wework 设备创建项目执行环境的记录路由回归：
+
+1. 启动桌面 App 自带的真实 Executor，再启动第二个真实 Executor，并让两者使用相同的
+   App 逻辑设备 ID、不同的 Runtime identity。
+2. Backend 必须保存两条独立设备记录，并为它们返回不同的 `app-record-{id}` 执行路由；
+   测试不得直接写数据库伪造设备。
+3. 从项目设置添加桌面 App 对应的 Wework 设备，填写有效仓库与初始化步骤，然后点击
+   “创建环境”。
+4. 环境准备命令必须发送到所选设备记录的 `app-record-{id}` 路由，状态变为
+   `ready`，并以该路由为键持久化到执行环境的 `devices` 映射中。
+5. 删除该 Wework 设备后，继续使用真实云端 Executor 创建环境并完成原有双智能体自动
+   处理链，证明记录路由修复未破坏后续调度。
+
+环境准备克隆仓库时使用设备上已配置的 Git 凭据，与任务派发到设备的方式一致：Backend
+不下发任务级 token，因为一个执行环境的多个仓库可能分属不同域名。因此私有仓库必须先把
+Git 账号同步到该设备，否则克隆会因缺少凭据失败。
+
 ### `cloud-device-lifecycle`
 
 该 checkpoint 复用 CI 启动的真实云端 Executor，验证：

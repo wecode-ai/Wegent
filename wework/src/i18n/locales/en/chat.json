@@ -1,4 +1,11 @@
 {
+  "table": {
+    "expand": "Expand table",
+    "close": "Close expanded table",
+    "copy": "Copy table",
+    "copied": "Table copied",
+    "failed": "Could not copy table. Try again."
+  },
   "continue_in_new_task": "Continue in new task",
   "message_navigation": {
     "label": "Previous message navigation",
@@ -99,6 +106,9 @@
     "renamed_file": "Renamed {{filename}}"
   },
   "assistant_status": {
+    "working": "Working",
+    "working_for": "Working for {{duration}}",
+    "worked_for": "Worked for {{duration}}",
     "stopped": "Stopped",
     "stopped_after": "You stopped after {{duration}}"
   },

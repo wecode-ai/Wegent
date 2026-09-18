@@ -345,8 +345,14 @@ function mergeRuntimeConversationTurn(
     itemMerge: undefined,
     items,
     status: preserveLocalTerminal || preserveLocalFailure ? local.status : snapshot.status,
+    // Transcript timestamps can have lower precision than the live turn.
+    startedAt: local.startedAt ?? runtimeConversationTurnTimestamp(local) ?? snapshot.startedAt,
     completedAt:
-      preserveLocalTerminal || preserveLocalFailure ? local.completedAt : snapshot.completedAt,
+      preserveLocalTerminal || preserveLocalFailure
+        ? local.completedAt
+        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
+          ? (local.completedAt ?? snapshot.completedAt)
+          : snapshot.completedAt,
     error: preserveLocalTerminal || preserveLocalFailure ? local.error : snapshot.error,
     errorType: preserveLocalTerminal || preserveLocalFailure ? local.errorType : snapshot.errorType,
     stoppedNotice: preserveLocalTerminal ? local.stoppedNotice : snapshot.stoppedNotice,
@@ -1142,7 +1148,11 @@ function upsertRuntimeBlock(
     }
     return upsertBlocks(items, [block])
   }
-  if (turnStatus !== 'done') return upsertBlocks(items, [block])
+  if (turnStatus !== 'done') {
+    return block.type === 'subagent'
+      ? insertDelayedSubagentBlock(items, block)
+      : upsertBlocks(items, [block])
+  }
 
   const terminalTextIndex = items.findLastIndex(item => item.type === 'assistant_text')
   if (terminalTextIndex < 0) return upsertBlocks(items, [block])
@@ -1155,8 +1165,34 @@ function upsertRuntimeBlock(
   return nextItems
 }
 
+function insertDelayedSubagentBlock(
+  items: RuntimeConversationItem[],
+  block: Extract<ProcessingBlock, { type: 'subagent' }>
+): RuntimeConversationItem[] {
+  const blockItem: Extract<RuntimeConversationItem, { type: 'block' }> = {
+    id: block.id,
+    type: 'block',
+    block: limitWorkbenchProcessingBlock(block),
+  }
+  const insertionIndex = items.findIndex(item => {
+    if (item.type === 'user_message') {
+      if (item.message.runtimeGuidance !== true) return false
+      const createdAt = Date.parse(item.message.createdAt ?? '')
+      return Number.isFinite(createdAt) && createdAt > block.createdAt
+    }
+    const createdAt =
+      item.type === 'assistant_text' ? Date.parse(item.createdAt) : item.block.createdAt
+    return Number.isFinite(createdAt) && createdAt > block.createdAt
+  })
+  if (insertionIndex < 0) return [...items, blockItem]
+  const nextItems = [...items]
+  nextItems.splice(insertionIndex, 0, blockItem)
+  return nextItems
+}
+
 function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = []
+  const runtimeTurnStartedAt = turn.startedAt ?? runtimeConversationTurnTimestamp(turn)
   let assistantItems: RuntimeConversationItem[] = []
   let followsGuidance = false
 
@@ -1181,6 +1217,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       runtimeStatus: isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
+      runtimeTurnStartedAt,
       runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
       runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(item =>

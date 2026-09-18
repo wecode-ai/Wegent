@@ -49,6 +49,14 @@ import { getDurationText } from './processingDuration'
 import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
 import { SubagentActivityGroup } from './SubagentBlockItem'
 
+/**
+ * What a turn's process section occupies while it is collapsed, which is how a finished turn renders:
+ * the summary row's `min-h-8` (32px) plus the section's own `mb-3` (12px). `messagePretextLayout` keeps
+ * its intrinsic-height estimate in step with this, so the height a row is laid out at before it is
+ * measured does not depend on how many blocks the turn happened to run.
+ */
+export const COLLAPSED_PROCESSING_HEIGHT = 44
+
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 type ProcessingDisplayItem =
   | ProcessingDisplayRow
@@ -83,8 +91,6 @@ interface ToolBlocksDisplayProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onOpenSubagent?: (block: SubagentBlock) => void
@@ -105,8 +111,6 @@ export function ToolBlocksDisplay({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   hideRequestUserInputBlocks = false,
   hiddenRequestUserInputIds,
   onOpenSubagent,
@@ -347,8 +351,6 @@ export function ToolBlocksDisplay({
                 stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 fileEditDurations={fileEditDurations}
               />
             )
@@ -360,8 +362,6 @@ export function ToolBlocksDisplay({
       expanded,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
-      onLoadFullTranscript,
-      loadingFullTranscript,
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,

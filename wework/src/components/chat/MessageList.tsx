@@ -49,11 +49,9 @@ import {
   isTextAttachment,
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
-import { getRecognizedLink } from '@/lib/link-preview'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
-import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
@@ -67,7 +65,7 @@ import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { getFileEditDurationsBySourceBlock } from './blocks/fileEditDurations'
-import { getDurationText } from './blocks/processingDuration'
+import { ProcessingDurationLabel } from './ProcessingDurationLabel'
 import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
 import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
@@ -97,6 +95,7 @@ interface MessageListProps {
   messages: WorkbenchMessage[]
   scrollElementRef?: RefObject<HTMLDivElement | null>
   initialDistanceFromBottomPx?: number
+  onBeforeUserMessageToggle?: () => void
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -133,8 +132,6 @@ interface MessageListProps {
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
@@ -207,6 +204,7 @@ export const MessageList = memo(function MessageList({
   messages,
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
+  onBeforeUserMessageToggle,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -228,8 +226,6 @@ export const MessageList = memo(function MessageList({
   onEditLastUserMessage,
   canEditLastUserMessage = false,
   onForkMessage,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
@@ -287,7 +283,7 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
-  const bottomOriginAppendOnlyItemKeys = useMemo(
+  const streamingVirtualMessageKeys = useMemo(
     () =>
       new Set(
         visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
@@ -313,7 +309,8 @@ export const MessageList = memo(function MessageList({
   }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
   const messageVirtualizer = useBottomOriginVirtualizer({
     bottomOrigin,
-    bottomOriginAppendOnlyItemKeys,
+    bottomOriginAnchorItemKeys: streamingVirtualMessageKeys,
+    preserveBottomOriginItemResizeAnchor: !virtualAnchorToEnd,
     count: visibleMessages.length,
     enabled: virtualMessages,
     getItemKey: index => visibleMessages[index]?.id ?? index,
@@ -604,6 +601,7 @@ export const MessageList = memo(function MessageList({
             {message.role === 'user' ? (
               <UserMessage
                 message={message}
+                onBeforeToggle={onBeforeUserMessageToggle}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenLocalSkillFile={onOpenLocalSkillFile}
                 editable={message.id === editableLastUserMessageId}
@@ -629,6 +627,7 @@ export const MessageList = memo(function MessageList({
               <AssistantMessage
                 message={message}
                 conversationKey={conversationKey}
+                isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
@@ -641,8 +640,6 @@ export const MessageList = memo(function MessageList({
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onOpenSubagent={onOpenSubagent}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
@@ -737,6 +734,9 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,
+    previous.onBeforeUserMessageToggle !== next.onBeforeUserMessageToggle
+      ? 'onBeforeUserMessageToggle'
+      : null,
     previous.className !== next.className ? 'className' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
@@ -773,8 +773,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'canEditLastUserMessage'
       : null,
     previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
-    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
-    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -871,7 +869,7 @@ function formatCompactDuration(durationMs: number): string {
 }
 
 function getStoppedElapsedDuration(message: WorkbenchMessage): string | null {
-  const startedAt = getTurnStartMs(message.createdAt)
+  const startedAt = message.runtimeTurnStartedAt ?? getTurnStartMs(message.createdAt)
   if (startedAt === undefined) return null
 
   const completedAt = getMessageTimestampMs(message.completedAt)
@@ -953,6 +951,7 @@ function formatMessageTime(createdAt: string) {
 
 function UserMessage({
   message,
+  onBeforeToggle,
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   editable = false,
@@ -963,6 +962,7 @@ function UserMessage({
   onSubmitEdit,
 }: {
   message: WorkbenchMessage
+  onBeforeToggle?: () => void
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
@@ -1008,10 +1008,11 @@ function UserMessage({
   )
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
+  const collapseText = displayContent.replace(CODEX_MENTION_LINK_PATTERN, '$2')
   const shouldCollapse =
     message.runtimeGuidance !== true &&
-    (displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-      displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
+    (collapseText.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+      collapseText.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
@@ -1121,7 +1122,7 @@ function UserMessage({
               data-testid="user-message-content"
               data-message-selectable-text
               className={[
-                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
+                'relative overflow-hidden break-words bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
@@ -1163,7 +1164,10 @@ function UserMessage({
                 type="button"
                 data-testid="toggle-user-message-button"
                 aria-expanded={isExpanded}
-                onClick={() => setIsExpanded(value => !value)}
+                onClick={() => {
+                  onBeforeToggle?.()
+                  setIsExpanded(value => !value)
+                }}
                 className="flex h-9 w-full items-center justify-center gap-1 border-t border-border/60 text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
               >
                 {isExpanded ? (
@@ -1710,7 +1714,6 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1748,133 +1751,108 @@ function renderUserContent(
   onOpenLocalSkillFile?: (path: string) => void,
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 ) {
-  const parts: ReactNode[] = []
-  let offset = 0
-
-  for (const match of content.matchAll(CODEX_MENTION_LINK_PATTERN)) {
-    const start = match.index ?? 0
-    const text = content.slice(offset, start)
-    if (text) {
-      parts.push(...renderUserTextWithLinks(text, offset))
-    }
-
-    const mentionName = match[2]
-    const href = match[3]
-    const skillFilePath = composerSkillFilePath(match[0])
-    const pathReference = composerPathReference(match[0])
-    const mentionKind = codexMentionKind(href)
-    const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
-    const brandIconUrl =
-      mentionKind === 'plugin' || mentionKind === 'app'
-        ? resolveComposerMentionBrandIconUrl(href)
-        : null
-    const tokenTestId = codexMentionTokenTestId(mentionName)
-    const testId =
-      mentionKind === 'skill'
-        ? `sent-local-skill-token-${tokenTestId}`
-        : `sent-${mentionKind}-token-${tokenTestId}`
-    const iconTestId =
-      mentionKind === 'skill'
-        ? `sent-local-skill-icon-${tokenTestId}`
-        : `sent-${mentionKind}-icon-${tokenTestId}`
-    parts.push(
-      <a
-        key={`${mentionKind}-${start}`}
-        href={href}
-        data-testid={testId}
-        data-cloud-resource-kind={cloudKind}
-        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-sm font-medium leading-none text-blue-600 no-underline"
-        onClick={event => {
-          event.preventDefault()
-          if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
-          if (pathReference) {
-            onOpenWorkspaceFile?.(
-              pathReference.path,
-              pathReference.directory ? { isDirectory: true } : undefined
-            )
-          }
-          const pluginReference = parsePluginUri(href)
-          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
-        }}
-      >
-        {mentionKind === 'folder' ? (
-          <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : mentionKind === 'file' ? (
-          <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : mentionKind === 'cloud' ? (
-          cloudKind === 'todo' ? (
-            <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : cloudKind === 'file' ? (
-            <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : cloudKind === 'delivery' ? (
-            <PackageOpen data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          ) : (
-            <LibraryBig data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-          )
-        ) : mentionKind === 'conversation' ? (
-          <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        ) : brandIconUrl ? (
-          <img
-            data-testid={iconTestId}
-            src={brandIconUrl}
-            alt=""
-            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
-          />
-        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
-          <span
-            data-testid={iconTestId}
-            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+  return (
+    <AssistantMarkdown
+      content={content}
+      variant="user"
+      onOpenFile={onOpenWorkspaceFile}
+      renderLink={(linkHref, text) => {
+        const reference = '[' + text + '](' + linkHref + ')'
+        const match = Array.from(reference.matchAll(CODEX_MENTION_LINK_PATTERN))[0]
+        if (!match) return undefined
+        const mentionName = match[2]
+        const href = match[3]
+        const skillFilePath = composerSkillFilePath(match[0])
+        const pathReference = composerPathReference(match[0])
+        const mentionKind = codexMentionKind(href)
+        const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+        const brandIconUrl =
+          mentionKind === 'plugin' || mentionKind === 'app'
+            ? resolveComposerMentionBrandIconUrl(href)
+            : null
+        const tokenTestId = codexMentionTokenTestId(mentionName)
+        const testId =
+          mentionKind === 'skill'
+            ? `sent-local-skill-token-${tokenTestId}`
+            : `sent-${mentionKind}-token-${tokenTestId}`
+        const iconTestId =
+          mentionKind === 'skill'
+            ? `sent-local-skill-icon-${tokenTestId}`
+            : `sent-${mentionKind}-icon-${tokenTestId}`
+        return (
+          <a
+            href={href}
+            data-testid={testId}
+            data-cloud-resource-kind={cloudKind}
+            className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
+            onClick={event => {
+              event.preventDefault()
+              if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+              if (pathReference) {
+                onOpenWorkspaceFile?.(
+                  pathReference.path,
+                  pathReference.directory ? { isDirectory: true } : undefined
+                )
+              }
+              const pluginReference = parsePluginUri(href)
+              if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
+            }}
           >
-            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
-          </span>
-        ) : (
-          <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        )}
-        <span className="min-w-0 truncate">
-          {mentionKind === 'file' ||
-          mentionKind === 'folder' ||
-          mentionKind === 'cloud' ||
-          mentionKind === 'conversation'
-            ? mentionName
-            : displayCodexMentionName(mentionName)}
-        </span>
-      </a>
-    )
-    offset = start + match[0].length
-  }
-
-  const remainingText = content.slice(offset)
-  if (remainingText) {
-    parts.push(...renderUserTextWithLinks(remainingText, offset))
-  }
-
-  return parts
-}
-function renderUserTextWithLinks(text: string, baseOffset: number): ReactNode[] {
-  const nodes: ReactNode[] = []
-  let localOffset = 0
-  for (const match of text.matchAll(COMPOSER_LINK_PATTERN)) {
-    const start = match.index ?? 0
-    const url = match[2] ?? ''
-    if (!getRecognizedLink(url)) continue
-    const before = text.slice(localOffset, start)
-    if (before) {
-      nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{before}</span>)
-    }
-    const label = match[1] ?? ''
-    nodes.push(
-      <ComposerLinkChip
-        key={`link-${baseOffset}-${start}`}
-        payload={{ url, label: label || url }}
-      />
-    )
-    localOffset = start + match[0].length
-  }
-  const tail = text.slice(localOffset)
-  if (tail) {
-    nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{tail}</span>)
-  }
-  return nodes
+            {mentionKind === 'folder' ? (
+              <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            ) : mentionKind === 'file' ? (
+              <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            ) : mentionKind === 'cloud' ? (
+              cloudKind === 'todo' ? (
+                <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              ) : cloudKind === 'file' ? (
+                <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              ) : cloudKind === 'delivery' ? (
+                <PackageOpen
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
+              ) : (
+                <LibraryBig
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
+              )
+            ) : mentionKind === 'conversation' ? (
+              <MessageCircle
+                data-testid={iconTestId}
+                className="h-3.5 w-3.5 shrink-0 text-blue-600"
+              />
+            ) : brandIconUrl ? (
+              <img
+                data-testid={iconTestId}
+                src={brandIconUrl}
+                alt=""
+                className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+              />
+            ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+              <span
+                data-testid={iconTestId}
+                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+              >
+                <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+              </span>
+            ) : (
+              <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            )}
+            <span className="min-w-0 truncate">
+              {mentionKind === 'file' ||
+              mentionKind === 'folder' ||
+              mentionKind === 'cloud' ||
+              mentionKind === 'conversation'
+                ? mentionName
+                : displayCodexMentionName(mentionName)}
+            </span>
+          </a>
+        )
+      }}
+    />
+  )
 }
 
 const RAW_FAILED_MESSAGE_PATTERNS = [
@@ -1933,6 +1911,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
 export function AssistantMessage({
   message,
   conversationKey,
+  isActiveTurn = false,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -1945,14 +1924,13 @@ export function AssistantMessage({
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
   onOpenSubagent,
-  onLoadFullTranscript,
-  loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onFork,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
+  isActiveTurn?: boolean
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -1977,8 +1955,6 @@ export function AssistantMessage({
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onOpenSubagent?: (block: SubagentBlock) => void
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onFork?: () => Promise<void> | void
@@ -2004,19 +1980,20 @@ export function AssistantMessage({
   )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
+  const hasProcessingActivity =
+    hasBlocks || message.blocks?.some(block => block.type === 'thinking')
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
   const activeThinkingContent = isStreaming ? getRuntimeMessageActiveThinking(message) : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
-  const isAssistantRunning = isStreaming || hasRunningBlocks
+  const isAssistantSettled = isCancelled || message.status === 'done' || message.status === 'failed'
+  const isAssistantRunning = !isAssistantSettled && (isStreaming || hasRunningBlocks)
   const canShowFinalArtifacts = !isAssistantRunning
-  const hasStreamedResponse = hasBlocks || hasVisibleContent
-  const shouldShowProcessingSummary = hasBlocks || (isAssistantRunning && hasStreamedResponse)
+  const shouldShowProcessingSummary = hasBlocks
   const processingStateKey = getMessageDisplayStateKey(conversationKey, message)
   const [finalProcessingExpanded, setFinalProcessingExpanded] = usePersistentProcessingExpansion(
     `${processingStateKey}:final-processing`
   )
-  const [finalProcessingCompletedAt] = useState(() => Date.now())
   const isProcessingOnlyBeforeGuidance =
     Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
   const hasPlanResponse = displayBlocks.some(
@@ -2042,7 +2019,7 @@ export function AssistantMessage({
     !hasRunningBlocks &&
     !isCancelled &&
     !hasProcessingAfterContent &&
-    (isProcessingOnlyBeforeGuidance ||
+    ((isProcessingOnlyBeforeGuidance && !isActiveTurn) ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
         !message.runtimeGuidanceContinuation))
@@ -2102,8 +2079,6 @@ export function AssistantMessage({
           onRequestUserInputIgnore={onRequestUserInputIgnore}
           onOpenAssistantPlan={onOpenAssistantPlan}
           onOpenSubagent={onOpenSubagent}
-          onLoadFullTranscript={onLoadFullTranscript}
-          loadingFullTranscript={loadingFullTranscript}
           hideRequestUserInputBlocks={hideRequestUserInputBlocks}
           hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         />
@@ -2160,8 +2135,6 @@ export function AssistantMessage({
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onOpenSubagent={onOpenSubagent}
-                onLoadFullTranscript={onLoadFullTranscript}
-                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
               />
@@ -2170,12 +2143,21 @@ export function AssistantMessage({
         )
       })
     : null
-  const finalProcessingDuration = getDurationText(
-    displayBlocks,
-    getProcessingSummaryStartMs(message, displayBlocks, false) ?? finalProcessingCompletedAt,
-    finalProcessingCompletedAt,
-    isStreaming ? finalProcessingCompletedAt : null,
-    false
+  const lastProcessingBlock = displayBlocks.at(-1) ?? message.blocks?.at(-1)
+  const processingStartedAt =
+    message.runtimeTurnStartedAt ??
+    getProcessingSummaryStartMs(message, message.blocks ?? [], false)
+  const processingCompletedAt = isAssistantRunning
+    ? undefined
+    : (getMessageTimestampMs(message.completedAt) ??
+      lastProcessingBlock?.completedAt ??
+      lastProcessingBlock?.createdAt)
+  const processingDurationLabel = (
+    <ProcessingDurationLabel
+      startedAt={processingStartedAt}
+      completedAt={processingCompletedAt}
+      isRunning={isAssistantRunning}
+    />
   )
 
   return (
@@ -2199,6 +2181,14 @@ export function AssistantMessage({
                 : t('assistant_status.stopped')}
             </div>
           ) : null}
+          {hasProcessingActivity && !isCancelled && !usesFinalProcessingShell ? (
+            <div
+              className="mb-3 w-full border-b border-border pb-2 text-sm text-text-muted"
+              data-testid="live-processing-timeline"
+            >
+              {processingDurationLabel}
+            </div>
+          ) : null}
           {usesFinalProcessingShell ? (
             <div
               className="mb-3 min-w-0 w-full border-b border-border pb-2"
@@ -2211,7 +2201,7 @@ export function AssistantMessage({
                 className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
                 onClick={() => setFinalProcessingExpanded(value => !value)}
               >
-                <span>{finalProcessingDuration || '已处理'}</span>
+                {processingDurationLabel}
                 <ChevronDown
                   className={`h-4 w-4 transition-transform ${finalProcessingExpanded ? '' : '-rotate-90'}`}
                   strokeWidth={2}
@@ -2229,13 +2219,6 @@ export function AssistantMessage({
             <AssistantThinkingIndicator content={activeThinkingContent} />
           )}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
-          {message.contentTruncated ? (
-            <ContentTruncatedNotice
-              originalChars={message.contentOriginalChars}
-              onLoadFullTranscript={onLoadFullTranscript}
-              loadingFullTranscript={loadingFullTranscript}
-            />
-          ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div data-message-selectable-text data-testid="assistant-message-content">
               <AssistantMarkdown
@@ -2466,36 +2449,6 @@ function GeneratedImagePreview({
       placeholderClassName="flex min-h-40 w-full items-center justify-center rounded-lg border border-border bg-surface text-text-muted"
       buttonClassName="block w-full cursor-zoom-in p-0 text-left"
     />
-  )
-}
-
-function ContentTruncatedNotice({
-  originalChars,
-  onLoadFullTranscript,
-  loadingFullTranscript = false,
-}: {
-  originalChars?: number
-  onLoadFullTranscript?: () => Promise<void> | void
-  loadingFullTranscript?: boolean
-}) {
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
-      <span>
-        早期内容已从当前视图卸载
-        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
-      </span>
-      {onLoadFullTranscript ? (
-        <button
-          type="button"
-          data-testid="load-full-runtime-transcript-button"
-          onClick={() => void onLoadFullTranscript()}
-          disabled={loadingFullTranscript}
-          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-        >
-          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
-        </button>
-      ) : null}
-    </div>
   )
 }
 

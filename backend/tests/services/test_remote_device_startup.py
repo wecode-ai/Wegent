@@ -48,5 +48,5 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
     assert "-e DEVICE_TERMINAL_ENABLED=true" in first.command
     assert "WEGENT_EXECUTOR_HOME_ID" not in first.commands[1].command
     assert (
-        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED" not in first.commands[1].command
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in first.commands[1].command
     )

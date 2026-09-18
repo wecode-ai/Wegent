@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import { getToken } from './user'
+import { fetchAllPages } from '@wegent/chat-core'
 import type { TeamBot, Team, PaginationParams, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
 import type { TeamDisplayConfig } from '@wegent/chat-core'
@@ -33,6 +35,16 @@ export interface TeamIdentityConfirmation {
 export interface TeamListResponse {
   total: number
   items: Team[]
+}
+
+export interface TeamListParams extends PaginationParams {
+  groupNames?: string[]
+  sourceFilter?: 'all' | 'mine' | 'personal' | 'group' | 'system'
+  mode?: 'all' | 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
+}
+
+export interface GetTeamsOptions {
+  signal?: AbortSignal
 }
 
 // Team Share Response Type
@@ -113,7 +125,35 @@ export interface CopyPreflightResponse {
   personal_skills: Array<{ id: number; name: string; description: string }>
 }
 
+const pendingTeamCatalogs = new Map<string, Promise<TeamListResponse>>()
+
 export const teamApis = {
+  /** Get the complete catalog for lists and selectors that filter teams locally. */
+  async getAllTeams(
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string,
+    refresh = false,
+    options?: GetTeamsOptions
+  ): Promise<TeamListResponse> {
+    // Cancellable requests own their pagination so aborts cannot affect other consumers.
+    if (options?.signal) {
+      return fetchAllPages((page, limit) =>
+        teamApis.getTeams({ page, limit }, scope, groupName, options)
+      )
+    }
+    const key = JSON.stringify([getToken(), scope || 'all', groupName || null])
+    const pending = pendingTeamCatalogs.get(key)
+    if (!refresh && pending) return pending
+
+    // Share the entire pagination chain; completed results are never cached here.
+    const request = fetchAllPages((page, limit) =>
+      teamApis.getTeams({ page, limit }, scope, groupName)
+    ).finally(() => {
+      if (pendingTeamCatalogs.get(key) === request) pendingTeamCatalogs.delete(key)
+    })
+    pendingTeamCatalogs.set(key, request)
+    return request
+  },
   /**
    * Get teams list
    * @param params - Pagination parameters
@@ -121,9 +161,10 @@ export const teamApis = {
    * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    */
   async getTeams(
-    params?: PaginationParams,
+    params?: TeamListParams,
     scope?: 'personal' | 'group' | 'all',
-    groupName?: string
+    groupName?: string,
+    options?: GetTeamsOptions
   ): Promise<TeamListResponse> {
     const p = params ? params : { page: 1, limit: 100 }
     const queryParams = new URLSearchParams()
@@ -135,7 +176,10 @@ export const teamApis = {
     if (groupName) {
       queryParams.append('group_name', groupName)
     }
-    return apiClient.get(`/teams?${queryParams.toString()}`)
+    p.groupNames?.forEach(name => queryParams.append('group_names', name))
+    if (p.sourceFilter) queryParams.append('source_filter', p.sourceFilter)
+    if (p.mode) queryParams.append('mode', p.mode)
+    return apiClient.get(`/teams?${queryParams.toString()}`, { signal: options?.signal })
   },
   /**
    * Create a new team

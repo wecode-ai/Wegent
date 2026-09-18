@@ -11,18 +11,29 @@ from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceExecutionEnvironmentCreate
+from app.services.device.runtime_route import runtime_device_route_id
+from app.services.execution_environment_initialization import (
+    initialize_execution_environment,
+    merge_execution_environment_device_state,
+)
 from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
+    get_workspace_kind,
     resource_grant,
+    workspace_from_kind,
+    workspace_kind_payload,
 )
+from shared.telemetry.decorators import trace_async
 
 
 class WorkspaceExecutionEnvironmentService:
     """Authorize execution environments for use in a Workspace."""
 
-    def list_execution_environments(
+    @trace_async("workspace.list_execution_environments", tracer_name="backend")
+    async def list_execution_environments(
         self, db: Session, workspace_id: int, user_id: int
     ) -> list[dict[str, object]]:
         require_workspace_role(db, workspace_id, user_id)
@@ -40,8 +51,14 @@ class WorkspaceExecutionEnvironmentService:
             .order_by(ResourceMember.created_at, ResourceMember.id)
             .all()
         )
+        connection_statuses = await execution_environment_statuses(
+            [device for _, device in rows]
+        )
         return [
-            execution_environment_values(db, grant, device) for grant, device in rows
+            execution_environment_values(
+                db, grant, device, connection_status=connection_statuses[device.id]
+            )
+            for grant, device in rows
         ]
 
     def require_execution_environment_authorized(
@@ -93,7 +110,8 @@ class WorkspaceExecutionEnvironmentService:
             role=BaseRole.Developer,
         )
 
-    def add_execution_environment(
+    @trace_async("workspace.add_execution_environment", tracer_name="backend")
+    async def add_execution_environment(
         self,
         db: Session,
         workspace_id: int,
@@ -125,6 +143,7 @@ class WorkspaceExecutionEnvironmentService:
                 status.HTTP_409_CONFLICT,
                 "Execution environment is already available in this Workspace",
             )
+        connection_statuses = await execution_environment_statuses([device])
         grant = ensure_resource_grant(
             db,
             workspace_id=workspace_id,
@@ -135,7 +154,9 @@ class WorkspaceExecutionEnvironmentService:
         )
         db.commit()
         db.refresh(grant)
-        return execution_environment_values(db, grant, device)
+        return execution_environment_values(
+            db, grant, device, connection_status=connection_statuses[device.id]
+        )
 
     def remove_execution_environment(
         self, db: Session, workspace_id: int, device_id: int, user_id: int
@@ -149,6 +170,52 @@ class WorkspaceExecutionEnvironmentService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         db.delete(grant)
         db.commit()
+
+    async def initialize_execution_environment(
+        self,
+        db: Session,
+        workspace_id: int,
+        device_id: int,
+        user_id: int,
+        version: int,
+    ):
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
+        kind = get_workspace_kind(db, workspace_id)
+        if kind is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+        current = workspace_from_kind(kind)
+        if current.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workspace changed")
+        grant, device = _get_execution_environment(db, workspace_id, device_id)
+        if grant is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Execution device is not available in this Workspace",
+            )
+        state = await initialize_execution_environment(
+            db=db,
+            device=device,
+            environment_id=f"workspace-{workspace_id}",
+            definition=current.execution_environment,
+        )
+        kind.json = workspace_kind_payload(
+            name=current.name,
+            description=current.description,
+            namespace=current.namespace,
+            public_id=current.public_id,
+            is_default=current.is_default,
+            execution_environment=merge_execution_environment_device_state(
+                current.execution_environment,
+                device_key=runtime_device_route_id(device),
+                device_state=state,
+            ),
+            # Recording a preparation result is not a configuration change, so the
+            # client keeps a usable version token and can retry after a failure.
+            version=current.version,
+        )
+        db.commit()
+        db.refresh(kind)
+        return workspace_from_kind(kind)
 
 
 def _get_execution_environment(

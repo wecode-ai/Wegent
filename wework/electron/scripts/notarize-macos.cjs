@@ -5,7 +5,10 @@ const { join, resolve } = require('node:path')
 
 const { resolveBuildIdentity } = require('./build-identity.cjs')
 
-const NOTARYTOOL_PROCESS_TIMEOUT_MS = 35 * 60 * 1000
+const NOTARYTOOL_UPLOAD_TIMEOUT_MS = 35 * 60 * 1000
+const NOTARYTOOL_WAIT_TIMEOUT = '45m'
+const NOTARYTOOL_WAIT_PROCESS_TIMEOUT_MS = 50 * 60 * 1000
+const NOTARYTOOL_STATUS_TIMEOUT_MS = 2 * 60 * 1000
 
 async function notarizeMacos(context) {
   if (context.electronPlatformName !== 'darwin') return
@@ -41,7 +44,8 @@ async function notarizeApp(appPath, environment = process.env) {
         `(${archiveBytes} bytes), compressed in ${formatDuration(Date.now() - compressionStartedAt)}`
     )
 
-    const result = await submitArchive(archivePath, environment)
+    const submission = await submitArchive(archivePath, environment)
+    const result = await waitForSubmission(submission.id, environment)
     if (result.status !== 'Accepted') {
       throw new Error(`Apple notarization failed with status: ${result.status || 'unknown'}`)
     }
@@ -63,36 +67,26 @@ async function notarizeApp(appPath, environment = process.env) {
 async function submitArchive(archivePath, environment) {
   const attempts = retryAttempts(environment.WEWORK_NOTARY_UPLOAD_ATTEMPTS)
   const archiveBytes = (await stat(archivePath)).size
-  const args = [
-    'notarytool',
-    'submit',
-    archivePath,
-    ...authorizationArgs(environment),
-    ...s3AccelerationArgs(environment.WEWORK_NOTARYTOOL_S3_ACCELERATION),
-    '--wait',
-    '--timeout',
-    '30m',
-    '--output-format',
-    'json',
-  ]
+  const args = submitArgs(archivePath, environment)
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const attemptStartedAt = Date.now()
     try {
       console.log(
-        `Apple notarization submit-and-wait attempt ${attempt}/${attempts} started: ` +
+        `Apple notarization upload attempt ${attempt}/${attempts} started: ` +
           `${formatBytes(archiveBytes)} (${archiveBytes} bytes)`
       )
       const result = JSON.parse(
         await run('xcrun', args, {
           streamOutput: true,
-          timeoutMs: NOTARYTOOL_PROCESS_TIMEOUT_MS,
+          timeoutMs: NOTARYTOOL_UPLOAD_TIMEOUT_MS,
         })
       )
+      const submission = requireSubmission(result)
       console.log(
-        `Apple notarization submit-and-wait attempt ${attempt}/${attempts} completed in ` +
-          `${formatDuration(Date.now() - attemptStartedAt)}: ${result.status || 'unknown'}`
+        `Apple notarization upload attempt ${attempt}/${attempts} completed in ` +
+          `${formatDuration(Date.now() - attemptStartedAt)}: submission ${submission.id}`
       )
-      return result
+      return submission
     } catch (error) {
       if (!isTransientNotaryFailure(error) || attempt === attempts) throw error
       const delayMs = attempt * 5000
@@ -103,6 +97,81 @@ async function submitArchive(archivePath, environment) {
     }
   }
   throw new Error('Apple notarization exhausted all upload attempts')
+}
+
+async function waitForSubmission(submissionId, environment) {
+  const waitStartedAt = Date.now()
+  console.log(
+    `Apple notarization processing wait started: submission ${submissionId}, ` +
+      `timeout ${NOTARYTOOL_WAIT_TIMEOUT}`
+  )
+  try {
+    await run('xcrun', waitArgs(submissionId, environment), {
+      streamOutput: true,
+      timeoutMs: NOTARYTOOL_WAIT_PROCESS_TIMEOUT_MS,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Apple notarization processing wait failed for submission ${submissionId}: ${message}`
+    )
+  }
+
+  const result = JSON.parse(
+    await run('xcrun', infoArgs(submissionId, environment), {
+      timeoutMs: NOTARYTOOL_STATUS_TIMEOUT_MS,
+    })
+  )
+  console.log(
+    `Apple notarization processing wait completed in ` +
+      `${formatDuration(Date.now() - waitStartedAt)}: submission ${submissionId}, ` +
+      `status ${result.status || 'unknown'}`
+  )
+  return result
+}
+
+function submitArgs(archivePath, environment) {
+  return [
+    'notarytool',
+    'submit',
+    archivePath,
+    ...authorizationArgs(environment),
+    ...s3AccelerationArgs(environment.WEWORK_NOTARYTOOL_S3_ACCELERATION),
+    '--no-wait',
+    '--output-format',
+    'json',
+  ]
+}
+
+function waitArgs(submissionId, environment) {
+  return [
+    'notarytool',
+    'wait',
+    submissionId,
+    ...authorizationArgs(environment),
+    '--timeout',
+    NOTARYTOOL_WAIT_TIMEOUT,
+    '--progress',
+  ]
+}
+
+function infoArgs(submissionId, environment) {
+  return [
+    'notarytool',
+    'info',
+    submissionId,
+    ...authorizationArgs(environment),
+    '--output-format',
+    'json',
+  ]
+}
+
+function requireSubmission(result) {
+  const id = typeof result?.id === 'string' ? result.id.trim() : ''
+  if (!id) {
+    throw new Error('Apple notarization upload completed without a submission ID')
+  }
+  return { ...result, id }
 }
 
 function formatBytes(bytes) {
@@ -272,8 +341,12 @@ module.exports = notarizeMacos
 module.exports.authorizationArgs = authorizationArgs
 module.exports.formatBytes = formatBytes
 module.exports.formatDuration = formatDuration
+module.exports.infoArgs = infoArgs
 module.exports.isTransientNotaryFailure = isTransientNotaryFailure
 module.exports.notarizeApp = notarizeApp
+module.exports.requireSubmission = requireSubmission
 module.exports.retryAttempts = retryAttempts
 module.exports.run = run
 module.exports.s3AccelerationArgs = s3AccelerationArgs
+module.exports.submitArgs = submitArgs
+module.exports.waitArgs = waitArgs

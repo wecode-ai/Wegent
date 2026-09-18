@@ -1,3 +1,4 @@
+import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
@@ -7,6 +8,8 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { ApiError } from '@/api/http'
 import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import {
+  clearLocalCodexPluginsReadStateCache,
+  readPluginReconciliationInventory,
   createLocalCodexPluginApi,
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
@@ -26,6 +29,7 @@ import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAut
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { ensureLocalExecutorStarted, getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -112,6 +116,7 @@ import { resolvePluginLogo } from './plugin-assets'
 import {
   isCloudManagedInstalledPlugin,
   linkedCloudPluginId,
+  linkedCloudInstalledPluginId,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
   storeDirMatchesPluginKey,
@@ -372,6 +377,14 @@ export function PluginsWorkspace({
   // Durable peek / warm cache already paints the catalog — do not start in a
   // "refreshing" skeleton state just because Codex plugin/list will revalidate.
   const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false)
+  const manualReconciliationTickRef = useRef<{
+    tick: number
+    accountKey: string
+    deviceId: string
+  } | null>(null)
+  const [reconciliationScope, setReconciliationScope] = useState({ accountKey: '', deviceId: '' })
+  const [reconciliationRequest, setReconciliationRequest] = useState(0)
+  const [reconciliationRevision, setReconciliationRevision] = useState(0)
   const [isOpenAiOfficialCatalogLoading, setIsOpenAiOfficialCatalogLoading] = useState(
     () => !hasOpenAiOfficialCatalog(initialMarketplaceItems)
   )
@@ -1354,7 +1367,19 @@ export function PluginsWorkspace({
   }
 
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
-    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    if (isReconcilingPlugins) {
+      setPluginOperationNotice({
+        id: 'plugin-reconciliation-busy',
+        kind: 'error',
+        message: t('workbench.plugins_reconciliation_busy', '正在检查安装状态，请完成后再操作'),
+      })
+      return
+    }
+    const plugin = installedPlugins.find(
+      item =>
+        String(item.id) === String(id) ||
+        String(linkedCloudInstalledPluginId(item.raw)) === String(id)
+    )
     const clearMarketplaceInstall = (
       previous: typeof pluginMarketplaceState
     ): typeof pluginMarketplaceState => ({
@@ -1384,7 +1409,7 @@ export function PluginsWorkspace({
     })
     const markUninstalledLocally = () => {
       const nextInstalled = installedPluginsRef.current.filter(
-        item => String(item.id) !== String(id)
+        item => String(item.id) !== String(id) && String(item.id) !== String(plugin?.id)
       )
       const nextMarketplaceItems = clearMarketplaceInstall(pluginMarketplaceStateRef.current).items
       setInstalledPlugins(nextInstalled)
@@ -1478,7 +1503,7 @@ export function PluginsWorkspace({
     void logoutLocalConnectorsForPlugin(plugin.raw)
       .catch(() => undefined)
       .then(() =>
-        uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
+        uninstallPluginIdentities(plugin.raw, plugin.id, currentDeviceId || undefined, {
           uninstallCloud: (pluginId, deviceId) =>
             pluginApi.uninstallInstalledPlugin(pluginId, deviceId),
           uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
@@ -1537,7 +1562,50 @@ export function PluginsWorkspace({
       })
   }
 
+  const isReconcilingPlugins = usePluginRefreshReconciliation({
+    request:
+      reconciliationScope.accountKey === marketplaceCacheKeyValue &&
+      reconciliationScope.deviceId === currentDeviceId
+        ? reconciliationRequest
+        : 0,
+    accountKey: marketplaceCacheKeyValue,
+    deviceId: currentDeviceId,
+    available: Boolean(cloudToken && cloudMarketplaceAvailable && deviceCloudConnected),
+    busy: installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0,
+    operations: {
+      readStore: readPluginReconciliationInventory,
+      sync: () => pluginApi.syncInstalledPluginsToDevice(currentDeviceId, true),
+      readCloud: async () => (await pluginApi.listInstalledPlugins(currentDeviceId)).items,
+      invalidate: () => {
+        clearLocalCodexPluginsReadStateCache()
+      },
+    },
+    onComplete: () => {
+      setReconciliationRevision(previous => previous + 1)
+      refreshLocalMarketplace()
+      setPluginOperationNotice({
+        id: 'plugin-reconciliation-complete',
+        kind: 'success',
+        message: t('workbench.plugins_reconciliation_complete', '插件安装状态已核对并同步'),
+      })
+    },
+    onError: error =>
+      setPluginOperationNotice({
+        id: 'plugin-reconciliation-error',
+        kind: 'error',
+        message: t('workbench.plugins_reconciliation_failed', '安装状态检查未完成：{{error}}', {
+          error: getErrorMessage(error, 'Unknown error'),
+        }),
+      }),
+  })
+
   const refreshMarketplace = () => {
+    if (isReconcilingPlugins) return
+    manualReconciliationTickRef.current = {
+      tick: marketplaceRefreshTick + 1,
+      accountKey: marketplaceCacheKeyValue,
+      deviceId: currentDeviceId,
+    }
     setBrowsingCategoryKey(null)
     skipGithubCatalogReconcileRef.current = false
     reconcileGithubCatalogRef.current = true
@@ -1708,9 +1776,47 @@ export function PluginsWorkspace({
     })
   }
 
-  const hasLiveRuntimeCloudConnection = async () => {
-    if (!cloudApiBaseUrl || !currentDeviceId) return false
-    return refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
+  const showDeviceIdentityUnavailableNotice = (itemId: string | number) => {
+    setPluginOperationNotice({
+      id: `install-device-identity-unavailable-${itemId}`,
+      kind: 'error',
+      message: t(
+        'workbench.plugins_install_device_identity_unavailable',
+        '当前设备信息尚未就绪，暂时无法安装插件。请稍后重试。'
+      ),
+    })
+  }
+
+  const rememberCurrentDeviceId = (deviceId: string) => {
+    const normalizedDeviceId = deviceId.trim()
+    if (!normalizedDeviceId || currentDeviceIdRef.current === normalizedDeviceId) {
+      return normalizedDeviceId
+    }
+    currentDeviceIdRef.current = normalizedDeviceId
+    setCurrentDeviceId(normalizedDeviceId)
+    return normalizedDeviceId
+  }
+
+  const resolveLiveRuntimeCloudConnection = async () => {
+    if (!cloudApiBaseUrl) return { connected: false, deviceId: '' }
+    const connected = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
+    if (!connected) return { connected: false, deviceId: '' }
+
+    const knownDeviceId =
+      currentDeviceIdRef.current.trim() || getKnownLocalExecutorDeviceId()?.trim() || ''
+    if (knownDeviceId) {
+      return { connected: true, deviceId: rememberCurrentDeviceId(knownDeviceId) }
+    }
+
+    try {
+      const executor = await ensureLocalExecutorStarted()
+      return {
+        connected: true,
+        deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),
+      }
+    } catch {
+      return { connected: true, deviceId: '' }
+    }
   }
 
   const installMarketplacePlugin = async (
@@ -1718,6 +1824,14 @@ export function PluginsWorkspace({
     promptAfterInstall?: string,
     updateConfirmed = false
   ) => {
+    if (isReconcilingPlugins) {
+      setPluginOperationNotice({
+        id: 'plugin-reconciliation-busy',
+        kind: 'error',
+        message: t('workbench.plugins_reconciliation_busy', '正在检查安装状态，请完成后再操作'),
+      })
+      return
+    }
     const installLock = resolveMarketplacePluginLock(item)
     if (installLock) {
       setPluginOperationNotice({
@@ -1743,9 +1857,18 @@ export function PluginsWorkspace({
       return
     }
 
-    if (needsCloudPackagePush && !(await hasLiveRuntimeCloudConnection())) {
-      showDeviceDisconnectedNotice(item.id)
-      return
+    let targetDeviceId = currentDeviceIdRef.current
+    if (needsCloudPackagePush) {
+      const liveConnection = await resolveLiveRuntimeCloudConnection()
+      if (!liveConnection.connected) {
+        showDeviceDisconnectedNotice(item.id)
+        return
+      }
+      if (!liveConnection.deviceId) {
+        showDeviceIdentityUnavailableNotice(item.id)
+        return
+      }
+      targetDeviceId = liveConnection.deviceId
     }
 
     if (alreadyInstalled) {
@@ -1760,10 +1883,10 @@ export function PluginsWorkspace({
         }
         setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
         pluginApi
-          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, currentDeviceId)
+          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
           .then(plugin => {
             const next = toInstalledPluginItem(plugin)
-            const device = currentDeviceInstallation(plugin, currentDeviceId)
+            const device = currentDeviceInstallation(plugin, targetDeviceId)
             setInstalledPlugins(previous =>
               previous.map(candidate =>
                 String(candidate.id) === String(next.id) ? next : candidate
@@ -1844,7 +1967,7 @@ export function PluginsWorkspace({
   }
 
   function executeMarketplaceInstall(install: PendingMarketplaceInstall | null = pendingInstall) {
-    if (!install) return
+    if (!install || isReconcilingPlugins) return
     const { item: dialogItem, promptAfterInstall } = install
     if (installingMarketplacePluginIds.has(dialogItem.id)) return
 
@@ -1915,27 +2038,44 @@ export function PluginsWorkspace({
             preparedItem.id,
             localMarketplaceId!
           )
-          return { plugin, preparedItem }
+          return {
+            plugin,
+            preparedItem,
+            targetDeviceId: currentDeviceIdRef.current,
+          }
         }
-        if (!(await hasLiveRuntimeCloudConnection())) {
+        const liveConnection = await resolveLiveRuntimeCloudConnection()
+        if (!liveConnection.connected) {
           throw Object.assign(new Error('Current device is disconnected'), {
             code: 'PLUGIN_DEVICE_DISCONNECTED',
           })
         }
-        const response = await pluginApi.installMarketplacePlugin(preparedItem.id, currentDeviceId)
-        return { plugin: response.plugin, preparedItem }
+        if (!liveConnection.deviceId) {
+          throw Object.assign(new Error('Current device identity is unavailable'), {
+            code: 'PLUGIN_DEVICE_ID_UNAVAILABLE',
+          })
+        }
+        const response = await pluginApi.installMarketplacePlugin(
+          preparedItem.id,
+          liveConnection.deviceId
+        )
+        return {
+          plugin: response.plugin,
+          preparedItem,
+          targetDeviceId: liveConnection.deviceId,
+        }
       })
-      .then(async ({ plugin, preparedItem }) => {
+      .then(async ({ plugin, preparedItem, targetDeviceId }) => {
         await ensureLocalConnectorsAfterInstall(preparedItem, plugin)
-        return plugin
+        return { plugin, targetDeviceId }
       })
 
     request
-      .then(plugin => {
+      .then(({ plugin, targetDeviceId }) => {
         const installed = toInstalledPluginItem(plugin)
         const deviceInstallation = installFromLocal
           ? null
-          : currentDeviceInstallation(plugin, currentDeviceId)
+          : currentDeviceInstallation(plugin, targetDeviceId)
         const deviceState = deviceInstallation?.state
         const installedOnCurrentDevice =
           installFromLocal ||
@@ -2042,6 +2182,11 @@ export function PluginsWorkspace({
         if (Reflect.get(error as object, 'code') === 'PLUGIN_DEVICE_DISCONNECTED') {
           setPluginMarketplaceState(previous => ({ ...previous, error: null }))
           showDeviceDisconnectedNotice(item.id)
+          return
+        }
+        if (Reflect.get(error as object, 'code') === 'PLUGIN_DEVICE_ID_UNAVAILABLE') {
+          setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+          showDeviceIdentityUnavailableNotice(item.id)
           return
         }
         const rawErrorMessage = getErrorMessage(
@@ -2670,9 +2815,13 @@ export function PluginsWorkspace({
           deviceId: deviceIdHint || peekedLocalState?.deviceId,
         })
       : Promise.resolve({ items: [] as PluginMarketplaceItem[] })
+    let installedReadFailed = false
     const installedPromise = pluginApi
       .listInstalledPlugins(deviceIdHint || peekedLocalState?.deviceId)
-      .catch(() => ({ items: [] as InstalledPlugin[] }))
+      .catch(() => {
+        installedReadFailed = true
+        return { items: [] as InstalledPlugin[] }
+      })
 
     // Live plugin/installed membership. Peek / plugin/list must not satisfy this.
     let liveLocalInstalledForMerge: InstalledPlugin[] | null = null
@@ -3199,6 +3348,38 @@ export function PluginsWorkspace({
     ]).then(([localResult, cloudResult, installedResult, diskResult, membershipResult]) => {
       if (!isCurrent) return
       catalogSettled = true
+      const manualRequest = manualReconciliationTickRef.current
+      if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
+        manualReconciliationTickRef.current = null
+      }
+      if (
+        manualRequest &&
+        manualRequest.tick <= marketplaceRefreshTick &&
+        manualRequest.accountKey === marketplaceCacheKeyValue &&
+        manualRequest.deviceId === currentDeviceIdRef.current
+      ) {
+        if (
+          cloudResult.status === 'fulfilled' &&
+          !installedReadFailed &&
+          installedResult.status === 'fulfilled' &&
+          membershipResult.status === 'fulfilled'
+        ) {
+          setReconciliationScope({
+            accountKey: manualRequest.accountKey,
+            deviceId: manualRequest.deviceId,
+          })
+          setReconciliationRequest(previous => previous + 1)
+        } else {
+          setPluginOperationNotice({
+            id: 'plugin-reconciliation-incomplete',
+            kind: 'error',
+            message: t(
+              'workbench.plugins_reconciliation_incomplete',
+              '插件数据未完整加载，本次未执行状态修复，请重试刷新'
+            ),
+          })
+        }
+      }
       setMarketplaceLoadingMessage('')
       setIsMarketplaceRefreshing(false)
 
@@ -3343,9 +3524,11 @@ export function PluginsWorkspace({
 
     void runPluginAutoUpdate({
       updateBatch: () => pluginApi.autoUpdateInstalledPlugins(),
+      syncPlugin: installedPluginId =>
+        pluginApi.syncInstalledPluginToDevice(installedPluginId, deviceId),
       syncDevice: () => pluginApi.syncInstalledPluginsToDevice(deviceId),
       syncWhenNoUpdates: marketplaceNeedsDeviceSync(pluginMarketplaceState.items),
-      onProgress: ({ updatedCount, remainingCount }) => {
+      onProgress: ({ processedCount, remainingCount }) => {
         if (currentDeviceIdRef.current !== deviceId) return
         setPluginOperationNotice({
           id: `plugin-auto-update-${deviceId}`,
@@ -3353,19 +3536,60 @@ export function PluginsWorkspace({
           message: t(
             'workbench.plugins_auto_update_progress',
             '正在自动更新插件：已处理 {{updated}} 个，剩余 {{remaining}} 个',
-            { updated: updatedCount, remaining: remainingCount }
+            { updated: processedCount, remaining: remainingCount }
           ),
         })
       },
     })
-      .then(updatedCount => {
+      .then(result => {
         if (currentDeviceIdRef.current !== deviceId) return
-        if (updatedCount > 0) {
+        if (result.failedCount > 0) {
+          const stageLabels: Record<string, string> = {
+            local_state: t('workbench.plugins_auto_update_stage_local_state', '读取本地插件状态'),
+            download: t('workbench.plugins_auto_update_stage_download', '下载插件包'),
+            checksum: t('workbench.plugins_auto_update_stage_checksum', '校验插件包'),
+            prepare: t('workbench.plugins_auto_update_stage_prepare', '准备本地插件目录'),
+            extract: t('workbench.plugins_auto_update_stage_extract', '解压插件包'),
+            codex_config: t('workbench.plugins_auto_update_stage_codex_config', '写入 Codex 配置'),
+            runtime_metadata: t(
+              'workbench.plugins_auto_update_stage_runtime_metadata',
+              '写入插件运行时配置'
+            ),
+            package: t('workbench.plugins_auto_update_stage_package', '检查本地插件包'),
+          }
+          const error = result.failures
+            .map(failure => {
+              const stage = failure.stage ? ` (${stageLabels[failure.stage] || failure.stage})` : ''
+              return `${failure.pluginName}${stage}: ${failure.message}`
+            })
+            .join('; ')
+          setPluginOperationNotice({
+            id: `plugin-auto-update-error-${deviceId}`,
+            kind: 'error',
+            message:
+              result.updatedCount > 0
+                ? t(
+                    'workbench.plugins_auto_update_partial',
+                    '已自动更新 {{updated}} 个插件，{{failed}} 个失败：{{error}}',
+                    {
+                      updated: result.updatedCount,
+                      failed: result.failedCount,
+                      error,
+                    }
+                  )
+                : t(
+                    'workbench.plugins_auto_update_failed',
+                    '插件自动更新失败，当前设备继续使用原版本：{{error}}',
+                    { error }
+                  ),
+          })
+          track('operation_failed', { operation: 'plugin_auto_update' })
+        } else if (result.updatedCount > 0) {
           setPluginOperationNotice({
             id: `plugin-auto-update-complete-${deviceId}`,
             kind: 'success',
             message: t('workbench.plugins_auto_update_complete', '已自动更新 {{count}} 个插件', {
-              count: updatedCount,
+              count: result.updatedCount,
             }),
           })
         } else {
@@ -3590,9 +3814,10 @@ export function PluginsWorkspace({
     marketplaceNeedsDeviceSync(pluginMarketplaceState.items) &&
     !deviceAutoSyncSettled
 
-  // GitHub plugin/list shares the Codex app-server lock with wegent
-  // plugin/install. Order: Wework official + enterprise (cloud catalog and
-  // device ZIP/install) and personal-created (disk listing), then GitHub.
+  // GitHub plugin/list shares the Codex app-server lock with other local Codex
+  // requests. Never start it while opening the page: offline GitHub requests can
+  // hold that lock for about a minute. Cached OpenAI rows paint immediately, and
+  // the user can explicitly refresh when they want to reconcile the remote catalog.
   useEffect(() => {
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (personalDiskSettledKey !== marketplaceCacheKeyValue) return
@@ -3601,14 +3826,7 @@ export function PluginsWorkspace({
     const shouldReconcileGithubCatalog = reconcileGithubCatalogRef.current
     const skipGithubCatalogReconcile = skipGithubCatalogReconcileRef.current
     skipGithubCatalogReconcileRef.current = false
-    // Warm OpenAI rows already come from peek/cache. Auto plugin/list reconciles
-    // github.com/openai/plugins and holds the shared Codex lock, which stalls chat
-    // send. Only refresh after the user explicitly asks.
-    if (
-      skipGithubCatalogReconcile ||
-      (!shouldReconcileGithubCatalog &&
-        hasOpenAiOfficialCatalog(pluginMarketplaceStateRef.current.items))
-    ) {
+    if (skipGithubCatalogReconcile) {
       setIsOpenAiOfficialCatalogLoading(false)
       return
     }
@@ -3622,6 +3840,7 @@ export function PluginsWorkspace({
     void localPluginApi
       .readState({
         mergeAllMarketplaces: true,
+        marketplaceKinds: shouldReconcileGithubCatalog ? undefined : ['local'],
         refresh: true,
       })
       .then(localState => {
@@ -3722,7 +3941,8 @@ export function PluginsWorkspace({
       setPluginDetailActionError({
         pluginId,
         message: getErrorMessage(error, 'Unable to load plugin details'),
-      })
+      }),
+    reconciliationRevision
   )
 
   useEffect(() => {
@@ -3945,6 +4165,13 @@ export function PluginsWorkspace({
     }, 4_000)
     return () => window.clearTimeout(timeoutId)
   }, [pluginOperationNotice])
+
+  useEffect(() => {
+    if (!deviceCloudConnected) return
+    setPluginOperationNotice(current =>
+      current?.id.startsWith('install-device-disconnected-') ? null : current
+    )
+  }, [deviceCloudConnected])
 
   const pluginShareDialog = pluginShareState ? (
     <PluginShareDialog
@@ -4881,20 +5108,37 @@ export function PluginsWorkspace({
               <button
                 type="button"
                 data-testid="plugins-refresh-button"
+                data-reconciling={isReconcilingPlugins}
+                data-reconciliation-revision={reconciliationRevision}
                 aria-label={t('workbench.plugins_refresh_marketplace', '刷新插件市场')}
-                disabled={pluginMarketplaceState.isLoading || isMarketplaceRefreshing}
+                disabled={
+                  pluginMarketplaceState.isLoading ||
+                  isMarketplaceRefreshing ||
+                  isReconcilingPlugins
+                }
                 className="plugin-market-icon-button hidden disabled:opacity-50 md:inline-flex"
                 onClick={refreshMarketplace}
               >
                 <RefreshCw
                   className={[
                     'h-4 w-4',
-                    pluginMarketplaceState.isLoading || isMarketplaceRefreshing
+                    pluginMarketplaceState.isLoading ||
+                    isMarketplaceRefreshing ||
+                    isReconcilingPlugins
                       ? 'animate-spin'
                       : '',
                   ].join(' ')}
                 />
               </button>
+              {isReconcilingPlugins && (
+                <span
+                  role="status"
+                  data-testid="plugins-reconciliation-status"
+                  className="text-muted-foreground"
+                >
+                  {t('workbench.plugins_reconciliation_checking', '正在检查安装状态…')}
+                </span>
+              )}
               <PluginCreateMenu
                 isOpen={isCreateMenuOpen}
                 onToggle={() => setIsCreateMenuOpen(previous => !previous)}

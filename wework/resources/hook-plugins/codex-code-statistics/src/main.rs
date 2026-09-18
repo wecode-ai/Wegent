@@ -34,6 +34,7 @@ struct PostToolUseInput {
     cwd: PathBuf,
     model: Option<String>,
     tool_name: String,
+    tool_use_id: String,
     tool_input: Value,
 }
 
@@ -76,7 +77,12 @@ async fn run() -> Result<(), String> {
         .get("changes")
         .and_then(Value::as_array)
         .ok_or("apply_patch hook input is missing changes")?;
-    let git_url = git_remote_url(&input.cwd);
+    let git_url = input
+        .tool_input
+        .get("git_url")
+        .and_then(Value::as_str)
+        .map(sanitize_git_url)
+        .unwrap_or_else(|| git_remote_url(&input.cwd));
     let headers = report_headers(&input)?;
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
@@ -149,7 +155,13 @@ fn report_payload(
     }
     let (added, deleted) = change_lines(change);
     Some(ReportPayload {
-        id: Uuid::new_v4().to_string(),
+        // Retries, process restarts, and log replays identify the same edit.
+        id: Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            &serde_json::to_vec(&(&input.session_id, &input.tool_use_id, path))
+                .expect("string tuple serializes"),
+        )
+        .to_string(),
         session_id: input.session_id.clone(),
         action: ACTION,
         payload_type: ACTION,
@@ -288,6 +300,7 @@ mod tests {
             cwd: PathBuf::from("/workspace"),
             model: Some("gpt-5.4".to_owned()),
             tool_name: "apply_patch".to_owned(),
+            tool_use_id: "call-1".to_owned(),
             tool_input: serde_json::json!({}),
         }
     }
@@ -314,6 +327,18 @@ mod tests {
         assert_eq!(value["filepath"], "/workspace/foo.ts");
         assert_eq!(value["git_url"], "https://example.com/repo.git");
         assert_eq!(value["mode"], "code");
+    }
+
+    #[test]
+    fn retry_identity_is_stable_and_distinguishes_files_and_calls() {
+        let change = serde_json::json!({"path":"/workspace/a.rs","kind":{"type":"add"},"diff":"a"});
+        let first = report_payload(&input(), &change, "").unwrap().id;
+        assert_eq!(first, report_payload(&input(), &change, "").unwrap().id);
+        let mut next = input();
+        next.tool_use_id = "call-2".to_owned();
+        assert_ne!(first, report_payload(&next, &change, "").unwrap().id);
+        let other = serde_json::json!({"path":"/workspace/b.rs","kind":{"type":"add"},"diff":"a"});
+        assert_ne!(first, report_payload(&input(), &other, "").unwrap().id);
     }
 
     #[test]

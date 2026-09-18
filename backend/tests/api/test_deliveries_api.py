@@ -942,7 +942,7 @@ def test_crossing_processing_boundary_starts_orchestrated_issue_workflow(
     dispatch.assert_awaited_once()
 
 
-def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
+def test_ai_issue_creation_rejects_missing_configuration_before_persisting(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -990,34 +990,38 @@ def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
         json={"title": "Configure before AI planning", "status": "pending"},
     )
 
-    assert created_response.status_code == 201
-    created = created_response.json()
-    assert created["status"] == "pending"
-    assert created["workflow"]["execution_config"]["model"] is None
+    assert created_response.status_code == 422
+    detail = created_response.json()["detail"]
+    assert detail["error_code"] == "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE"
+    assert detail["missing_fields"] == ["device", "model"]
+    assert test_db.query(LoopItem).count() == 0
     assert test_db.query(ProjectAutomationRun).count() == 0
     dispatch.assert_not_awaited()
 
-    workflow = created["workflow"]
-    workflow["execution_config"] = {
-        "agent_id": None,
-        "runtime_profile_id": None,
-        "execution_device_id": "local-device",
-        "model": "gpt-5-codex",
-        "model_type": "runtime",
-        "model_options": {},
-        "workspace_binding": {"type": "standalone"},
+    workflow = {
+        **delivery_project.metadata_json["workflow_definition"],
+        "execution_config": {
+            "agent_id": None,
+            "runtime_profile_id": None,
+            "execution_device_id": "local-device",
+            "model": "gpt-5-codex",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+        },
     }
-    started_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
+    started_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
         json={
-            "version": created["version"],
+            "title": "Configured AI planning",
             "status": "pending",
             "workflow": workflow,
         },
     )
 
-    assert started_response.status_code == 200
+    assert started_response.status_code == 201, started_response.text
+    created = started_response.json()
     run = test_db.query(ProjectAutomationRun).one()
     assert run.task_id == created["id"]
     assert (run.metadata_json or {})["workflow_execution_config"]["model"] == (
@@ -1379,6 +1383,69 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
 
     assert response.status_code == 201
     ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
+
+
+def test_tag_update_requires_and_dispatches_one_matching_automation(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Choose tag automation"},
+    ).json()
+    matching_rules = [
+        SimpleNamespace(id="rule-1", title="Implement", description=""),
+        SimpleNamespace(id="rule-2", title="Review", description=""),
+    ]
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.matching_rules",
+        MagicMock(return_value=matching_rules),
+    )
+    ingest = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
+    )
+
+    selection_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "tags": ["review"]},
+    )
+
+    assert selection_response.status_code == 409
+    assert (
+        selection_response.json()["detail"]["code"] == "automation_selection_required"
+    )
+    unchanged = test_db.get(LoopItem, created["id"])
+    assert unchanged is not None
+    test_db.refresh(unchanged)
+    assert unchanged.tags == []
+    assert unchanged.version == created["version"]
+    ingest.assert_not_awaited()
+
+    selected_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "tags": ["review"],
+            "automation_rule_id": "rule-2",
+        },
+    )
+
+    assert selected_response.status_code == 200
+    assert selected_response.json()["tags"] == ["review"]
+    ingest.assert_awaited_once()
+    event = ingest.await_args.args[1]
+    assert event.event_type == "task.tag_added"
+    assert event.payload["added_tags"] == ["review"]
     assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 

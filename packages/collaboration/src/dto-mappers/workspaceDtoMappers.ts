@@ -5,6 +5,8 @@
 import type {
   WorkspaceDelivery,
   WorkspaceDeliveryAsset,
+  WorkspaceGitBranch,
+  WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
   WorkspaceWorkflowPlan,
@@ -21,7 +23,7 @@ import type {
 
 type WorkspaceDto = object | Record<string, unknown>;
 
-function asRecord(input: WorkspaceDto): Record<string, unknown> {
+function asRecord(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
@@ -253,11 +255,18 @@ export function mapCollaborationWorkspaceDto(
   input: WorkspaceDto,
 ): CollaborationWorkspace {
   const row = asRecord(input);
+  const executionEnvironment = asRecord(
+    row.execution_environment ?? row.executionEnvironment ?? {},
+  );
+  const repositories = executionEnvironment.repositories;
+  const setupSteps =
+    executionEnvironment.setup_steps ?? executionEnvironment.setupSteps;
   return {
     id: String(row.id),
     location: "cloud",
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
+    namespace: String(row.namespace ?? "default"),
     access_role: (row.access_role ??
       row.accessRole ??
       "Member") as CollaborationWorkspace["access_role"],
@@ -266,6 +275,56 @@ export function mapCollaborationWorkspaceDto(
     execution_environment_count: Number(
       row.execution_environment_count ?? row.executionEnvironmentCount ?? 0,
     ),
+    execution_environment: {
+      repositories: Array.isArray(repositories)
+        ? repositories.map((value) => {
+            const repository = asRecord(value);
+            return {
+              name: String(repository.name ?? ""),
+              url: String(repository.url ?? ""),
+              ref: String(repository.ref ?? ""),
+              path: String(repository.path ?? ""),
+              primary: Boolean(repository.primary),
+            };
+          })
+        : [],
+      setup_steps: Array.isArray(setupSteps)
+        ? setupSteps.map((value) => {
+            const step = asRecord(value);
+            return {
+              command: String(step.command ?? ""),
+              working_directory: String(
+                step.working_directory ?? step.workingDirectory ?? "",
+              ),
+            };
+          })
+        : [],
+      fingerprint: String(executionEnvironment.fingerprint ?? ""),
+      devices: Object.fromEntries(
+        Object.entries(asRecord(executionEnvironment.devices ?? {})).map(
+          ([deviceKey, value]) => {
+            const entry = asRecord(value);
+            return [
+              deviceKey,
+              {
+                status: entry.status as
+                  | "preparing"
+                  | "ready"
+                  | "error"
+                  | undefined,
+                workspace_path: String(
+                  entry.workspace_path ?? entry.workspacePath ?? "",
+                ),
+                prepared_at: nullableString(
+                  entry.prepared_at ?? entry.preparedAt ?? null,
+                ),
+                error: String(entry.error ?? ""),
+              },
+            ];
+          },
+        ),
+      ),
+    },
     project_count: Number(row.project_count ?? row.projectCount ?? 0),
     created_by_user_id: Number(
       row.created_by_user_id ?? row.createdByUserId ?? 0,
@@ -372,6 +431,30 @@ export function mapCollaborationPlatformResourcesDto(
           mapCollaborationExecutionEnvironmentDto(environment as WorkspaceDto),
         )
       : [],
+  };
+}
+
+export function mapWorkspaceGitRepositoryDto(
+  input: WorkspaceDto,
+): WorkspaceGitRepository {
+  const row = asRecord(input);
+  return {
+    id: Number(camelOrSnake(row, "gitRepoId", "git_repo_id") ?? 0),
+    name: String(row.name ?? ""),
+    fullName: String(camelOrSnake(row, "gitRepo", "git_repo") ?? ""),
+    cloneUrl: String(camelOrSnake(row, "gitUrl", "git_url") ?? ""),
+    gitDomain: String(camelOrSnake(row, "gitDomain", "git_domain") ?? ""),
+    provider: String(row.type ?? ""),
+  };
+}
+
+export function mapWorkspaceGitBranchDto(
+  input: WorkspaceDto,
+): WorkspaceGitBranch {
+  const row = asRecord(input);
+  return {
+    name: String(row.name ?? ""),
+    default: row.default === true,
   };
 }
 

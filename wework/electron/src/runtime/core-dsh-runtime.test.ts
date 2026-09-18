@@ -14,11 +14,19 @@ import { describe, expect, test } from 'vitest'
 import {
   CORE_DSH_VERSION,
   copyManagedPlugin,
-  prepareCoreDshLaunch,
+  createCoreDshLaunch,
+  prepareCoreDshRuntime,
   selectBundledDshRuntimeMatching,
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+
+async function prepareCoreDshLaunch(
+  options: Parameters<typeof prepareCoreDshRuntime>[0] & { port: number }
+) {
+  const { port, ...runtimeOptions } = options
+  return createCoreDshLaunch(await prepareCoreDshRuntime(runtimeOptions), port)
+}
 
 describe('core DSH runtime', () => {
   test('preserves linked plugin directories as Windows junctions', async () => {
@@ -134,6 +142,15 @@ describe('core DSH runtime', () => {
       },
       port: 3080,
     })
+    const workspacePath = join(
+      dataDirectory,
+      'dsh-core',
+      'profiles',
+      'wework-core',
+      'pnpm-workspace.yaml'
+    )
+    const unchangedWorkspace = `${await readFile(workspacePath, 'utf8')}# keep-existing-workspace\n`
+    await writeFile(workspacePath, unchangedWorkspace)
     const second = await prepareCoreDshLaunch({
       runtimeRoot: runtime.root,
       dataDirectory,
@@ -157,6 +174,7 @@ describe('core DSH runtime', () => {
     expect(second.environment.WEWORK_APP_WEB_ROOT).toBe(
       join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
     )
+    await expect(readFile(workspacePath, 'utf8')).resolves.toBe(unchangedWorkspace)
     expect(
       JSON.parse(
         await readFile(

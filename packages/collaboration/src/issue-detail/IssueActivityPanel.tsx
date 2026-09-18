@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ArrowUp, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, UserPlus } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { executionStatusLabel } from "./executionStatusLabel";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAgent,
@@ -20,58 +21,11 @@ type ActivityEntry =
   | { kind: "comment"; at: string; comment: CollaborationComment }
   | { kind: "run"; at: string; run: CollaborationExecution };
 
-type CommentAssignmentTarget = {
+type AssignmentTarget = {
   type: "human" | "agent";
   targetId: string;
-};
-
-type SelectedAssignmentTarget = CommentAssignmentTarget & {
   name: string;
-  start: number;
-  end: number;
 };
-
-export function reconcileSelectedAssignmentTarget(
-  previousBody: string,
-  nextBody: string,
-  target: SelectedAssignmentTarget | null,
-): SelectedAssignmentTarget | null {
-  if (!target) return null;
-
-  let prefixLength = 0;
-  while (
-    prefixLength < previousBody.length &&
-    prefixLength < nextBody.length &&
-    previousBody[prefixLength] === nextBody[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < previousBody.length - prefixLength &&
-    suffixLength < nextBody.length - prefixLength &&
-    previousBody[previousBody.length - 1 - suffixLength] ===
-      nextBody[nextBody.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const previousEditEnd = previousBody.length - suffixLength;
-  let nextStart = target.start;
-  let nextEnd = target.end;
-  if (previousEditEnd <= target.start) {
-    const delta = nextBody.length - previousBody.length;
-    nextStart += delta;
-    nextEnd += delta;
-  } else if (prefixLength < target.end) {
-    return null;
-  }
-
-  return nextBody.slice(nextStart, nextEnd) === `@${target.name}`
-    ? { ...target, start: nextStart, end: nextEnd }
-    : null;
-}
 
 export function issueActivityEntries(
   assignments: CollaborationAssignment[],
@@ -167,32 +121,32 @@ export function IssueActivityPanel({
 }) {
   const [body, setBody] = useState("");
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const [selectedAssignment, setSelectedAssignment] =
-    useState<SelectedAssignmentTarget | null>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
-  const mentionFocusFrameRef = useRef<number | null>(null);
+  const mentionCaretRef = useRef<number | null>(null);
   const submissionIdRef = useRef(0);
   useEffect(() => {
     submissionIdRef.current += 1;
-    if (mentionFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(mentionFocusFrameRef.current);
-      mentionFocusFrameRef.current = null;
-    }
+    mentionCaretRef.current = null;
     setBody("");
     setMentionOpen(false);
+    setAssignmentOpen(false);
     setComposerExpanded(false);
-    setSelectedAssignment(null);
     setSending(false);
     return () => {
       submissionIdRef.current += 1;
-      if (mentionFocusFrameRef.current !== null) {
-        window.cancelAnimationFrame(mentionFocusFrameRef.current);
-        mentionFocusFrameRef.current = null;
-      }
+      mentionCaretRef.current = null;
     };
   }, [issue.id]);
+  useLayoutEffect(() => {
+    const caret = mentionCaretRef.current;
+    if (caret === null) return;
+    mentionCaretRef.current = null;
+    commentRef.current?.focus();
+    commentRef.current?.setSelectionRange(caret, caret);
+  }, [body]);
   const entries = useMemo(
     () => issueActivityEntries(assignments, comments, executions),
     [assignments, comments, executions],
@@ -218,76 +172,51 @@ export function IssueActivityPanel({
         .at(-1) ?? null,
     [currentAssignment, executions, issue.id],
   );
-  const pendingAssignment = useMemo(() => {
-    if (!canAssign || !selectedAssignment) return null;
-    if (
-      assignments.some(
-        (assignment) =>
-          assignment.status === "active" &&
-          assignment.target_type === selectedAssignment.type &&
-          assignment.target_id === selectedAssignment.targetId &&
-          !assignment.workflow_step,
-      )
-    ) {
-      return null;
-    }
-    return body.slice(selectedAssignment.start, selectedAssignment.end) ===
-      `@${selectedAssignment.name}`
-      ? selectedAssignment
-      : null;
-  }, [assignments, body, canAssign, selectedAssignment]);
   const submit = async () => {
     const submissionId = ++submissionIdRef.current;
     const submittedIssueId = issue.id;
     const submittedBody = body;
     const commentBody = submittedBody.trim();
     if (!commentBody) return;
-    const assignmentTarget = pendingAssignment;
-    if (!assignmentTarget && !canComment) return;
-    if (mentionFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(mentionFocusFrameRef.current);
-      mentionFocusFrameRef.current = null;
-    }
+    if (!canComment) return;
+    mentionCaretRef.current = null;
     setBody("");
     setMentionOpen(false);
     setComposerExpanded(false);
-    setSelectedAssignment(null);
     setSending(true);
     try {
-      if (assignmentTarget) {
-        if (!api.assignments) throw new Error("Assignments API is unavailable");
-        const result = await api.assignments.create(submittedIssueId, {
-          targetType: assignmentTarget.type,
-          targetId: assignmentTarget.targetId,
-          workflowStep: null,
-          commentBody,
-          notifyTarget: assignmentTarget.type === "human",
-        });
-        if (submissionId !== submissionIdRef.current) return;
-        onAssignmentsChange([...assignments, result.assignment]);
-        if (result.comment) onCommentsChange([...comments, result.comment]);
-        onIssueChange(result.issue);
-      } else {
-        const comment = await api.comments.create(
-          submittedIssueId,
-          commentBody,
-        );
-        if (submissionId !== submissionIdRef.current) return;
-        onCommentsChange([...comments, comment]);
-      }
+      const comment = await api.comments.create(submittedIssueId, commentBody);
+      if (submissionId !== submissionIdRef.current) return;
+      onCommentsChange([...comments, comment]);
     } catch {
       if (submissionId !== submissionIdRef.current) return;
       setBody(submittedBody);
       setComposerExpanded(true);
-      setSelectedAssignment(assignmentTarget);
       onError();
     } finally {
       if (submissionId === submissionIdRef.current) setSending(false);
     }
   };
-  const insertMention = (
-    target: CommentAssignmentTarget & { name: string },
-  ) => {
+  const assign = async (target: AssignmentTarget) => {
+    if (!api.assignments || sending) return;
+    setSending(true);
+    setAssignmentOpen(false);
+    try {
+      const result = await api.assignments.create(issue.id, {
+        targetType: target.type,
+        targetId: target.targetId,
+        workflowStep: null,
+        notifyTarget: true,
+      });
+      onAssignmentsChange([...assignments, result.assignment]);
+      onIssueChange(result.issue);
+    } catch {
+      onError();
+    } finally {
+      setSending(false);
+    }
+  };
+  const insertMention = (target: { name: string }) => {
     const textarea = commentRef.current;
     const start = textarea?.selectionStart ?? body.length;
     const end = textarea?.selectionEnd ?? start;
@@ -296,26 +225,14 @@ export function IssueActivityPanel({
     const suffix = body.slice(end);
     const leadingSpace = prefix && !/\s$/.test(prefix) ? " " : "";
     const trailingSpace = suffix && /^\s/.test(suffix) ? "" : " ";
-    const mentionStart = prefix.length + leadingSpace.length;
-    const mentionEnd = mentionStart + target.name.length + 1;
+    const mentionEnd =
+      prefix.length + leadingSpace.length + target.name.length + 1;
     const nextBody = `${prefix}${leadingSpace}@${target.name}${trailingSpace}${suffix}`;
     const nextCaret = mentionEnd + trailingSpace.length;
+    mentionCaretRef.current = nextCaret;
     setBody(nextBody);
-    setSelectedAssignment({
-      ...target,
-      start: mentionStart,
-      end: mentionEnd,
-    });
     setMentionOpen(false);
     setComposerExpanded(true);
-    if (mentionFocusFrameRef.current !== null) {
-      window.cancelAnimationFrame(mentionFocusFrameRef.current);
-    }
-    mentionFocusFrameRef.current = window.requestAnimationFrame(() => {
-      mentionFocusFrameRef.current = null;
-      textarea?.focus();
-      textarea?.setSelectionRange(nextCaret, nextCaret);
-    });
   };
 
   return (
@@ -323,7 +240,7 @@ export function IssueActivityPanel({
       className="task-detail-comments collaboration-comment collaboration-activity-panel"
       data-testid="collaboration-issue-activity"
     >
-      {showCurrentAssignment ? (
+      {showCurrentAssignment || canAssign ? (
         <section
           className="collaboration-current-assignment"
           data-testid="collaboration-current-assignment"
@@ -377,6 +294,72 @@ export function IssueActivityPanel({
               )}
             </p>
           )}
+          {canAssign ? (
+            <div className="issue-comment-mention">
+              <button
+                type="button"
+                data-testid="collaboration-issue-assignment-trigger"
+                aria-label={translate("todo.assign", "分配")}
+                aria-expanded={assignmentOpen}
+                disabled={sending}
+                onClick={() => setAssignmentOpen((current) => !current)}
+              >
+                <UserPlus aria-hidden="true" className="h-4 w-4" />
+                {translate("todo.assign", "分配")}
+              </button>
+              {assignmentOpen ? (
+                <div
+                  className="issue-comment-mention-popup"
+                  data-testid="collaboration-issue-assignment-popup"
+                >
+                  {members.length > 0 ? (
+                    <section>
+                      <h4>{translate("todo.members", "成员")}</h4>
+                      {members.map((member) => (
+                        <button
+                          type="button"
+                          key={`assignment-member:${member.user_id}`}
+                          data-testid={`collaboration-issue-assign-member-${member.user_id}`}
+                          onClick={() =>
+                            void assign({
+                              type: "human",
+                              targetId: String(member.user_id),
+                              name: member.user_name,
+                            })
+                          }
+                        >
+                          <span>{member.user_name.slice(0, 1)}</span>
+                          {member.user_name}
+                        </button>
+                      ))}
+                    </section>
+                  ) : null}
+                  {agents.length > 0 ? (
+                    <section>
+                      <h4>{translate("todo.agent_teams", "智能体")}</h4>
+                      {agents.map((agent) => (
+                        <button
+                          type="button"
+                          key={`assignment-agent:${agent.id}`}
+                          data-testid={`collaboration-issue-assign-agent-${agent.id}`}
+                          onClick={() =>
+                            void assign({
+                              type: "agent",
+                              targetId: agent.id,
+                              name: agent.name,
+                            })
+                          }
+                        >
+                          <span>AI</span>
+                          {agent.name}
+                        </button>
+                      ))}
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       ) : null}
       <header className="task-detail-comments-head">
@@ -440,10 +423,32 @@ export function IssueActivityPanel({
               data-testid={`collaboration-run-${entry.run.id}`}
               key={`run:${entry.run.id}`}
             >
-              <strong>{translate("todo.execution_run", "执行任务")}</strong>
+              <strong>
+                {entry.run.executor_type === "automation_manager"
+                  ? translate("todo.execution_manager_run", "AI 调度")
+                  : translate("todo.execution_run", "执行任务")}
+              </strong>
               <p>
-                {entry.run.task_title} · {entry.run.display_state}
+                {entry.run.task_title} ·{" "}
+                {executionStatusLabel(entry.run.display_state, translate)}
               </p>
+              {entry.run.executor_type === "automation_manager" &&
+              entry.run.display_state === "succeeded" ? (
+                <p>
+                  {translate(
+                    "todo.execution_manager_completed",
+                    "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
+                  )}
+                </p>
+              ) : null}
+              {entry.run.error_message ? (
+                <p
+                  className="collaboration-run-error"
+                  data-testid={`collaboration-run-error-${entry.run.id}`}
+                >
+                  {entry.run.error_message}
+                </p>
+              ) : null}
               <time>{entry.run.created_at.slice(0, 16).replace("T", " ")}</time>
             </article>
           );
@@ -472,62 +477,17 @@ export function IssueActivityPanel({
           aria-label={translate("todo.comment", "评论")}
           placeholder={translate(
             "todo.comment_or_assign",
-            "评论，输入 @成员或 @智能体 分配任务",
+            "评论，输入 @ 提及成员或智能体",
           )}
           value={body}
-          disabled={(!canComment && !canAssign) || sending}
-          aria-describedby={
-            pendingAssignment
-              ? "collaboration-issue-assignment-preview"
-              : undefined
-          }
+          disabled={!canComment || sending}
           onChange={(event) => {
             const nextBody = event.target.value;
-            setSelectedAssignment((current) =>
-              reconcileSelectedAssignmentTarget(body, nextBody, current),
-            );
             setBody(nextBody);
             if (nextBody) setComposerExpanded(true);
             if (nextBody.endsWith("@")) setMentionOpen(true);
           }}
         />
-        {pendingAssignment ? (
-          <div
-            id="collaboration-issue-assignment-preview"
-            className="issue-comment-assignment-preview"
-            data-testid="collaboration-issue-assignment-preview"
-            role="status"
-            aria-live="polite"
-          >
-            <span
-              className={
-                pendingAssignment.type === "agent" ? "is-agent" : undefined
-              }
-            >
-              {pendingAssignment.type === "agent"
-                ? "AI"
-                : pendingAssignment.name.slice(0, 1)}
-            </span>
-            <p>
-              {translate("todo.will_assign_to", "将分配给")}{" "}
-              <strong>@{pendingAssignment.name}</strong>
-              {pendingAssignment.type === "agent"
-                ? ` · ${translate("todo.will_start_execution", "发送后开始执行")}`
-                : ""}
-            </p>
-            <button
-              type="button"
-              data-testid="collaboration-issue-assignment-cancel"
-              aria-label={`${translate("todo.cancel_assignment", "取消分配给")} ${pendingAssignment.name}`}
-              onClick={() => {
-                setSelectedAssignment(null);
-                commentRef.current?.focus();
-              }}
-            >
-              <X aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ) : null}
         <div className="issue-comment-composer-actions">
           <div className="issue-comment-mention">
             <button
@@ -535,7 +495,7 @@ export function IssueActivityPanel({
               aria-label={translate("todo.mention_collaborator", "提及协作者")}
               aria-expanded={mentionOpen}
               data-testid="collaboration-issue-mention-trigger"
-              disabled={(!canComment && !canAssign) || sending}
+              disabled={!canComment || sending}
               onClick={() => {
                 setComposerExpanded(true);
                 setMentionOpen((current) => !current);
@@ -558,8 +518,6 @@ export function IssueActivityPanel({
                         data-testid={`collaboration-issue-mention-member-${member.user_id}`}
                         onClick={() =>
                           insertMention({
-                            type: "human",
-                            targetId: String(member.user_id),
                             name: member.user_name,
                           })
                         }
@@ -580,8 +538,6 @@ export function IssueActivityPanel({
                         data-testid={`collaboration-issue-mention-agent-${agent.id}`}
                         onClick={() =>
                           insertMention({
-                            type: "agent",
-                            targetId: agent.id,
                             name: agent.name,
                           })
                         }
@@ -598,19 +554,9 @@ export function IssueActivityPanel({
           <button
             type="button"
             data-testid="collaboration-issue-comment-submit"
-            aria-label={
-              pendingAssignment
-                ? translate("todo.assign_and_comment", "分配并评论")
-                : translate("todo.send_comment", "发送")
-            }
-            title={
-              pendingAssignment
-                ? translate("todo.assign_and_comment", "分配并评论")
-                : translate("todo.send_comment", "发送")
-            }
-            disabled={
-              sending || !body.trim() || (!pendingAssignment && !canComment)
-            }
+            aria-label={translate("todo.send_comment", "发送")}
+            title={translate("todo.send_comment", "发送")}
+            disabled={sending || !body.trim() || !canComment}
             onClick={() => void submit()}
           >
             <ArrowUp aria-hidden="true" />

@@ -9,6 +9,8 @@ import {
   mapCollaborationPlatformResourcesDto,
   mapCollaborationWorkspaceDto,
   mapCollaborationWorkspaceNavigationContextDto,
+  mapWorkspaceGitBranchDto,
+  mapWorkspaceGitRepositoryDto,
 } from "../dto-mappers";
 import type {
   SharedCollaborationResourcesApi,
@@ -16,9 +18,12 @@ import type {
   SharedWorkspaceAgentsApi,
   SharedWorkspaceAssignmentsApi,
   SharedWorkspaceCommentsApi,
+  SharedWorkspaceGitRepositoriesApi,
+  SharedWorkspaceProjectsApi,
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationGroup,
   CollaborationComment,
   CollaborationIssue,
   CollaborationMember,
@@ -34,6 +39,15 @@ export interface SharedWorkspaceHttpTransport {
 export interface SharedWorkspaceHttpApi {
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
+  gitRepositories: SharedWorkspaceGitRepositoriesApi;
+  projects: Pick<
+    SharedWorkspaceProjectsApi,
+    | "listCollaborationGroups"
+    | "addCollaborationGroup"
+    | "createCollaborationGroup"
+    | "updateCollaborationGroup"
+    | "removeCollaborationGroup"
+  >;
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
   agents: SharedWorkspaceAgentsApi;
@@ -42,6 +56,9 @@ export interface SharedWorkspaceHttpApi {
 function encoded(value: string | number): string {
   return encodeURIComponent(String(value));
 }
+
+// Matches the backend /git/repositories page-size cap.
+const GIT_REPOSITORY_FETCH_LIMIT = 5000;
 
 function snakeCaseKey(key: string): string {
   return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -55,10 +72,14 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [
-      snakeCaseKey(key),
-      workspaceHttpRequestBody(nested),
-    ]),
+    Object.entries(value).map(([key, nested]) => {
+      const wireKey = snakeCaseKey(key);
+      // Runtime/provider option names are opaque API values.
+      return [
+        wireKey,
+        wireKey === "model_options" ? nested : workspaceHttpRequestBody(nested),
+      ];
+    }),
   );
 }
 
@@ -80,10 +101,13 @@ function keysToCamelCase(value: unknown): unknown {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [
-      camelCaseKey(key),
-      keysToCamelCase(nested),
-    ]),
+    Object.entries(value).map(([key, nested]) => {
+      const viewKey = camelCaseKey(key);
+      return [
+        viewKey,
+        viewKey === "modelOptions" ? nested : keysToCamelCase(nested),
+      ];
+    }),
   );
 }
 
@@ -105,14 +129,83 @@ function mapWorkspaceMemberDto(input: unknown): CollaborationMember {
   };
 }
 
+function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
+  const row = record(input);
+  const members = Array.isArray(row.members) ? row.members : [];
+  const stages = Array.isArray(row.stages) ? row.stages : [];
+  const executionRequirements = record(
+    row.execution_requirements ?? row.executionRequirements,
+  );
+  const requiredTags =
+    executionRequirements.required_tags ?? executionRequirements.requiredTags;
+  const leader = record(row.leader);
+  const mapStage = (stage: unknown) => {
+    const value = record(stage);
+    const assignee = value.assignee == null ? null : record(value.assignee);
+    return {
+      id: String(value.id),
+      name: String(value.name ?? ""),
+      description: String(value.description ?? ""),
+      assignee:
+        assignee === null
+          ? null
+          : {
+              kind:
+                assignee.kind === "human"
+                  ? ("human" as const)
+                  : ("agent" as const),
+              id: String(assignee.id),
+              responsibility: String(assignee.responsibility ?? ""),
+            },
+    };
+  };
+  return {
+    id: String(row.id),
+    workspace_id: String(row.workspace_id ?? row.workspaceId),
+    owner_type:
+      (row.owner_type ?? row.ownerType) === "project" ? "project" : "workspace",
+    owner_id: String(row.owner_id ?? row.ownerId),
+    name: String(row.name ?? ""),
+    description: String(row.description ?? ""),
+    instructions: String(row.instructions ?? ""),
+    leader: {
+      kind: leader.kind === "human" ? "human" : "agent",
+      id: String(leader.id),
+      responsibility: String(leader.responsibility ?? ""),
+    },
+    members: members.map((member) => {
+      const value = record(member);
+      return {
+        kind: value.kind === "human" ? "human" : "agent",
+        id: String(value.id),
+        responsibility: String(value.responsibility ?? ""),
+      };
+    }),
+    coordination_mode: "manager",
+    stages: stages.map(mapStage),
+    execution_requirements: {
+      required_tags: Array.isArray(requiredTags)
+        ? requiredTags.map(String)
+        : [],
+    },
+    version: Number(row.version ?? 1),
+    created_by_user_id: Number(
+      row.created_by_user_id ?? row.createdByUserId ?? 0,
+    ),
+    created_at: String(row.created_at ?? row.createdAt ?? ""),
+    updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+  };
+}
+
 function mapProjectAgentDto(input: unknown): WorkspaceProjectAgent {
   const row = keysToCamelCase(input) as Record<string, unknown>;
+  const teamId = row.teamId ?? row.wegentTeamId;
   return {
     ...row,
     id: String(row.id),
     name: String(row.name ?? ""),
     ...(row.agentId == null ? {} : { agent_id: String(row.agentId) }),
-    ...(row.teamId == null ? {} : { team_id: Number(row.teamId) }),
+    ...(teamId == null ? {} : { team_id: Number(teamId) }),
   };
 }
 
@@ -213,6 +306,33 @@ export function createSharedWorkspaceHttpApi(
           `/v1/workspaces/${encoded(workspaceId)}/agents/${encoded(teamId)}`,
         );
       },
+      async listCollaborationGroups(workspaceId) {
+        const response = await transport.get<{ items: unknown[] }>(
+          `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups`,
+        );
+        return response.items.map(mapCollaborationGroupDto);
+      },
+      async createCollaborationGroup(workspaceId, input) {
+        return mapCollaborationGroupDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async updateCollaborationGroup(workspaceId, groupId, input) {
+        return mapCollaborationGroupDto(
+          await transport.patch(
+            `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups/${encoded(groupId)}`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async removeCollaborationGroup(workspaceId, groupId) {
+        await transport.delete(
+          `/v1/workspaces/${encoded(workspaceId)}/collaboration-groups/${encoded(groupId)}`,
+        );
+      },
       async listExecutionEnvironments(workspaceId) {
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
@@ -234,11 +354,74 @@ export function createSharedWorkspaceHttpApi(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments/${encoded(deviceId)}`,
         );
       },
+      async initializeExecutionEnvironment(workspaceId, input) {
+        return mapCollaborationWorkspaceDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/execution-environment/initialize`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
     },
     resources: {
       async list() {
         return mapCollaborationPlatformResourcesDto(
           await transport.get("/v1/resources"),
+        );
+      },
+    },
+    gitRepositories: {
+      async list() {
+        const items = await transport.get<unknown[]>(
+          `/git/repositories?limit=${GIT_REPOSITORY_FETCH_LIMIT}`,
+        );
+        return items.map((item) => mapWorkspaceGitRepositoryDto(record(item)));
+      },
+      async listBranches(repository) {
+        const query = new URLSearchParams({
+          git_repo: repository.fullName,
+          type: repository.provider,
+          git_domain: repository.gitDomain,
+        });
+        const items = await transport.get<unknown[]>(
+          `/git/repositories/branches?${query.toString()}`,
+        );
+        return items.map((item) => mapWorkspaceGitBranchDto(record(item)));
+      },
+    },
+    projects: {
+      async listCollaborationGroups(projectId) {
+        const response = await transport.get<{ items: unknown[] }>(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
+        );
+        return response.items.map(mapCollaborationGroupDto);
+      },
+      async addCollaborationGroup(projectId, groupId) {
+        return mapCollaborationGroupDto(
+          await transport.post(
+            `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}`,
+          ),
+        );
+      },
+      async createCollaborationGroup(projectId, input) {
+        return mapCollaborationGroupDto(
+          await transport.post(
+            `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async updateCollaborationGroup(projectId, groupId, input) {
+        return mapCollaborationGroupDto(
+          await transport.patch(
+            `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      async removeCollaborationGroup(projectId, groupId) {
+        await transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups/${encoded(groupId)}`,
         );
       },
     },

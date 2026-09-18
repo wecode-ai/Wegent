@@ -14,9 +14,13 @@ When a cloud device is created, the Backend reads the current user's GitLab toke
 | `GIT_STAFF_SINA_COM_CN_TOKEN` | `git.staff.sina.com.cn` | Access the corresponding GitLab repositories from the cloud device |
 | `GITLAB_WEIBO_CN_TOKEN`       | `gitlab.weibo.cn`       | Access the corresponding GitLab repositories from the cloud device |
 
-For the `ubuntu` user, the startup script rewrites supported `ssh://git@...` and `git@...:` repository addresses to HTTPS through `url.*.insteadOf`. `~/.wecode/git-askpass.sh` then authenticates with the current Wegent user name and token.
+For the `ubuntu` user, the startup script applies the same Wegent-managed configuration used by manual synchronization. Supported `ssh://git@...` and `git@...:` repository addresses are rewritten to HTTPS through `url.*.insteadOf`, and the credential helper under `~/.wecode/git-auth/` authenticates with the Git user name and token for the matching domain.
 
-To support clones from later interactive shells, the startup script writes the Git user name and token variables to `~/.wecode/git-token-env` with `0600` permissions and loads it from `~/.bashrc`. Tokens are not written to Git remote URLs, Device CRDs, the database, or logs. A token lookup failure does not block cloud device creation.
+Each Git domain gets a separate commit identity from the validated token's `git_login` and `git_email`. Conditional Git includes select that identity from the repository remote, without setting global `user.name` or `user.email`. If GitLab does not return a complete identity, token authentication and device creation continue; logs contain only the affected domain, and repositories on that domain require the user to complete the commit identity.
+
+Token files use `0600` permissions and are not written to Git remote URLs, Device CRDs, the database, or logs. The startup script applies its sensitive payload only while shell xtrace is disabled.
+
+Before creating a cloud device, the Backend validates every token to be injected against its GitLab domain. The request returns `400` when no supported token is configured or GitLab rejects a token, and `503` when the secret service or GitLab validation is temporarily unavailable. The Backend creates the device API key and Nevis Sandbox only after every token is accepted, preventing cloud devices that cannot clone private repositories. Logs include only the user name, domain, status, and error type, never token values. A device keeps the token and identity snapshot captured at creation time; later account updates must be manually synchronized to an existing device.
 
 ## Manually sync a selected device
 

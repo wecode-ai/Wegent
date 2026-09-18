@@ -1364,7 +1364,8 @@ Configuration File:
       WEGENT_FRONTEND_PORT  - Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
 
     Other Settings:
-      WEGENT_BACKEND_MODE  - Backend mode: python (default) or hybrid
+      WEGENT_BACKEND_MODE  - Backend mode: hybrid (default) or python
+      WEGENT_BACKEND_RS_DIR - Rust Backend directory used by hybrid mode (default: backend-rs-intra)
       WEGENT_PYTHON_UPSTREAM_PORT - Hybrid Python port (default: 8004)
       EXECUTOR_IMAGE        - Docker image for executor
       WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
@@ -1376,7 +1377,7 @@ Configuration File:
 Examples:
   $0                                    # Start with default configuration
   $0 backend frontend                   # Start only backend and frontend
-  WEGENT_BACKEND_MODE=hybrid $0 backend # Start Backend through the Rust gateway
+  WEGENT_BACKEND_MODE=python $0 backend # Temporarily bypass the Rust gateway
   $0 be fe                              # Start only backend and frontend (short names)
   $0 --clean-frontend-cache             # Start after clearing frontend .next cache
   $0 --init                             # Initialize configuration interactively
@@ -2210,7 +2211,9 @@ start_services() {
         done
     fi
 
-    local backend_mode=${WEGENT_BACKEND_MODE:-python}
+    local backend_mode=${WEGENT_BACKEND_MODE:-hybrid}
+    local backend_rs_dir=${WEGENT_BACKEND_RS_DIR:-backend-rs-intra}
+    local backend_rs_launcher="$SCRIPT_DIR/$backend_rs_dir/scripts/start-hybrid-backend.sh"
     if [ "$start_backend" = true ]; then
         case "$backend_mode" in
             python|hybrid)
@@ -2221,6 +2224,18 @@ start_services() {
                 exit 1
                 ;;
         esac
+        if [ "$backend_mode" = "hybrid" ]; then
+            if ! [[ "$backend_rs_dir" =~ ^[A-Za-z0-9._-]+$ ]] || \
+                [ "$backend_rs_dir" = "." ] || [ "$backend_rs_dir" = ".." ]; then
+                echo -e "${RED}Invalid WEGENT_BACKEND_RS_DIR: $backend_rs_dir${NC}"
+                echo "Expected a repository-relative directory name such as 'backend-rs'."
+                exit 1
+            fi
+            if [ ! -x "$backend_rs_launcher" ]; then
+                echo -e "${RED}Rust Backend launcher not found or not executable: $backend_rs_launcher${NC}"
+                exit 1
+            fi
+        fi
     fi
 
     # Check if config file exists, if not, run init wizard first
@@ -2432,7 +2447,7 @@ start_services() {
     if [ "$start_backend" = true ]; then
         local backend_process_command="uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
         if [ "$backend_mode" = "hybrid" ]; then
-            backend_process_command="export WEGENT_HYBRID_STATE_FILE=\"$PID_DIR/backend-hybrid.state\" && exec \"$SCRIPT_DIR/backend-rs/scripts/start-hybrid-backend.sh\" --host 0.0.0.0 --port $BACKEND_PORT"
+            backend_process_command="export WEGENT_HYBRID_STATE_FILE=\"$PID_DIR/backend-hybrid.state\" && export WEGENT_REPOSITORY_ROOT=\"$SCRIPT_DIR\" && export WEGENT_RS_PROJECT_DIR=\"$SCRIPT_DIR/$backend_rs_dir\" && exec \"$backend_rs_launcher\" --host 0.0.0.0 --port $BACKEND_PORT"
         else
             rm -f "$PID_DIR/backend-hybrid.state"
         fi

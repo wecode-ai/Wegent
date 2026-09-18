@@ -12,9 +12,11 @@ contract coverage instead of rewriting it. DingTalk is the reference adapter.
 """
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -157,6 +159,146 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
     provider_id = "dingtalk"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (1789562644000, 1789562644000),
+            ("1789562644000", 1789562644000),
+            (None, None),
+            (0, None),
+            (-1, None),
+            (True, None),
+            ("not-a-timestamp", None),
+        ],
+    )
+    async def test_live_timestamp_probe_only_accepts_a_positive_epoch(
+        self, test_user, monkeypatch, value, expected
+    ):
+        self.configure_user(monkeypatch, test_user)
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(
+                    isError=False,
+                    content=[
+                        SimpleNamespace(
+                            type="text",
+                            text=json.dumps({"success": True, "updateTime": value}),
+                        )
+                    ],
+                )
+            )
+        )
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+        assert (
+            await self.make_provider().get_update_time(test_user, "probe-node")
+            == expected
+        )
+        session.call_tool.assert_awaited_once_with(
+            "get_document_info", {"nodeId": "probe-node"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_probe_failure_names_the_underlying_cause(
+        self, test_user, monkeypatch
+    ):
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        self.configure_user(monkeypatch, test_user)
+        session = SimpleNamespace(
+            call_tool=AsyncMock(side_effect=RuntimeError("connection reset"))
+        )
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+
+        with pytest.raises(ExternalDocumentFetchError) as excinfo:
+            await self.make_provider().get_update_time(test_user, "probe-node")
+
+        assert "RuntimeError" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_unusable_update_time_is_logged_with_its_value(
+        self, test_user, monkeypatch, caplog
+    ):
+        self.configure_user(monkeypatch, test_user)
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(
+                    isError=False,
+                    content=[
+                        SimpleNamespace(
+                            type="text",
+                            text=json.dumps(
+                                {"success": True, "updateTime": "not-a-timestamp"}
+                            ),
+                        )
+                    ],
+                )
+            )
+        )
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="app.services.knowledge.external_document_providers",
+        ):
+            assert (
+                await self.make_provider().get_update_time(test_user, "probe-node")
+                is None
+            )
+
+        assert "Unusable updateTime" in caplog.text
+        assert "not-a-timestamp" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_fetch_reports_the_live_source_timestamp(
+        self, test_db, test_user, monkeypatch
+    ):
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "timestamped-copy", "Timestamped Doc")
+        self.mock_fetch_body(monkeypatch, provider, "body")
+
+        content = await provider.fetch_content(test_db, test_user, "timestamped-copy")
+
+        assert content.metadata["source_update_time"] == 1789562644000
+
+    @pytest.mark.asyncio
+    async def test_fetch_requires_a_node_in_the_user_directory(
+        self, test_db, test_user, monkeypatch
+    ):
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.mock_fetch_body(monkeypatch, provider, "body")
+
+        with pytest.raises(ExternalSourceUnavailableError):
+            await provider.fetch_content(test_db, test_user, "not-in-cache")
+
     def make_provider(self):
         from app.services.knowledge.external_document_providers import (
             DingTalkExternalDocumentProvider,
@@ -225,8 +367,8 @@ class TestDingTalkProviderContract(ProviderContractSuite):
     ) -> None:
         async def fake_fetch(
             mcp_url: str, node_id: str, user: User
-        ) -> tuple[str, bytes]:
-            return "md", markdown.encode("utf-8")
+        ) -> tuple[str, bytes, int | None]:
+            return "md", markdown.encode("utf-8"), 1789562644000
 
         monkeypatch.setattr(provider, "_fetch_document_content", fake_fetch)
 
@@ -270,6 +412,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
                         "nodeType": "file",
                         "contentType": "ALIDOC",
                         "extension": "adoc",
+                        "updateTime": 1789562644000,
                     }
                     if name == "get_document_info"
                     else {"success": True, "markdown": "# Imported"}
@@ -283,13 +426,14 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
         provider = self.make_provider()
-        extension, content = await provider._fetch_document_content(
+        extension, content, update_time = await provider._fetch_document_content(
             "https://mcp.example.test/dingtalk",
             "node-1",
             SimpleNamespace(),
         )
 
         assert (extension, content) == ("md", b"# Imported")
+        assert update_time == 1789562644000
         assert observed["transport"] == {
             "url": "https://mcp.example.test/dingtalk",
             "sse_read_timeout": 180,

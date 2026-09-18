@@ -26,6 +26,19 @@ jest.mock('@/apis/attachments', () => ({
   formatFileSize: (bytes: number) => `${bytes} B`,
 }))
 
+const mockProtectionExtension = {
+  renderBoundary: jest.fn(({ children }: { children: React.ReactNode }) => children),
+  renderProtectedPreview: jest.fn(({ children }: { children: React.ReactNode }) => children),
+}
+let mockExtensionRegistered = false
+
+jest.mock('@/features/knowledge/document/document-protection-registry', () => ({
+  subscribeKnowledgeDocumentProtectionExtension: () => () => undefined,
+  getKnowledgeDocumentProtectionExtension: () =>
+    mockExtensionRegistered ? mockProtectionExtension : null,
+  isKnowledgeDocumentProtectionRequired: () => false,
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -76,7 +89,55 @@ describe('KnowledgeSourcePreview', () => {
     expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
     expect(fetchAttachmentFile).toHaveBeenCalledWith(3, {
       signal: expect.any(AbortSignal),
+      purpose: 'preview',
     })
+  })
+
+  it('wraps the rendered original in the watermark boundary when the preview is protected', async () => {
+    render(
+      <KnowledgeSourcePreview
+        document={document}
+        active={true}
+        onDownload={onDownload}
+        protectedPreview={true}
+        watermarkText="reader@example.com"
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+    const boundary = screen.getByTestId('knowledge-protected-content')
+    expect(boundary).toContainElement(screen.getByTestId('mock-file-preview'))
+    expect(screen.getByTestId('knowledge-document-watermark')).toBeInTheDocument()
+  })
+
+  it('leaves the watermark to the deployment extension viewer when one is installed', async () => {
+    mockExtensionRegistered = true
+    try {
+      render(
+        <KnowledgeSourcePreview
+          document={document}
+          active={true}
+          onDownload={onDownload}
+          protectedPreview={true}
+          watermarkText="reader@example.com"
+        />
+      )
+
+      await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+      // FilePreview renders through the extension viewer, which applies its
+      // own watermark; the open-source boundary must not stack a second layer.
+      expect(screen.queryByTestId('knowledge-protected-content')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('knowledge-document-watermark')).not.toBeInTheDocument()
+    } finally {
+      mockExtensionRegistered = false
+    }
+  })
+
+  it('renders without the protection boundary by default', async () => {
+    render(<KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />)
+
+    await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+    expect(screen.queryByTestId('knowledge-protected-content')).not.toBeInTheDocument()
   })
 
   it('keeps the loaded file when the mounted preview is hidden', async () => {

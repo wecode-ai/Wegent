@@ -63,3 +63,9 @@ def get_channel_user_mapping_config(channel_id: int) -> Dict[str, Any]:
         "mode": config.get("user_mapping_mode", DEFAULT_USER_MAPPING_MODE),
         "config": config.get("user_mapping_config"),
     }
+
+
+def get_channel_chat_card_config(channel_id: int) -> Optional[Dict[str, Any]]:
+    """Read the optional chat-card contract independently of notifications."""
+    spec = _get_channel_spec(channel_id)
+    return (spec or {}).get("config", {}).get("chat_card")

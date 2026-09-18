@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cp -r ../../../backend ./backend
+cp -r ../../../backend-rs ./backend-rs
+cp -r ../../../backend-rs-intra ./backend-rs-intra
 cp -r ../../../shared ./shared
 cp -r ../../../chat_shell ./chat_shell
 cp -r ../../../knowledge_engine ./knowledge_engine

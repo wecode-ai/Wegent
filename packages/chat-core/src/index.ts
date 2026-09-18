@@ -10,6 +10,7 @@ export type {
   TeamDisplayConfig,
 } from './api-types'
 export { nestMessageBlocks } from './message-blocks'
+export { fetchAllPages } from './pagination'
 export type { CardBlock, MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
   getLatestThinkingContent,

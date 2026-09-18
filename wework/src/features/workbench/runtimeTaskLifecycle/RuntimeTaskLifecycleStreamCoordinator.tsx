@@ -4,9 +4,12 @@ import {
   type WorkbenchServices,
 } from '../workbenchServices'
 import {
+  beginRuntimeGoalSnapshot,
+  isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
+  setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -64,6 +67,35 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     let reconciliation: Promise<void> | null = null
     let pendingReason: ReconciliationReason | null = null
 
+    const reconcileRuntimeGoal = async (
+      address: RuntimeTaskAddress,
+      reason: ReconciliationReason
+    ) => {
+      const getRuntimeGoal = executorClient.runtime.getRuntimeGoal
+      if (typeof getRuntimeGoal !== 'function') return
+      const snapshotVersion = beginRuntimeGoalSnapshot(address)
+      try {
+        const response = await getRuntimeGoal({ address })
+        if (
+          disposed ||
+          !response.accepted ||
+          !isRuntimeGoalSnapshotCurrent(address, snapshotVersion)
+        ) {
+          return
+        }
+        const goal = response.goal ?? null
+        setRuntimeConversationGoal(address, goal)
+        store.goalStatusReceived(address, goal?.status ?? null)
+      } catch (error) {
+        console.warn('[Wework] Runtime Goal reconciliation failed', {
+          reason,
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
+      }
+    }
+
     const runReconciliation = async (initialReason: ReconciliationReason) => {
       let reason: typeof pendingReason = initialReason
       while (!disposed && reason) {
@@ -89,6 +121,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
                   reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns)
                 }
                 store.syncTranscript(address, transcript)
+                await reconcileRuntimeGoal(address, reason)
               } catch (error) {
                 console.warn('[Wework] Runtime transcript reconciliation failed', {
                   reason,
