@@ -66,13 +66,6 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.collect_links(false).await
         };
-        // Collaboration board tasks run on the device for a cloud project; they
-        // are managed from the collaboration space, so keep them out of the
-        // device task list.
-        let collected_links = collected_links
-            .into_iter()
-            .filter(|link| !link_is_cloud_project_task(link))
-            .collect::<Vec<_>>();
         for link in &collected_links {
             self.project_runtime_link_status(link);
         }

@@ -5067,7 +5067,7 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "local-task-1".to_owned(),
         runtime: "claude".to_owned(),
-        workspace_path: "/tmp/cached-project".to_owned(),
+        workspace_path: "/tmp/Codex/cached-task".to_owned(),
         title: "Cached task".to_owned(),
         status: "active".to_owned(),
         ..RuntimeTaskLink::default()
@@ -5088,6 +5088,47 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     assert!(tasks
         .iter()
         .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn cached_task_list_keeps_tasks_linked_to_cloud_issues() {
+    let (handler, root) = isolated_runtime_work_handler("cached-cloud-issue-task-list");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "cloud-issue-task-1".to_owned(),
+        runtime: "claude".to_owned(),
+        workspace_path: "/tmp/Codex/cloud-issue-task".to_owned(),
+        title: "Cloud issue task".to_owned(),
+        status: "active".to_owned(),
+        runtime_handle: json!({
+            "cloudProjectId": "project-1",
+            "origin": {
+                "type": "board_comment",
+                "cloudProjectId": "project-1",
+                "loopItemId": "issue-1"
+            }
+        }),
+        ..RuntimeTaskLink::default()
+    });
+
+    let response = handler
+        .list_tasks(&json!({ "preferCached": true }))
+        .await
+        .expect("cached task list should keep cloud issue tasks");
+    let tasks = response["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array")
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(tasks.iter().any(|task| {
+        task["taskId"] == "cloud-issue-task-1"
+            && task["runtimeHandle"]["cloudProjectId"] == "project-1"
+            && task["runtimeHandle"]["origin"]["loopItemId"] == "issue-1"
+    }));
 
     let _ = fs::remove_dir_all(root);
 }
