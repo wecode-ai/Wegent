@@ -93,7 +93,7 @@ describe('AppUpdateProvider', () => {
     expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
   })
 
-  test('downloads a discovered update silently by default', async () => {
+  test('prompts to restart after downloading a discovered update automatically', async () => {
     let appUpdate: AppUpdateContextValue | null = null
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
@@ -119,9 +119,10 @@ describe('AppUpdateProvider', () => {
     expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith(expect.any(Function))
     expect(appUpdate?.downloadProgress).toBeNull()
     expect(appUpdate?.status).toBe('available')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
 
     await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
       await appUpdate?.installUpdate()
     })
 
