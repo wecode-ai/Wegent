@@ -12,15 +12,22 @@ pages without gaps or repeats, and a complete answer is never a truncated one.
 
 from __future__ import annotations
 
+import uuid
+from typing import Iterator
+
 import pytest
 from llama_index.core.schema import TextNode
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus_backend import MilvusBackend
+from knowledge_engine.storage.milvus_rows import ITERATOR_BATCH_SIZE
 
-from .conftest import MilvusContractEnv, index_nodes
+from .conftest import MilvusContractEnv, drop_collection_with_contract, index_nodes
 
 pytestmark = pytest.mark.milvus
+
+# The user whose datasets share one collection under the per-user strategy.
+SHARED_USER_ID = 7
 
 
 def _nodes(count: int, *, heading_path: str | None = None) -> list[TextNode]:
@@ -193,13 +200,13 @@ def test_document_listing_pages_static_data_without_gaps_or_repeats(
     assert all(doc["chunk_count"] == 2 for page in pages for doc in page["documents"])
 
 
-def test_reading_more_rows_than_one_internal_page_stays_complete(
+def test_reading_more_rows_than_one_iterator_batch_stays_complete(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A complete read walks the server's pages instead of stopping at one."""
+    """A complete read walks the server's cursor across batches, not past one."""
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
-    long_document_chunks = 1200
+    long_document_chunks = ITERATOR_BATCH_SIZE + 200
     index_nodes(
         backend,
         knowledge_id=knowledge_id,
@@ -225,6 +232,41 @@ def test_reading_more_rows_than_one_internal_page_stays_complete(
         "8451": long_document_chunks,
         "8452": 3,
     }
+
+
+def test_listing_a_static_dataset_across_iterator_batches_pages_once(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """More rows than one iterator batch still page every document exactly once."""
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+    doc_refs = ["8551", "8552"]
+    chunks_per_document = ITERATOR_BATCH_SIZE + 50
+    for doc_ref in doc_refs:
+        index_nodes(
+            backend,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
+            nodes=_nodes(chunks_per_document),
+        )
+
+    first_page = backend.list_documents(knowledge_id, page=1, page_size=1)
+    second_page = backend.list_documents(knowledge_id, page=2, page_size=1)
+    repeated_first_page = backend.list_documents(knowledge_id, page=1, page_size=1)
+
+    collected = [
+        document["doc_ref"]
+        for page in (first_page, second_page)
+        for document in page["documents"]
+    ]
+    assert collected == sorted(doc_refs), "no document repeats or goes missing"
+    assert [page["total"] for page in (first_page, second_page)] == [2, 2]
+    assert [
+        document["chunk_count"]
+        for page in (first_page, second_page)
+        for document in page["documents"]
+    ] == [chunks_per_document] * 2, "every batch of rows is counted"
+    assert repeated_first_page == first_page, "a static page keeps its order"
 
 
 def test_get_document_returns_only_its_own_chunks_in_order(
@@ -317,3 +359,68 @@ def test_reads_never_adopt_a_collection_that_replaced_the_index(
         backend.get_document(knowledge_id, "8651")
     with pytest.raises(IndexContractIncompatibleError):
         backend.list_documents(knowledge_id)
+
+
+@pytest.fixture
+def shared_collection_backend(milvus_uri: str) -> Iterator[MilvusBackend]:
+    """A backend whose per-user strategy shares one physical collection."""
+    prefix = f"contract_reading_{uuid.uuid4().hex[:8]}"
+    backend = MilvusBackend(
+        {
+            "url": milvus_uri,
+            "indexStrategy": {"mode": "per_user", "prefix": prefix},
+            "ext": {"timeout": 30.0},
+        }
+    )
+    collection_name = backend.get_index_name("1", user_id=SHARED_USER_ID)
+    try:
+        yield backend
+    finally:
+        drop_collection_with_contract(milvus_uri, collection_name)
+
+
+def test_shared_collection_reads_never_leave_their_own_dataset(
+    milvus_env: MilvusContractEnv,
+    shared_collection_backend: MilvusBackend,
+) -> None:
+    """Two datasets in one collection read back as two separate datasets."""
+    backend = shared_collection_backend
+    knowledge_a = milvus_env.new_knowledge_id()
+    knowledge_b = milvus_env.new_knowledge_id()
+    assert backend.get_index_name(
+        knowledge_a, user_id=SHARED_USER_ID
+    ) == backend.get_index_name(
+        knowledge_b, user_id=SHARED_USER_ID
+    ), "this case proves nothing unless both datasets share a collection"
+
+    index_nodes(
+        backend,
+        knowledge_id=knowledge_a,
+        doc_ref="8751",
+        nodes=_nodes(3),
+        user_id=SHARED_USER_ID,
+    )
+    index_nodes(
+        backend,
+        knowledge_id=knowledge_b,
+        doc_ref="8752",
+        nodes=_nodes(5),
+        user_id=SHARED_USER_ID,
+    )
+
+    neighbour = backend.list_documents(knowledge_b, user_id=SHARED_USER_ID)
+    assert [document["doc_ref"] for document in neighbour["documents"]] == ["8752"]
+    assert neighbour["total"] == 1, "the neighbour's rows are really in the collection"
+
+    listing = backend.list_documents(knowledge_a, user_id=SHARED_USER_ID)
+    assert [document["doc_ref"] for document in listing["documents"]] == ["8751"]
+    assert listing["total"] == 1
+    assert [document["chunk_count"] for document in listing["documents"]] == [3]
+
+    document = backend.get_document(knowledge_a, "8751", user_id=SHARED_USER_ID)
+    assert document["chunk_count"] == 3
+    assert {chunk["metadata"]["doc_ref"] for chunk in document["chunks"]} == {"8751"}
+
+    chunks = backend.get_all_chunks(knowledge_a, max_chunks=100, user_id=SHARED_USER_ID)
+    assert len(chunks) == 3
+    assert {chunk["doc_ref"] for chunk in chunks} == {"8751"}

@@ -8,14 +8,15 @@ This module owns one concern: turning stored rows back into the document,
 chunk and metadata shapes the callers of the storage backend expect. It never
 writes and never creates a collection; the index-contract decision stays with
 the backend and is injected here so the reader cannot adopt a collection the
-contract does not describe.
+contract does not describe. A complete read walks one bounded server iterator
+instead of re-applying an offset to an unordered result, so a document or a
+total is only ever answered from rows that were really there.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
-
-from pymilvus import MilvusClient
 
 from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_engine.storage.milvus_filters import compile_metadata_conditions
@@ -32,10 +33,13 @@ from knowledge_engine.storage.milvus_native import (
 )
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
+logger = logging.getLogger(__name__)
+
 MAX_READ_LIMIT = 10000
-# Milvus answers one unordered page per request, so a complete read walks
-# bounded pages instead of asking for every row in one call.
-READ_PAGE_SIZE = 1000
+# Rows one iterator RPC asks for. A complete read walks the server's own primary
+# key cursor in batches of this size instead of re-applying an offset to an
+# unordered result.
+ITERATOR_BATCH_SIZE = 1000
 DEFAULT_LIST_PAGE_SIZE = 20
 
 
@@ -65,6 +69,18 @@ def row_metadata(hit: Dict[str, Any]) -> Dict[str, Any]:
 def row_chunk_index(hit: Dict[str, Any]) -> int:
     """The chunk position a stored row declares in its metadata."""
     return int(row_metadata(hit).get(CHUNK_INDEX_KEY) or 0)
+
+
+def close_row_iterator(iterator: Any) -> None:
+    """Release an opened row iterator, whatever the read did.
+
+    A read that already produced an answer or an error keeps it: a release that
+    fails is recorded and never replaces the result it interrupted.
+    """
+    try:
+        iterator.close()
+    except Exception:
+        logger.debug("[Milvus] Failed to close the row iterator", exc_info=True)
 
 
 class MilvusRowReader:
@@ -225,16 +241,23 @@ class MilvusRowReader:
         limit: int,
         output_fields: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Read at most ``limit`` stored rows."""
+        """Read at most ``limit`` stored rows.
+
+        The caller asked for at most that many rows, so one bounded request is
+        the whole answer: the rows come back in the server's order and the
+        caller shapes or sorts them, and a response with fewer rows is simply a
+        smaller match set.
+        """
         store = self._store_for()
         with store.client() as client:
-            return self._query_page(
-                store,
+            if self._missing_index_for(client, collection_name):
+                return []
+            return store.query_rows(
                 client,
                 collection_name,
                 filter_expr,
-                limit=limit,
                 output_fields=output_fields,
+                limit=limit,
             )
 
     def _read_all_rows(
@@ -244,58 +267,41 @@ class MilvusRowReader:
         *,
         output_fields: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Read every matching row, or fail when they exceed the read budget.
+        """Read every matching row through one bounded server iterator.
 
         A caller that needs the whole picture - a document, or a total - cannot
-        be answered from a truncated page, so one row past the budget is enough
-        to fail instead of returning a smaller truth.
+        be answered from a truncated read, so the iterator is bounded one row
+        past the budget and a read that reaches that row fails: the rows that
+        fit would report a smaller chunk count or total as the true one. The
+        read never creates or adopts a collection.
         """
         store = self._store_for()
         rows: List[Dict[str, Any]] = []
         with store.client() as client:
-            while True:
-                requested = min(READ_PAGE_SIZE, MAX_READ_LIMIT + 1 - len(rows))
-                page = self._query_page(
-                    store,
-                    client,
-                    collection_name,
-                    filter_expr,
-                    limit=requested,
-                    offset=len(rows),
-                    output_fields=output_fields,
-                )
-                rows.extend(page)
-                if len(rows) > MAX_READ_LIMIT:
-                    raise StorageBackendError(
-                        "Milvus read exceeded the budget; the complete result "
-                        "cannot be returned.",
-                        details={
-                            "collection_name": collection_name,
-                            "budget": MAX_READ_LIMIT,
-                        },
-                    )
-                if len(page) < requested:
-                    return rows
-
-    def _query_page(
-        self,
-        store: MilvusDocumentStore,
-        client: MilvusClient,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        limit: int,
-        offset: int = 0,
-        output_fields: Optional[Sequence[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Read one page without ever creating or adopting a collection."""
-        if self._missing_index_for(client, collection_name):
-            return []
-        return store.query_rows(
-            client,
-            collection_name,
-            filter_expr,
-            output_fields=output_fields,
-            limit=limit,
-            offset=offset,
-        )
+            if self._missing_index_for(client, collection_name):
+                return []
+            iterator = store.open_row_iterator(
+                client,
+                collection_name,
+                filter_expr,
+                batch_size=ITERATOR_BATCH_SIZE,
+                limit=MAX_READ_LIMIT + 1,
+                output_fields=output_fields,
+            )
+            try:
+                while True:
+                    batch = iterator.next()
+                    if not batch:
+                        return rows
+                    rows.extend(batch)
+                    if len(rows) > MAX_READ_LIMIT:
+                        raise StorageBackendError(
+                            "Milvus read exceeded the budget; the complete result "
+                            "cannot be returned.",
+                            details={
+                                "collection_name": collection_name,
+                                "budget": MAX_READ_LIMIT,
+                            },
+                        )
+            finally:
+                close_row_iterator(iterator)

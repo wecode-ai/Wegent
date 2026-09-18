@@ -28,7 +28,7 @@ from knowledge_engine.storage.milvus_native import (
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
 )
-from knowledge_engine.storage.milvus_rows import MAX_READ_LIMIT
+from knowledge_engine.storage.milvus_rows import ITERATOR_BATCH_SIZE, MAX_READ_LIMIT
 from shared.models import RetrievalScope
 
 _CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")
@@ -129,6 +129,67 @@ def _legacy_binding(*, analyzer=ANALYZER_TYPE, schema_version=SCHEMA_VERSION):
     return LegacyBinding()
 
 
+class FakeRowIterator:
+    """Stands in for PyMilvus ``query_iterator`` on the reading path.
+
+    The server continues a query iterator from the primary key of the last row
+    it sent, so this double hands the matching rows back in key order, one
+    ``batch_size`` at a time, and reports exhaustion once the row count reaches
+    the limit the caller bounded the read with.
+    """
+
+    def __init__(
+        self,
+        rows,
+        *,
+        collection_name,
+        filter_expr,
+        batch_size,
+        limit,
+        output_fields,
+        failure=None,
+        failure_after_batches=0,
+    ):
+        self.collection_name = collection_name
+        self.filter_expr = filter_expr
+        self.batch_size = batch_size
+        self.limit = limit
+        self.output_fields = output_fields
+        self.failure = failure
+        self.failure_after_batches = failure_after_batches
+        self.matching_rows = sorted(
+            (row for row in rows if FakeStore._filter_matches(row, filter_expr)),
+            key=lambda row: str(row.get("id") or ""),
+        )
+        self.batches = 0
+        self.returned = 0
+        self.closed = False
+
+    def next(self):
+        if self.failure is not None and self.batches >= self.failure_after_batches:
+            raise self.failure
+        assert not self.closed, "a closed iterator is never read again"
+        if self.returned >= self.limit:
+            return []
+        allowed = min(self.batch_size, self.limit - self.returned)
+        batch = self.matching_rows[self.returned : self.returned + allowed]
+        if not batch:
+            return []
+        self.batches += 1
+        self.returned += len(batch)
+        return [
+            {
+                key: value
+                for key, value in row.items()
+                if key in (self.output_fields or row)
+            }
+            for row in batch
+        ]
+
+    def close(self):
+        self.closed = True
+
+
 class FakeStore:
     """Records the storage-layer calls the adapter makes."""
 
@@ -141,6 +202,8 @@ class FakeStore:
         has_contract=True,
         sparse_hits=None,
         hybrid_hits=None,
+        iterator_failure=None,
+        iterator_failure_after_batches=0,
     ):
         self.collection_exists = collection_exists
         self.rows = list(rows or [])
@@ -154,6 +217,9 @@ class FakeStore:
         self.contract_reads = 0
         self.deleted_filters: list[str] = []
         self.queries: list[dict] = []
+        self.iterators: list["FakeRowIterator"] = []
+        self.iterator_failure = iterator_failure
+        self.iterator_failure_after_batches = iterator_failure_after_batches
         self.searches: list[dict] = []
         self.sparse_searches: list[dict] = []
         self.sparse_hits: list[dict] = list(sparse_hits or [])
@@ -260,6 +326,31 @@ class FakeStore:
             {key: value for key, value in row.items() if key in (output_fields or row)}
             for row in matching[offset : offset + limit]
         ]
+
+    def open_row_iterator(
+        self,
+        client,
+        collection_name,
+        filter_expr,
+        *,
+        batch_size,
+        limit,
+        output_fields=None,
+    ):
+        """Answer one complete read the way ``query_iterator`` does."""
+        self.calls.append(("open_row_iterator", collection_name, filter_expr))
+        iterator = FakeRowIterator(
+            self.rows,
+            collection_name=collection_name,
+            filter_expr=filter_expr,
+            batch_size=batch_size,
+            limit=limit,
+            output_fields=output_fields,
+            failure=self.iterator_failure,
+            failure_after_batches=self.iterator_failure_after_batches,
+        )
+        self.iterators.append(iterator)
+        return iterator
 
     def search(
         self,
@@ -2354,6 +2445,9 @@ def test_get_document_missing_raises_without_creating():
     with pytest.raises(ValueError):
         backend.get_document("1", "42")
 
+    assert store.iterators == [], "a missing collection opens no iterator"
+    assert "ensure_index" not in [call[0] for call in store.calls]
+
 
 def _chunk_rows(
     doc_ref: str,
@@ -2364,15 +2458,88 @@ def _chunk_rows(
     return [_stored_row(doc_ref, index, metadata=metadata) for index in chunk_indexes]
 
 
-def test_get_document_reads_every_chunk_across_pages():
-    """A document longer than one internal page is still complete."""
+def test_get_document_reads_every_chunk_across_batches():
+    """A document longer than one iterator batch is still complete."""
     backend = _backend()
-    backend._store = FakeStore(rows=_chunk_rows("42", range(2500)))
+    store = FakeStore(rows=list(reversed(_chunk_rows("42", range(2500)))))
+    backend._store = store
 
     document = backend.get_document("1", "42")
 
+    [iterator] = store.iterators
+    assert iterator.batches == 3, "the read crossed more than one batch"
     assert document["chunk_count"] == 2500
     assert [chunk["chunk_index"] for chunk in document["chunks"]] == list(range(2500))
+
+
+def test_a_complete_read_uses_one_bounded_iterator_instead_of_offset_pages():
+    """The reader walks the server's own cursor, never an unordered offset."""
+    backend = _backend()
+    store = FakeStore(rows=_chunk_rows("42", range(5)))
+    backend._store = store
+
+    backend.get_document("1", "42")
+
+    assert store.queries == [], "a complete read no longer pages with offsets"
+    [iterator] = store.iterators
+    assert iterator.batch_size == ITERATOR_BATCH_SIZE
+    assert (
+        iterator.limit == MAX_READ_LIMIT + 1
+    ), "the iterator is bounded one row past the budget"
+    assert iterator.closed is True
+
+
+def test_the_iterator_narrows_the_read_to_the_requested_scope():
+    """Both the knowledge base and the document scope reach the database read."""
+    backend = _backend()
+    store = FakeStore(rows=_chunk_rows("42", [0]) + _chunk_rows("43", [0, 1]))
+    backend._store = store
+
+    listing = backend.list_documents("1")
+
+    [iterator] = store.iterators
+    assert iterator.filter_expr == 'metadata["knowledge_id"] == "1"'
+    assert iterator.output_fields == [METADATA_FIELD]
+    assert [document["doc_ref"] for document in listing["documents"]] == ["42", "43"]
+
+    backend.get_document("1", "42")
+
+    document_iterator = store.iterators[-1]
+    assert 'metadata["knowledge_id"] == "1"' in document_iterator.filter_expr
+    assert 'metadata["doc_ref"] in ["42"]' in document_iterator.filter_expr
+
+
+def test_a_read_over_the_budget_stops_early_and_closes_the_iterator():
+    """The bounded read ends as soon as the budget is passed, and releases."""
+    backend = _backend()
+    store = FakeStore(rows=_chunk_rows("42", range(MAX_READ_LIMIT + 1)))
+    backend._store = store
+
+    with pytest.raises(StorageBackendError):
+        backend.get_document("1", "42")
+
+    [iterator] = store.iterators
+    assert iterator.closed is True
+    assert iterator.returned == MAX_READ_LIMIT + 1, "the read stopped at the budget"
+
+
+def test_a_failing_iterator_batch_is_reported_and_closed():
+    """A batch that fails mid-read still releases the iterator."""
+    backend = _backend()
+    failure = RuntimeError("milvus rpc failed")
+    store = FakeStore(
+        rows=_chunk_rows("42", range(2500)),
+        iterator_failure=failure,
+        iterator_failure_after_batches=1,
+    )
+    backend._store = store
+
+    with pytest.raises(RuntimeError):
+        backend.get_document("1", "42")
+
+    [iterator] = store.iterators
+    assert iterator.batches == 1, "the failure happened inside the read"
+    assert iterator.closed is True
 
 
 def test_get_document_fails_when_the_document_exceeds_the_read_budget():

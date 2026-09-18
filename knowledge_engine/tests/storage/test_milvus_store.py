@@ -22,8 +22,10 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus_native import (
     ANALYZER_TYPE,
+    DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
     METRIC_TYPE,
+    ROW_OUTPUT_FIELDS,
     SCHEMA_VERSION,
     SPARSE_VECTOR_FIELD,
     MilvusIndexBinding,
@@ -31,6 +33,10 @@ from knowledge_engine.storage.milvus_native import (
     index_contract_from_description,
 )
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
+
+# Literal on purpose: this test pins the level a complete read sends, so reading
+# the constant from the module would let a wrong production value pass.
+READ_CONSISTENCY = "Bounded"
 
 
 def _binding(**overrides):
@@ -111,6 +117,71 @@ def test_client_is_closed_when_the_operation_raises():
             raise RuntimeError("boom")
 
     assert created[0].closed is True
+
+
+class _IteratorClient:
+    """Records the row-iterator request a complete read sends."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict] = []
+
+    def query_iterator(self, **kwargs):
+        self.requests.append(kwargs)
+        return _OpenedIterator()
+
+
+class _OpenedIterator:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_a_row_iterator_is_bounded_by_batch_size_limit_and_timeout():
+    """One complete read is one iterator the caller can bound three ways."""
+    client = _IteratorClient()
+    store = MilvusDocumentStore(
+        uri="http://milvus.test:19530",
+        timeout=7.0,
+    )
+
+    iterator = store.open_row_iterator(
+        client,
+        "wegent_kb_1",
+        'metadata["knowledge_id"] == "1"',
+        batch_size=1000,
+        limit=10001,
+    )
+
+    [request] = client.requests
+    assert request["batch_size"] == 1000
+    assert request["limit"] == 10001
+    assert request["filter"] == 'metadata["knowledge_id"] == "1"'
+    assert request["output_fields"] == ROW_OUTPUT_FIELDS
+    assert request["consistency_level"] == READ_CONSISTENCY
+    assert request["timeout"] == 7.0
+    iterator.close()
+    assert iterator.closed is True
+
+
+def test_a_row_iterator_without_a_configured_timeout_stays_bounded():
+    """An unset store timeout falls back to the shared RPC deadline."""
+    client = _IteratorClient()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530", timeout=0.0)
+
+    store.open_row_iterator(
+        client,
+        "wegent_kb_1",
+        'metadata["knowledge_id"] == "1"',
+        batch_size=10,
+        limit=20,
+        output_fields=["id"],
+    )
+
+    [request] = client.requests
+    assert request["timeout"] == DEFAULT_RPC_TIMEOUT_SECONDS
+    assert request["output_fields"] == ["id"]
 
 
 class _SparseSearchClient:

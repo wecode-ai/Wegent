@@ -32,6 +32,7 @@ from tests.contract.milvus_fault_injection import (
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
+CONTRACT_USER_ID = 1
 # The registry collection the previous index-contract mechanism created. This
 # code neither creates nor reads it, and the contract tests assert it is absent
 # from the service they run against.
@@ -100,11 +101,14 @@ def index_nodes(
     nodes: list[TextNode],
     created_at: str = CONTRACT_CREATED_AT,
     dimension: int = CONTRACT_DIMENSION,
+    user_id: int = CONTRACT_USER_ID,
 ) -> None:
     """Write prepared nodes through the storage entry the document service uses.
 
     The caller owns the node text and metadata, so a contract test can index a
-    document with real chunk shapes without going through file ingestion.
+    document with real chunk shapes without going through file ingestion. The
+    user is part of the call because a strategy that shares a collection - the
+    per-user one - names that collection from it.
     """
     chunk_metadata = ChunkMetadata(
         knowledge_id=knowledge_id,
@@ -117,12 +121,14 @@ def index_nodes(
         nodes=nodes,
         chunk_metadata=chunk_metadata,
         embed_model=DeterministicEmbedding(dimension),
+        user_id=user_id,
     )
     await_document_visibility(
         backend,
         knowledge_id=knowledge_id,
         doc_ref=doc_ref,
         expected_chunks=len(nodes),
+        user_id=user_id,
     )
 
 

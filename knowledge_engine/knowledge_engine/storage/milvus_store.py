@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Iterator, List, Sequence
 import grpc
 from pymilvus import AnnSearchRequest, MilvusClient, WeightedRanker
 from pymilvus.exceptions import MilvusException
+from pymilvus.orm.iterator import QueryIterator
 
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
@@ -399,6 +400,37 @@ class MilvusDocumentStore:
                 consistency_level=consistency_level,
                 timeout=self.rpc_timeout,
             )
+        )
+
+    def open_row_iterator(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        batch_size: int,
+        limit: int,
+        output_fields: Sequence[str] | None = None,
+        consistency_level: str = READ_CONSISTENCY_LEVEL,
+    ) -> QueryIterator:
+        """Open a bounded server iterator over the matching rows.
+
+        The server continues the query from the primary key of the last row it
+        returned, so the batches of one static collection neither repeat nor
+        skip a row, while an ``offset`` the server re-applies to an unordered
+        result promises neither. Each batch is one RPC on the read consistency
+        level with this store's deadline, ``batch_size`` rows are asked for per
+        call, and ``limit`` is the business ceiling the caller must not read
+        past. The caller owns closing the iterator it is handed.
+        """
+        return client.query_iterator(
+            collection_name=collection_name,
+            batch_size=batch_size,
+            limit=limit,
+            filter=filter_expr,
+            output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
+            consistency_level=consistency_level,
+            timeout=self.rpc_timeout,
         )
 
     def search(
