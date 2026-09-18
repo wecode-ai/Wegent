@@ -1415,6 +1415,7 @@ describe('DesktopWorkbenchLayout', () => {
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
       services: {
+        deviceApi: { readWorkspaceFileChunk: vi.fn() },
         ...(deliveryApiMock.available
           ? {
               deliveryApi: {
@@ -9096,7 +9097,7 @@ describe('DesktopWorkbenchLayout', () => {
       'opened encoded file path'
     )
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
-      'local-device',
+      'workspace-cloud-device',
       filePath,
       '/workspace/project'
     )
@@ -9159,9 +9160,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(listWorkspaceEntries).toHaveBeenCalledWith(
-        'local-device',
+        'workspace-cloud-device',
         '/workspace/project/docs',
-        '/workspace/project/docs'
+        '/workspace/project'
       )
     )
     expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/project/docs')

@@ -1,10 +1,11 @@
+import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
-import { resetSystemProxyStateForTests, resolveLocalCodexProxyUrl } from './systemProxy'
+import { resolveLocalCodexProxyUrl } from './systemProxy'
 
 export type UnlistenFn = () => void
 
@@ -52,11 +53,7 @@ export interface LocalExecutorLog {
   status: LocalExecutorStatus
 }
 
-export interface LocalExecutorEvent {
-  event: string
-  payload: Record<string, unknown>
-  sequence?: number
-}
+export type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 
 interface CodexStartupStatus {
   ready: boolean
@@ -315,7 +312,6 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
-  resetSystemProxyStateForTests()
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {

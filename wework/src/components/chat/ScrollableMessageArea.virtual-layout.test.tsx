@@ -5,22 +5,36 @@ import { ScrollableMessageArea } from './ScrollableMessageArea'
 interface MockMessageListProps {
   conversationKey?: string | number | null
   virtualAnchorToEnd?: boolean
+  onVirtualLayoutChange?: () => void
 }
 
 let resizeObserverCallback: ResizeObserverCallback | null = null
+let virtualLayoutCallback: (() => void) | undefined
 
-vi.mock('@/lib/runtime-environment', () => ({
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
   isDesktopRuntime: () => true,
 }))
 
-vi.mock('./MessageList', () => ({
-  MessageList: ({ conversationKey, virtualAnchorToEnd }: MockMessageListProps) => (
-    <div
-      data-testid="virtual-message-list"
-      data-conversation-key={conversationKey ?? 'keyless'}
-      data-virtual-anchor-to={virtualAnchorToEnd ? 'end' : 'start'}
-    />
-  ),
+vi.mock('../../../../packages/collaboration/src/conversation/MessageList', () => ({
+  MessageList: ({
+    conversationKey,
+    virtualAnchorToEnd,
+    onVirtualLayoutChange,
+  }: MockMessageListProps) => {
+    virtualLayoutCallback = onVirtualLayoutChange
+    return (
+      <div
+        data-testid="virtual-message-list"
+        data-conversation-key={conversationKey ?? 'keyless'}
+        data-virtual-anchor-to={virtualAnchorToEnd ? 'end' : 'start'}
+      >
+        <article data-message-id="1">
+          <p data-scroll-anchor>Text</p>
+        </article>
+      </div>
+    )
+  },
 }))
 
 describe('ScrollableMessageArea virtual layout ownership', () => {
@@ -40,6 +54,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
 
   afterEach(() => {
     resizeObserverCallback = null
+    virtualLayoutCallback = undefined
     vi.unstubAllGlobals()
   })
 
@@ -81,6 +96,44 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       'data-virtual-anchor-to',
       'start'
     )
+  })
+
+  test('restores the reading anchor on virtual commit before a resize notification', () => {
+    render(
+      <ScrollableMessageArea
+        conversationKey="1"
+        scrollOrigin="bottom"
+        messages={[
+          { id: '1', role: 'assistant', content: 'Text', status: 'streaming', createdAt: '' },
+        ]}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchor = screen.getByText('Text')
+    let scrollHeight = 1_200
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: { configurable: true, writable: true, value: -160 },
+    })
+    scroller.getBoundingClientRect = () => new DOMRect(0, 100, 320, 200)
+    anchor.getBoundingClientRect = () =>
+      new DOMRect(0, 1_000 - (scrollHeight - 200 + scroller.scrollTop), 320, 40)
+    // Release initial positioning ownership before simulating reader input.
+    act(() => virtualLayoutCallback?.())
+    fireEvent.wheel(scroller, { deltaY: -12 })
+    fireEvent.scroll(scroller)
+    const anchorTop = anchor.getBoundingClientRect().top
+
+    scrollHeight += 40
+    expect(anchor.getBoundingClientRect().top).toBe(anchorTop - 40)
+    expect(virtualLayoutCallback).toBeTypeOf('function')
+    act(() => virtualLayoutCallback!())
+
+    expect(anchor.getBoundingClientRect().top).toBe(anchorTop)
+    expect(scroller.scrollTop).toBe(-200)
+    act(() => resizeObserverCallback!([], {} as ResizeObserver))
+    expect(scroller.scrollTop).toBe(-200)
   })
 
   test('switches bottom-pinned conversations without synchronously measuring layout', () => {

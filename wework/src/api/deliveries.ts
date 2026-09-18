@@ -1,3 +1,4 @@
+import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
@@ -808,6 +809,7 @@ export function createDeliveryApi(client: HttpClient) {
   const pendingTrackedItems = new Map<string, CloudLoopItem>()
 
   const api = {
+    ...createIssueTaskBindingApi(client),
     listCloudProjects(): Promise<{ items: CloudProject[] }> {
       return client.get('/v1/cloud-projects')
     },
@@ -1182,21 +1184,6 @@ export function createDeliveryApi(client: HttpClient) {
     removeLoopItemCollaborator(itemId: string, userId: number): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/collaborators/${userId}`)
     },
-    bindTask(
-      itemId: string,
-      task: RuntimeTaskAddress,
-      taskTitle?: string | null,
-      workflowNodeId?: string | null
-    ): Promise<void> {
-      const modelSelection =
-        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
-        ...task,
-        ...(taskTitle ? { taskTitle } : {}),
-        ...(workflowNodeId ? { workflowNodeId } : {}),
-        ...(modelSelection ? { modelSelection } : {}),
-      })
-    },
     decideWorkflowNode(
       itemId: string,
       workflowNodeId: string,
@@ -1313,9 +1300,6 @@ export function createDeliveryApi(client: HttpClient) {
     },
     unbindCloudContext(task: RuntimeTaskAddress): Promise<void> {
       return client.delete('/v1/runtime-tasks/cloud-context', task)
-    },
-    unbindTask(itemId: string, task: RuntimeTaskAddress): Promise<void> {
-      return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, task)
     },
     listCloudProjectMembers(projectId: CloudProjectIdInput): Promise<CloudProjectMember[]> {
       return client.get(`/v1/cloud-projects/${projectId}/members`)

@@ -52,12 +52,8 @@ interface ReaderLayoutModel {
   /** Records the current position as the sample a layout change is measured against. */
   sample: () => void
   /**
-   * Applies one layout change under the rule the scroll area now relies on: the browser's own scroll
-   * anchoring is switched off for this list, so nothing but the reader and the layout change itself
-   * moves the reader. The layout change does move them: a scroller holds on to the offset of the
-   * content start across a height change, which under a bottom scroll origin rewrites `scrollTop` by
-   * however much the scrollable range changed — unless the scroller's own box is re-laid out, in
-   * which case it holds on to the pixel offset instead.
+   * Models Chromium's bottom-origin scroller with overflow-anchor:none: layout changes preserve
+   * scrollTop unless the new range clamps it. Content coordinates change independently.
    *
    * - `aboveViewportGrowthPx` moves the anchor down the content (positive) or up it (negative), which
    *   is what a re-measured row above the viewport or a whole-list reflow does;
@@ -65,8 +61,7 @@ interface ReaderLayoutModel {
    * - `readerScrollPx` is the reader's own scrolling;
    * - `scrollerWidthPx` re-lays out the scroller's own box, as opening a panel beside the conversation
    *   does;
-   * - `coalesceScrollEvent` leaves out the scroll event the rewrite would deliver: the browser delivers
-   *   it in the same frame as the next wheel step, which is the order that used to lose the shift.
+   * - `coalesceScrollEvent` delays the scroll handler until the next input or layout notification.
    */
   apply: (change: {
     aboveViewportGrowthPx?: number
@@ -199,20 +194,16 @@ function createAnchorHarness(): AnchorHarness {
       apply: change => {
         const above = change.aboveViewportGrowthPx ?? 0
         const below = change.belowViewportGrowthPx ?? 0
-        const previousContentHeightPx = layout.contentHeightPx
         layout.contentHeightPx += above + below
         layout.anchorContentTopPx += above
-        const rangeChangePx = layout.contentHeightPx - previousContentHeightPx
-        const scrollerBoxResized =
-          change.scrollerWidthPx !== undefined && change.scrollerWidthPx !== layout.clientWidthPx
         if (change.scrollerWidthPx !== undefined) {
           layout.clientWidthPx = change.scrollerWidthPx
         }
-        layout.distanceFromBottomPx +=
-          (scrollerBoxResized ? 0 : rangeChangePx) + (change.readerScrollPx ?? 0)
         const maximumOffsetPx = Math.max(0, layout.contentHeightPx - CLIENT_HEIGHT)
-        scroller.scrollTop = Math.min(0, Math.max(-maximumOffsetPx, -layout.distanceFromBottomPx))
-        layout.distanceFromBottomPx = -scroller.scrollTop
+        scroller.scrollTop = Math.min(
+          0,
+          Math.max(-maximumOffsetPx, scroller.scrollTop - (change.readerScrollPx ?? 0))
+        )
         if (change.coalesceScrollEvent !== true) {
           fireEvent.scroll(scroller)
         }
@@ -221,7 +212,6 @@ function createAnchorHarness(): AnchorHarness {
         fireEvent.wheel(scroller, { deltaY: -pixels })
         const maximumOffsetPx = Math.max(0, layout.contentHeightPx - CLIENT_HEIGHT)
         scroller.scrollTop = Math.max(-maximumOffsetPx, scroller.scrollTop - pixels)
-        layout.distanceFromBottomPx = -scroller.scrollTop
         fireEvent.scroll(scroller)
       },
       anchorTopPx: () => anchor.getBoundingClientRect().top,
@@ -737,15 +727,42 @@ describe('ScrollableMessageArea', () => {
       const scrollBefore = scroller.scrollTop
       model.sample()
 
-      // Measured from a reported trace: a row the reader had already scrolled past came back 2393px
-      // shorter and the reader's offset moved 2269px back towards the bottom with it. That rewrite
-      // belongs to the layout, not to the reader, so the sampled text has to end up exactly where the
-      // reader left it.
+      // A large estimate correction above the viewport leaves both the native bottom-origin offset
+      // and visible text unchanged. The application must not introduce movement of its own.
       model.apply({ aboveViewportGrowthPx: -2_393 })
       harness.flushResizeObservers()
 
       expect(model.anchorTopPx()).toBe(anchorBefore)
       expect(scroller.scrollTop).toBe(scrollBefore)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  test('keeps consecutive wheel steps stable through alternating row measurements', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { model } = harness
+      const anchorBefore = model.anchorTopPx()
+      model.sample()
+
+      for (let step = 1; step <= 5; step += 1) {
+        model.scrollAsUser(12)
+        model.apply({
+          aboveViewportGrowthPx: step % 2 === 0 ? 373 : -373,
+          belowViewportGrowthPx: step % 2 === 0 ? -40 : 40,
+          coalesceScrollEvent: true,
+        })
+        harness.flushResizeObservers()
+        expect(model.anchorTopPx()).toBe(anchorBefore + step * 12)
+
+        // Repeated layout notifications must not apply the correction a second time.
+        harness.flushResizeObservers()
+        expect(model.anchorTopPx()).toBe(anchorBefore + step * 12)
+      }
+
+      model.scrollAsUser(-60)
+      expect(model.anchorTopPx()).toBe(anchorBefore)
     } finally {
       harness.dispose()
     }
@@ -770,17 +787,15 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('does not adopt a re-measured row rewrite as the position the reader chose', () => {
+  test('preserves a wheel step before a row remeasurement notification arrives', () => {
     const harness = createAnchorHarness()
     try {
       const { model } = harness
       const anchorBefore = model.anchorTopPx()
       model.sample()
 
-      // Measured from a reported trace: a row the reader had scrolled past came back 332px shorter, the
-      // scroller rewrote the offset towards the bottom with it, and the reader's next wheel step landed
-      // before any layout event could put the text back. Their step has to arrive where they were
-      // reading, so the text may only move by the 120px they asked for — never by the 332px with it.
+      // The wheel arrives before the resize notification. Only its requested movement may affect
+      // the visible text; the height correction above it must not be counted as scrolling.
       model.apply({ aboveViewportGrowthPx: -332, coalesceScrollEvent: true })
       model.scrollAsUser(120)
       harness.flushResizeObservers()
@@ -863,10 +878,8 @@ describe('ScrollableMessageArea', () => {
       model.apply({ aboveViewportGrowthPx: 600, belowViewportGrowthPx: 2_000 })
       harness.flushResizeObservers()
 
-      // Nothing from the sample can be measured any more, so the layout change stays unattributed
-      // instead of being guessed at: the offset is left on the height change's own rewrite and the
-      // next sample is taken from where the reader is now.
-      expect(scroller.scrollTop).toBe(scrollBefore - 2_600)
+      // Without a surviving anchor, keep the native offset instead of inventing a correction.
+      expect(scroller.scrollTop).toBe(scrollBefore)
     } finally {
       harness.dispose()
     }

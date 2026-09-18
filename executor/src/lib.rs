@@ -37,6 +37,7 @@ pub mod task_runtime;
 mod url_origin;
 pub mod version;
 pub mod wecode;
+mod workspace_paths;
 
 #[cfg(test)]
 pub(crate) mod test_env {

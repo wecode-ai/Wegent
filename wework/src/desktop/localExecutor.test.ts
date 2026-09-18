@@ -114,7 +114,7 @@ describe('localExecutor', () => {
 
   test('passes the system proxy into the startup barrier when no local proxy is configured', async () => {
     window.weworkElectronNetwork = {
-      resolveCodexProxy: vi.fn().mockResolvedValue('http://127.0.0.1:7891'),
+      resolveProxy: vi.fn().mockResolvedValue('http://127.0.0.1:7891'),
     }
 
     await ensureLocalExecutorStarted()

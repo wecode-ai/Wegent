@@ -1484,7 +1484,7 @@ describe('CloudTodoWorkspace', () => {
       expect.stringContaining('验证看板悬浮预览始终展示当前会话目标和最新进展')
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
       'Implement cloud MCP'
@@ -1519,10 +1519,9 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.click(screen.getByTestId('mock-dnd-drag-cancel'))
 
     fireEvent.mouseLeave(screen.getByTestId('cloud-todo-card-WEG-1'))
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
       'data-pinned',
       'true'
@@ -1533,11 +1532,11 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
   })
 
-  it('keeps a pinned board preview stable and switches it only from another progress row', async () => {
+  it('keeps a board preview stable and switches it only from another progress action', async () => {
     const secondItem = {
       ...item,
       id: 'WEG-2',
@@ -1572,10 +1571,9 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    fireEvent.mouseEnter(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-progress-trigger-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
       'data-pinned',
       'true'
@@ -1585,7 +1583,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-2')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-2'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-2'))
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveAttribute(
       'data-pinned',
@@ -1689,7 +1687,7 @@ describe('CloudTodoWorkspace', () => {
       '第一行'
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
@@ -1818,7 +1816,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(conversation).toHaveAttribute('data-device-id', 'local-device')
     expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
@@ -5792,9 +5790,9 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
       'Stopped task Issue'
     )
-    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveAttribute(
+    expect(await screen.findByTestId('cloud-todo-card-progress-trigger-WEG-1')).toHaveAttribute(
       'aria-label',
-      '固定任务进展：Stopped task'
+      '查看进展：Stopped task Issue'
     )
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('Stopped task')
     expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(

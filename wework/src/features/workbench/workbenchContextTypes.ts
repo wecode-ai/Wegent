@@ -222,7 +222,7 @@ export interface WorkbenchContextValue {
     trialPluginApp?: LocalDeviceApp
     hasConversationContext?: boolean
     dismissTrialGuide?: () => void
-    applyTrialTemplate?: (template: PluginPathComponent) => void
+    showTrialGuide?: (title: string, app: LocalDeviceApp) => void
     selectedSkills: SkillRef[]
     attachmentStateByScope: Readonly<Record<string, MultiAttachmentUploadState>>
     attachments: Attachment[]

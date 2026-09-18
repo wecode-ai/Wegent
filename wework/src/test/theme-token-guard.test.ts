@@ -6,13 +6,15 @@ const sourceRoot = resolve(process.cwd(), 'src')
 
 const guardedFiles = [
   'components/chat/AssistantMarkdown.tsx',
-  'components/chat/CodexTurnArtifacts.tsx',
+  '../../packages/collaboration/src/conversation/CodexTurnArtifacts.tsx',
   'components/chat/composer/CompactChatComposer.tsx',
   'components/chat/composer/ComposerToolbar.tsx',
+  '../../packages/collaboration/src/composer/ComposerProseMirrorEditor.tsx',
+  '../../packages/collaboration/src/composer/LinkEditPopover.tsx',
   'components/chat/composer/ContextUsageIndicator.tsx',
-  'components/chat/composer/ModelAutomaticReasoningOption.tsx',
-  'components/chat/composer/ModelSelector.tsx',
-  'components/common/ActionMenu.tsx',
+  '../../packages/collaboration/src/controls/ModelAutomaticReasoningOption.tsx',
+  '../../packages/collaboration/src/controls/ModelSelector.tsx',
+  '../../packages/collaboration/src/controls/ActionMenu.tsx',
   'components/layout/DesktopAppSwitcher.tsx',
   'components/layout/workspace-panels/FileWorkspacePanel.tsx',
   'components/projects/DeviceFolderPicker.tsx',
@@ -23,11 +25,27 @@ const guardedFiles = [
   'components/layout/DesktopSidebar.tsx',
   'components/layout/DesktopSettingsMenu.tsx',
   'components/layout/EnvironmentInfoPopover.tsx',
-  'components/chat/MessageList.tsx',
-  'components/chat/FileChangesCard.tsx',
-  'components/chat/ScrollableMessageArea.tsx',
-  'components/chat/blocks/ToolBlockItem.tsx',
-  'components/chat/blocks/ToolBlocksDisplay.tsx',
+  '../../packages/collaboration/src/conversation/MessageList.tsx',
+  '../../packages/collaboration/src/conversation/UserMessage.tsx',
+  '../../packages/collaboration/src/conversation/UserMessageEditForm.tsx',
+  '../../packages/collaboration/src/conversation/AssistantMessage.tsx',
+  '../../packages/collaboration/src/conversation/AssistantErrorCard.tsx',
+  '../../packages/collaboration/src/conversation/GeneratedImageGallery.tsx',
+  '../../packages/collaboration/src/conversation/MessageHoverActions.tsx',
+  '../../packages/collaboration/src/conversation/CodeCommentPreview.tsx',
+  '../../packages/collaboration/src/conversation/ImSourceBadge.tsx',
+  '../../packages/collaboration/src/conversation/FileChangesCard.tsx',
+  '../../packages/collaboration/src/conversation/ScrollableMessageArea.tsx',
+  '../../packages/collaboration/src/conversation/RuntimeTranscriptGapMarker.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ToolBlockItem.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ToolBlocksDisplay.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ToolFileChanges.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ToolInlineDiff.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ToolBlockDetails.tsx',
+  '../../packages/collaboration/src/conversation/blocks/toolBlockLabels.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ProcessingActivity.tsx',
+  '../../packages/collaboration/src/conversation/blocks/ProcessingPreview.tsx',
+  '../../packages/collaboration/src/conversation/FileChangesPreview.tsx',
   'components/plugins/PluginCreateMenu.tsx',
   'components/plugins/PluginsWorkspace.tsx',
   '../dsh/ui-plugin-center/src/PluginManagementPage.tsx',
@@ -42,7 +60,7 @@ const forbiddenThemeClasses = [
 
 const zIndexGuardedFiles = [
   'components/chat/composer/CompactChatComposer.tsx',
-  'components/chat/composer/ModelSelector.tsx',
+  '../../packages/collaboration/src/controls/ModelSelector.tsx',
   'components/chat/composer/ProjectChatComposer.tsx',
   'components/chat/composer/ComposerTextarea.tsx',
   'components/layout/DesktopWorkbenchLayout.tsx',
@@ -72,6 +90,8 @@ describe('theme token guard', () => {
     const guardedStylePaths = [
       resolve(process.cwd(), 'src/styles/globals.css'),
       resolve(process.cwd(), '../packages/collaboration/src/issue-detail/task-detail-layout.css'),
+      resolve(process.cwd(), '../packages/collaboration/src/conversation/file-change-motion.css'),
+      resolve(process.cwd(), '../packages/collaboration/src/composer/styles.css'),
     ]
 
     for (const stylePath of guardedStylePaths) {
@@ -124,7 +144,10 @@ describe('theme token guard', () => {
   })
 
   test('tailwind exposes semantic z-index layers', () => {
-    const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
+    const tailwindConfigPath = resolve(
+      process.cwd(),
+      '../packages/collaboration/tailwind-preset.js'
+    )
     const source = readFileSync(tailwindConfigPath, 'utf8')
 
     expect(source).toContain("chrome: 'var(--z-chrome)'")

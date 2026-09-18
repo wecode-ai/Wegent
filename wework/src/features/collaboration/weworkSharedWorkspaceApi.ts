@@ -107,7 +107,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'remove',
   ],
   collaborators: ['list', 'add', 'remove'],
-  taskBindings: ['list'],
+  taskBindings: ['list', 'bindTask', 'unbindTask'],
   workflowPlans: [
     'get',
     'approve',
@@ -622,6 +622,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
     },
     taskBindings: {
+      bindTask: deliveryApi.bindTask,
+      unbindTask: deliveryApi.unbindTask,
       async list(issueId, projectId) {
         return (await deliveryApi.listTaskBindings(issueId)).map(binding =>
           mapWorkspaceTaskBindingDto(binding, projectId)
