@@ -2,7 +2,25 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Redis-backed cache and transaction-safe invalidation for Kind readers."""
+"""Redis-backed cache for Kind readers with write-through invalidation.
+
+Reads are served from a version-free cache keyed by the resource identity.
+Writes are applied to the cache after the transaction commits: the write
+path re-populates every key the row could be stored under (its id key plus
+the personal/public/group name key matching its current identity), and
+deletes the identity keys the row used to be reachable through when the
+name, namespace, or owner changed.
+
+This is correct as long as a given Kind row is not mutated concurrently
+from two sessions; concurrent writes can interleave commit order and leave
+an older row in the cache. A positive TTL plus a shorter negative (miss)
+TTL bounds any staleness from paths that bypass the write-through hook.
+
+All Redis operations fail open: any error (including Redis being down)
+falls back to a direct database read, and repeated failures disable the
+cache for a short cooldown window to avoid paying a timeout on every
+request.
+"""
 
 import json
 import logging
@@ -12,7 +30,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 import redis
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -22,9 +40,11 @@ from app.services.readers.kinds import IKindReader, KindType
 logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "wegent:kind_cache:"
-_GENERATION_KEY = f"{_KEY_PREFIX}generation"
-_PENDING_INVALIDATION_KEY = "kind_cache_pending_invalidation"
+_PENDING_SNAPSHOTS_KEY = "kind_cache_pending_snapshots"
+_PENDING_BULK_KEY = "kind_cache_pending_bulk"
 _MISS_SENTINEL = "__kind_cache_miss__"
+# Disable the cache for this long after a Redis failure to avoid paying a
+# connection timeout on every lookup while Redis is down.
 _FAILURE_COOLDOWN_SECONDS = 30.0
 
 _KIND_COLUMNS = (
@@ -91,72 +111,55 @@ class KindCacheStore:
             exc,
         )
 
-    def get_many(
-        self, keys: Sequence[str]
-    ) -> tuple[dict[str, Optional[Kind]], Optional[str]]:
-        """Return ``({key: kind_or_None}, generation)`` in a single round trip.
+    def get_many(self, keys: Sequence[str]) -> tuple[dict[str, Optional[Kind]], bool]:
+        """Return ``({key: kind_or_None}, available)`` in a single round trip.
 
         A key present in the mapping is a usable entry; ``None`` means a
         negative (not-found) entry. Keys absent from the mapping must be
-        loaded. Generation is ``None`` when the cache is unavailable.
+        loaded. ``available`` is False when the cache cannot be used.
         """
         if not keys or not self._available():
-            return {}, None
+            return {}, False
         try:
-            values = self._get_client().mget([_GENERATION_KEY, *keys])
+            payloads = self._get_client().mget(list(keys))
         except Exception as exc:
             self._on_error("get cache entries", exc)
-            return {}, None
+            return {}, False
 
-        generation = values[0] or "0"
         entries: dict[str, Optional[Kind]] = {}
-        for key, payload in zip(keys, values[1:]):
+        for key, payload in zip(keys, payloads):
             if payload is None:
                 continue
             try:
-                envelope = json.loads(payload)
-                if envelope.get("generation") != generation:
-                    continue
-                entries[key] = _kind_from_payload(envelope["payload"])
+                entries[key] = _kind_from_payload(payload)
             except Exception as exc:
                 logger.warning(
                     "[KindCache] Failed to decode payload for %s: %s", key, exc
                 )
-        return entries, generation
+        return entries, True
 
-    def get(self, key: str) -> tuple[bool, Optional[Kind], Optional[str]]:
-        """Return ``(hit, kind, generation)`` for a cache lookup."""
-        entries, generation = self.get_many([key])
-        return key in entries, entries.get(key), generation
+    def get(self, key: str) -> tuple[bool, Optional[Kind]]:
+        """Return ``(hit, kind)`` for a cache lookup."""
+        entries, _ = self.get_many([key])
+        return key in entries, entries.get(key)
 
-    def set(
-        self,
-        key: str,
-        generation: str,
-        kind: Optional[Kind],
-        ttl: int,
-    ) -> None:
+    def set(self, key: str, kind: Optional[Kind], ttl: int) -> None:
         if not self._available():
             return
         try:
-            payload = json.dumps(
-                {
-                    "generation": generation,
-                    "payload": _kind_to_payload(kind),
-                }
-            )
-            self._get_client().setex(key, ttl, payload)
+            self._get_client().setex(key, ttl, _kind_to_payload(kind))
         except Exception as exc:
             self._on_error("set", exc)
 
-    def bump_generation(self) -> None:
-        """Invalidate all Kind cache entries after a successful DB commit."""
-        if not self._available():
+    def delete(self, *keys: str) -> None:
+        """Evict keys after a committed write."""
+        keys = tuple(key for key in keys if key)
+        if not keys or not self._available():
             return
         try:
-            self._get_client().incr(_GENERATION_KEY)
+            self._get_client().delete(*keys)
         except Exception as exc:
-            self._on_error("increment generation", exc)
+            self._on_error("delete", exc)
 
 
 def _kind_value(kind: KindType | str) -> str:
@@ -182,6 +185,10 @@ class CachedKindReader(IKindReader):
         self._base = base
         self._store = store or KindCacheStore()
 
+    # ------------------------------------------------------------------
+    # Key builders
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _id_key(kind: KindType | str, resource_id: int) -> str:
         return f"{_KEY_PREFIX}id:{_kind_value(kind)}:{resource_id}"
@@ -200,19 +207,21 @@ class CachedKindReader(IKindReader):
     def _group_key(kind: KindType | str, namespace: str, name: str) -> str:
         return f"{_KEY_PREFIX}group:{_kind_value(kind)}:{namespace}:{name}"
 
+    # ------------------------------------------------------------------
+    # Cached lookups
+    # ------------------------------------------------------------------
+
     def _cached(
         self,
         key: str,
         loader: Callable[[], Optional[Kind]],
     ) -> Optional[Kind]:
-        hit, kind, generation = self._store.get(key)
-        if generation is None:
-            return loader()
+        hit, kind = self._store.get(key)
         if hit:
             return kind
 
         kind = loader()
-        self._store.set(key, generation, kind, _ttl_for(kind))
+        self._store.set(key, kind, _ttl_for(kind))
         return kind
 
     def get_by_id(
@@ -233,7 +242,7 @@ class CachedKindReader(IKindReader):
         keys = {
             resource_id: self._id_key(kind, resource_id) for resource_id in ordered_ids
         }
-        entries, generation = self._store.get_many(list(keys.values()))
+        entries, available = self._store.get_many(list(keys.values()))
 
         found: dict[int, Optional[Kind]] = {
             resource_id: entries[keys[resource_id]]
@@ -250,8 +259,8 @@ class CachedKindReader(IKindReader):
             for resource_id in missing_ids:
                 row = loaded.get(resource_id)
                 found[resource_id] = row
-                if generation is not None:
-                    self._store.set(keys[resource_id], generation, row, _ttl_for(row))
+                if available:
+                    self._store.set(keys[resource_id], row, _ttl_for(row))
 
         return [
             item
@@ -283,6 +292,10 @@ class CachedKindReader(IKindReader):
             lambda: self._base.get_group(db, kind, namespace, name),
         )
 
+    # ------------------------------------------------------------------
+    # Invalidation
+    # ------------------------------------------------------------------
+
     def on_change(
         self,
         kind: KindType,
@@ -291,62 +304,204 @@ class CachedKindReader(IKindReader):
         namespace: str,
         name: str,
     ) -> None:
-        """Keep reader extension hooks working for explicit invalidation callers."""
+        """Forward explicit invalidation calls to the underlying reader."""
         self._base.on_change(kind, resource_id, user_id, namespace, name)
-        self._store.bump_generation()
 
 
-_listener_installed = False
-_invalidation_store = KindCacheStore()
+# =============================================================================
+# Write-through after commit
+# =============================================================================
 
 
-def _mark_pending_invalidation(session: Session) -> None:
-    session.info[_PENDING_INVALIDATION_KEY] = True
+class _Snapshot:
+    """Before/after identity of a Kind row touched by a flush."""
+
+    __slots__ = ("kind_id", "old", "new", "deleted", "row")
+
+    def __init__(
+        self,
+        kind_id: Optional[int],
+        old: Optional[Dict[str, Any]],
+        new: Optional[Dict[str, Any]],
+        deleted: bool,
+        row: Kind,
+    ) -> None:
+        self.kind_id = kind_id
+        self.old = old
+        self.new = new
+        self.deleted = deleted
+        self.row = row
 
 
-def _has_kind_change(session: Session) -> bool:
-    return any(
-        isinstance(instance, Kind)
-        for instance in (*session.new, *session.dirty, *session.deleted)
-    )
+_registered_factories: set[int] = set()
+_write_through_store = KindCacheStore()
+
+
+def _identity(kind: Kind) -> Dict[str, Any]:
+    return {
+        "kind": kind.kind,
+        "user_id": kind.user_id,
+        "namespace": kind.namespace,
+        "name": kind.name,
+    }
+
+
+def _capture_snapshot_before_flush(session: Session) -> None:
+    """Record before/after state for every Kind row touched by this flush.
+
+    New rows are captured here too; their primary key is only assigned once
+    the INSERT has been sent, so the snapshot is filled in at flush time and
+    the id is back-filled in ``_capture_snapshot_after_flush``.
+    """
+    snapshots = session.info.setdefault(_PENDING_SNAPSHOTS_KEY, {})
+
+    for instance in session.new:
+        if not isinstance(instance, Kind):
+            continue
+        snapshots[id(instance)] = _Snapshot(
+            instance.id, old=None, new=_identity(instance), deleted=False, row=instance
+        )
+
+    for instance in session.dirty:
+        if not isinstance(instance, Kind):
+            continue
+        if session.is_modified(instance, include_collections=False):
+            state = inspect(instance)
+            old = _identity(instance)
+            for column in ("name", "namespace", "user_id", "kind"):
+                history = state.attrs[column].history
+                if history.deleted:
+                    old[column] = history.deleted[0]
+            snapshots[id(instance)] = _Snapshot(
+                instance.id,
+                old=old,
+                new=_identity(instance),
+                deleted=False,
+                row=instance,
+            )
+
+    for instance in session.deleted:
+        if not isinstance(instance, Kind):
+            continue
+        snapshots[id(instance)] = _Snapshot(
+            instance.id, old=_identity(instance), new=None, deleted=True, row=instance
+        )
+
+
+def _capture_snapshot_after_flush(session: Session) -> None:
+    """Back-fill the primary key for rows captured before their INSERT."""
+    snapshots = session.info.get(_PENDING_SNAPSHOTS_KEY)
+    if not snapshots:
+        return
+    for snapshot in snapshots.values():
+        if snapshot.row.id is not None:
+            snapshot.kind_id = snapshot.row.id
+
+
+def _keys_for_identity(identity: Dict[str, Any]) -> List[str]:
+    """All name-based lookup keys a row with this identity is cached under."""
+    kind = identity["kind"]
+    namespace = identity["namespace"]
+    name = identity["name"]
+    user_id = identity["user_id"]
+    keys = [
+        f"{_KEY_PREFIX}public:{kind}:{namespace}:{name}",
+        f"{_KEY_PREFIX}group:{kind}:{namespace}:{name}",
+    ]
+    if user_id:
+        keys.append(f"{_KEY_PREFIX}personal:{kind}:{user_id}:{namespace}:{name}")
+    return keys
+
+
+def _flush_snapshots_to_cache(snapshots: Dict[int, _Snapshot]) -> None:
+    """Write committed Kind rows back to the cache and evict stale keys."""
+    store = _write_through_store
+    for snapshot in snapshots.values():
+        keys_to_delete: List[str] = []
+        if snapshot.old is not None and (
+            snapshot.deleted or snapshot.old != snapshot.new
+        ):
+            keys_to_delete.extend(_keys_for_identity(snapshot.old))
+
+        if snapshot.deleted:
+            if snapshot.old is not None and snapshot.kind_id is not None:
+                keys_to_delete.append(
+                    f"{_KEY_PREFIX}id:{snapshot.old['kind']}:{snapshot.kind_id}"
+                )
+        elif snapshot.row is not None and snapshot.kind_id is not None:
+            row = snapshot.row
+            store.set(
+                f"{_KEY_PREFIX}id:{row.kind}:{snapshot.kind_id}",
+                row,
+                _ttl_for(row),
+            )
+            for key in _keys_for_identity(snapshot.new):
+                store.set(key, row, _ttl_for(row))
+
+        if keys_to_delete:
+            store.delete(*keys_to_delete)
 
 
 def _after_bulk_kind_change(update_context: Any) -> None:
     query = getattr(update_context, "query", None)
     descriptions = getattr(query, "column_descriptions", ())
     if any(description.get("entity") is Kind for description in descriptions):
-        _mark_pending_invalidation(update_context.session)
+        # Bulk statements bypass the ORM unit of work, so there are no row
+        # objects to write back; the entry TTL bounds this staleness.
+        update_context.session.info[_PENDING_BULK_KEY] = True
 
 
 def _after_commit(session: Session) -> None:
-    if not session.info.pop(_PENDING_INVALIDATION_KEY, False):
+    snapshots = session.info.pop(_PENDING_SNAPSHOTS_KEY, None)
+    session.info.pop(_PENDING_BULK_KEY, None)
+    if not snapshots:
         return
-    _invalidation_store.bump_generation()
+    try:
+        _flush_snapshots_to_cache(snapshots)
+    except Exception as exc:
+        # A failed write-through must never break the committed request; the
+        # entry TTL bounds how long a stale value survives.
+        logger.warning("[KindCache] Write-through failed: %s", exc)
 
 
 def _after_rollback(session: Session) -> None:
-    session.info.pop(_PENDING_INVALIDATION_KEY, None)
+    session.info.pop(_PENDING_SNAPSHOTS_KEY, None)
+    session.info.pop(_PENDING_BULK_KEY, None)
 
 
 def register_kind_cache_invalidation(session: Session) -> None:
-    """Mark a direct/bulk Kind write for invalidation after its transaction commits."""
+    """Mark a direct bulk Kind write so its commit is observed."""
     if settings.KIND_READER_CACHE_ENABLED:
-        _mark_pending_invalidation(session)
+        session.info[_PENDING_BULK_KEY] = True
 
 
-def install_kind_change_listener() -> None:
-    """Register transaction listeners once for all synchronous SQLAlchemy sessions."""
-    global _listener_installed
-    if _listener_installed:
+def _mark_kind_changes(session: Session, flush_context: Any, instances: Any) -> None:
+    _capture_snapshot_before_flush(session)
+
+
+def _capture_new_rows(session: Session, flush_context: Any) -> None:
+    _capture_snapshot_after_flush(session)
+
+
+def install_kind_change_listener(session_factory: Any) -> None:
+    """Register transaction listeners on one session factory (idempotent).
+
+    Listeners are attached to the factory instead of the global ``Session``
+    class so sessions created from other factories (e.g. tests) stay clean.
+    """
+    if id(session_factory) in _registered_factories:
         return
+    event.listen(session_factory, "before_flush", _mark_kind_changes)
+    event.listen(session_factory, "after_flush_postexec", _capture_new_rows)
+    event.listen(session_factory, "after_bulk_update", _after_bulk_kind_change)
+    event.listen(session_factory, "after_bulk_delete", _after_bulk_kind_change)
+    event.listen(session_factory, "after_commit", _after_commit)
+    event.listen(session_factory, "after_rollback", _after_rollback)
+    _registered_factories.add(id(session_factory))
 
-    @event.listens_for(Session, "before_flush")
-    def mark_kind_changes(session: Session, flush_context: Any, instances: Any) -> None:
-        if _has_kind_change(session):
-            _mark_pending_invalidation(session)
 
-    event.listen(Session, "after_bulk_update", _after_bulk_kind_change)
-    event.listen(Session, "after_bulk_delete", _after_bulk_kind_change)
-    event.listen(Session, "after_commit", _after_commit)
-    event.listen(Session, "after_rollback", _after_rollback)
-    _listener_installed = True
+def install_default_kind_change_listener() -> None:
+    """Attach write-through listeners to the production session factory."""
+    from app.db.session import SessionLocal
+
+    install_kind_change_listener(SessionLocal)

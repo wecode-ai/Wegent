@@ -9,6 +9,10 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Generator, Tuple
 
+# Tests must not read or write the shared Kind Redis cache; cached entries
+# would otherwise leak state between tests.
+os.environ.setdefault("KIND_READER_CACHE_ENABLED", "false")
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
