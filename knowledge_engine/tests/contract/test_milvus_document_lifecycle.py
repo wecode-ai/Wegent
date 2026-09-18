@@ -35,6 +35,7 @@ from .conftest import (
     DeterministicEmbedding,
     MilvusContractEnv,
     await_document_visibility,
+    await_parent_removal,
     drop_collection_with_contract,
 )
 
@@ -416,15 +417,22 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
         text=_hierarchical_text(marker="orphanmarker", key="iota"),
         splitter_config=HIERARCHICAL_SPLITTER,
     )
-    child_texts = {
-        chunk["content"]
-        for chunk in backend.get_document(
-            knowledge_id, "914", user_id=CONTRACT_USER_ID
-        )["chunks"]
-    }
+    document = backend.get_document(knowledge_id, "914", user_id=CONTRACT_USER_ID)
+    stored_chunks = document["chunks"]
+    child_texts = {chunk["content"] for chunk in stored_chunks}
+    parent_node_ids = sorted(
+        {chunk["metadata"]["parent_node_id"] for chunk in stored_chunks}
+    )
+    assert parent_node_ids and all(parent_node_ids)
 
     # The sidecar of that document is gone while its chunks stay stored.
     backend.delete_parent_nodes(knowledge_id, "914", user_id=CONTRACT_USER_ID)
+    await_parent_removal(
+        backend,
+        knowledge_id=knowledge_id,
+        parent_node_ids=parent_node_ids,
+        user_id=CONTRACT_USER_ID,
+    )
 
     records = _mentioning(
         _query(

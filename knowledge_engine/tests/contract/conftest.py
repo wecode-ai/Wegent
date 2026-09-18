@@ -150,6 +150,45 @@ def await_document_visibility(
         time.sleep(VISIBILITY_POLL_SECONDS)
 
 
+def await_parent_removal(
+    backend: MilvusBackend,
+    *,
+    knowledge_id: str,
+    parent_node_ids: list[str],
+    timeout: float = VISIBILITY_TIMEOUT_SECONDS,
+    **read_kwargs,
+) -> None:
+    """Wait until the reading path stops serving deleted parent nodes.
+
+    The same ``Bounded`` snapshot that hides a fresh write for a moment also
+    still answers with rows a delete has already removed, so a read issued
+    inside ``VISIBILITY_WINDOW_SECONDS`` of ``delete_parent_nodes`` can expand
+    a child hit to the parent body it was supposed to lose. The product
+    accepts that window - the delete returns as soon as the server accepted it
+    - so a contract test waits it out here rather than asserting inside it.
+
+    The poll uses the storage entry the expansion uses, so this proves the
+    removal becomes readable. A parent that is still stored when the deadline
+    passes fails with the time it waited, because a delete that never lands is
+    not the window the spec accepts.
+    """
+    started = time.monotonic()
+    deadline = started + timeout
+    while True:
+        if not backend.get_parent_nodes(knowledge_id, parent_node_ids, **read_kwargs):
+            return
+        if time.monotonic() >= deadline:
+            waited = time.monotonic() - started
+            raise AssertionError(
+                f"parent nodes {parent_node_ids} of knowledge base "
+                f"{knowledge_id} were still readable {waited:.2f}s after their "
+                f"delete returned; the measured visibility window is "
+                f"~{VISIBILITY_WINDOW_SECONDS}s, so this is a delete that did "
+                "not land, not that window."
+            )
+        time.sleep(VISIBILITY_POLL_SECONDS)
+
+
 def drop_collection_with_contract(uri: str, collection_name: str) -> None:
     """Drop one stored collection, its parent sidecar and its contract.
 
