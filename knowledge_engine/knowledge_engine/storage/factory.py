@@ -20,6 +20,14 @@ STORAGE_BACKEND_REGISTRY: Dict[str, Type[BaseStorageBackend]] = {
     "milvus": MilvusBackend,
 }
 
+# Storage backends whose write removes the document's previous rows itself. The
+# indexing layer must not delete the document's rows before calling one of
+# them: the same rows would be deleted twice, once outside and once inside the
+# write that owns the replacement. The Milvus write deletes them after it has
+# confirmed the collection contract and before it writes, which is why it is
+# listed here; every other backend keeps the delete-then-index order.
+DOCUMENT_REPLACING_STORAGE_TYPES = frozenset({"milvus"})
+
 
 def get_supported_storage_types() -> List[str]:
     return list(STORAGE_BACKEND_REGISTRY.keys())
@@ -42,6 +50,19 @@ def get_all_storage_retrieval_methods() -> Dict[str, List[str]]:
         storage_type: backend_class.get_supported_retrieval_methods()
         for storage_type, backend_class in STORAGE_BACKEND_REGISTRY.items()
     }
+
+
+def storage_backend_owns_document_replacement(storage_type: str) -> bool:
+    """Whether this storage type removes a document's rows inside its own write.
+
+    Such a backend is the only owner of that removal, so the indexing layer
+    must not delete the document's rows before calling it. The caller answers
+    this from the storage config the runtime resolved for the request, never
+    from the retriever's name, and a type this module does not know keeps the
+    existing delete-then-index order: the runtime refuses to build such a
+    backend anyway.
+    """
+    return (storage_type or "").strip().lower() in DOCUMENT_REPLACING_STORAGE_TYPES
 
 
 def create_storage_backend_from_config(

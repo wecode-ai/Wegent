@@ -227,7 +227,9 @@ def test_index_document_task_routes_indexing_through_gateway():
         mock_resolve = stack.enter_context(
             patch(
                 "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
-                return_value=object(),
+                # No resolved storage config: this test only routes the task, so
+                # the chain keeps the existing delete-then-index order.
+                return_value=SimpleNamespace(retriever_config=None),
             )
         )
         mock_gateway = MagicMock()

@@ -6,6 +6,142 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.knowledge.indexing import run_document_indexing
+from app.services.rag.runtime_specs import DeleteRuntimeSpec, IndexRuntimeSpec
+from shared.models import RuntimeEmbeddingModelConfig, RuntimeRetrieverConfig
+
+
+def _spec_without_a_resolved_retriever_config() -> SimpleNamespace:
+    """A runtime spec whose storage config these tests do not resolve."""
+    return SimpleNamespace(retriever_config=None)
+
+
+def _kb_record(retriever_name: str) -> SimpleNamespace:
+    """The knowledge base row the resolver reads its retrieval config from."""
+    return SimpleNamespace(
+        user_id=3,
+        json={"spec": {"retrievalConfig": {"retriever_name": retriever_name}}},
+    )
+
+
+def _resolved_retriever_config(storage_type: str) -> RuntimeRetrieverConfig:
+    return RuntimeRetrieverConfig(
+        name="retriever-1",
+        namespace="default",
+        storage_config={
+            "type": storage_type,
+            "url": "http://vector-store:19530",
+            "indexStrategy": {"mode": "per_dataset"},
+        },
+    )
+
+
+def _run_indexing_against_storage(
+    *,
+    storage_type: str,
+    retriever_name: str = "retriever-1",
+) -> tuple[MagicMock, list[str], dict]:
+    """Run the real indexing chain against one resolved storage type.
+
+    Only the resolver's control-plane lookups (the knowledge base row, the
+    retriever config and the embedding model config) and the gateway are
+    faked: the runtime specs, the storage decision and the index call order are
+    the product's own chain.
+    """
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
+    calls: list[str] = []
+    gateway = MagicMock()
+
+    async def fake_delete_document_index(
+        spec: DeleteRuntimeSpec, db: object = None
+    ) -> dict:
+        calls.append("delete_document_index")
+        return {"deleted_chunks": 1}
+
+    async def fake_index_document(spec: IndexRuntimeSpec, db: object = None) -> dict:
+        calls.append("index_document")
+        return {"status": "success", "indexed_count": 1, "index_name": "idx"}
+
+    gateway.delete_document_index = AsyncMock(side_effect=fake_delete_document_index)
+    gateway.index_document = AsyncMock(side_effect=fake_index_document)
+
+    with (
+        patch(
+            "app.services.knowledge.indexing.resolve_kb_index_info",
+            return_value=kb_index_info,
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.RagRuntimeResolver._get_knowledge_base_record",
+            return_value=_kb_record(retriever_name),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.RagRuntimeResolver._build_resolved_retriever_config",
+            return_value=_resolved_retriever_config(storage_type),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.RagRuntimeResolver._build_resolved_embedding_model_config",
+            return_value=RuntimeEmbeddingModelConfig(
+                model_name="embedding-1",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_index_gateway",
+            return_value=gateway,
+        ),
+    ):
+        result = run_document_indexing(
+            knowledge_base_id="1",
+            attachment_id=2,
+            retriever_name=retriever_name,
+            retriever_namespace="default",
+            embedding_model_name="embedding-1",
+            embedding_model_namespace="default",
+            user_id=3,
+            user_name="tester",
+            document_id=4,
+            kb_index_info=kb_index_info,
+            trigger_summary=False,
+            db=db,
+        )
+
+    return gateway, calls, result
+
+
+def test_milvus_indexing_leaves_the_replacement_delete_to_the_backend() -> None:
+    """The Milvus write replaces the document, so indexing must not pre-delete.
+
+    The Milvus adapter deletes the document's previous rows inside its own
+    write, after it confirms the collection contract, so a business pre-delete
+    would delete the same rows twice and race the write that owns them.
+    """
+    gateway, calls, result = _run_indexing_against_storage(storage_type="milvus")
+
+    assert result["status"] == "success"
+    assert calls == ["index_document"]
+    gateway.delete_document_index.assert_not_awaited()
+    gateway.index_document.assert_awaited_once()
+
+
+def test_a_non_milvus_retriever_keeps_the_delete_then_index_order() -> None:
+    """Every other engine keeps the existing pre-delete before indexing.
+
+    The engine comes from the storage config the runtime resolved, so a
+    retriever whose name says milvus but whose storage is Elasticsearch still
+    deletes its old index first.
+    """
+    gateway, calls, _ = _run_indexing_against_storage(
+        storage_type="elasticsearch",
+        retriever_name="milvus-retriever",
+    )
+
+    assert calls == ["delete_document_index", "index_document"]
+    delete_spec = gateway.delete_document_index.await_args.args[0]
+    assert delete_spec.document_ref == "4"
+    assert delete_spec.retriever_config.storage_config["type"] == "elasticsearch"
+    gateway.index_document.assert_awaited_once()
 
 
 def test_run_document_indexing_closes_owned_session_before_gateway_call() -> None:
@@ -42,7 +178,7 @@ def test_run_document_indexing_closes_owned_session_before_gateway_call() -> Non
         ),
         patch(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
-            return_value=object(),
+            return_value=_spec_without_a_resolved_retriever_config(),
         ),
         patch(
             "app.services.knowledge.indexing.get_index_gateway",
@@ -88,7 +224,7 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
         ),
         patch(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
-            return_value=object(),
+            return_value=_spec_without_a_resolved_retriever_config(),
         ) as mock_build_runtime_spec,
         patch(
             "app.services.knowledge.indexing.get_index_gateway",
@@ -143,7 +279,7 @@ def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec
         ),
         patch(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
-            return_value=object(),
+            return_value=_spec_without_a_resolved_retriever_config(),
         ) as mock_build_runtime_spec,
         patch(
             "app.services.knowledge.indexing.get_index_gateway",
@@ -196,7 +332,7 @@ def test_run_document_indexing_normalizes_legacy_splitter_config_for_runtime_spe
         ),
         patch(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
-            return_value=object(),
+            return_value=_spec_without_a_resolved_retriever_config(),
         ) as mock_build_runtime_spec,
         patch(
             "app.services.knowledge.indexing.get_index_gateway",
