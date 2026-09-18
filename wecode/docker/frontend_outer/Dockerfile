@@ -27,6 +27,7 @@ RUN echo "[frontend] installing pnpm dependencies" && \
 COPY frontend ./frontend
 COPY packages/chat-core ./packages/chat-core
 COPY packages/collaboration ./packages/collaboration
+COPY shared/assets ./shared/assets
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
