@@ -244,7 +244,6 @@ def test_a_replaced_index_fails_every_read_path_loudly(milvus_env) -> None:
         with pytest.raises(IndexContractIncompatibleError) as failure:
             call()
         assert failure.value.code == "index_contract_incompatible", name
-        assert failure.value.retryable is False, name
         assert collection_name in str(failure.value), name
 
 
@@ -259,7 +258,6 @@ def test_a_collection_without_a_contract_is_not_adopted(milvus_env) -> None:
         backend.get_all_chunks(knowledge_id, max_chunks=5)
 
     assert failure.value.code == "index_contract_incompatible"
-    assert failure.value.retryable is False
 
     # The foreign collection is still there and still exactly as it was.
     client = MilvusClient(uri=milvus_env.uri)
@@ -396,7 +394,6 @@ def test_a_physical_drop_needs_the_contract_the_index_declares(milvus_env) -> No
     with pytest.raises(IndexMissingError) as failure:
         backend.drop_knowledge_index(knowledge_id)
     assert failure.value.code == "index_missing"
-    assert failure.value.retryable is False
 
     client = MilvusClient(uri=milvus_env.uri)
     try:

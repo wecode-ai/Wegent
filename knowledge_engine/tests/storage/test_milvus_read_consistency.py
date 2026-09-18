@@ -5,11 +5,11 @@
 """Read consistency contract for the native Milvus store (no server).
 
 Retrieval answers from data the write path wrote in a single write, so the read
-RPCs run at ``Bounded``. The delete verification and the collection creation
-stay ``Strong``: they are the reads that decide whether the data and the schema
-are really there before the write path reports success. The index contract is
-no longer a row of its own: it travels in the collection's description, so
-reading it is one ``describe_collection`` and no consistency level.
+RPCs run at ``Bounded``. The collection creation stays ``Strong``: it is the
+read that decides whether the schema is really there before the write path
+reports success. The index contract is no longer a row of its own: it travels
+in the collection's description, so reading it is one ``describe_collection``
+and no consistency level.
 """
 
 import pytest
@@ -195,15 +195,6 @@ def test_sparse_search_uses_the_read_consistency_level():
     )
 
     assert client.consistency_levels("search") == [READ_CONSISTENCY]
-
-
-def test_delete_verification_row_count_stays_strong():
-    """Deleting proves the rows are gone through a Strong read."""
-    client = _RecordingClient()
-
-    _store(client).count_rows(client, COLLECTION_NAME, 'knowledge_id == "1"')
-
-    assert client.consistency_levels("query") == [WRITE_CONSISTENCY]
 
 
 def test_collection_creation_stays_strong():

@@ -16,7 +16,6 @@ from knowledge_engine.embedding.vectors import EmptyIndexableContentError
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
-    IndexMissingError,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
@@ -215,8 +214,10 @@ class FakeStore:
         # Reading the contract describes the collection itself in the real
         # store, so one request costs one contract read per lookup.
         self.contract_reads = 0
+        self.has_collection_calls: list[str] = []
         self.deleted_filters: list[str] = []
         self.queries: list[dict] = []
+        self.dropped_collections: list[str] = []
         self.iterators: list["FakeRowIterator"] = []
         self.iterator_failure = iterator_failure
         self.iterator_failure_after_batches = iterator_failure_after_batches
@@ -227,6 +228,8 @@ class FakeStore:
         self.hybrid_hits: list[dict] = list(hybrid_hits or [])
         self.clients_created = 0
         self.clients_closed = 0
+        # The real store exposes the per-RPC deadline the drop RPCs send.
+        self.rpc_timeout = 10.0
 
     @contextmanager
     def client(self):
@@ -237,6 +240,7 @@ class FakeStore:
             self.clients_closed += 1
 
     def has_collection(self, client, collection_name):
+        self.has_collection_calls.append(collection_name)
         return self.collection_exists
 
     def ensure_index(self, client, collection_name, *, dimension, embedding_space):
@@ -287,20 +291,23 @@ class FakeStore:
         # Recorded so a reintroduced write-path flush fails the test below.
         self.calls.append(("flush", collection_name))
 
-    def count_rows(self, client, collection_name, filter_expr):
-        self.queries.append({"filter": filter_expr, "count": True})
-        return sum(1 for row in self.rows if self._filter_matches(row, filter_expr))
-
     def delete_rows(
         self, client, collection_name, filter_expr, *, flush: bool = True
-    ) -> None:
+    ) -> int:
         self.calls.append(("delete_rows", collection_name, filter_expr))
         self.deleted_filters.append(filter_expr)
         if flush:
             self.flush(client, collection_name)
+        matching = [row for row in self.rows if self._filter_matches(row, filter_expr)]
         self.rows = [
             row for row in self.rows if not self._filter_matches(row, filter_expr)
         ]
+        # The real store reports the delete RPC's own count.
+        return len(matching)
+
+    def drop_collection(self, collection_name, **kwargs):
+        self.dropped_collections.append(collection_name)
+        self.collection_exists = False
 
     def query_rows(
         self,
@@ -810,8 +817,38 @@ def test_rewrite_drops_the_documents_previous_rows_before_writing():
     assert all(call[0] != "flush" for call in store.calls)
 
 
-def test_rewrite_of_a_document_without_rows_issues_no_delete():
-    """The common first write does not pay for a cleanup nobody needs."""
+def test_one_write_owns_exactly_one_client():
+    """The contract confirm, the replacement delete and the write share a client.
+
+    A write that opened one client per storage step would pay a connection for
+    a consistency claim no caller needs; one lifetime covers the whole
+    replacement and is still closed on every exit.
+    """
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("42", 0)])
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+    )
+
+    assert store.clients_created == 1
+    assert store.clients_closed == 1
+    assert [call[0] for call in store.calls] == [
+        "ensure_index",
+        "delete_rows",
+        "upsert_rows",
+    ]
+
+
+def test_a_first_write_still_runs_its_replacement_delete():
+    """The replacement is unconditional: one scoped delete, then one write.
+
+    Whether the document had rows is not worth a counting query per write, so
+    the delete is always issued and matches nothing on a first write.
+    """
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("43", 0)])
     backend._store = store
@@ -822,30 +859,12 @@ def test_rewrite_of_a_document_without_rows_issues_no_delete():
         embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
     )
 
-    assert store.deleted_filters == []
-
-
-def test_rewrite_fails_when_the_previous_rows_cannot_be_removed():
-    """An unproven removal ends the write instead of writing mixed content."""
-
-    backend = _backend()
-    store = FakeStore(rows=[_stored_chunk_row("42", 7)])
-    backend._store = store
-
-    def keep_rows(client, collection_name, filter_expr, *, flush=True):
-        store.calls.append(("delete_rows", collection_name, filter_expr))
-        store.deleted_filters.append(filter_expr)
-
-    store.delete_rows = keep_rows
-
-    with pytest.raises(StorageBackendError):
-        backend.index_with_metadata(
-            nodes=_nodes(),
-            chunk_metadata=_chunk_metadata(),
-            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
-        )
-
-    assert all(call[0] != "upsert_rows" for call in store.calls)
+    assert len(store.deleted_filters) == 1
+    scope = store.deleted_filters[0]
+    assert 'metadata["knowledge_id"] == "1"' in scope
+    assert 'metadata["doc_ref"] in ["42"]' in scope
+    # The other document's rows survive the no-match delete.
+    assert [row["id"] for row in store.rows if row["id"] == "43-0"]
 
 
 def test_rewrite_stops_before_the_write_when_the_delete_rpc_fails():
@@ -1056,9 +1075,11 @@ def test_a_failed_write_is_reported_without_a_compensating_delete():
         )
 
     assert "simulated write failure" in str(failure.value)
-    # Document 42 had no rows before this write, so no delete ran at all and
-    # the half-written row stays stored until a retry replaces it.
-    assert store.deleted_filters == []
+    # Document 42 had no rows before this write, so its one replacement delete
+    # matched nothing, and nothing deletes for the failure afterwards: the
+    # half-written row stays stored until a retry replaces it.
+    assert len(store.deleted_filters) == 1
+    assert 'metadata["doc_ref"] in ["42"]' in store.deleted_filters[0]
     assert sorted(row[METADATA_FIELD]["doc_ref"] for row in store.rows) == [
         "42",
         "43",
@@ -1239,6 +1260,9 @@ def test_one_retrieve_reads_the_stored_contract_once(retrieval_mode):
 
     assert store.contract_reads == 1
     assert [name for name, *_ in store.calls].count("read_contract") == 1
+    # The contract read is the only existence check: the answering branch runs
+    # on what it already learned.
+    assert store.has_collection_calls == []
     assert store.searches or store.sparse_searches or store.hybrid_searches
 
 
@@ -1293,38 +1317,6 @@ def test_a_retrieve_of_a_never_indexed_knowledge_base_creates_nothing(
 
     assert result == {"records": []}
     assert store.contract_reads == 1
-    assert not store.searches
-
-
-class _CollectionLostAfterTheContractRead(FakeStore):
-    """The contract was read, then the collection disappeared under it."""
-
-    def read_contract(self, client, collection_name):
-        binding = super().read_contract(client, collection_name)
-        self.collection_exists = False
-        return binding
-
-
-@pytest.mark.parametrize("retrieval_mode", ["vector", "keyword", "hybrid"])
-def test_a_collection_lost_during_the_request_fails_loudly(retrieval_mode):
-    """A collection that disappears mid-request is not an empty result."""
-    backend = _backend()
-    store = _CollectionLostAfterTheContractRead()
-    backend._store = store
-
-    with pytest.raises(IndexMissingError) as failure:
-        backend.retrieve(
-            knowledge_id="1",
-            query="q",
-            embed_model=FakeEmbedModel([[1.0, 0.0]]),
-            retrieval_setting={
-                "retrieval_mode": retrieval_mode,
-                "top_k": 5,
-                "score_threshold": 0.0,
-            },
-        )
-
-    assert failure.value.code == "index_missing"
     assert not store.searches
 
 
@@ -2364,7 +2356,8 @@ def test_delete_missing_document_is_idempotent_and_creates_nothing():
     assert all(call[0] != "ensure_index" for call in store.calls)
 
 
-def test_delete_document_removes_rows_and_verifies_absence():
+def test_delete_document_removes_rows_and_reports_the_delete_rpcs_count():
+    """One delete answers the entry point: no counting query, no read-back."""
     backend = _backend()
     store = FakeStore(
         rows=[_stored_row("42", 0), _stored_row("42", 1), _stored_row("43", 0)]
@@ -2376,9 +2369,17 @@ def test_delete_document_removes_rows_and_verifies_absence():
 
     assert result["deleted_chunks"] == 2
     assert [row["id"] for row in store.rows] == ["43-0"]
-    assert len(store.deleted_filters) >= 1
-    # The delete entry point promises a durable removal, unlike a rewrite.
-    assert ("flush", "test_kb_1") in store.calls
+    assert len(store.deleted_filters) == 1
+    assert 'metadata["doc_ref"] in ["42"]' in store.deleted_filters[0]
+    # The contract read is the only extra lookup, and the delete entry point
+    # flushes so the removal is durable when it is reported.
+    assert [call[0] for call in store.calls] == [
+        "read_contract",
+        "delete_rows",
+        "flush",
+    ]
+    assert store.has_collection_calls == []
+    assert store.queries == []
 
 
 def test_delete_document_never_prepares_vectors(monkeypatch):
@@ -2412,11 +2413,13 @@ def test_delete_knowledge_clears_only_the_knowledge_base_scope():
     assert result["status"] == "deleted"
     assert store.rows == []
     # The index scope lives in its metadata JSON column and the sidecar keeps
-    # its own top-level field, so each collection is counted in its own shape.
-    assert {query["filter"] for query in store.queries if query.get("count")} == {
+    # its own top-level field, so each collection is deleted in its own shape -
+    # once each, with no counting query in front of either delete.
+    assert store.deleted_filters == [
         'metadata["knowledge_id"] == "1"',
         'knowledge_id == "1"',
-    }
+    ]
+    assert store.queries == []
 
 
 def test_drop_knowledge_index_refuses_a_shared_collection():
@@ -2435,6 +2438,24 @@ def test_drop_knowledge_index_refuses_a_shared_collection():
         backend.drop_knowledge_index("1", user_id=7)
 
     assert store.calls == []
+
+
+def test_drop_reads_the_contract_once_and_drops_both_collections():
+    """The drop chain is one contract read, one sidecar lookup and two drops."""
+    backend = _backend()
+    store = FakeStore()
+    backend._store = store
+
+    result = backend.drop_knowledge_index("1")
+
+    assert result["status"] == "dropped"
+    assert result["dropped_parent_collection"] is True
+    # The contract read answers both the existence and the ownership of the
+    # index collection; the sidecar declares no contract, so it is only looked
+    # up by name.
+    assert [name for name, *_ in store.calls] == ["read_contract"]
+    assert store.has_collection_calls == ["test_kb_1__parents"]
+    assert store.dropped_collections == ["test_kb_1", "test_kb_1__parents"]
 
 
 def test_get_document_missing_raises_without_creating():

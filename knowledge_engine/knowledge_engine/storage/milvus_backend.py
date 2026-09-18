@@ -49,7 +49,6 @@ from knowledge_engine.storage.base import (
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
-    IndexMissingError,
     UnsupportedStorageCapabilityError,
 )
 from knowledge_engine.storage.milvus_cleanup import MilvusCleanup
@@ -289,9 +288,10 @@ class MilvusBackend(BaseStorageBackend):
 
         A rewrite drops whatever this document stored before it stages the new
         rows, so the version a caller reads is always one version of one
-        document. ``MilvusCleanup.clear_document_rows`` owns why that is
-        required, which scope it honours and why the index contract is
-        confirmed by ``ensure_index`` first.
+        document. ``MilvusCleanup`` owns the delete entry point's version of
+        that removal; this write owns its own, on the same client that
+        confirmed the index contract, so the whole replacement costs one client
+        lifetime and no reconnection between its steps.
 
         The rows are written once and never published in a second pass, and the
         write returns as soon as the server accepted them. Retrieval reads at
@@ -300,14 +300,11 @@ class MilvusBackend(BaseStorageBackend):
         buying it back with a write-side wait.
 
         Milvus has no transaction spanning the write, so the failure path is
-        explicit too: the removal is proven before the rows go in, and a write
+        explicit too: the removal is issued before the rows go in and a write
         that fails afterwards is raised as it is instead of being cleaned up
         here. The rows such a failed write left behind are cleared by the next
         write of the same document, which repeats this whole replacement under
-        the caller's document lock. The price of dropping the old row-count
-        check is that a server which accepts a write and stores nothing is no
-        longer detected here; the parity spec accepts that in exchange for one
-        write.
+        the caller's document lock.
         """
         with self._store.client() as client:
             self._store.ensure_index(
@@ -316,28 +313,32 @@ class MilvusBackend(BaseStorageBackend):
                 dimension=dimension,
                 embedding_space=embedding_space,
             )
-        self._remove_document_rows(collection_name, knowledge_id, doc_ref)
-        with self._store.client() as client:
+            self._remove_document_rows(client, collection_name, knowledge_id, doc_ref)
             self._store.upsert_rows(client, collection_name, rows)
 
     def _remove_document_rows(
-        self, collection_name: str, knowledge_id: str, doc_ref: str
-    ) -> int:
-        """Remove one document's rows at the write boundary.
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        knowledge_id: str,
+        doc_ref: str,
+    ) -> None:
+        """Remove one document's rows on the client the write already holds.
 
-        A removal that fails or cannot prove it removed the rows raises, and the
-        write that asked for it never reaches the new rows.
+        The write confirmed this collection's index contract just before, so
+        the removal needs no existence check or contract read of its own. Its
+        failure ends the write before the new rows land, and whether the
+        document had rows is not worth a counting query: the delete is issued
+        unconditionally and matches nothing on a first write.
 
-        ``require_bound`` is False because this write confirmed the index
-        contract of this collection just before. ``flush`` is False because
-        the removal is proven with a Strong consistency read and must not seal
-        the segment on every rewrite.
+        ``flush`` is False because the write path must not seal the segment on
+        every rewrite; durability of a rewrite comes from the next delete entry
+        point or the accepted visibility window, not from a flush here.
         """
-        return self._cleanup.clear_document_rows(
+        self._store.delete_rows(
+            client,
             collection_name,
-            knowledge_id,
-            doc_ref,
-            require_bound=False,
+            build_scope_filter(knowledge_id=knowledge_id, doc_refs=[doc_ref]),
             flush=False,
         )
 
@@ -586,7 +587,6 @@ class MilvusBackend(BaseStorageBackend):
     ) -> List[Dict[str, Any]]:
         """Verify the request's contract and run one dense search on its client."""
         self._require_bound_index(
-            client,
             collection_name,
             binding=binding,
             dimension=len(query_vector),
@@ -602,31 +602,19 @@ class MilvusBackend(BaseStorageBackend):
 
     def _require_bound_index(
         self,
-        client: MilvusClient,
         collection_name: str,
-        *,
         binding: MilvusIndexBinding,
+        *,
         dimension: int,
         embedding_space: str,
     ) -> None:
         """Verify the request's contract still serves the requested space."""
-        self._require_live_collection(client, collection_name)
         self._store.confirm_contract(
             collection_name,
             binding,
             dimension=dimension,
             embedding_space=embedding_space,
         )
-
-    def _require_live_collection(
-        self, client: MilvusClient, collection_name: str
-    ) -> None:
-        """Fail when the collection confirmed for this request is gone."""
-        if not self._store.has_collection(client, collection_name):
-            raise IndexMissingError(
-                collection_name,
-                "the bound collection disappeared during the query",
-            )
 
     def _hybrid_retrieve(
         self,
@@ -653,7 +641,6 @@ class MilvusBackend(BaseStorageBackend):
         """
         query_vector = prepare_query_vector(embed_model, dense_query)
         self._require_bound_index(
-            client,
             collection_name,
             binding=binding,
             dimension=len(query_vector),
@@ -688,7 +675,6 @@ class MilvusBackend(BaseStorageBackend):
         analyzed and indexed by the server when the document was written. The
         reported score is the raw BM25 score the server returned.
         """
-        self._require_live_collection(client, collection_name)
         self._store.verify_keyword_binding(collection_name, binding)
         hits = self._store.sparse_search(
             client,

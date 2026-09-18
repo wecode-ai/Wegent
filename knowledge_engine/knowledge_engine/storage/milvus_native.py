@@ -53,13 +53,12 @@ CONTRACT_DESCRIPTION_PREFIX = "wegent-index-contract:"
 
 MAX_ID_LENGTH = 128
 MAX_TEXT_LENGTH = 65535
-MAX_COUNT_ROWS = 16384
 
 # Retrieval reads at the level that skips the linearizable wait (~400ms Strong
 # versus ~1ms Bounded on the contract fixture), which also means the first reads
 # after a write can be answered from a snapshot that predates it. The write path
-# accepts that window and does not wait for it (ticket 11); deletion and
-# creation still verify, so those reads stay Strong.
+# accepts that window and does not wait for it (ticket 11); creation still
+# verifies, so that read stays Strong.
 READ_CONSISTENCY_LEVEL = "Bounded"
 WRITE_CONSISTENCY_LEVEL = "Strong"
 

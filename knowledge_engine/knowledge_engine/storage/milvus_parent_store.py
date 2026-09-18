@@ -89,6 +89,8 @@ class MilvusParentStore:
                     timeout=store.rpc_timeout,
                 )
             else:
+                # The lookup above already settled existence, so the removal of
+                # the document's previous parents costs no second check.
                 self._delete_with_client(
                     store,
                     client,
@@ -165,6 +167,8 @@ class MilvusParentStore:
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         store = self._store
         with store.client() as client:
+            if not client.has_collection(collection_name, timeout=store.rpc_timeout):
+                return 0
             return self._delete_with_client(
                 store, client, collection_name, knowledge_id, doc_ref
             )
@@ -177,8 +181,7 @@ class MilvusParentStore:
         knowledge_id: str,
         doc_ref: str,
     ) -> int:
-        if not client.has_collection(collection_name, timeout=store.rpc_timeout):
-            return 0
+        """Delete the document's parent rows; the caller settled existence."""
         client.delete(
             collection_name=collection_name,
             filter=self.scope_filter(knowledge_id, doc_ref),

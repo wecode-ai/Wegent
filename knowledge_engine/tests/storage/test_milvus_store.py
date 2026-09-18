@@ -184,15 +184,73 @@ def test_a_row_iterator_without_a_configured_timeout_stays_bounded():
     assert request["output_fields"] == ["id"]
 
 
+class _DeleteClient:
+    """Records the delete request the store sends and what the RPC answered."""
+
+    def __init__(self, *, answer) -> None:
+        self.answer = answer
+        self.deletes: list[dict] = []
+        self.flushes: list[dict] = []
+        self.lookups: list[str] = []
+
+    def has_collection(self, collection_name: str, **kwargs) -> bool:
+        self.lookups.append(collection_name)
+        return True
+
+    def delete(self, **kwargs):
+        self.deletes.append(kwargs)
+        return self.answer
+
+    def flush(self, *args, **kwargs):
+        self.flushes.append(kwargs)
+
+
+def test_delete_rows_reports_the_delete_rpcs_own_count():
+    """The count is the one the delete RPC returned, not a pre-delete query."""
+    client = _DeleteClient(answer={"delete_count": 3})
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    deleted = store.delete_rows(
+        client,
+        "wegent_kb_1",
+        'metadata["knowledge_id"] == "1"',
+    )
+
+    assert deleted == 3
+    [delete] = client.deletes
+    assert delete["filter"] == 'metadata["knowledge_id"] == "1"'
+    assert delete["timeout"] == store.rpc_timeout
+    # The delete entry point flushes, so the removal is durable when reported.
+    assert client.flushes and client.flushes[0]["timeout"] == store.rpc_timeout
+    # No existence check and no counting query escort the delete RPC.
+    assert client.lookups == []
+
+
+def test_delete_rows_can_skip_the_flush_and_reports_an_absent_count_as_zero():
+    client = _DeleteClient(answer={})
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    deleted = store.delete_rows(
+        client,
+        "wegent_kb_1",
+        'metadata["knowledge_id"] == "1"',
+        flush=False,
+    )
+
+    assert deleted == 0
+    assert client.flushes == []
+
+
 class _SparseSearchClient:
     """Records the search request the store sends for a keyword query."""
 
-    def __init__(self, *, exists: bool = True) -> None:
-        self.exists = exists
+    def __init__(self) -> None:
+        self.lookups: list[str] = []
         self.searches: list[dict] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
-        return self.exists
+        self.lookups.append(collection_name)
+        return True
 
     def search(self, **kwargs):
         self.searches.append(kwargs)
@@ -226,22 +284,9 @@ def test_keyword_search_uses_the_sparse_bm25_field_not_a_query_vector():
     assert request["filter"] == 'knowledge_id == "1"'
     assert request["limit"] == 5
     assert hits == [{"id": "row-1", "display_text": "展示正文", "__score__": 2.5}]
-
-
-def test_keyword_search_on_a_missing_collection_returns_nothing():
-    client = _SparseSearchClient(exists=False)
-    store = MilvusDocumentStore(uri="http://milvus.test:19530")
-
-    hits = store.sparse_search(
-        client,
-        "wegent_kb_1",
-        query_text="q",
-        filter_expr="",
-        limit=5,
-    )
-
-    assert hits == []
-    assert client.searches == []
+    # The caller read the collection's contract, so the search itself is one
+    # RPC: no second existence check in the same request.
+    assert client.lookups == []
 
 
 def test_keyword_capability_check_follows_the_stored_analyzer():
@@ -257,12 +302,13 @@ def test_keyword_capability_check_follows_the_stored_analyzer():
 class _HybridSearchClient:
     """Records the hybrid request the store sends to the server."""
 
-    def __init__(self, *, exists: bool = True) -> None:
-        self.exists = exists
+    def __init__(self) -> None:
+        self.lookups: list[str] = []
         self.hybrid_requests: list[dict] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
-        return self.exists
+        self.lookups.append(collection_name)
+        return True
 
     def hybrid_search(self, **kwargs):
         self.hybrid_requests.append(kwargs)
@@ -307,25 +353,9 @@ def test_hybrid_search_sends_both_branches_and_the_native_ranker():
     assert request["timeout"] == store.rpc_timeout
     # The fused score is reported as the server returned it.
     assert hits == [{"id": "row-1", "display_text": "融合分数", "__score__": 0.42}]
-
-
-def test_hybrid_search_on_a_missing_collection_returns_nothing():
-    client = _HybridSearchClient(exists=False)
-    store = MilvusDocumentStore(uri="http://milvus.test:19530")
-
-    hits = store.hybrid_search(
-        client,
-        "wegent_kb_1",
-        dense_query_vector=[1.0, 0.0],
-        sparse_query_text="q",
-        filter_expr="",
-        limit=5,
-        vector_weight=0.7,
-        keyword_weight=0.3,
-    )
-
-    assert hits == []
-    assert client.hybrid_requests == []
+    # One hybrid request is one RPC: the existence check belongs to the
+    # caller that read the collection's contract.
+    assert client.lookups == []
 
 
 class _IndexParams:

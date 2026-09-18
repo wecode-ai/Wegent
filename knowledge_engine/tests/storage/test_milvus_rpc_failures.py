@@ -2,12 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Milvus RPCs stay bounded and their failures keep a stable classification.
+"""Milvus RPCs stay bounded and their failures keep a stable error shape.
 
 The PyMilvus client constructor timeout only bounds the initial connection: a
 per-call ``timeout`` is what limits the RPC itself, and without it the SDK
 keeps retrying a dead server. These tests assert the kwarg that actually
-bounds the call, not the constructor argument.
+bounds the call, not the constructor argument. A failing RPC becomes one
+stable storage error that carries no connection target, and the client it
+failed on is still released.
 """
 
 from __future__ import annotations
@@ -20,19 +22,9 @@ from grpc._cython import cygrpc
 from pymilvus import MilvusException
 
 from knowledge_engine.storage.errors import StorageBackendError
-from knowledge_engine.storage.milvus_errors import (
-    is_transient_rpc_failure,
-    rpc_failure,
-    rpc_status_code,
-)
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
 TIMEOUT_SECONDS = 3.0
-
-
-def _code_number(status: StatusCode) -> int:
-    """The numeric gRPC status, which is what ``grpc.RpcError.code()`` returns."""
-    return status.value[0]
 
 
 def _rpc_error(status_code: cygrpc.StatusCode, details: str) -> grpc.RpcError:
@@ -121,8 +113,9 @@ def test_query_rows_bounds_the_rpc_with_the_configured_timeout():
         limit=10,
     )
 
-    assert client.timeout_of("has_collection") == TIMEOUT_SECONDS
     assert client.timeout_of("query") == TIMEOUT_SECONDS
+    # The caller read the collection's contract, so the query is the only RPC.
+    assert [name for name, _ in client.calls] == ["query"]
 
 
 def test_dense_and_sparse_search_bound_the_rpc():
@@ -179,8 +172,13 @@ def test_the_contract_read_bounds_both_of_its_rpcs():
     assert client.timeout_of("describe_collection") == TIMEOUT_SECONDS
 
 
-def test_an_unresponsive_rpc_reports_the_sdk_failure():
-    """A bounded RPC that still fails reports a retryable storage failure."""
+def test_a_failing_rpc_reports_one_stable_storage_error():
+    """A bounded RPC that still fails becomes one stable storage error.
+
+    The message stays generic - the raw SDK message can carry the connection
+    target - while the SDK error type travels in the details and the original
+    exception stays as the cause.
+    """
 
     class _DeadClient(_RecordingClient):
         def query(self, **kwargs):
@@ -197,112 +195,17 @@ def test_an_unresponsive_rpc_reports_the_sdk_failure():
         with store.client() as used:
             store.query_rows(used, "wegent_kb_1", "", limit=10)
 
-    assert failure.value.retryable is True
-    deadline_code = _code_number(StatusCode.DEADLINE_EXCEEDED)
-    assert f"code={deadline_code}" in str(failure.value)
+    assert failure.value.details["sdk_error"] == "MilvusException"
+    assert failure.value.__cause__ is not None
     assert client.closed is True
 
 
-def test_a_disconnected_service_reports_a_retryable_failure():
-    class _DisconnectedClient(_RecordingClient):
-        def query(self, **kwargs):
-            raise MilvusException(
-                code=StatusCode.UNAVAILABLE,
-                message="server unavailable",
-            )
-
-    client = _DisconnectedClient()
-    store = _store(client)
-
-    with pytest.raises(StorageBackendError) as failure:
-        with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=10)
-
-    assert failure.value.retryable is True
-    assert f"code={_code_number(StatusCode.UNAVAILABLE)}" in str(failure.value)
-    assert client.closed is True
-
-
-def test_a_deterministic_sdk_rejection_keeps_its_own_code():
-    class _RejectingClient(_RecordingClient):
-        def query(self, **kwargs):
-            raise MilvusException(code=1100, message="invalid filter")
-
-    client = _RejectingClient()
-    store = _store(client)
-
-    with pytest.raises(StorageBackendError) as failure:
-        with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=10)
-
-    assert failure.value.retryable is False
-    assert failure.value.details["sdk_code"] == "1100"
-
-
-def test_the_classification_separates_transient_from_deterministic():
-    assert (
-        is_transient_rpc_failure(
-            MilvusException(code=StatusCode.DEADLINE_EXCEEDED, message="late")
-        )
-        is True
-    )
-    assert (
-        is_transient_rpc_failure(
-            MilvusException(code=StatusCode.UNAVAILABLE, message="down")
-        )
-        is True
-    )
-    assert (
-        is_transient_rpc_failure(MilvusException(code=1100, message="invalid filter"))
-        is False
-    )
-
-
-def test_a_status_code_hidden_behind_the_sdk_bound_method_is_extracted():
+def test_an_sdk_exhausted_retry_shape_is_reported_the_same_way():
     """PyMilvus passes ``grpc.RpcError.code`` - a bound method - as the code.
 
-    A plain ``in`` check against status codes therefore misses it, which is how
-    a real exhausted retry loop used to be reported as non-retryable.
+    That shape is what the SDK raises after its retry loop runs out, so the
+    conversion has to survive it like any other failure.
     """
-    error = MilvusException(
-        code=_rpc_error(cygrpc.StatusCode.deadline_exceeded, "Deadline Exceeded").code,
-        message="[describe_collection] Retry timeout: 2.0s",
-    )
-
-    assert callable(error.code), "the SDK really did hand over a bound method"
-    assert rpc_status_code(error) == _code_number(StatusCode.DEADLINE_EXCEEDED)
-    assert is_transient_rpc_failure(error) is True
-
-
-def test_an_exhausted_retry_loop_is_reported_as_retryable():
-    """The shape the SDK raises after retries run out stays retryable."""
-    error = MilvusException(
-        code=_rpc_error(cygrpc.StatusCode.unavailable, "unavailable").code,
-        message="[query] Retry timeout: 10.0s",
-    )
-
-    with pytest.raises(StorageBackendError) as failure:
-        raise rpc_failure(error)
-
-    assert failure.value.retryable is True
-    assert failure.value.details["sdk_code"] == str(
-        _code_number(StatusCode.UNAVAILABLE)
-    )
-
-
-def test_a_bare_grpc_error_is_classified_without_the_sdk_wrapper():
-    """Some SDK calls let the grpc error through instead of wrapping it."""
-    error = _rpc_error(cygrpc.StatusCode.unavailable, "channel down")
-
-    assert rpc_status_code(error) == _code_number(StatusCode.UNAVAILABLE)
-    assert is_transient_rpc_failure(error) is True
-
-    deterministic = _rpc_error(cygrpc.StatusCode.invalid_argument, "bad filter")
-    assert is_transient_rpc_failure(deterministic) is False
-
-
-def test_an_exhausted_retry_becomes_a_retryable_storage_error_on_the_wire():
-    """The whole path: SDK shape -> client() -> caller-visible storage error."""
     sdk_error = MilvusException(
         code=_rpc_error(cygrpc.StatusCode.deadline_exceeded, "Deadline Exceeded").code,
         message="[query] Retry timeout: 2.0s",
@@ -320,44 +223,28 @@ def test_an_exhausted_retry_becomes_a_retryable_storage_error_on_the_wire():
         with store.client() as used:
             store.query_rows(used, "wegent_kb_1", "", limit=5)
 
-    assert failure.value.retryable is True
-    assert failure.value.code == "storage_unavailable"
-    assert failure.value.details["sdk_code"] == str(
-        _code_number(StatusCode.DEADLINE_EXCEEDED)
-    )
-    assert "cancelled" in str(failure.value)
+    assert failure.value.details["sdk_error"] == "MilvusException"
     assert client.closed is True
 
 
-def test_a_missing_status_code_never_becomes_retryable():
-    class _NoCode(Exception):
-        pass
+def test_a_bare_grpc_error_is_reported_the_same_way():
+    """Some SDK calls let the grpc error through instead of wrapping it."""
+    error = _rpc_error(cygrpc.StatusCode.unavailable, "channel down")
 
-    assert rpc_status_code(_NoCode("nothing to see")) is None
-    assert is_transient_rpc_failure(_NoCode("nothing to see")) is False
-
-
-def test_a_connection_failure_is_classified_as_retryable():
-    """An unreachable service is transient.
-
-    The elapsed-time budget is proven against a real unroutable target in
-    ``tests/contract/test_milvus_network_timeout.py``; a fake client cannot
-    show it.
-    """
-    from pymilvus.exceptions import ConnectError
-
-    class _UnreachableClient(_RecordingClient):
+    class _BareGrpcClient(_RecordingClient):
         def query(self, **kwargs):
-            raise ConnectError("Fail connecting to server")
+            self._record("query", kwargs)
+            raise error
 
-    client = _UnreachableClient()
+    client = _BareGrpcClient()
     store = _store(client)
 
     with pytest.raises(StorageBackendError) as failure:
         with store.client() as used:
             store.query_rows(used, "wegent_kb_1", "", limit=10)
 
-    assert failure.value.retryable is True
+    assert failure.value.details["sdk_error"] == "_InactiveRpcError"
+    assert client.closed is True
 
 
 def test_each_operation_closes_only_its_own_client():

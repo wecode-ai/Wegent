@@ -27,7 +27,6 @@ from pymilvus.orm.iterator import QueryIterator
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
-    StorageBackendError,
 )
 from knowledge_engine.storage.milvus_errors import rpc_failure
 from knowledge_engine.storage.milvus_native import (
@@ -35,9 +34,7 @@ from knowledge_engine.storage.milvus_native import (
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
     HEAVY_RPC_TIMEOUT_SECONDS,
-    ID_FIELD,
     INDEX_TYPE,
-    MAX_COUNT_ROWS,
     METRIC_TYPE,
     READ_CONSISTENCY_LEVEL,
     ROW_OUTPUT_FIELDS,
@@ -330,42 +327,23 @@ class MilvusDocumentStore:
         filter_expr: str,
         *,
         flush: bool = True,
-    ) -> None:
-        """Delete the matching rows, flushing unless the caller says otherwise.
+    ) -> int:
+        """Delete the matching rows and report the count the RPC returned.
 
-        The delete entry point flushes so the removal is durable before it is
-        reported. The write path passes ``flush=False``: it re-reads the scope
-        through a separate Strong consistency client to prove the rows are
-        gone, and it must not seal the segment on every rewrite.
+        The caller has already settled the collection's existence and contract,
+        so the delete is the only RPC here. The delete entry point flushes so
+        the removal is durable before it is reported; the write path passes
+        ``flush=False`` because it must not seal the segment on every rewrite.
         """
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return
-        client.delete(
+        result = client.delete(
             collection_name=collection_name,
             filter=filter_expr,
             timeout=self.rpc_timeout,
         )
         if flush:
             client.flush(collection_name, timeout=self.rpc_timeout)
-
-    def count_rows(
-        self, client: MilvusClient, collection_name: str, filter_expr: str
-    ) -> int:
-        rows = self.query_rows(
-            client,
-            collection_name,
-            filter_expr,
-            output_fields=[ID_FIELD],
-            limit=MAX_COUNT_ROWS,
-            consistency_level=WRITE_CONSISTENCY_LEVEL,
-        )
-        if len(rows) >= MAX_COUNT_ROWS:
-            raise StorageBackendError(
-                "Milvus row count exceeded the verification budget; the count "
-                "cannot be trusted for deletion.",
-                details={"collection_name": collection_name, "budget": MAX_COUNT_ROWS},
-            )
-        return len(rows)
+        deleted_count = result.get("delete_count", 0) if isinstance(result, dict) else 0
+        return int(deleted_count)
 
     def query_rows(
         self,
@@ -382,14 +360,10 @@ class MilvusDocumentStore:
 
         Milvus does not order a query result, so ``offset`` continues the
         server's own order: it pages a static collection the way ``limit``
-        alone cannot, and the caller owns any order it promises on top.
-
-        ``consistency_level`` is an internal convention rather than a caller
-        knob: retrieval pages with the read level, and a count that decides a
-        deletion uses the write level, which waits for the newest data.
+        alone cannot, and the caller owns any order it promises on top. The
+        caller has already settled the collection's existence, so the query is
+        the only RPC here.
         """
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return []
         return list(
             client.query(
                 collection_name=collection_name,
@@ -443,9 +417,12 @@ class MilvusDocumentStore:
         limit: int,
         output_fields: Sequence[str] | None = None,
     ) -> List[Dict[str, Any]]:
-        """Dense vector search returning raw database similarity scores."""
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return []
+        """Dense vector search returning raw database similarity scores.
+
+        The caller read the collection's contract on the same client, so the
+        search is the only RPC here: a collection that vanished in between is
+        an RPC failure, not an empty result.
+        """
         results = client.search(
             collection_name=collection_name,
             data=[list(query_vector)],
@@ -473,10 +450,8 @@ class MilvusDocumentStore:
 
         The query is plain text: Milvus analyzes it with the collection's
         analyzer and scores it against the sparse terms it indexed. No
-        embedding provider is involved.
+        embedding provider is involved, and no extra RPC escorts the search.
         """
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return []
         results = client.search(
             collection_name=collection_name,
             data=[query_text],
@@ -509,9 +484,8 @@ class MilvusDocumentStore:
         server before either branch is cut. ``WeightedRanker`` fuses the two
         branches with the shares the caller resolved, and the score it returns
         is the score this call reports: nothing here normalizes or remaps it.
+        The whole request is one RPC on the client that read the contract.
         """
-        if not client.has_collection(collection_name, timeout=self.rpc_timeout):
-            return []
         requests = [
             AnnSearchRequest(
                 data=[list(dense_query_vector)],

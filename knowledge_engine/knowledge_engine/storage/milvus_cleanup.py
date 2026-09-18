@@ -4,17 +4,18 @@
 
 """Removing stored Milvus data: documents, knowledge bases and indexes.
 
-This module owns one concern: taking stored data away again and proving it
-is gone. It shares the index contract with the write path, so it never drops a
-collection whose contract it cannot confirm, and it keeps the parent sidecar
-out of the retrieval contract.
+This module owns one concern: taking stored data away again. It shares the
+index contract with the write path, so it never deletes from a collection
+whose contract it cannot confirm, and it keeps the parent sidecar out of the
+retrieval contract. A delete is proven by its own RPC: the count it reports is
+the one the server returned, and no read-back or extra client re-verifies it.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable, Dict
 
-from knowledge_engine.storage.errors import IndexMissingError, StorageBackendError
+from knowledge_engine.storage.errors import IndexMissingError
 from knowledge_engine.storage.milvus_native import build_scope_filter
 from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
@@ -58,46 +59,30 @@ class MilvusCleanup:
         collection_name: str,
         knowledge_id: str,
         doc_ref: str,
-        *,
-        require_bound: bool = True,
-        flush: bool = True,
     ) -> int:
-        """Remove every stored row of one document and prove it is gone.
+        """Remove every stored row of one document.
 
-        This is the write path's own replacement step: a rewrite calls it once
-        before it writes the new version, and the write path is the only owner
-        of that removal. Rows are keyed by knowledge base, document and chunk
-        index, so without this the previous version of a document that got
-        shorter stays readable next to the new one. The scope is one knowledge
-        base and one document, so a shared physical collection keeps every other
-        document.
+        This is the delete entry point's removal: rows are keyed by knowledge
+        base, document and chunk index, so without this the previous version of
+        a document that got shorter stays readable next to the new one. The
+        scope is one knowledge base and one document, so a shared physical
+        collection keeps every other document.
 
-        Every row of the document is removed, not only the ones this write
-        knows about: two writers of the same document are not coordinated, so a
-        writer still in flight when a rewrite starts loses the rows it already
+        Every row of the document is removed, not only the ones this code knows
+        about: two writers of the same document are not coordinated, so a
+        writer still in flight when a delete starts loses the rows it already
         wrote and the last writer wins. The parity spec accepts that window and
         promises the normal ordered flow only.
 
-        A removal that cannot prove itself raises, and the caller's write stops
-        there: nothing compensates a failed write afterwards, so the retry of
-        the same document is what clears rows a previous attempt left behind.
-
-        ``require_bound`` is False for the write path, which confirmed the
-        index contract of this collection earlier in the same write.
-        ``flush`` is False there too: the write path proves the removal with a
-        Strong consistency read and must not seal the segment on every
-        rewrite, while the delete entry point keeps flushing.
+        A removal whose RPC fails raises, and the count reported is the one the
+        delete RPC returned: nothing counts the rows first and nothing reads
+        them back to prove the delete afterwards.
         """
         filter_expr = build_scope_filter(
             knowledge_id=knowledge_id,
             doc_refs=[doc_ref],
         )
-        return self._delete_verified(
-            collection_name,
-            filter_expr,
-            require_bound=require_bound,
-            flush=flush,
-        )
+        return self._delete_rows(collection_name, filter_expr)
 
     def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
         """Delete every chunk and parent node of one knowledge base.
@@ -111,8 +96,8 @@ class MilvusCleanup:
             knowledge_id, **kwargs
         )
         scope_filter = build_scope_filter(knowledge_id=knowledge_id)
-        deleted_chunks = self._delete_verified(collection_name, scope_filter)
-        deleted_parent_nodes = self._delete_verified(
+        deleted_chunks = self._delete_rows(collection_name, scope_filter)
+        deleted_parent_nodes = self._delete_rows(
             parent_collection_name,
             self._parent_scope_filter(knowledge_id),
             require_bound=False,
@@ -135,12 +120,15 @@ class MilvusCleanup:
         store = self._store_for()
 
         with store.client() as client:
-            collection_exists = store.has_collection(client, collection_name)
+            # The contract read answers both the existence and the ownership of
+            # the index collection in one lookup, exactly as the write path
+            # confirms it.
+            index_exists = store.read_contract(client, collection_name) is not None
             parent_exists = store.has_collection(client, parent_collection_name)
-            if collection_exists:
-                # A physical drop goes through the contract the collection
-                # declares about itself, exactly as the write path confirms it.
-                store.read_contract(client, collection_name)
+            if index_exists:
+                client.drop_collection(
+                    collection_name=collection_name, timeout=store.rpc_timeout
+                )
             elif parent_exists:
                 # The knowledge base still holds parents but its index
                 # collection is gone, so nothing confirms that these names were
@@ -150,10 +138,6 @@ class MilvusCleanup:
                     collection_name,
                     "the index collection is gone, so the parent sidecar of "
                     "this knowledge base cannot be identified as its own",
-                )
-            if collection_exists:
-                client.drop_collection(
-                    collection_name=collection_name, timeout=store.rpc_timeout
                 )
             if parent_exists:
                 client.drop_collection(
@@ -168,31 +152,24 @@ class MilvusCleanup:
             "status": "dropped",
         }
 
-    def _delete_verified(
+    def _delete_rows(
         self,
         collection_name: str,
         filter_expr: str,
         *,
         require_bound: bool = True,
-        flush: bool = True,
     ) -> int:
+        """Delete the matching rows on one client and report the RPC's count.
+
+        A bound collection is only mutated through the contract it declares
+        about itself; the parent sidecar declares none, so it is only checked
+        for existence. An absent collection is an idempotent no-op.
+        """
         store = self._store_for()
         with store.client() as client:
-            if not store.has_collection(client, collection_name):
-                return 0
             if require_bound:
-                # A collection is only mutated through the contract it declares
-                # about itself; the parent sidecar declares none and is exempt.
-                store.read_contract(client, collection_name)
-            deleted = store.count_rows(client, collection_name, filter_expr)
-            if not deleted:
+                if store.read_contract(client, collection_name) is None:
+                    return 0
+            elif not store.has_collection(client, collection_name):
                 return 0
-            store.delete_rows(client, collection_name, filter_expr, flush=flush)
-        with store.client() as reader:
-            remaining = store.count_rows(reader, collection_name, filter_expr)
-        if remaining:
-            raise StorageBackendError(
-                f"Milvus delete verification failed: {remaining} rows remain.",
-                details={"collection_name": collection_name, "remaining": remaining},
-            )
-        return deleted
+            return store.delete_rows(client, collection_name, filter_expr)
