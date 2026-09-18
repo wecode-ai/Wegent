@@ -3973,7 +3973,6 @@
     "create_first_task": "Create the first task",
     "create_first_issue": "Create the first issue",
     "create_task_in_pending": "Create in Ready",
-    "create_issue_in_pending": "Create issue in Ready",
     "column_drag_hint_inbox": "Move here: return to Inbox",
     "column_drag_hint_pending": "Move here: wait to start",
     "column_drag_hint_in_progress": "Move here: start progress",
