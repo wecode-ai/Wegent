@@ -14,8 +14,10 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.models.kind import Kind
 from app.services.readers.kind_cache import (
+    _GENERATION_KEY,
     _MISS_SENTINEL,
     CachedKindReader,
+    KindCacheStore,
     _after_commit,
     _after_rollback,
     _kind_from_payload,
@@ -32,14 +34,22 @@ class FakeStore:
     def __init__(self):
         self.data = {}
         self.generation = "0"
+        self.mget_calls = 0
+
+    def get_many(self, keys):
+        self.mget_calls += 1
+        entries = {}
+        for key in keys:
+            if key not in self.data:
+                continue
+            entry_generation, kind = self.data[key]
+            if entry_generation == self.generation:
+                entries[key] = kind
+        return entries, self.generation
 
     def get(self, key):
-        if key not in self.data:
-            return False, None, self.generation
-        entry_generation, kind = self.data[key]
-        if entry_generation != self.generation:
-            return False, None, self.generation
-        return True, kind, self.generation
+        entries, generation = self.get_many([key])
+        return key in entries, entries.get(key), generation
 
     def set(self, key, generation, kind, ttl):
         self.data[key] = (generation, kind)
@@ -146,6 +156,9 @@ def test_get_by_ids_uses_per_item_cache():
     store = FakeStore()
     reader, base = _make_reader(store)
     base.get_by_id.side_effect = lambda db, kind, rid: _make_kind(kind_id=rid)
+    base.get_by_ids.side_effect = lambda db, kind, rids: [
+        _make_kind(kind_id=rid) for rid in rids
+    ]
 
     db = MagicMock()
     first = reader.get_by_ids(db, KindType.BOT, [1, 2, 3])
@@ -153,7 +166,9 @@ def test_get_by_ids_uses_per_item_cache():
 
     assert [k.id for k in first] == [1, 2, 3]
     assert [k.id for k in second] == [1, 2, 3]
-    assert base.get_by_id.call_count == 3
+    base.get_by_ids.assert_called_once()  # one batch load, not three
+    base.get_by_id.assert_not_called()
+    assert store.mget_calls == 2  # one batch lookup per call
 
 
 def test_get_by_ids_empty():
@@ -161,6 +176,20 @@ def test_get_by_ids_empty():
     reader, base = _make_reader(store)
     assert reader.get_by_ids(MagicMock(), KindType.BOT, []) == []
     base.get_by_id.assert_not_called()
+    base.get_by_ids.assert_not_called()
+
+
+def test_get_by_ids_deduplicates_and_skips_missing_rows():
+    store = FakeStore()
+    reader, base = _make_reader(store)
+    base.get_by_ids.side_effect = lambda db, kind, rids: [
+        _make_kind(kind_id=rid) for rid in rids if rid != 2
+    ]
+
+    result = reader.get_by_ids(MagicMock(), KindType.BOT, [1, 2, 1, 3])
+
+    assert [k.id for k in result] == [1, 3]
+    base.get_by_ids.assert_called_once()
 
 
 def test_generation_change_invalidates_all_lookup_keys():
@@ -279,3 +308,78 @@ def test_store_failure_falls_back_to_db():
     assert reader.get_by_id(MagicMock(), KindType.BOT, 1) is kind
     assert reader.get_by_id(MagicMock(), KindType.BOT, 1) is kind
     assert base.get_by_id.call_count == 2
+
+
+class _FakeRedis:
+    """Records the exact commands issued by KindCacheStore."""
+
+    def __init__(self):
+        self.data = {}
+        self.calls = []
+
+    def mget(self, keys):
+        self.calls.append(("mget", list(keys)))
+        return [self.data.get(key) for key in keys]
+
+    def setex(self, key, ttl, value):
+        self.calls.append(("setex", key, ttl))
+        self.data[key] = value
+
+    def incr(self, key):
+        self.calls.append(("incr", key))
+        self.data[key] = str(int(self.data.get(key, 0)) + 1)
+        return int(self.data[key])
+
+
+def test_store_get_many_reads_generation_and_keys_in_one_round_trip():
+    store = KindCacheStore()
+    store._client = _FakeRedis()
+    kind = _make_kind()
+
+    store.set("k1", "0", kind, 300)
+    entries, generation = store.get_many(["k1", "k2"])
+
+    assert generation == "0"
+    assert list(entries) == ["k1"]
+    assert entries["k1"].id == kind.id
+    assert store._client.calls == [
+        ("setex", "k1", 300),
+        ("mget", [_GENERATION_KEY, "k1", "k2"]),
+    ]
+
+
+def test_store_get_many_drops_entries_from_an_older_generation():
+    store = KindCacheStore()
+    store._client = _FakeRedis()
+    store.set("k1", "0", _make_kind(), 300)
+
+    store.bump_generation()
+    entries, generation = store.get_many(["k1"])
+
+    assert generation == "1"
+    assert entries == {}
+
+
+def test_cache_hit_returns_a_detached_instance():
+    """Write paths must not trust the object returned by a cache hit."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.services.readers.kinds import KindReader
+
+    engine = create_engine("sqlite://")
+    Kind.__table__.create(engine)
+    db = sessionmaker(bind=engine)()
+    db.add(_persisted_kind())
+    db.commit()
+    team_id = db.query(Kind).one().id
+
+    store = KindCacheStore()
+    store._client = _FakeRedis()
+    reader = CachedKindReader(KindReader(), store)
+
+    miss = reader.get_by_id(db, KindType.BOT, team_id)
+    hit = reader.get_by_id(db, KindType.BOT, team_id)
+
+    assert miss in db
+    assert hit not in db

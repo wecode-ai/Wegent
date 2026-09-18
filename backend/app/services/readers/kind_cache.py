@@ -9,7 +9,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import redis
 from sqlalchemy import event
@@ -91,26 +91,43 @@ class KindCacheStore:
             exc,
         )
 
+    def get_many(
+        self, keys: Sequence[str]
+    ) -> tuple[dict[str, Optional[Kind]], Optional[str]]:
+        """Return ``({key: kind_or_None}, generation)`` in a single round trip.
+
+        A key present in the mapping is a usable entry; ``None`` means a
+        negative (not-found) entry. Keys absent from the mapping must be
+        loaded. Generation is ``None`` when the cache is unavailable.
+        """
+        if not keys or not self._available():
+            return {}, None
+        try:
+            values = self._get_client().mget([_GENERATION_KEY, *keys])
+        except Exception as exc:
+            self._on_error("get cache entries", exc)
+            return {}, None
+
+        generation = values[0] or "0"
+        entries: dict[str, Optional[Kind]] = {}
+        for key, payload in zip(keys, values[1:]):
+            if payload is None:
+                continue
+            try:
+                envelope = json.loads(payload)
+                if envelope.get("generation") != generation:
+                    continue
+                entries[key] = _kind_from_payload(envelope["payload"])
+            except Exception as exc:
+                logger.warning(
+                    "[KindCache] Failed to decode payload for %s: %s", key, exc
+                )
+        return entries, generation
+
     def get(self, key: str) -> tuple[bool, Optional[Kind], Optional[str]]:
         """Return ``(hit, kind, generation)`` for a cache lookup."""
-        if not self._available():
-            return False, None, None
-        try:
-            generation, payload = self._get_client().mget((_GENERATION_KEY, key))
-        except Exception as exc:
-            self._on_error("get cache entry", exc)
-            return False, None, None
-        generation = generation or "0"
-        if payload is None:
-            return False, None, generation
-        try:
-            envelope = json.loads(payload)
-            if envelope.get("generation") != generation:
-                return False, None, generation
-            return True, _kind_from_payload(envelope["payload"]), generation
-        except Exception as exc:
-            logger.warning("[KindCache] Failed to decode payload for %s: %s", key, exc)
-            return False, None, generation
+        entries, generation = self.get_many([key])
+        return key in entries, entries.get(key), generation
 
     def set(
         self,
@@ -146,8 +163,20 @@ def _kind_value(kind: KindType | str) -> str:
     return kind.value if isinstance(kind, KindType) else str(kind)
 
 
+def _ttl_for(kind: Optional[Kind]) -> int:
+    """Negative entries expire sooner than successfully loaded rows."""
+    if kind is not None:
+        return settings.KIND_READER_CACHE_TTL_SECONDS
+    return settings.KIND_READER_CACHE_MISS_TTL_SECONDS
+
+
 class CachedKindReader(IKindReader):
-    """Caching decorator over a direct Kind reader."""
+    """Caching decorator over a direct Kind reader.
+
+    Cache hits return reconstructed, session-detached ``Kind`` instances.
+    Read-only callers are unaffected, but write paths must load the row
+    through their own session before mutating or deleting it.
+    """
 
     def __init__(self, base: IKindReader, store: Optional[KindCacheStore] = None):
         self._base = base
@@ -183,12 +212,7 @@ class CachedKindReader(IKindReader):
             return kind
 
         kind = loader()
-        ttl = (
-            settings.KIND_READER_CACHE_TTL_SECONDS
-            if kind is not None
-            else settings.KIND_READER_CACHE_MISS_TTL_SECONDS
-        )
-        self._store.set(key, generation, kind, ttl)
+        self._store.set(key, generation, kind, _ttl_for(kind))
         return kind
 
     def get_by_id(
@@ -204,10 +228,35 @@ class CachedKindReader(IKindReader):
     ) -> List[Kind]:
         if not resource_ids:
             return []
+
+        ordered_ids = list(dict.fromkeys(resource_ids))
+        keys = {
+            resource_id: self._id_key(kind, resource_id) for resource_id in ordered_ids
+        }
+        entries, generation = self._store.get_many(list(keys.values()))
+
+        found: dict[int, Optional[Kind]] = {
+            resource_id: entries[keys[resource_id]]
+            for resource_id in ordered_ids
+            if keys[resource_id] in entries
+        }
+        missing_ids = [
+            resource_id for resource_id in ordered_ids if resource_id not in found
+        ]
+        if missing_ids:
+            loaded = {
+                row.id: row for row in self._base.get_by_ids(db, kind, missing_ids)
+            }
+            for resource_id in missing_ids:
+                row = loaded.get(resource_id)
+                found[resource_id] = row
+                if generation is not None:
+                    self._store.set(keys[resource_id], generation, row, _ttl_for(row))
+
         return [
             item
-            for resource_id in resource_ids
-            if (item := self.get_by_id(db, kind, resource_id)) is not None
+            for resource_id in ordered_ids
+            if (item := found.get(resource_id)) is not None
         ]
 
     def get_personal(

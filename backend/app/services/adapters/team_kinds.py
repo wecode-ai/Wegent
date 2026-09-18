@@ -1417,6 +1417,23 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         return team_dict
 
+    @staticmethod
+    def _get_team_for_write(db: Session, team_id: int) -> Optional[Kind]:
+        """Load a Team row through the caller's session before mutating it.
+
+        ``kindReader`` may serve a cached hit as a detached instance, so write
+        paths must read through the session instead of the cached reader.
+        """
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
     def update_with_user(
         self,
         db: Session,
@@ -1434,7 +1451,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         from app.schemas.namespace import GroupRole
         from app.services.group_permission import check_group_permission
 
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        team = self._get_team_for_write(db, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1691,7 +1708,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         from app.schemas.namespace import GroupRole
         from app.services.group_permission import check_group_permission
 
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        team = self._get_team_for_write(db, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
