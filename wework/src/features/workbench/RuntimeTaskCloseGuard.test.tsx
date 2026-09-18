@@ -4,8 +4,10 @@ import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 
 const mocks = vi.hoisted(() => ({
   closeRequestHandler: undefined as (() => void) | undefined,
+  cancelMainWindowClose: vi.fn(),
   installRuntimeTaskCloseGuard: vi.fn(),
   closeMainWindowToTray: vi.fn(),
+  quitApplication: vi.fn(),
   unlisten: vi.fn(),
 }))
 
@@ -18,14 +20,18 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@/desktop/runtimeTaskCloseGuard', () => ({
+  cancelMainWindowClose: mocks.cancelMainWindowClose,
   closeMainWindowToTray: mocks.closeMainWindowToTray,
   installRuntimeTaskCloseGuard: mocks.installRuntimeTaskCloseGuard,
+  quitApplication: mocks.quitApplication,
 }))
 
 describe('RuntimeTaskCloseGuard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.cancelMainWindowClose.mockResolvedValue(undefined)
     mocks.closeMainWindowToTray.mockResolvedValue(undefined)
+    mocks.quitApplication.mockResolvedValue(undefined)
     mocks.closeRequestHandler = undefined
     mocks.installRuntimeTaskCloseGuard.mockImplementation(async handler => {
       mocks.closeRequestHandler = handler
@@ -67,6 +73,42 @@ describe('RuntimeTaskCloseGuard', () => {
     await act(async () => {
       resolveClose?.()
     })
+  })
+
+  test('quits completely from the secondary action', async () => {
+    render(<RuntimeTaskCloseGuard />)
+
+    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
+    act(() => {
+      mocks.closeRequestHandler?.()
+    })
+
+    fireEvent.click(screen.getByTestId('runtime-task-close-cancel-button'))
+
+    expect(screen.queryByTestId('runtime-task-close-confirm-overlay')).not.toBeInTheDocument()
+    expect(mocks.quitApplication).toHaveBeenCalledTimes(1)
+    expect(mocks.cancelMainWindowClose).not.toHaveBeenCalled()
+  })
+
+  test('reopens the dialog when quitting completely fails', async () => {
+    const error = new Error('native quit failed')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mocks.quitApplication.mockRejectedValueOnce(error)
+    render(<RuntimeTaskCloseGuard />)
+
+    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
+    act(() => {
+      mocks.closeRequestHandler?.()
+    })
+
+    fireEvent.click(screen.getByTestId('runtime-task-close-cancel-button'))
+
+    const quitButton = await screen.findByTestId('runtime-task-close-cancel-button')
+    expect(quitButton).toBeEnabled()
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to quit from close-to-tray confirmation:',
+      error
+    )
   })
 
   test('reopens the dialog for retry when the native close-to-tray command fails', async () => {
