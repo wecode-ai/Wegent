@@ -13,7 +13,7 @@ here depends on public routing, an external service or a VPN:
   RPCs (``ShowCollections`` / ``DescribeCollection``) past the deadline, which
   bounds the *per-call* deadline the store passes to every RPC.
 
-Both assert the failure is one stable storage error and that the client was
+Both assert the failure is a retryable storage error and that the client was
 released, not pooled.
 """
 
@@ -59,9 +59,9 @@ def test_a_silent_service_fails_inside_the_bounded_budget(
     elapsed = time.monotonic() - started
 
     assert elapsed < MAX_OPERATION_SECONDS, f"the bounded operation took {elapsed:.1f}s"
-    assert failure.value.code == "storage_backend_error"
-    # The client it failed on was released, which the next test proves by
-    # running a fresh bounded operation on the same backend.
+    assert failure.value.retryable is True
+    assert failure.value.code == "storage_unavailable"
+    assert "unknown" in str(failure.value)
 
 
 def test_the_store_keeps_working_after_a_bounded_failure(
@@ -103,7 +103,8 @@ def test_the_per_call_timeout_bounds_a_query_rpc(
         backend.get_all_chunks("wegent_kb_1", max_chunks=5)
     elapsed = time.monotonic() - started
 
-    assert failure.value.code == "storage_backend_error"
+    assert failure.value.retryable is True
+    assert failure.value.code == "storage_unavailable"
     assert elapsed < MAX_OPERATION_SECONDS, f"the bounded RPC took {elapsed:.1f}s"
     # The deadline, not the server, ended the call: the client gave up slightly
     # after its configured timeout while the peer was still holding the RPC.

@@ -187,7 +187,7 @@ def test_a_row_iterator_without_a_configured_timeout_stays_bounded():
 class _DeleteClient:
     """Records the delete request the store sends and what the RPC answered."""
 
-    def __init__(self, *, answer) -> None:
+    def __init__(self, *, answer: dict) -> None:
         self.answer = answer
         self.deletes: list[dict] = []
         self.flushes: list[dict] = []
@@ -197,15 +197,15 @@ class _DeleteClient:
         self.lookups.append(collection_name)
         return True
 
-    def delete(self, **kwargs):
+    def delete(self, **kwargs) -> dict:
         self.deletes.append(kwargs)
         return self.answer
 
-    def flush(self, *args, **kwargs):
+    def flush(self, *args, **kwargs) -> None:
         self.flushes.append(kwargs)
 
 
-def test_delete_rows_reports_the_delete_rpcs_own_count():
+def test_delete_rows_reports_the_delete_rpcs_own_count() -> None:
     """The count is the one the delete RPC returned, not a pre-delete query."""
     client = _DeleteClient(answer={"delete_count": 3})
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
@@ -226,7 +226,7 @@ def test_delete_rows_reports_the_delete_rpcs_own_count():
     assert client.lookups == []
 
 
-def test_delete_rows_can_skip_the_flush_and_reports_an_absent_count_as_zero():
+def test_delete_rows_can_skip_the_flush_and_reports_an_absent_count_as_zero() -> None:
     client = _DeleteClient(answer={})
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
@@ -252,7 +252,7 @@ class _SparseSearchClient:
         self.lookups.append(collection_name)
         return True
 
-    def search(self, **kwargs):
+    def search(self, **kwargs) -> list:
         self.searches.append(kwargs)
         return [
             [
@@ -310,7 +310,7 @@ class _HybridSearchClient:
         self.lookups.append(collection_name)
         return True
 
-    def hybrid_search(self, **kwargs):
+    def hybrid_search(self, **kwargs) -> list:
         self.hybrid_requests.append(kwargs)
         return [
             [

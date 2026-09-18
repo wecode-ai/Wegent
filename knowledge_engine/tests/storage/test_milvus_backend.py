@@ -229,7 +229,7 @@ class FakeStore:
         self.clients_created = 0
         self.clients_closed = 0
         # The real store exposes the per-RPC deadline the drop RPCs send.
-        self.rpc_timeout = 10.0
+        self.rpc_timeout: float = 10.0
 
     @contextmanager
     def client(self):
@@ -292,7 +292,12 @@ class FakeStore:
         self.calls.append(("flush", collection_name))
 
     def delete_rows(
-        self, client, collection_name, filter_expr, *, flush: bool = True
+        self,
+        client,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        flush: bool = True,
     ) -> int:
         self.calls.append(("delete_rows", collection_name, filter_expr))
         self.deleted_filters.append(filter_expr)
@@ -305,7 +310,7 @@ class FakeStore:
         # The real store reports the delete RPC's own count.
         return len(matching)
 
-    def drop_collection(self, collection_name, **kwargs):
+    def drop_collection(self, collection_name: str, **kwargs) -> None:
         self.dropped_collections.append(collection_name)
         self.collection_exists = False
 
@@ -817,7 +822,7 @@ def test_rewrite_drops_the_documents_previous_rows_before_writing():
     assert all(call[0] != "flush" for call in store.calls)
 
 
-def test_one_write_owns_exactly_one_client():
+def test_one_write_owns_exactly_one_client() -> None:
     """The contract confirm, the replacement delete and the write share a client.
 
     A write that opened one client per storage step would pay a connection for
@@ -843,7 +848,7 @@ def test_one_write_owns_exactly_one_client():
     ]
 
 
-def test_a_first_write_still_runs_its_replacement_delete():
+def test_a_first_write_still_runs_its_replacement_delete() -> None:
     """The replacement is unconditional: one scoped delete, then one write.
 
     Whether the document had rows is not worth a counting query per write, so
@@ -2356,7 +2361,7 @@ def test_delete_missing_document_is_idempotent_and_creates_nothing():
     assert all(call[0] != "ensure_index" for call in store.calls)
 
 
-def test_delete_document_removes_rows_and_reports_the_delete_rpcs_count():
+def test_delete_document_removes_rows_and_reports_the_delete_rpcs_count() -> None:
     """One delete answers the entry point: no counting query, no read-back."""
     backend = _backend()
     store = FakeStore(
@@ -2440,7 +2445,7 @@ def test_drop_knowledge_index_refuses_a_shared_collection():
     assert store.calls == []
 
 
-def test_drop_reads_the_contract_once_and_drops_both_collections():
+def test_drop_reads_the_contract_once_and_drops_both_collections() -> None:
     """The drop chain is one contract read, one sidecar lookup and two drops."""
     backend = _backend()
     store = FakeStore()
