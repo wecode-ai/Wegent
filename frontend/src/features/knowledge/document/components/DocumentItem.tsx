@@ -5,6 +5,7 @@
 'use client'
 
 import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
 
 import {
   Trash2,
@@ -254,10 +255,6 @@ export function DocumentItem({
       : isExternal && typeof externalSource?.url === 'string'
         ? externalSource.url
         : null
-  // The provider rejected the initial import because the source disappeared
-  // or access was revoked. The failed placeholder remains retryable.
-  const isExternalSourceInaccessible = isExternal && externalSource?.status === 'inaccessible'
-
   // Get display name - for web documents, remove .md extension
   const displayName =
     isWeb && document.name.endsWith('.md') ? document.name.slice(0, -3) : document.name
@@ -644,28 +641,11 @@ export function DocumentItem({
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}
-        {isExternalSourceInaccessible && (
-          <TooltipProvider>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="ml-1 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
-                  data-testid="external-source-inaccessible"
-                >
-                  {t('knowledge:document.document.sourceInaccessible')}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">
-                  {externalSource?.last_error ||
-                    t('knowledge:document.document.sourceInaccessibleHint')}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+        <ExternalSourceStatusBadge
+          document={document}
+          testId="external-source-inaccessible"
+          className="ml-1"
+        />
       </div>
 
       {/* Size */}

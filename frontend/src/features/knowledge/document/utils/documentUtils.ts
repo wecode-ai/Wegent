@@ -96,7 +96,7 @@ export interface ExternalDocumentSourceInfo {
   resource_id?: string
   title: string
   url?: string
-  /** 'accessible' | 'inaccessible' — undefined means not yet determined. */
+  /** 'accessible' | 'inaccessible' | 'sync_error' — undefined means unknown. */
   status?: string
   /** ISO timestamp of the last successful import. */
   last_success_at?: string

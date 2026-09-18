@@ -931,6 +931,77 @@ def test_manual_reimport_renames_the_copy_to_the_latest_source_name(
     )
 
 
+def test_oversized_source_title_lands_truncated(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    import_dispatches: list[dict],
+) -> None:
+    """A source title longer than the name column lands truncated, not failing."""
+    source_title = "钉" * 300
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地旧名称"
+    test_db.commit()
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name=source_title,
+            file_extension="md",
+            content=b"new body",
+            metadata={"title": source_title, "source_update_time": 1789562645000},
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    _mock_index_task(monkeypatch)
+
+    refreshed = external_document_import_service.request_source_refresh(
+        test_db, test_user, imported_copy.id
+    )
+    run_external_document_import(
+        test_db, refreshed, test_user, generation=refreshed.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "钉" * 255
+
+
+def test_blank_source_title_keeps_the_copy_name(
+    test_db: Session,
+    test_user: User,
+    imported_copy: KnowledgeDocument,
+    monkeypatch: pytest.MonkeyPatch,
+    import_dispatches: list[dict],
+) -> None:
+    """A source that reports no title never replaces the copy's own name."""
+    _serve_existing_content(test_db, imported_copy, "旧正文")
+    imported_copy.name = "本地旧名称"
+    test_db.commit()
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name="   ",
+            file_extension="md",
+            content=b"new body",
+            metadata={"source_update_time": 1789562645000},
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    _mock_index_task(monkeypatch)
+
+    refreshed = external_document_import_service.request_source_refresh(
+        test_db, test_user, imported_copy.id
+    )
+    run_external_document_import(
+        test_db, refreshed, test_user, generation=refreshed.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, imported_copy.id, test_user.id)
+    assert current.name == "本地旧名称"
+
+
 def test_unchanged_source_keeps_the_copy_name(
     test_db: Session,
     test_user: User,

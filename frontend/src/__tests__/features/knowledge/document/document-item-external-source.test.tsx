@@ -66,10 +66,15 @@ describe('DocumentItem external source status', () => {
       screen.getByText('knowledge:document.document.indexStatus.available')
     ).toBeInTheDocument()
     const sourceStatus = screen.getByTestId('external-source-inaccessible')
-    expect(sourceStatus).toHaveTextContent('knowledge:document.document.sourceInaccessible')
+    // The shared badge resolves its copy from the knowledge namespace.
+    expect(sourceStatus).toHaveTextContent('document.document.sourceInaccessible')
     expect(sourceStatus).not.toHaveTextContent('knowledge:document.document.wikiSourceMissing')
     await user.hover(sourceStatus)
-    expect((await screen.findAllByText('钉钉源文档不存在或已被删除')).length).toBeGreaterThan(0)
+    // The tooltip carries the shared wording; the provider's raw text stays in the logs.
+    expect(
+      (await screen.findAllByText('document.document.sourceInaccessibleHint')).length
+    ).toBeGreaterThan(0)
+    expect(screen.queryByText('钉钉源文档不存在或已被删除')).not.toBeInTheDocument()
   })
 
   it('keeps a source the last check reached free of the unavailable badge', () => {
@@ -89,5 +94,27 @@ describe('DocumentItem external source status', () => {
     )
 
     expect(screen.queryByTestId('external-source-inaccessible')).not.toBeInTheDocument()
+  })
+
+  it('reports a failed source check as a synchronization failure', () => {
+    render(
+      <DocumentItem
+        document={{
+          ...deletedDingtalkDocument,
+          source_config: {
+            external: {
+              ...dingtalkExternal,
+              status: 'sync_error',
+              last_error: 'DingTalk content read failed',
+            },
+          },
+        }}
+      />
+    )
+
+    // The row shares the source-state mapping with the tree and the preview.
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent(
+      'document.document.sourceSyncFailed'
+    )
   })
 })

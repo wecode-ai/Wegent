@@ -187,41 +187,19 @@ class ExternalDocumentImportService:
         self, db: Session, user: User, document_id: int
     ) -> KnowledgeDocument:
         """Force an imported external document to fetch its source again."""
-        document = db.get(KnowledgeDocument, document_id)
-        if document is None:
-            raise ExternalDocumentImportError("Document not found", status_code=404)
-        kb, has_access = KnowledgeService.get_knowledge_base(
-            db=db, knowledge_base_id=document.kind_id, user_id=user.id
+        document = self._load_manageable_external_document(
+            db, user, document_id, action="synchronized"
         )
-        if not kb or not has_access:
-            raise ExternalDocumentImportError("Document not found", status_code=404)
-        if not KnowledgeService.can_manage_knowledge_base_documents(
-            db, document.kind_id, user.id
-        ):
-            raise ExternalDocumentImportError(
-                "You do not have permission to manage documents in this knowledge base",
-                status_code=403,
-            )
         # Any imported external document can re-fetch its source: DingTalk
         # copies follow the same refresh path as the scheduled copy update.
-        if not document.has_external_identity:
-            raise ExternalDocumentImportError(
-                "Only imported external documents can be synchronized"
-            )
-        refresh = self.queue_source_refresh(db, document)
+        refresh = self.refresh_existing_document(
+            db, document, document.external_source_config
+        )
         if not refresh.started:
             raise ExternalDocumentImportError(
                 "This document is still being processed; retry later", status_code=409
             )
         return refresh.document
-
-    def queue_source_refresh(
-        self, db: Session, document: KnowledgeDocument
-    ) -> ExternalDocumentRefreshResult:
-        """Queue a refresh after the caller has established authorization."""
-        return self.refresh_existing_document(
-            db, document, document.external_source_config
-        )
 
     def import_documents(
         self,
@@ -299,34 +277,9 @@ class ExternalDocumentImportService:
         Raises:
             ExternalDocumentImportError: With the HTTP status to surface.
         """
-        document = (
-            db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id == document_id)
-            .first()
+        document = self._load_manageable_external_document(
+            db, user, document_id, action="retried"
         )
-        if document is None:
-            raise ExternalDocumentImportError("Document not found", status_code=404)
-
-        kb, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
-            knowledge_base_id=document.kind_id,
-            user_id=user.id,
-        )
-        if not kb or not has_access:
-            raise ExternalDocumentImportError("Document not found", status_code=404)
-        if not KnowledgeService.can_manage_knowledge_base_documents(
-            db, document.kind_id, user.id
-        ):
-            raise ExternalDocumentImportError(
-                "You do not have permission to manage documents in this "
-                "knowledge base",
-                status_code=403,
-            )
-
-        if not document.has_external_identity:
-            raise ExternalDocumentImportError(
-                "Only imported external documents can be retried"
-            )
 
         decision = prepare_document_index_enqueue(db=db, document_id=document.id)
         if not decision.should_enqueue:
@@ -350,6 +303,44 @@ class ExternalDocumentImportService:
             document.id,
             decision.generation,
         )
+        return document
+
+    def _load_manageable_external_document(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        *,
+        action: str,
+    ) -> KnowledgeDocument:
+        """Load a copy the user may act on, or raise the status to surface.
+
+        The manual retry and the manual source sync are the same per-document
+        write on the same kind of copy, so both resolve the document and its
+        permissions here; ``action`` only names the operation in the message.
+        """
+        document = db.get(KnowledgeDocument, document_id)
+        if document is None:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=user.id,
+        )
+        if not kb or not has_access:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, document.kind_id, user.id
+        ):
+            raise ExternalDocumentImportError(
+                "You do not have permission to manage documents in this "
+                "knowledge base",
+                status_code=403,
+            )
+        if not document.has_external_identity:
+            raise ExternalDocumentImportError(
+                f"Only imported external documents can be {action}"
+            )
         return document
 
     def _resolve_batch_items(

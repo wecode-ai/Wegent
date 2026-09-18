@@ -73,6 +73,7 @@ import {
 } from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
+import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import { useExternalDocumentSync } from '../hooks/useExternalDocumentSync'
@@ -482,16 +483,7 @@ export function DocumentDetailDialog({
                             </span>
                           </>
                         )}
-                        {externalSourceInfo.status === 'inaccessible' ? (
-                          <Badge
-                            variant="default"
-                            size="sm"
-                            className="bg-red-500/10 text-red-600 border-red-500/20"
-                            data-testid="external-source-inaccessible"
-                          >
-                            {t('document.document.sourceInaccessible')}
-                          </Badge>
-                        ) : externalSourceInfo.status === 'accessible' ? (
+                        {externalSourceInfo.status === 'accessible' ? (
                           <Badge
                             variant="default"
                             size="sm"
@@ -499,7 +491,12 @@ export function DocumentDetailDialog({
                           >
                             {t('document.document.externalSource.accessible')}
                           </Badge>
-                        ) : null}
+                        ) : (
+                          <ExternalSourceStatusBadge
+                            document={document}
+                            testId="external-source-inaccessible"
+                          />
+                        )}
                       </div>
                     )}
                   </div>

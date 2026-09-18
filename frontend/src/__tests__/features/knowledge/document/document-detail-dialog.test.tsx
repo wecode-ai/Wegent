@@ -334,6 +334,32 @@ describe('DocumentDetailDialog external source info', () => {
     expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
   })
 
+  it('reports a failed source check as a synchronization failure', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: {
+            external: {
+              ...externalMeta,
+              status: 'sync_error',
+              last_error: 'DingTalk metadata read timed out',
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    // The preview shares the source-state mapping with the list and the tree.
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent(
+      'document.document.sourceSyncFailed'
+    )
+  })
+
   it('hides the source info for regular documents', () => {
     render(
       <DocumentDetailDialog
