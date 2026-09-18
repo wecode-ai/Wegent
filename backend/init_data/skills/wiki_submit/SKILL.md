@@ -50,6 +50,13 @@ Remove an accidental page before completing the run.
 
 ## Generation workflow
 
+### Bounded Section Writers
+
+If the invocation identifies you as a bounded Section Writer or assigns one Work
+Package, submit only that package's pages and return the result to the Coordinator.
+A bounded Section Writer must not run `plan`, `complete`, or `fail`: those commands
+change the whole generation and belong to its Coordinator.
+
 ### Before the first submit
 
 1. Read the run prompt and make one page-and-link plan, including stable paths and a

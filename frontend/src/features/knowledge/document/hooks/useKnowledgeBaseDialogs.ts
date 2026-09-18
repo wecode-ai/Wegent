@@ -156,14 +156,18 @@ export function useKnowledgeBaseDialogs({
           // attached, and hand-picking here is what dropped the summary settings and
           // left the retrieval config to be auto-resolved instead of taken from the
           // form. `data` already carries every field the dialog collected.
-          await createCodeWiki({
+          const created = await createCodeWiki({
             namespace,
             data,
           })
           setShowCreateDialog(false)
           resetCreateDialogState()
-          toast.success(t('codeWiki.create.created'))
           void sidebar.refreshAll()
+          if (created.scheduledUpdateError) {
+            toast.warning(t('codeWiki.create.scheduleNotConfigured'))
+          } else {
+            toast.success(t('codeWiki.create.created'))
+          }
           return
         }
 
@@ -208,16 +212,7 @@ export function useKnowledgeBaseDialogs({
         setIsCreating(false)
       }
     },
-    [
-      createScope,
-      createGroupName,
-      createKbType,
-      sidebar,
-      reloadGroupKbs,
-      resetCreateDialogState,
-      router,
-      t,
-    ]
+    [createScope, createGroupName, createKbType, sidebar, reloadGroupKbs, resetCreateDialogState, t]
   )
 
   const handleUpdate = useCallback(
@@ -229,7 +224,6 @@ export function useKnowledgeBaseDialogs({
         await updateKnowledgeBase(editingKb.id, data)
 
         await sidebar.refreshAll()
-        setEditingKb(null)
       } finally {
         setIsUpdating(false)
       }

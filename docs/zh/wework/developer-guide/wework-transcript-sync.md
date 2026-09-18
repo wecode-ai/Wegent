@@ -143,5 +143,10 @@ GitHub CI 的执行前提。
 调整数据库结构。对象存储不可用时，segment 不会提交到 MySQL，outbox 继续保留定位
 信息，本地任务仍可离线执行。
 
+transcript bucket 与附件 bucket 是两个独立桶，`ATTACHMENT_S3_*` 对应的账号必须对该桶
+持有 `ListBucket`、`GetObject`、`PutObject`、`DeleteObject` 权限。只授权了附件桶的账号
+会在首次上传时以 503 失败；此时 Backend 日志记录 S3 错误码，设备侧错误信息末尾括号内
+也会给出同一错误码（如 `AccessDenied`）。
+
 未配置独立根密钥时兼容使用 `SECRET_KEY`。生产环境应配置独立值，并在相关 tgz 保留期间
 保持不变。

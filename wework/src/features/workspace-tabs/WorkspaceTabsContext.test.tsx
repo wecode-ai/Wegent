@@ -148,6 +148,7 @@ function RoutingHarness({
 describe('WorkspaceTabsProvider routing', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     window.history.replaceState({}, '', '/')
   })
 
@@ -162,6 +163,29 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('preserves an auxiliary route before entering settings', () => {
+    sessionStorage.setItem('wework.settingsReturnPath', '/todo')
+    render(<RoutingHarness />)
+
+    act(() => navigateTo('/cloud-work'))
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/cloud-work')
+
+    act(() => navigateTo('/settings/connections?addDevice=1'))
+
+    expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
+  })
+
+  test('does not replace the return route with a settings route', () => {
+    sessionStorage.setItem('wework.settingsReturnPath', '/cloud-work')
+    window.history.replaceState({}, '', '/settings')
+
+    render(<RoutingHarness />)
+
+    act(() => navigateTo('/settings/connections'))
+
+    expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
 
   test('notifies resource owners when a workspace tab closes', () => {

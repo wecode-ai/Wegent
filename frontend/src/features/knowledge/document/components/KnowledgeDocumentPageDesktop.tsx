@@ -698,7 +698,7 @@ export function KnowledgeDocumentPageDesktop({
       />
       <EditKnowledgeBaseDialog
         open={!!dialogs.editingKb}
-        onOpenChange={open => !dialogs.isUpdating && !open && dialogs.setEditingKb(null)}
+        onOpenChange={open => !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
         onSubmit={dialogs.handleUpdate}
         onTypeConverted={handleKnowledgeBaseTypeConverted}
