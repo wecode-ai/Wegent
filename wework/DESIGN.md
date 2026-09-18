@@ -440,8 +440,9 @@ may reveal on hover/focus but must remain keyboard accessible.
 - Secondary row actions can appear on hover/focus but must not steal the row's
   primary click and must have a keyboard path.
 - Overflowing sidebar lists keep an overlay scrollbar visible at every scroll
-  position. Use a transparent `8px` track and a quiet theme-aware `4px` thumb;
-  scrollbars must not change the content width or inherit the content-edge mask.
+  position. Match the Codex desktop sidebar with a quiet theme-aware `8px`
+  thumb inset `3px` from the sidebar edge; scrollbars must not change the content
+  width or inherit the content-edge mask.
 - Task titles use a `12px` edge fade instead of ellipsis. After `600ms` of hover
   or keyboard focus, scroll at `30px/s`, decelerating continuously over the final
   `40px` to rest. Keep the end visible until pointer exit or blur, then return to

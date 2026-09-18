@@ -7630,7 +7630,7 @@ describe('DesktopWorkbenchLayout', () => {
   test('right workspace panel opens the file tab from the launcher', async () => {
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-file-option')).toHaveClass(
       'h-11',
@@ -7638,7 +7638,7 @@ describe('DesktopWorkbenchLayout', () => {
       'font-light'
     )
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('⌥⌘F')
-    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    fireEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const fileTab = screen.getByTestId('right-workspace-file-tab')
@@ -7695,16 +7695,18 @@ describe('DesktopWorkbenchLayout', () => {
 
     try {
       renderWorkspacePanelLayout()
-      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+      fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      fireEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
 
-      const extensionTab = screen.getByTestId('right-workspace-extension-tab-test%3Ainspector')
+      const extensionTab = await screen.findByTestId(
+        'right-workspace-extension-tab-test%3Ainspector'
+      )
       expect(extensionTab).toHaveAttribute('aria-selected', 'true')
       expect(extensionTab).toHaveTextContent('DSH Inspector')
       expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
       expect(screen.getByTestId('right-workspace-panel-shell')).toContainElement(extensionTab)
 
-      await userEvent.click(
+      fireEvent.click(
         within(extensionTab).getByTestId(
           'right-workspace-extension-tab-test%3Ainspector-close-button'
         )
@@ -8871,7 +8873,6 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('switches folders in the file tab for a multi-root project', async () => {
-    const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
     const runtimeWork = {
       projects: [
@@ -8931,12 +8932,12 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await user.click(screen.getByTestId('right-workspace-file-option'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     expect(await screen.findByTestId('workspace-file-root-selector')).toHaveTextContent('web')
-    await user.click(screen.getByTestId('workspace-file-root-selector'))
-    await user.click(screen.getByTitle('/workspace/api'))
+    fireEvent.click(screen.getByTestId('workspace-file-root-selector'))
+    fireEvent.click(screen.getByTitle('/workspace/api'))
 
     await waitFor(() =>
       expect(listWorkspaceEntries).toHaveBeenCalledWith(
@@ -8950,7 +8951,6 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
-    const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
     const readWorkspaceTextFile = vi.fn().mockResolvedValue({
       path: '/workspace/project/README.md',
@@ -9010,7 +9010,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
+    fireEvent.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
     expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
       'opened from tool block'
@@ -9025,7 +9025,7 @@ describe('DesktopWorkbenchLayout', () => {
       '显示目录树'
     )
 
-    await user.click(screen.getByTestId('workspace-file-toggle-tree-button'))
+    fireEvent.click(screen.getByTestId('workspace-file-toggle-tree-button'))
 
     expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
       'w-[240px]',
@@ -13039,8 +13039,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(activePane().getByTestId('right-workspace-chat-option'))
     const sideChat = activePane().getByTestId('right-workspace-chat-panel')
-    const composer = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(composer, 'keep this temporary chat')
+    setComposerValue(sideChat, 'keep this temporary chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
