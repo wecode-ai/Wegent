@@ -1,7 +1,7 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DiffFileSection } from './parseUnifiedDiff'
 
@@ -173,6 +173,12 @@ function PierreReviewFileTree({
   selectedPath?: string
   onSelectPath: (path: string) => void
 }) {
+  const selectionRef = useRef({ selectedPath, onSelectPath })
+  const syncingSelectionRef = useRef(false)
+  useEffect(() => {
+    selectionRef.current = { selectedPath, onSelectPath }
+  }, [selectedPath, onSelectPath])
+
   const { model } = useFileTree({
     density: 'compact',
     flattenEmptyDirectories: true,
@@ -183,7 +189,11 @@ function PierreReviewFileTree({
     itemHeight: 28,
     onSelectionChange: selectedPaths => {
       const nextPath = selectedPaths[0]
-      if (nextPath) onSelectPath(nextPath)
+      // Programmatic selection follows the diff scroll without navigating it again.
+      const current = selectionRef.current
+      if (!syncingSelectionRef.current && nextPath && nextPath !== current.selectedPath) {
+        current.onSelectPath(nextPath)
+      }
     },
     paths,
     search: false,
@@ -196,7 +206,15 @@ function PierreReviewFileTree({
 
   useEffect(() => {
     if (!selectedPath) return
-    model.getItem(selectedPath)?.select()
+    syncingSelectionRef.current = true
+    try {
+      for (const path of model.getSelectedPaths()) {
+        if (path !== selectedPath) model.getItem(path)?.deselect()
+      }
+      model.getItem(selectedPath)?.select()
+    } finally {
+      syncingSelectionRef.current = false
+    }
     model.scrollToPath(selectedPath, { focus: false, offset: 'nearest' })
   }, [model, selectedPath])
 

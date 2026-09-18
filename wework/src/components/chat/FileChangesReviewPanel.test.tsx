@@ -1,5 +1,5 @@
 import '@/i18n'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
@@ -81,6 +81,98 @@ const largeDiff = Array.from({ length: 13 }, (_, index) => {
 }).join('\n')
 
 describe('FileChangesReviewPanel', () => {
+  test('syncs the tree while scrolling both ways without jumping the diff', async () => {
+    render(<FileChangesReviewPanel loading={false} diff={twoFileDiff} />)
+
+    const container = screen.getByTestId('file-changes-review-diff-lines')
+    const sections = screen.getAllByTestId('file-changes-review-file-diff-section')
+    const tree = screen.getByTestId('pierre-file-tree')
+    const selectedFile = () =>
+      tree.shadowRoot?.querySelector('[data-item-selected]')?.getAttribute('aria-label')
+    Object.defineProperties(container, {
+      clientHeight: { value: 400 },
+      scrollHeight: { value: 1200 },
+    })
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
+    sections.forEach((section, index) => {
+      vi.spyOn(section, 'getBoundingClientRect').mockImplementation(
+        () => ({ bottom: 100 + (index + 1) * 600 - container.scrollTop }) as DOMRect
+      )
+    })
+
+    await waitFor(() => expect(selectedFile()).toBe('alpha.ts'))
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+
+    fireEvent.scroll(container, { target: { scrollTop: 650 } })
+    await waitFor(() => expect(selectedFile()).toBe('beta.ts'))
+    expect(container.scrollTop).toBe(650)
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+
+    fireEvent.scroll(container, { target: { scrollTop: 200 } })
+    await waitFor(() => expect(selectedFile()).toBe('alpha.ts'))
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+
+    const beta = tree.shadowRoot?.querySelector('button[aria-label="beta.ts"]')
+    expect(beta).toBeTruthy()
+    await userEvent.click(beta as HTMLElement)
+    await waitFor(() =>
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(sections[1])
+    )
+
+    const stopScroll = vi.fn()
+    container.scrollTo = stopScroll
+    fireEvent.wheel(container, { deltaY: 100 })
+    expect(stopScroll).toHaveBeenCalledWith({ top: 200, left: 0, behavior: 'instant' })
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    fireEvent.scroll(container, { target: { scrollTop: 650 } })
+    await waitFor(() => expect(selectedFile()).toBe('beta.ts'))
+    fireEvent.scroll(container, { target: { scrollTop: 200 } })
+    await waitFor(() => expect(selectedFile()).toBe('alpha.ts'))
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  test('selects a short final file when reaching the bottom of the diff', async () => {
+    render(<FileChangesReviewPanel loading={false} diff={twoFileDiff} />)
+
+    const container = screen.getByTestId('file-changes-review-diff-lines')
+    const sections = screen.getAllByTestId('file-changes-review-file-diff-section')
+    Object.defineProperties(container, {
+      clientHeight: { value: 400 },
+      scrollHeight: { value: 700 },
+    })
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
+    vi.spyOn(sections[0], 'getBoundingClientRect').mockReturnValue({ bottom: 400 } as DOMRect)
+    vi.spyOn(sections[1], 'getBoundingClientRect').mockReturnValue({ bottom: 500 } as DOMRect)
+
+    fireEvent.scroll(container, { target: { scrollTop: 300 } })
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('pierre-file-tree').shadowRoot?.querySelector('[data-item-selected]')
+      ).toHaveAttribute('aria-label', 'beta.ts')
+    )
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  test('cancels a pending file jump when the user resumes scrolling', async () => {
+    render(<FileChangesReviewPanel loading={false} diff={twoFileDiff} />)
+    const container = screen.getByTestId('file-changes-review-diff-lines')
+    const tree = screen.getByTestId('pierre-file-tree')
+    await waitFor(() =>
+      expect(tree.shadowRoot?.querySelector('button[aria-label="beta.ts"]')).toBeTruthy()
+    )
+
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] })
+    try {
+      fireEvent.click(tree.shadowRoot?.querySelector('button[aria-label="beta.ts"]') as HTMLElement)
+      fireEvent.wheel(container, { deltaY: 100 })
+      act(() => vi.advanceTimersByTime(50))
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('uses the application dark theme for review diffs', async () => {
     document.documentElement.dataset.theme = 'dark'
 
@@ -99,7 +191,7 @@ describe('FileChangesReviewPanel', () => {
       <FileChangesReviewPanel
         loading={false}
         diff={twoFileDiff}
-        branchName="human/dingo-20260624-023038"
+        branchName="feature/change-set"
         targetBranchName="origin/main"
       />
     )
@@ -108,7 +200,7 @@ describe('FileChangesReviewPanel', () => {
     expect(within(toolbar).getByText(/Branch|分支/)).toBeInTheDocument()
     expect(within(toolbar).getByText('+2')).toBeInTheDocument()
     expect(within(toolbar).getByText('-2')).toBeInTheDocument()
-    expect(within(toolbar).getByText('human/dingo-20260624-023038')).toBeInTheDocument()
+    expect(within(toolbar).getByText('feature/change-set')).toBeInTheDocument()
     expect(within(toolbar).getByText('origin/main')).toBeInTheDocument()
 
     expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
@@ -163,7 +255,53 @@ describe('FileChangesReviewPanel', () => {
     })
   })
 
-  test('shows only the selected file when the diff is large', async () => {
+  test('orders diff sections exactly like the file tree regardless of patch order', async () => {
+    const paths = [
+      'README.md',
+      'src/file-10.ts',
+      'src/z.ts',
+      'src/nested/change.ts',
+      'src/file-2.ts',
+      'src/a.ts',
+    ]
+    const patch = paths
+      .map(path =>
+        [
+          `diff --git a/${path} b/${path}`,
+          `--- a/${path}`,
+          `+++ b/${path}`,
+          '@@ -1 +1 @@',
+          '-old',
+          '+new',
+        ].join('\n')
+      )
+      .join('\n')
+    render(<FileChangesReviewPanel loading={false} diff={patch} />)
+
+    const expected = [
+      'src/nested/change.ts',
+      'src/a.ts',
+      'src/file-2.ts',
+      'src/file-10.ts',
+      'src/z.ts',
+      'README.md',
+    ]
+    await waitFor(() => {
+      const treeFiles = screen
+        .getByTestId('pierre-file-tree')
+        .shadowRoot?.querySelectorAll('[data-item-type="file"]')
+      expect(Array.from(treeFiles ?? [], item => item.getAttribute('data-item-path'))).toEqual(
+        expected
+      )
+    })
+    expect(
+      screen
+        .getAllByTestId('file-changes-review-file-diff-section')
+        .map(section => section.dataset.reviewPath)
+    ).toEqual(expected)
+  })
+
+  test('keeps large diffs in one continuous list when focusing another file', async () => {
     const { rerender } = render(
       <FileChangesReviewPanel
         loading={false}
@@ -173,7 +311,6 @@ describe('FileChangesReviewPanel', () => {
       />
     )
 
-    expect(screen.getByText(/This diff is large|此差异较大/)).toBeInTheDocument()
     expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('上轮对话')
     expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
     expect(screen.getByTestId('toggle-file-tree-button')).toHaveAttribute('aria-pressed', 'false')
@@ -182,8 +319,11 @@ describe('FileChangesReviewPanel', () => {
     await waitFor(() => {
       expect(diff).toBeInTheDocument()
       expect(getRenderedDiffText()).toContain('new 1')
-      expect(getRenderedDiffText()).not.toContain('new 2')
+      expect(getRenderedDiffText()).toContain('new 2')
+      expect(getRenderedDiffText()).toContain('new 13')
     })
+    const sections = screen.getAllByTestId('file-changes-review-file-diff-section')
+    expect(sections).toHaveLength(13)
 
     rerender(
       <FileChangesReviewPanel
@@ -196,8 +336,30 @@ describe('FileChangesReviewPanel', () => {
     )
 
     await waitFor(() => {
-      expect(getRenderedDiffText()).not.toContain('new 2')
+      expect(getRenderedDiffText()).toContain('new 2')
       expect(getRenderedDiffText()).toContain('new 13')
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(sections[12])
+    })
+  })
+
+  test('keeps the next file available after a diff with more than 700 lines', async () => {
+    const longDiff = [
+      'diff --git a/src/long.ts b/src/long.ts',
+      '--- a/src/long.ts',
+      '+++ b/src/long.ts',
+      '@@ -1,701 +1,701 @@',
+      ...Array.from({ length: 701 }, (_, index) => `-old line ${index}`),
+      ...Array.from({ length: 701 }, (_, index) => `+new line ${index}`),
+      twoFileDiff,
+    ].join('\n')
+
+    render(<FileChangesReviewPanel loading={false} diff={longDiff} />)
+
+    expect(screen.getAllByTestId('file-changes-review-file-diff-section')).toHaveLength(3)
+    await waitFor(() => {
+      expect(getRenderedDiffText()).toContain('new line 700')
+      expect(getRenderedDiffText()).toContain('new alpha')
+      expect(getRenderedDiffText()).toContain('new beta')
     })
   })
 

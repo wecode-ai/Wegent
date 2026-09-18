@@ -216,7 +216,6 @@
     "previous_turn_label": "上轮对话",
     "branch_label": "分支",
     "branch_unknown": "当前工作区",
-    "large_diff_single_file_notice": "此差异较大，每次仅显示一个文件",
     "file_list_label": "变更文件",
     "file_search_placeholder": "筛选文件...",
     "file_search_empty": "没有匹配的文件",

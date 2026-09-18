@@ -16,7 +16,8 @@ import {
   WrapText,
 } from 'lucide-react'
 import { PatchDiff } from '@pierre/diffs/react'
-import type { RefObject } from 'react'
+import { prepareFileTreeInput } from '@pierre/trees'
+import type { RefObject, UIEventHandler } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -39,8 +40,6 @@ import {
 } from './fileChangesReviewUtils'
 import { ReviewFileTree } from './FileChangesReviewTree'
 
-const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
-const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
 const PIERRE_DIFF_CSS = `
   :host {
     --diffs-light-bg: rgb(var(--color-bg-base));
@@ -139,8 +138,16 @@ export function FileChangesReviewPanel({
   const [commentSelection, setCommentSelection] = useState<DiffCommentSelection | null>(null)
   const [comment, setComment] = useState('')
   const diffLinesRef = useRef<HTMLDivElement>(null)
+  const navigationFrameRef = useRef<number | null>(null)
+  const navigatingRef = useRef(false)
 
-  const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
+  const sections = useMemo(() => {
+    const sectionsByPath = new Map(parseUnifiedDiff(diff).map(section => [section.path, section]))
+    const { paths } = prepareFileTreeInput([...sectionsByPath.keys()], {
+      flattenEmptyDirectories: true,
+    })
+    return paths.map(path => sectionsByPath.get(path)!)
+  }, [diff])
   const focusSectionIndex = useMemo(
     () => (focusFilePath ? findSectionIndexForPath(sections, focusFilePath) : -1),
     [focusFilePath, sections]
@@ -153,15 +160,77 @@ export function FileChangesReviewPanel({
   const selectedIndex = selectedPathIndex >= 0 ? selectedPathIndex : defaultSelectedIndex
   const selectedSection = sections[selectedIndex] ?? sections[0]
   const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
-  const isLargeDiff = useMemo(() => isLargeReviewDiff(sections), [sections])
-  const displayedSections = isLargeDiff && selectedSection ? [selectedSection] : sections
+
+  useEffect(() => {
+    const container = diffLinesRef.current
+    if (!container) return
+    const stopNavigation = () => {
+      if (navigationFrameRef.current !== null) {
+        cancelAnimationFrame(navigationFrameRef.current)
+        navigationFrameRef.current = null
+      }
+      if (navigatingRef.current) {
+        navigatingRef.current = false
+        container.scrollTo({
+          top: container.scrollTop,
+          left: container.scrollLeft,
+          behavior: 'instant',
+        })
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+        stopNavigation()
+      }
+    }
+    const onScrollEnd = () => {
+      navigatingRef.current = false
+    }
+    const inputEvents = ['wheel', 'touchstart', 'pointerdown'] as const
+    inputEvents.forEach(type => container.addEventListener(type, stopNavigation, { passive: true }))
+    container.addEventListener('keydown', onKeyDown)
+    container.addEventListener('scrollend', onScrollEnd)
+    return () => {
+      inputEvents.forEach(type => container.removeEventListener(type, stopNavigation))
+      container.removeEventListener('keydown', onKeyDown)
+      container.removeEventListener('scrollend', onScrollEnd)
+      if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current)
+      navigationFrameRef.current = null
+      navigatingRef.current = false
+    }
+  }, [loading, error, sections.length])
+
+  const syncScrolledSection: UIEventHandler<HTMLDivElement> = event => {
+    const container = event.currentTarget
+    if (event.target !== container) return
+    const elements = Array.from(container.querySelectorAll<HTMLElement>('[data-review-path]'))
+    const top = container.getBoundingClientRect().top
+    const atBottom =
+      container.scrollTop > 0 &&
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 1
+    const current = atBottom
+      ? elements.at(-1)
+      : elements.find(element => element.getBoundingClientRect().bottom > top + 1)
+    const path = current?.dataset.reviewPath
+    if (!path) return
+    setSelection(previous =>
+      previous.focusFilePath === focusFilePath && previous.path === path
+        ? previous
+        : { focusFilePath, path }
+    )
+  }
 
   const scrollToSection = useCallback((section: DiffFileSection, behavior: ScrollBehavior) => {
-    const container = diffLinesRef.current
-    const target = Array.from(
-      container?.querySelectorAll<HTMLElement>('[data-review-path]') ?? []
-    ).find(element => element.dataset.reviewPath === section.path)
-    target?.scrollIntoView({ behavior, block: 'start' })
+    if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current)
+    navigationFrameRef.current = requestAnimationFrame(() => {
+      navigationFrameRef.current = null
+      const container = diffLinesRef.current
+      const target = Array.from(
+        container?.querySelectorAll<HTMLElement>('[data-review-path]') ?? []
+      ).find(element => element.dataset.reviewPath === section.path)
+      navigatingRef.current = Boolean(target) && behavior === 'smooth'
+      target?.scrollIntoView({ behavior, block: 'start' })
+    })
   }, [])
 
   const selectSection = useCallback(
@@ -170,7 +239,7 @@ export function FileChangesReviewPanel({
       if (!section) return
       setSelection({ focusFilePath, path: section.path })
       setHunksCollapsed(false)
-      requestAnimationFrame(() => scrollToSection(section, 'smooth'))
+      scrollToSection(section, 'smooth')
     },
     [focusFilePath, scrollToSection, sections]
   )
@@ -178,7 +247,7 @@ export function FileChangesReviewPanel({
   useEffect(() => {
     if (focusSectionIndex < 0) return
     const section = sections[focusSectionIndex]
-    requestAnimationFrame(() => scrollToSection(section, 'instant'))
+    scrollToSection(section, 'instant')
   }, [focusFilePath, focusSectionIndex, scrollToSection, sections])
 
   const applyPatch = useCallback(
@@ -254,11 +323,6 @@ export function FileChangesReviewPanel({
             }
             onCopyGitApplyCommand={copyGitApplyCommand}
           />
-          {isLargeDiff ? (
-            <p className="shrink-0 border-b border-border bg-background px-6 py-2 text-sm text-text-muted">
-              {t('file_changes.large_diff_single_file_notice')}
-            </p>
-          ) : null}
           {actionError ? (
             <p
               role="alert"
@@ -281,10 +345,11 @@ export function FileChangesReviewPanel({
               </div>
             ) : (
               <AllDiffSections
-                sections={displayedSections}
+                sections={sections}
                 ariaLabel={t('file_changes.all_files_diff_label')}
                 wrapLines={wrapLines}
                 diffLinesRef={diffLinesRef}
+                onScroll={syncScrolledSection}
                 diffStyle={diffStyle}
                 hunksCollapsed={hunksCollapsed}
                 collapsedSections={collapsedSections}
@@ -564,6 +629,7 @@ function AllDiffSections({
   ariaLabel,
   wrapLines,
   diffLinesRef,
+  onScroll,
   diffStyle,
   hunksCollapsed,
   collapsedSections,
@@ -583,6 +649,7 @@ function AllDiffSections({
   ariaLabel: string
   wrapLines: boolean
   diffLinesRef: RefObject<HTMLDivElement | null>
+  onScroll: UIEventHandler<HTMLDivElement>
   diffStyle: 'unified' | 'split'
   hunksCollapsed: boolean
   collapsedSections: Set<string>
@@ -607,6 +674,7 @@ function AllDiffSections({
     >
       <div
         ref={diffLinesRef}
+        onScroll={onScroll}
         data-testid="file-changes-review-diff-lines"
         data-wrap={wrapLines ? 'true' : 'false'}
         data-diff-style={diffStyle}
@@ -896,13 +964,4 @@ function getSectionsDiffStats(sections: DiffFileSection[]) {
     },
     { additions: 0, deletions: 0 }
   )
-}
-
-function isLargeReviewDiff(sections: DiffFileSection[]) {
-  if (sections.length > LARGE_DIFF_FILE_COUNT_THRESHOLD) {
-    return true
-  }
-
-  const lineCount = sections.reduce((total, section) => total + section.lines.length, 0)
-  return lineCount > LARGE_DIFF_LINE_COUNT_THRESHOLD
 }
