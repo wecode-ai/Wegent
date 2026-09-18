@@ -42,12 +42,12 @@ describe('parseChatError', () => {
 
   test('reports the model service endpoint when the local proxy cannot connect', () => {
     const parsed = parseChatError(
-      'unexpected status 502 Bad Gateway: {"detail":"Local model proxy request failed: error sending request for url (https://wegent.intra.weibo.com/api/runtime-work/llm-responses-proxy/responses)"}'
+      'unexpected status 502 Bad Gateway: {"detail":"Local model proxy request failed: error sending request for url (https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses)"}'
     )
 
     expect(parsed.type).toBe('model_service_connection_error')
     expect(parsed.endpoint).toBe(
-      'https://wegent.intra.weibo.com/api/runtime-work/llm-responses-proxy/responses'
+      'https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses'
     )
   })
 })

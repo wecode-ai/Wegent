@@ -260,7 +260,7 @@ const RATE_LIMIT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT_COMPLETE'
 const MODEL_SERVICE_CONNECTION_PROMPT =
   'WEWORK_DESKTOP_E2E_MODEL_SERVICE_CONNECTION: show the failed endpoint.'
 const MODEL_SERVICE_CONNECTION_ENDPOINT =
-  'https://wegent.intra.weibo.com/api/runtime-work/llm-responses-proxy/responses'
+  'https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses'
 const MODEL_SERVICE_CONNECTION_ERROR = `unexpected status 502 Bad Gateway: {"detail":"Local model proxy request failed: error sending request for url (${MODEL_SERVICE_CONNECTION_ENDPOINT})"}`
 const ANTHROPIC_EMPTY_PROMPT =
   'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY: recover when Kimi reports tokens without output.'
