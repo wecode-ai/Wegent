@@ -1321,6 +1321,12 @@
   "wikiSection": {
     "synced_badge": "Synced Wiki",
     "connection": "Wiki connection",
+    "project": "Repository",
+    "branch": "Branch",
+    "no_projects": "No accessible repositories",
+    "no_branches": "This repository has no branches",
+    "load_projects_failed": "Failed to load GitLab repositories",
+    "load_branches_failed": "Failed to load GitLab branches",
     "loading": "Loading wiki bindings…",
     "load_failed": "Failed to load wiki bindings",
     "add_failed": "Failed to bind",
@@ -1347,6 +1353,11 @@
     "resynced_n": "Resynchronized {{count}} wiki documents",
     "processing_n": "{{count}} wiki documents are already processing and were skipped",
     "bind_selected": "Bind selected ({{count}})",
-    "bind_scope_success_n": "Bound {{count}} wiki documents"
+    "bind_scope_success_n": "Bound {{count}} wiki documents",
+    "unsupported": {
+      "invalid_file_name": "Invalid file name",
+      "missing_file_extension": "Missing file extension",
+      "unsupported_file_type": "Unsupported file type"
+    }
   }
 }

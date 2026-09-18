@@ -135,6 +135,8 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
     assert current_user is not None
 
     class Connector:
+        connector_type = "wikijs"
+
         async def list_pages(self, *_args, **_kwargs):
             assert not production_session.in_transaction()
             return [], None
@@ -161,6 +163,8 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
             offset=0,
             refresh=False,
             connection_id="conn-primary",
+            project_path=None,
+            branch=None,
             db=production_session,
             current_user=current_user,
         )
@@ -176,6 +180,8 @@ async def test_list_pages_keeps_current_user_attached_across_remote_io(
 @pytest.mark.asyncio
 async def test_list_pages_translates_connector_error_to_http_response(monkeypatch):
     class Connector:
+        connector_type = "wikijs"
+
         async def list_pages(self, *_args, **_kwargs):
             raise WikiApiError(
                 "wiki_auth_failed",
@@ -205,6 +211,8 @@ async def test_list_pages_translates_connector_error_to_http_response(monkeypatc
             offset=0,
             refresh=False,
             connection_id="conn-primary",
+            project_path=None,
+            branch=None,
             db=db,
             current_user=SimpleNamespace(id=7),
         )

@@ -28,14 +28,19 @@ from app.schemas.external_wiki import (
     WikiBindingCreateRequest,
     WikiBindingCreateResponse,
     WikiBoundDocument,
+    WikiBranchesResponse,
+    WikiBranchSummary,
     WikiConnectionsResponse,
     WikiConnectionSummary,
     WikiConnectionTestRequest,
     WikiConnectionTestResponse,
+    WikiConnectorCapabilities,
     WikiConnectorOption,
     WikiNamedConnectionUpdateRequest,
     WikiPagesResponse,
     WikiPageSummary,
+    WikiProjectsResponse,
+    WikiProjectSummary,
 )
 from app.services.external_source_connections import external_source_connection_service
 from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
@@ -76,7 +81,15 @@ router = APIRouter()
 
 
 def _wiki_error(exc: WikiApiError) -> HTTPException:
-    client_codes = {"bad_request", "wiki_not_configured"}
+    client_codes = {
+        "bad_request",
+        "external_file_empty",
+        "external_file_too_large",
+        "external_scope_invalid",
+        "external_sync_config_invalid",
+        "unsupported_file_type",
+        "wiki_not_configured",
+    }
     code = status.HTTP_400_BAD_REQUEST
     if exc.error_code not in client_codes:
         code = status.HTTP_502_BAD_GATEWAY
@@ -128,13 +141,33 @@ def _require_kb_edit(db: Session, kb: Kind, user: User) -> None:
 def _available_connectors() -> list[WikiConnectorOption]:
     register_builtin_connectors()
     return [
-        WikiConnectorOption(type=c.connector_type, display_name=c.display_name)
+        WikiConnectorOption(
+            type=c.connector_type,
+            display_name=c.display_name,
+            capabilities=WikiConnectorCapabilities(
+                resource_kind=c.capabilities.resource_kind,
+                supports_locale=c.capabilities.supports_locale,
+                supports_project_selection=(c.capabilities.supports_project_selection),
+                supports_branch_selection=c.capabilities.supports_branch_selection,
+                supports_scheduled_sync=c.capabilities.supports_scheduled_sync,
+            ),
+        )
         for c in WIKI_CONNECTORS.list()
     ]
 
 
 def _connection_summary(item: dict[str, Any]) -> WikiConnectionSummary:
-    return WikiConnectionSummary(**item, available_connectors=_available_connectors())
+    options = _available_connectors()
+    connector_type = str(item.get("connector_type") or "")
+    selected = next(
+        (option.capabilities for option in options if option.type == connector_type),
+        WikiConnectorCapabilities(),
+    )
+    return WikiConnectionSummary(
+        **item,
+        capabilities=selected,
+        available_connectors=options,
+    )
 
 
 def _knowledge_base_display_name(knowledge_base: Kind) -> str:
@@ -195,7 +228,7 @@ async def list_wiki_connections(
     options = _available_connectors()
     return WikiConnectionsResponse(
         connections=[
-            WikiConnectionSummary(**item, available_connectors=options)
+            _connection_summary(item)
             for item in WikiConnectionService.list_connections(db, current_user)
         ],
         available_connectors=options,
@@ -423,6 +456,11 @@ def _bound_document(document: KnowledgeDocument) -> WikiBoundDocument:
         resource_url=str(external.get("url") or ""),
         status=str(index_status),
         connection_id=str(sync.get("connection_id") or "") or None,
+        adapter_type=str(sync.get("adapter_type") or "wikijs"),
+        resource_kind=str(sync.get("resource_kind") or "page"),
+        project_path=str(sync.get("project_path") or "") or None,
+        branch=str(sync.get("branch") or "") or None,
+        file_extension=str(sync.get("file_extension") or ""),
     )
 
 
@@ -467,6 +505,8 @@ async def create_kb_binding(
             current_user,
             body.connection_id,
             body.page_ids,
+            project_path=body.project_path,
+            branch=body.branch,
         )
         result = external_document_import_service.import_resolved_documents(
             db=db,
@@ -527,7 +567,97 @@ def _summary(config: WikiSiteConfig, meta: Any) -> WikiPageSummary:
         tags=list(meta.tags),
         locale=meta.locale,
         is_published=meta.is_published,
-        page_url=build_page_url(config.site_url, meta.path),
+        page_url=meta.source_url or build_page_url(config.site_url, meta.path),
+        resource_kind=meta.resource_kind,
+        resource_key=meta.resource_key,
+        file_extension=meta.file_extension,
+        importable=meta.importable,
+        unsupported_reason=meta.unsupported_reason,
+        is_directory=meta.is_directory,
+    )
+
+
+def _require_connection(
+    db: Session,
+    current_user: User,
+    connection_id: str | None,
+):
+    if not connection_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请选择 Wiki 连接",
+        )
+    connection = WikiConnectionService.get_user_wiki_connection(
+        current_user, db=db, connection_id=connection_id
+    )
+    if connection is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先在「设置 → 集成」配置外部 Wiki 连接",
+        )
+    return connection
+
+
+@router.get("/wiki/projects", response_model=WikiProjectsResponse)
+async def list_wiki_projects(
+    connection_id: str = Query(..., min_length=1),
+    search: str = Query("", max_length=100),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    connection = _require_connection(db, current_user, connection_id)
+    db.commit()
+    try:
+        projects, next_offset = await connection.connector.list_projects(
+            connection.config,
+            search=search,
+            limit=limit,
+            offset=offset,
+        )
+    except WikiApiError as exc:
+        raise _wiki_error(exc) from exc
+    return WikiProjectsResponse(
+        projects=[
+            WikiProjectSummary(
+                path=project.path,
+                name=project.name,
+                default_branch=project.default_branch,
+                web_url=project.web_url,
+            )
+            for project in projects
+        ],
+        next_offset=next_offset,
+    )
+
+
+@router.get("/wiki/branches", response_model=WikiBranchesResponse)
+async def list_wiki_branches(
+    connection_id: str = Query(..., min_length=1),
+    project_path: str = Query(..., min_length=1, max_length=255),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    connection = _require_connection(db, current_user, connection_id)
+    db.commit()
+    try:
+        branches, next_offset = await connection.connector.list_branches(
+            connection.config,
+            project_path,
+            limit=limit,
+            offset=offset,
+        )
+    except WikiApiError as exc:
+        raise _wiki_error(exc) from exc
+    return WikiBranchesResponse(
+        branches=[
+            WikiBranchSummary(name=branch.name, is_default=branch.is_default)
+            for branch in branches
+        ],
+        next_offset=next_offset,
     )
 
 
@@ -590,22 +720,30 @@ async def list_wiki_pages(
     offset: int = Query(0, ge=0),
     refresh: bool = Query(False),
     connection_id: Optional[str] = Query(None),
+    project_path: Optional[str] = Query(None, max_length=255),
+    branch: Optional[str] = Query(None, max_length=255),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """List pages from one connection for the synchronized-import picker."""
-    if not connection_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请选择 Wiki 连接",
-        )
-    connection = WikiConnectionService.get_user_wiki_connection(
-        current_user, db=db, connection_id=connection_id
-    )
-    if connection is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先在「设置 → 集成」配置外部 Wiki 连接",
+    connection = _require_connection(db, current_user, connection_id)
+    if connection.connector.connector_type != "wikijs":
+        db.commit()
+        try:
+            pages, next_offset = await connection.connector.list_pages(
+                connection.config,
+                path=path,
+                locale=locale,
+                limit=limit,
+                offset=offset,
+                project_path=project_path,
+                branch=branch,
+            )
+        except WikiApiError as exc:
+            raise _wiki_error(exc) from exc
+        return WikiPagesResponse(
+            pages=[_summary(connection.config, meta) for meta in pages],
+            next_offset=next_offset,
         )
     cache_scope = (
         f"user:{current_user.id}:{connection.connection_id}:"

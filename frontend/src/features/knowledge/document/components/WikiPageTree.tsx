@@ -26,6 +26,7 @@ interface WikiPageTreeProps {
   forceExpanded?: boolean
   onTogglePage: (pageId: string) => void
   onToggleDirectory: (path: string) => void
+  onLoadDirectory?: (path: string) => void
   onToggleDirectorySelection: (pageIds: string[]) => void
 }
 
@@ -103,10 +104,11 @@ function TreeNode({
   forceExpanded,
   onTogglePage,
   onToggleDirectory,
+  onLoadDirectory,
   onToggleDirectorySelection,
 }: Omit<WikiPageTreeProps, 'pages'> & { node: WikiPageTreeNode; depth: number }) {
   const { t } = useTranslation('knowledge')
-  const hasChildren = node.children.length > 0
+  const hasChildren = node.children.length > 0 || Boolean(node.page?.is_directory)
   const open = hasChildren && (forceExpanded || expandedPaths.has(node.key))
   const page = node.page
   const isBound = page ? boundPageIds.has(page.id) : false
@@ -135,7 +137,10 @@ function TreeNode({
           <button
             type="button"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded text-text-muted hover:text-text-primary md:h-7 md:w-7"
-            onClick={() => onToggleDirectory(node.key)}
+            onClick={() => {
+              onToggleDirectory(node.key)
+              if (!open && page?.is_directory) onLoadDirectory?.(page.path)
+            }}
             aria-expanded={open}
             aria-label={directoryLabel}
             title={directoryLabel}
@@ -199,13 +204,14 @@ function TreeNode({
         ) : page ? (
           <label
             className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm ${
-              isBound ? 'cursor-not-allowed opacity-50' : ''
+              isBound || page.importable === false ? 'cursor-not-allowed opacity-50' : ''
             }`}
+            title={page.unsupported_reason || undefined}
           >
             <input
               type="checkbox"
               checked={checked}
-              disabled={isBound || disabled}
+              disabled={isBound || disabled || page.importable === false}
               onChange={() => onTogglePage(page.id)}
               data-testid={`wiki-import-check-${page.path}`}
             />
@@ -217,6 +223,11 @@ function TreeNode({
             {isBound && (
               <span className="shrink-0 text-xs text-text-muted">
                 {t('wikiSection.already_bound')}
+              </span>
+            )}
+            {!isBound && page.importable === false && (
+              <span className="shrink-0 text-xs text-text-muted">
+                {t(`wikiSection.unsupported.${page.unsupported_reason || 'unsupported_file_type'}`)}
               </span>
             )}
           </label>
@@ -237,6 +248,7 @@ function TreeNode({
               forceExpanded={forceExpanded}
               onTogglePage={onTogglePage}
               onToggleDirectory={onToggleDirectory}
+              onLoadDirectory={onLoadDirectory}
               onToggleDirectorySelection={onToggleDirectorySelection}
             />
           ))}

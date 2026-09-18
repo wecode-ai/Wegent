@@ -46,6 +46,7 @@ import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { getProcessingErrorMessage } from '../utils/processing-error'
 import {
   getDocumentDisplayUpdatedAt,
+  getSyncedWikiConnectorType,
   isSyncedWikiDocument,
   isWikiSourceMissing,
 } from '../utils/documentUtils'
@@ -572,9 +573,9 @@ export function KnowledgeDocumentTreeGrid({
       },
       {
         id: 'type',
-        size: 80,
-        minSize: 72,
-        maxSize: 120,
+        size: 112,
+        minSize: 100,
+        maxSize: 140,
         header: () => t('document.document.columns.type'),
         cell: ({ row }) => {
           const node = row.original.node
@@ -593,8 +594,9 @@ export function KnowledgeDocumentTreeGrid({
           if (document.source_type === 'external') {
             return (
               <ExternalDocumentBadge
-                extension={document.file_extension}
                 syncedWiki={isSyncedWikiDocument(document)}
+                extension={document.file_extension}
+                connectorType={getSyncedWikiConnectorType(document)}
               />
             )
           }

@@ -9,22 +9,18 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  AlertTriangle,
-  ExternalLink as BookExternalLink,
-  Link2,
-  Loader2,
-  RefreshCw,
-  X,
-} from 'lucide-react'
+import { AlertTriangle, Loader2, RefreshCw, X } from 'lucide-react'
 
+import { getWikiConnectorPresentation } from './ExternalDocumentBadge'
 import { getWikiDirectoryKeys, WikiPageTree } from './WikiPageTree'
 
 import {
   wikiApis,
+  type WikiBranchSummary,
   type WikiBoundDocument,
   type WikiConnectionSummary,
   type WikiPageSummary,
+  type WikiProjectSummary,
 } from '@/apis/wiki'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +38,8 @@ export interface WikiBindImportSummary {
 
 export interface WikiImportOptions {
   connectionId: string
+  projectPath?: string
+  branch?: string
 }
 
 interface WikiDocumentImportProps {
@@ -57,6 +55,13 @@ const HAN_CHARACTER_PATTERN = /\p{Script=Han}/u
 const SEARCH_TOKEN_PATTERN = /\p{Script=Han}+|[\p{L}\p{N}]+/gu
 const WIKI_API_PAGE_SIZE = 200
 const DEFAULT_PICKER_PAGE_SIZE = 20
+const WIKIJS_CAPABILITIES = {
+  resource_kind: 'page' as const,
+  supports_locale: true,
+  supports_project_selection: false,
+  supports_branch_selection: false,
+  supports_scheduled_sync: true,
+}
 const WIKI_PATH_COLLATOR = new Intl.Collator(['zh-CN', 'en'], {
   numeric: true,
   sensitivity: 'base',
@@ -100,6 +105,11 @@ export function WikiDocumentImport({
   const [siteUrl, setSiteUrl] = useState('')
   const [connections, setConnections] = useState<WikiConnectionSummary[]>([])
   const [connectionId, setConnectionId] = useState('')
+  const [projects, setProjects] = useState<WikiProjectSummary[]>([])
+  const [projectPath, setProjectPath] = useState('')
+  const [branches, setBranches] = useState<WikiBranchSummary[]>([])
+  const [branch, setBranch] = useState('')
+  const [scopeLoading, setScopeLoading] = useState(false)
   const [bound, setBound] = useState<WikiBoundDocument[]>([])
   const [boundLoading, setBoundLoading] = useState(true)
   const [pages, setPages] = useState<WikiPageSummary[] | null>(null)
@@ -115,6 +125,18 @@ export function WikiDocumentImport({
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
   const pagesRequestIdRef = useRef(0)
+  const selectedConnection = useMemo(
+    () => connections.find(item => item.id === connectionId),
+    [connectionId, connections]
+  )
+  const capabilities = selectedConnection
+    ? selectedConnection.capabilities || WIKIJS_CAPABILITIES
+    : undefined
+  const isRepository = capabilities?.resource_kind === 'file'
+  const isFlatProjectWiki =
+    capabilities?.supports_project_selection && capabilities.resource_kind === 'page'
+  const selectedConnector = getWikiConnectorPresentation(selectedConnection?.connector_type)
+  const SelectedConnectorIcon = selectedConnector.Icon
 
   const loadBound = useCallback(async () => {
     try {
@@ -147,7 +169,9 @@ export function WikiDocumentImport({
   }, [knowledgeBaseId])
 
   const loadPages = useCallback(
-    async (refresh = false) => {
+    async (refresh = false, directoryPath = '', targetProject = '', targetBranch = '') => {
+      if (capabilities?.supports_project_selection && !targetProject) return
+      if (capabilities?.supports_branch_selection && !targetBranch) return
       const requestId = pagesRequestIdRef.current + 1
       pagesRequestIdRef.current = requestId
       try {
@@ -162,6 +186,9 @@ export function WikiDocumentImport({
           const response = await wikiApis.listPages({
             limit: WIKI_API_PAGE_SIZE,
             connection_id: connectionId || undefined,
+            project_path: targetProject || undefined,
+            branch: targetBranch || undefined,
+            path: directoryPath || undefined,
             ...(offset ? { offset } : {}),
             ...(refresh && firstRequest ? { refresh: true } : {}),
           })
@@ -173,9 +200,14 @@ export function WikiDocumentImport({
         }
         if (requestId !== pagesRequestIdRef.current) return
         const uniquePages = [...new Map(loadedPages.map(page => [page.id, page])).values()]
-        setPages(uniquePages)
+        setPages(current => {
+          if (!directoryPath) return uniquePages
+          return [
+            ...new Map([...(current || []), ...uniquePages].map(page => [page.id, page])).values(),
+          ]
+        })
         setPageWarnings([...loadedWarnings])
-        setExpandedDirectories(getWikiDirectoryKeys(uniquePages))
+        if (!isRepository) setExpandedDirectories(getWikiDirectoryKeys(uniquePages))
         setPickerPage(1)
         setConnectionError(null)
         const availablePageIds = new Set(uniquePages.map(page => page.id))
@@ -197,12 +229,85 @@ export function WikiDocumentImport({
         if (requestId === pagesRequestIdRef.current) setPagesLoading(false)
       }
     },
-    [connectionId, toast, t]
+    [capabilities, connectionId, isRepository, toast, t]
   )
 
-  useEffect(() => {
-    if (connected && connectionId) void loadPages()
-  }, [connected, connectionId, loadPages])
+  const loadProjects = useCallback(async () => {
+    if (!connectionId) return
+    try {
+      setScopeLoading(true)
+      const loaded: WikiProjectSummary[] = []
+      let offset = 0
+      const visited = new Set<number>()
+      while (!visited.has(offset)) {
+        visited.add(offset)
+        const response = await wikiApis.listProjects({
+          connection_id: connectionId,
+          limit: WIKI_API_PAGE_SIZE,
+          ...(offset ? { offset } : {}),
+        })
+        loaded.push(...response.projects)
+        if (response.next_offset === null) break
+        offset = response.next_offset
+      }
+      setProjects(loaded)
+      setProjectPath(loaded[0]?.path || '')
+      if (!loaded.length) setPages([])
+    } catch (error) {
+      setProjects([])
+      setPages([])
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || t('wikiSection.load_projects_failed'),
+      })
+    } finally {
+      setScopeLoading(false)
+    }
+  }, [connectionId, t, toast])
+
+  const loadBranches = useCallback(
+    async (targetProject: string) => {
+      if (!connectionId || !targetProject) return
+      try {
+        setScopeLoading(true)
+        const loaded: WikiBranchSummary[] = []
+        let offset = 0
+        const visited = new Set<number>()
+        while (!visited.has(offset)) {
+          visited.add(offset)
+          const response = await wikiApis.listBranches({
+            connection_id: connectionId,
+            project_path: targetProject,
+            limit: WIKI_API_PAGE_SIZE,
+            ...(offset ? { offset } : {}),
+          })
+          loaded.push(...response.branches)
+          if (response.next_offset === null) break
+          offset = response.next_offset
+        }
+        setBranches(loaded)
+        const projectDefault = projects.find(item => item.path === targetProject)?.default_branch
+        setBranch(
+          loaded.find(item => item.name === projectDefault)?.name ||
+            loaded.find(item => item.is_default)?.name ||
+            loaded[0]?.name ||
+            ''
+        )
+        if (!loaded.length) setPages([])
+      } catch (error) {
+        setBranches([])
+        setBranch('')
+        setPages([])
+        toast({
+          variant: 'destructive',
+          title: (error as Error)?.message || t('wikiSection.load_branches_failed'),
+        })
+      } finally {
+        setScopeLoading(false)
+      }
+    },
+    [connectionId, projects, t, toast]
+  )
 
   useEffect(() => {
     const connection = connections.find(item => item.id === connectionId)
@@ -212,8 +317,35 @@ export function WikiDocumentImport({
     setPageWarnings([])
     setSelected(new Set())
     setExpandedDirectories(new Set())
+    setProjects([])
+    setProjectPath('')
+    setBranches([])
+    setBranch('')
     setPickerPage(1)
   }, [connectionId, connections])
+
+  useEffect(() => {
+    if (!connected || !connectionId || !capabilities) return
+    if (capabilities.supports_project_selection) void loadProjects()
+    else void loadPages()
+  }, [capabilities, connected, connectionId, loadPages, loadProjects])
+
+  useEffect(() => {
+    if (!projectPath || !capabilities?.supports_project_selection) return
+    setPages(null)
+    setSelected(new Set())
+    setExpandedDirectories(new Set())
+    if (capabilities.supports_branch_selection) void loadBranches(projectPath)
+    else void loadPages(false, '', projectPath)
+  }, [capabilities, loadBranches, loadPages, projectPath])
+
+  useEffect(() => {
+    if (!branch || !capabilities?.supports_branch_selection) return
+    setPages(null)
+    setSelected(new Set())
+    setExpandedDirectories(new Set())
+    void loadPages(false, '', projectPath, branch)
+  }, [branch, capabilities, loadPages, projectPath])
 
   useEffect(() => {
     onDraftChange(selected.size > 0)
@@ -221,8 +353,17 @@ export function WikiDocumentImport({
 
   const boundPageIds = useMemo(
     () =>
-      new Set(bound.filter(item => item.connection_id === connectionId).map(item => item.page_id)),
-    [bound, connectionId]
+      new Set(
+        bound
+          .filter(
+            item =>
+              item.connection_id === connectionId &&
+              (!capabilities?.supports_project_selection || item.project_path === projectPath) &&
+              (!capabilities?.supports_branch_selection || item.branch === branch)
+          )
+          .map(item => item.page_id)
+      ),
+    [bound, branch, capabilities, connectionId, projectPath]
   )
 
   const filteredPages = useMemo(() => {
@@ -232,12 +373,15 @@ export function WikiDocumentImport({
       .sort(compareWikiPagesByPath)
   }, [pages, keyword])
 
-  const pickerTotalPages = Math.max(1, Math.ceil(filteredPages.length / pickerPageSize))
+  const pickerTotalPages = isRepository
+    ? 1
+    : Math.max(1, Math.ceil(filteredPages.length / pickerPageSize))
   const effectivePickerPage = Math.min(pickerPage, pickerTotalPages)
   const visiblePages = useMemo(() => {
+    if (isRepository) return filteredPages
     const start = (effectivePickerPage - 1) * pickerPageSize
     return filteredPages.slice(start, start + pickerPageSize)
-  }, [effectivePickerPage, filteredPages, pickerPageSize])
+  }, [effectivePickerPage, filteredPages, isRepository, pickerPageSize])
 
   useEffect(() => {
     setPickerPage(1)
@@ -264,7 +408,7 @@ export function WikiDocumentImport({
   }
 
   const selectableFilteredPageIds = filteredPages
-    .filter(page => !boundPageIds.has(page.id))
+    .filter(page => page.importable !== false && !page.is_directory && !boundPageIds.has(page.id))
     .map(page => page.id)
   const allFilteredSelected =
     selectableFilteredPageIds.length > 0 &&
@@ -288,7 +432,11 @@ export function WikiDocumentImport({
     if (!pageIds.length) return
     try {
       setSubmitting(true)
-      const summary = await onImport(pageIds, { connectionId })
+      const summary = await onImport(pageIds, {
+        connectionId,
+        projectPath: projectPath || undefined,
+        branch: branch || undefined,
+      })
       setSelected(new Set())
       await loadBound()
       onDone?.()
@@ -383,8 +531,51 @@ export function WikiDocumentImport({
             </select>
           </label>
         )}
+        {capabilities?.supports_project_selection && (
+          <label className="flex items-center gap-2 text-sm text-text-primary">
+            <span>{t('wikiSection.project')}</span>
+            <select
+              value={projectPath}
+              onChange={event => setProjectPath(event.target.value)}
+              disabled={scopeLoading || projects.length === 0}
+              className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3"
+              data-testid="wiki-import-project-select"
+            >
+              {projects.length === 0 && <option value="">{t('wikiSection.no_projects')}</option>}
+              {projects.map(project => (
+                <option key={project.path} value={project.path}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {capabilities?.supports_branch_selection && (
+          <label className="flex items-center gap-2 text-sm text-text-primary">
+            <span>{t('wikiSection.branch')}</span>
+            <select
+              value={branch}
+              onChange={event => setBranch(event.target.value)}
+              disabled={scopeLoading || branches.length === 0}
+              className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3"
+              data-testid="wiki-import-branch-select"
+            >
+              {branches.length === 0 && <option value="">{t('wikiSection.no_branches')}</option>}
+              {branches.map(item => (
+                <option key={item.name} value={item.name}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="flex items-center gap-2 text-xs text-text-muted">
-          <BookExternalLink className="h-3.5 w-3.5" />
+          <SelectedConnectorIcon
+            aria-label={selectedConnector.label}
+            className="h-3.5 w-3.5 shrink-0"
+            data-connector-type={selectedConnector.type.replace('_', '-')}
+            data-testid="wiki-import-connector-icon"
+          />
           <span className="min-w-0 truncate" data-testid="wiki-import-site">
             {siteUrl}
           </span>
@@ -441,39 +632,51 @@ export function WikiDocumentImport({
               className="h-24 shrink-0 space-y-1 overflow-y-auto pr-1"
               data-testid="wiki-import-bound-list"
             >
-              {filteredBound.map(item => (
-                <li
-                  key={item.id}
-                  className="flex items-center justify-between gap-2 rounded border border-border/70 bg-surface px-2 py-1.5"
-                  data-testid={`wiki-import-bound-${item.id}`}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5 text-sm">
-                    <Link2 className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                    <span className="truncate">{item.name}</span>
-                    <span className="shrink-0 text-xs text-text-muted">
-                      {t('wikiSection.synced_badge')}
+              {filteredBound.map(item => {
+                const connector = getWikiConnectorPresentation(item.adapter_type)
+                const ConnectorIcon = connector.Icon
+                return (
+                  <li
+                    key={item.id}
+                    className="flex items-center justify-between gap-2 rounded border border-border/70 bg-surface px-2 py-1.5"
+                    data-testid={`wiki-import-bound-${item.id}`}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5 text-sm">
+                      <ConnectorIcon
+                        aria-label={connector.label}
+                        className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                        data-connector-type={connector.type.replace('_', '-')}
+                        data-testid={`wiki-import-bound-connector-${item.id}`}
+                      />
+                      <span className="truncate">{item.name}</span>
+                      <span
+                        className="shrink-0 text-xs text-text-muted"
+                        data-testid={`wiki-import-bound-connector-name-${item.id}`}
+                      >
+                        {connector.label}
+                      </span>
                     </span>
-                  </span>
-                  {canManageDocuments && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      type="button"
-                      className="min-h-11 min-w-11 px-1.5 md:h-6 md:min-h-6 md:min-w-0"
-                      onClick={() => void handleUnbind(item.id)}
-                      disabled={removingId === item.id}
-                      aria-label={t('wikiSection.unbind')}
-                      data-testid={`wiki-import-unbind-${item.id}`}
-                    >
-                      {removingId === item.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <X className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  )}
-                </li>
-              ))}
+                    {canManageDocuments && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        className="min-h-11 min-w-11 px-1.5 md:h-6 md:min-h-6 md:min-w-0"
+                        onClick={() => void handleUnbind(item.id)}
+                        disabled={removingId === item.id}
+                        aria-label={t('wikiSection.unbind')}
+                        data-testid={`wiki-import-unbind-${item.id}`}
+                      >
+                        {removingId === item.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <X className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
@@ -494,7 +697,7 @@ export function WikiDocumentImport({
               size="sm"
               type="button"
               className="min-h-11 shrink-0 px-3 md:min-h-8"
-              onClick={() => void loadPages(true)}
+              onClick={() => void loadPages(true, '', projectPath, branch)}
               disabled={pagesLoading || !connectionId}
               data-testid="wiki-import-refresh-button"
             >
@@ -547,31 +750,80 @@ export function WikiDocumentImport({
           ) : (
             <>
               <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                <WikiPageTree
-                  pages={visiblePages}
-                  boundPageIds={boundPageIds}
-                  selectedPageIds={selected}
-                  selectablePages={filteredPages.filter(page => !boundPageIds.has(page.id))}
-                  expandedPaths={expandedDirectories}
-                  disabled={!canManageDocuments}
-                  forceExpanded={Boolean(keyword.trim())}
-                  onTogglePage={pageId => updateSelection([pageId])}
-                  onToggleDirectory={toggleDirectory}
-                  onToggleDirectorySelection={updateSelection}
-                />
+                {isFlatProjectWiki ? (
+                  <ul className="space-y-1" data-testid="wiki-import-page-list">
+                    {visiblePages.map(page => {
+                      const isBound = boundPageIds.has(page.id)
+                      return (
+                        <li key={page.id}>
+                          <label
+                            className={`flex min-h-11 items-center gap-2 rounded px-2 py-1 text-sm hover:bg-surface ${
+                              isBound || page.importable === false
+                                ? 'cursor-not-allowed opacity-50'
+                                : ''
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected.has(page.id)}
+                              disabled={isBound || page.importable === false || !canManageDocuments}
+                              onChange={() => updateSelection([page.id])}
+                              data-testid={`wiki-import-check-${page.path}`}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{page.title}</span>
+                            <span className="max-w-[45%] truncate text-xs text-text-muted">
+                              {page.path}
+                            </span>
+                            {isBound && (
+                              <span className="text-xs text-text-muted">
+                                {t('wikiSection.already_bound')}
+                              </span>
+                            )}
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <WikiPageTree
+                    pages={visiblePages}
+                    boundPageIds={boundPageIds}
+                    selectedPageIds={selected}
+                    selectablePages={filteredPages.filter(
+                      page =>
+                        page.importable !== false &&
+                        !page.is_directory &&
+                        !boundPageIds.has(page.id)
+                    )}
+                    expandedPaths={expandedDirectories}
+                    disabled={!canManageDocuments}
+                    forceExpanded={Boolean(keyword.trim())}
+                    onTogglePage={pageId => updateSelection([pageId])}
+                    onToggleDirectory={toggleDirectory}
+                    onLoadDirectory={path => {
+                      const hasLoadedChildren = pages?.some(
+                        page => page.path !== path && page.path.startsWith(`${path}/`)
+                      )
+                      if (!hasLoadedChildren) void loadPages(false, path, projectPath, branch)
+                    }}
+                    onToggleDirectorySelection={updateSelection}
+                  />
+                )}
               </div>
-              <div className="shrink-0" data-testid="wiki-import-pagination">
-                <Pagination
-                  page={effectivePickerPage}
-                  totalPages={pickerTotalPages}
-                  totalCount={filteredPages.length}
-                  pageSize={pickerPageSize}
-                  pageSizeOptions={[20, 50, 100]}
-                  onGoToPage={setPickerPage}
-                  onPageSizeChange={setPickerPageSize}
-                  disabled={pagesLoading}
-                />
-              </div>
+              {!isRepository && (
+                <div className="shrink-0" data-testid="wiki-import-pagination">
+                  <Pagination
+                    page={effectivePickerPage}
+                    totalPages={pickerTotalPages}
+                    totalCount={filteredPages.length}
+                    pageSize={pickerPageSize}
+                    pageSizeOptions={[20, 50, 100]}
+                    onGoToPage={setPickerPage}
+                    onPageSizeChange={setPickerPageSize}
+                    disabled={pagesLoading}
+                  />
+                </div>
+              )}
             </>
           )}
         </section>

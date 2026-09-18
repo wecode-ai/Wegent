@@ -1321,6 +1321,12 @@
   "wikiSection": {
     "synced_badge": "同步 Wiki",
     "connection": "Wiki 连接",
+    "project": "仓库",
+    "branch": "分支",
+    "no_projects": "没有可访问的仓库",
+    "no_branches": "仓库暂无分支",
+    "load_projects_failed": "加载 GitLab 仓库失败",
+    "load_branches_failed": "加载 GitLab 分支失败",
     "loading": "正在加载 Wiki 绑定…",
     "load_failed": "加载 Wiki 绑定失败",
     "add_failed": "绑定失败",
@@ -1347,6 +1353,11 @@
     "resynced_n": "已重新同步 {{count}} 个 Wiki 文档",
     "processing_n": "{{count}} 个 Wiki 文档正在处理中，本次跳过",
     "bind_selected": "绑定选中（{{count}}）",
-    "bind_scope_success_n": "已绑定 {{count}} 个 Wiki 文档"
+    "bind_scope_success_n": "已绑定 {{count}} 个 Wiki 文档",
+    "unsupported": {
+      "invalid_file_name": "文件名无效",
+      "missing_file_extension": "缺少扩展名",
+      "unsupported_file_type": "不支持此文件类型"
+    }
   }
 }

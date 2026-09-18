@@ -65,10 +65,15 @@ import {
 } from '@/utils/languageDetection'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
-import { getExternalSourceInfo, isDocumentEditable } from '../utils/documentUtils'
+import {
+  getExternalSourceInfo,
+  getSyncedWikiConnectorType,
+  isDocumentEditable,
+} from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
+import { ExternalDocumentBadge } from './ExternalDocumentBadge'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -196,6 +201,10 @@ export function DocumentDetailDialog({
   // Source governance metadata for imported external documents.
   const externalSourceInfo = useMemo(
     () => (document ? getExternalSourceInfo(document) : null),
+    [document]
+  )
+  const syncedWikiConnectorType = useMemo(
+    () => (document ? getSyncedWikiConnectorType(document) : null),
     [document]
   )
   const sourceInfo = externalSourceInfo
@@ -460,7 +469,15 @@ export function DocumentDetailDialog({
                         className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"
                         data-testid="external-source-info"
                       >
-                        <span className="capitalize">{sourceInfo.provider}</span>
+                        {syncedWikiConnectorType ? (
+                          <ExternalDocumentBadge
+                            syncedWiki
+                            extension={document.file_extension}
+                            connectorType={syncedWikiConnectorType}
+                          />
+                        ) : (
+                          <span className="capitalize">{sourceInfo.provider}</span>
+                        )}
                         {wikiConnectionName && (
                           <>
                             <span>•</span>

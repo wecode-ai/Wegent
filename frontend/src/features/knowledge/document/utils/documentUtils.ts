@@ -109,6 +109,8 @@ export interface ExternalDocumentSyncInfo {
   enabled: boolean
   connection_id?: string
   resource_id?: string
+  adapter_type?: string
+  resource_kind?: 'page' | 'file'
   path?: string
   locale?: string
   observed_version?: string
@@ -167,6 +169,17 @@ export function isSyncedWikiDocument(
   )
 }
 
+export type SyncedWikiConnectorType = 'wikijs' | 'gitlab_repo' | 'gitlab_wiki'
+
+export function getSyncedWikiConnectorType(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): SyncedWikiConnectorType | null {
+  if (!isSyncedWikiDocument(document)) return null
+  const adapterType = getExternalSourceInfo(document)?.sync?.adapter_type
+  if (adapterType === 'gitlab_repo' || adapterType === 'gitlab_wiki') return adapterType
+  return 'wikijs'
+}
+
 export function isWikiSourceMissing(
   document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
 ): boolean {
@@ -184,17 +197,15 @@ function isValidTimestamp(value: string): boolean {
 /**
  * The update timestamp a document list should display.
  *
- * Synchronized Wiki documents prefer the latest observed source update time.
+ * Synchronized Wiki documents display the latest successful index time.
  * Regular documents keep the existing rule: unmodified rows display '-'.
  */
 export function getDocumentDisplayUpdatedAt(
   document: Pick<KnowledgeDocument, 'source_type' | 'source_config' | 'updated_at' | 'created_at'>
 ): string | null {
   if (isSyncedWikiDocument(document)) {
-    const sync = getExternalSourceInfo(document)?.sync
-    if (sync?.observed_version && isValidTimestamp(sync.observed_version)) {
-      return sync.observed_version
-    }
+    const lastSyncedAt = getExternalSourceInfo(document)?.sync?.last_synced_at
+    return lastSyncedAt && isValidTimestamp(lastSyncedAt) ? lastSyncedAt : null
   }
   if (document.updated_at === document.created_at) return null
   return document.updated_at || null

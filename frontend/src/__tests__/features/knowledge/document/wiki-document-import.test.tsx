@@ -142,7 +142,31 @@ describe('WikiDocumentImport', () => {
       expect(screen.getByTestId('wiki-import-site')).toHaveTextContent('wiki.example.com')
     )
     expect(await screen.findByTestId('wiki-import-bound-31')).toBeInTheDocument()
+    expect(screen.getByTestId('wiki-import-connector-icon')).toHaveAttribute(
+      'data-connector-type',
+      'wikijs'
+    )
+    expect(screen.getByTestId('wiki-import-bound-connector-name-31')).toHaveTextContent('wikijs')
     expect(await screen.findByTestId('wiki-import-connection-status')).toHaveClass('text-success')
+  })
+
+  it('shows each bound document connector instead of the selected connection connector', async () => {
+    mockListKbWikiDocuments.mockResolvedValue([
+      {
+        ...bound,
+        adapter_type: 'gitlab_repo',
+      },
+    ])
+
+    renderTab()
+
+    expect(await screen.findByTestId('wiki-import-bound-connector-31')).toHaveAttribute(
+      'data-connector-type',
+      'gitlab-repo'
+    )
+    expect(screen.getByTestId('wiki-import-bound-connector-name-31')).toHaveTextContent(
+      'gitlab-repo'
+    )
   })
 
   it('shows a red connection status with the failure reason on hover', async () => {

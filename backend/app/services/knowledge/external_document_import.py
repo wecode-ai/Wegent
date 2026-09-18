@@ -779,7 +779,12 @@ def run_external_document_import(
                 f"Unsupported external provider: {provider_id}"
             )
         if isinstance(provider, DetachedExternalDocumentProvider):
-            prepared = provider.prepare_content_fetch(db, user, resource_id)
+            prepared = provider.prepare_content_fetch(
+                db,
+                user,
+                resource_id,
+                document.external_source_config,
+            )
             # Wiki remote I/O must not hold a checked-out database connection.
             db.commit()
             db.close()

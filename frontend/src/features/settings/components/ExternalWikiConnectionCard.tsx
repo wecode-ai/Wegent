@@ -7,7 +7,12 @@
 import { useEffect, useState } from 'react'
 import { ExternalLink as BookExternalLink, Loader2, Plus, Trash2 } from 'lucide-react'
 
-import { wikiApis, type WikiConnection, type WikiConnectionSummary } from '@/apis/wiki'
+import {
+  wikiApis,
+  type WikiConnection,
+  type WikiConnectionSummary,
+  type WikiConnectorOption,
+} from '@/apis/wiki'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +40,7 @@ export default function ExternalWikiConnectionCard() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [connection, setConnection] = useState<WikiConnection | null>(null)
   const [connections, setConnections] = useState<WikiConnectionSummary[]>([])
+  const [connectorOptions, setConnectorOptions] = useState<WikiConnectorOption[]>([])
   const [connectionId, setConnectionId] = useState('')
   const [displayName, setDisplayName] = useState('Wiki')
   const [connectorType, setConnectorType] = useState('wikijs')
@@ -49,6 +55,7 @@ export default function ExternalWikiConnectionCard() {
         setLoading(true)
         const response = await wikiApis.listConnections()
         setConnections(response.connections)
+        setConnectorOptions(response.available_connectors)
         const current = response.connections[0]
         if (current) applyConnection(current)
         else resetNewConnection()
@@ -196,6 +203,10 @@ export default function ExternalWikiConnectionCard() {
     !!siteUrl.trim() &&
     !!displayName.trim() &&
     (!enabled || !!apiKey.trim() || !!connection?.api_key_masked)
+  const selectedConnector = connectorOptions.find(option => option.type === connectorType)
+  const supportsLocale =
+    selectedConnector?.capabilities?.supports_locale ?? connectorType === 'wikijs'
+  const isGitLab = selectedConnector?.capabilities?.supports_project_selection ?? false
 
   return (
     <div
@@ -272,30 +283,37 @@ export default function ExternalWikiConnectionCard() {
           onChange={event => setConnectorType(event.target.value)}
           data-testid="wiki-connector-type-select"
         >
-          {(connection?.available_connectors || [{ type: 'wikijs', display_name: 'Wiki.js' }]).map(
-            option => (
-              <option key={option.type} value={option.type}>
-                {option.display_name}
-              </option>
-            )
-          )}
+          {(connectorOptions.length
+            ? connectorOptions
+            : connection?.available_connectors || []
+          ).map(option => (
+            <option key={option.type} value={option.type}>
+              {option.display_name}
+            </option>
+          ))}
         </select>
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="wiki-site-url">{t('wiki.url_label')}</Label>
+        <Label htmlFor="wiki-site-url">
+          {t(isGitLab ? 'wiki.gitlab_url_label' : 'wiki.url_label')}
+        </Label>
         <Input
           id="wiki-site-url"
           value={siteUrl}
           onChange={event => setSiteUrl(event.target.value)}
-          placeholder={t('wiki.url_placeholder')}
+          placeholder={t(isGitLab ? 'wiki.gitlab_url_placeholder' : 'wiki.url_placeholder')}
           data-testid="wiki-site-url-input"
         />
-        <p className="text-xs text-text-muted">{t('wiki.url_hint')}</p>
+        <p className="text-xs text-text-muted">
+          {t(isGitLab ? 'wiki.gitlab_url_hint' : 'wiki.url_hint')}
+        </p>
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="wiki-api-key">{t('wiki.api_key_label')}</Label>
+        <Label htmlFor="wiki-api-key">
+          {t(isGitLab ? 'wiki.gitlab_api_key_label' : 'wiki.api_key_label')}
+        </Label>
         <Input
           id="wiki-api-key"
           type="password"
@@ -306,23 +324,27 @@ export default function ExternalWikiConnectionCard() {
               ? t('wiki.api_key_masked_placeholder', {
                   masked: connection.api_key_masked,
                 })
-              : t('wiki.api_key_placeholder')
+              : t(isGitLab ? 'wiki.gitlab_api_key_placeholder' : 'wiki.api_key_placeholder')
           }
           data-testid="wiki-api-key-input"
         />
-        <p className="text-xs text-text-muted">{t('wiki.api_key_hint')}</p>
+        <p className="text-xs text-text-muted">
+          {t(isGitLab ? 'wiki.gitlab_api_key_hint' : 'wiki.api_key_hint')}
+        </p>
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="wiki-default-locale">{t('wiki.locale_label')}</Label>
-        <Input
-          id="wiki-default-locale"
-          value={defaultLocale}
-          onChange={event => setDefaultLocale(event.target.value)}
-          placeholder={t('wiki.locale_placeholder')}
-          data-testid="wiki-default-locale-input"
-        />
-      </div>
+      {supportsLocale && (
+        <div className="space-y-1.5">
+          <Label htmlFor="wiki-default-locale">{t('wiki.locale_label')}</Label>
+          <Input
+            id="wiki-default-locale"
+            value={defaultLocale}
+            onChange={event => setDefaultLocale(event.target.value)}
+            placeholder={t('wiki.locale_placeholder')}
+            data-testid="wiki-default-locale-input"
+          />
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Button

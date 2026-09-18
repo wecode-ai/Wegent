@@ -26,6 +26,7 @@ from app.services.wiki.connector import (
     WikiApiError,
     WikiConnectionTest,
     WikiConnector,
+    WikiConnectorCapabilities,
     WikiPage,
     WikiPageMeta,
     WikiPageProbe,
@@ -253,6 +254,11 @@ class WikijsConnector(WikiConnector):
     """Wiki.js 2.x adapter over the GraphQL endpoint."""
 
     supports_scheduled_sync = True
+    capabilities = WikiConnectorCapabilities(
+        resource_kind="page",
+        supports_locale=True,
+        supports_scheduled_sync=True,
+    )
     connector_type = "wikijs"
     display_name = "Wiki.js"
 
@@ -287,6 +293,23 @@ class WikijsConnector(WikiConnector):
                                 "Wiki 站点拒绝了 API Key（401/403），请检查 Key 是否有效",
                                 retryable=False,
                             )
+                        if response.status == 429:
+                            retry_after = str(
+                                response.headers.get("Retry-After") or ""
+                            ).strip()
+                            delay = (
+                                min(float(retry_after), 30.0)
+                                if retry_after.replace(".", "", 1).isdigit()
+                                else 1.0
+                            )
+                            if attempt == _MAX_ATTEMPTS - 1:
+                                raise WikiApiError(
+                                    "external_rate_limited",
+                                    "Wiki 站点请求过于频繁，请稍后重试",
+                                    retryable=True,
+                                )
+                            await asyncio.sleep(delay)
+                            continue
                         if response.status >= 500:
                             raise WikiApiError(
                                 "wiki_unreachable",
@@ -446,6 +469,8 @@ class WikijsConnector(WikiConnector):
         locale: str | None = None,
         limit: int,
         offset: int = 0,
+        project_path: str | None = None,
+        branch: str | None = None,
     ) -> tuple[list[WikiPageMeta], int | None]:
         effective_locale = locale or config.default_locale
         # pages.list has no server-side path filter and no offset: prefix

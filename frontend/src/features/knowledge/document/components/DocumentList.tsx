@@ -804,11 +804,16 @@ export function DocumentList({
     }
   }
 
-  const handleWikiImport = async (pageIds: string[], options: { connectionId: string }) => {
+  const handleWikiImport = async (
+    pageIds: string[],
+    options: { connectionId: string; projectPath?: string; branch?: string }
+  ) => {
     const { wikiApis } = await import('@/apis/wiki')
 
     const result = await wikiApis.bindKbWikiDocuments(knowledgeBase.id, pageIds, {
       connectionId: options.connectionId,
+      projectPath: options.projectPath,
+      branch: options.branch,
       folderId: selectedUploadFolderId || 0,
     })
 

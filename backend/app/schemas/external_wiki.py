@@ -14,9 +14,18 @@ WikiPageId = Annotated[
 ]
 
 
+class WikiConnectorCapabilities(BaseModel):
+    resource_kind: str = "page"
+    supports_locale: bool = False
+    supports_project_selection: bool = False
+    supports_branch_selection: bool = False
+    supports_scheduled_sync: bool = False
+
+
 class WikiConnectorOption(BaseModel):
     type: str
     display_name: str
+    capabilities: WikiConnectorCapabilities
 
 
 class WikiConnectionSummary(BaseModel):
@@ -27,6 +36,9 @@ class WikiConnectionSummary(BaseModel):
     site_url: str = ""
     default_locale: Optional[str] = None
     api_key_masked: str = ""
+    capabilities: WikiConnectorCapabilities = Field(
+        default_factory=WikiConnectorCapabilities
+    )
     available_connectors: list[WikiConnectorOption] = Field(default_factory=list)
 
 
@@ -66,6 +78,8 @@ class WikiBindingCreateRequest(BaseModel):
 
     page_ids: list[WikiPageId] = Field(..., min_length=1, max_length=50)
     connection_id: str = Field(..., min_length=1, max_length=100)
+    project_path: Optional[str] = Field(None, min_length=1, max_length=255)
+    branch: Optional[str] = Field(None, min_length=1, max_length=255)
     folder_id: int = Field(0, ge=0)
 
 
@@ -81,6 +95,11 @@ class WikiBoundDocument(BaseModel):
     resource_url: str = ""
     status: str
     connection_id: Optional[str] = None
+    adapter_type: str = "wikijs"
+    resource_kind: str = "page"
+    project_path: Optional[str] = None
+    branch: Optional[str] = None
+    file_extension: str = ""
 
 
 class WikiBindingCreateResponse(BaseModel):
@@ -101,9 +120,37 @@ class WikiPageSummary(BaseModel):
     locale: str = ""
     is_published: bool = True
     page_url: str = ""
+    resource_kind: str = "page"
+    resource_key: str = ""
+    file_extension: str = ""
+    importable: bool = True
+    unsupported_reason: Optional[str] = None
+    is_directory: bool = False
 
 
 class WikiPagesResponse(BaseModel):
     pages: list[WikiPageSummary] = Field(default_factory=list)
     next_offset: Optional[int] = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class WikiProjectSummary(BaseModel):
+    path: str
+    name: str
+    default_branch: Optional[str] = None
+    web_url: str = ""
+
+
+class WikiProjectsResponse(BaseModel):
+    projects: list[WikiProjectSummary] = Field(default_factory=list)
+    next_offset: Optional[int] = None
+
+
+class WikiBranchSummary(BaseModel):
+    name: str
+    is_default: bool = False
+
+
+class WikiBranchesResponse(BaseModel):
+    branches: list[WikiBranchSummary] = Field(default_factory=list)
+    next_offset: Optional[int] = None

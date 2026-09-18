@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -35,7 +36,12 @@ from app.services.knowledge.external_document_providers import (
     ExternalSourceUnavailableError,
     PreparedExternalDocumentFetch,
 )
-from app.services.wiki.connector import WikiApiError, WikiPageMeta, build_page_url
+from app.services.wiki.connector import (
+    StoredWikiResourceRef,
+    WikiApiError,
+    WikiPageMeta,
+    build_page_url,
+)
 from app.services.wiki.service import WikiConnectionService
 
 SYNC_CONFIG_KEY = "sync"
@@ -44,6 +50,11 @@ logger = logging.getLogger(__name__)
 _WIKI_SYNC_ERROR_MESSAGES = {
     "bad_request": "Wiki 页面标识无效",
     "external_connection_unavailable": "Wiki 连接不可用",
+    "external_file_empty": "外部文件为空",
+    "external_file_too_large": "外部文件超过知识库上传大小限制",
+    "external_rate_limited": "外部服务请求过于频繁",
+    "external_scope_invalid": "外部文档的仓库或分支不可用",
+    "external_sync_config_invalid": "外部文档同步配置无效",
     "external_version_unavailable": "Wiki 源文档缺少更新时间",
     "upstream_error": "Wiki 站点响应异常",
     "wiki_auth_failed": "Wiki 站点鉴权失败",
@@ -94,6 +105,7 @@ class SyncCandidate:
     document_id: int
     owner_user_id: int
     locator: ExternalSyncLocator
+    resource_ref: StoredWikiResourceRef | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +137,9 @@ class ExternalSyncProvider(ABC):
         owner: User,
         connection_id: str,
         selections: Sequence[str],
+        *,
+        project_path: str | None = None,
+        branch: str | None = None,
     ) -> list[ResolvedExternalDocument]:
         """Resolve server-owned metadata for selected provider resources."""
 
@@ -168,6 +183,92 @@ def get_document_sync_config(document: Any) -> dict[str, Any]:
     return dict(sync) if isinstance(sync, dict) else {}
 
 
+def build_wiki_resource_ref(
+    provider_id: str,
+    encoded_resource_id: str,
+    sync: dict[str, Any],
+    *,
+    expected_adapter_type: str | None = None,
+) -> tuple[ExternalSyncLocator, StoredWikiResourceRef]:
+    """Validate persisted Wiki sync metadata and restore its remote locator."""
+    locator = decode_external_sync_resource_id(provider_id, encoded_resource_id)
+    connection_id = str(sync.get("connection_id") or "")
+    resource_id = str(sync.get("resource_id") or "")
+    if not sync.get("enabled") or connection_id != locator.connection_id:
+        raise ExternalDocumentFetchError("Invalid synchronized document metadata")
+
+    adapter_type = str(sync.get("adapter_type") or expected_adapter_type or "")
+    if expected_adapter_type and adapter_type != expected_adapter_type:
+        raise ExternalDocumentFetchError("Invalid synchronized document metadata")
+
+    if locator.identity_version == "v1":
+        if resource_id != locator.resource_id:
+            raise ExternalDocumentFetchError("Invalid synchronized document metadata")
+        return locator, StoredWikiResourceRef(
+            identity=encoded_resource_id,
+            resource_id=resource_id,
+            adapter_type=adapter_type or "wikijs",
+            resource_kind=str(sync.get("resource_kind") or "page"),
+            resource_key=str(sync.get("resource_key") or resource_id),
+            path=str(sync.get("path") or resource_id),
+            project_path=(
+                str(sync["project_path"]) if sync.get("project_path") else None
+            ),
+            branch=str(sync["branch"]) if sync.get("branch") else None,
+            file_extension=str(sync.get("file_extension") or ""),
+        )
+
+    resource_kind = str(sync.get("resource_kind") or "")
+    resource_key = str(sync.get("resource_key") or "")
+    project_path = str(sync.get("project_path") or "")
+    path = str(sync.get("path") or "")
+    branch = str(sync.get("branch") or "") or None
+    required = adapter_type and resource_id and resource_key and project_path and path
+    if not required or resource_kind != locator.resource_kind:
+        raise ExternalDocumentFetchError("Invalid synchronized document metadata")
+    if adapter_type == "gitlab_repo":
+        expected_resource_key = [project_path, branch, path]
+        valid_adapter_metadata = resource_kind == "file" and branch is not None
+    elif adapter_type == "gitlab_wiki":
+        expected_resource_key = [project_path, path]
+        valid_adapter_metadata = resource_kind == "page" and branch is None
+    else:
+        expected_resource_key = []
+        valid_adapter_metadata = False
+    try:
+        resource_key_parts = json.loads(resource_key)
+    except (TypeError, ValueError):
+        resource_key_parts = None
+    if (
+        not valid_adapter_metadata
+        or resource_id != path
+        or resource_key_parts != expected_resource_key
+    ):
+        raise ExternalDocumentFetchError("Invalid synchronized document metadata")
+    expected_identity = encode_external_sync_resource_id(
+        ExternalSyncLocator(
+            provider_id,
+            connection_id,
+            resource_key,
+            resource_kind=resource_kind,
+            identity_version="v2",
+        )
+    )
+    if expected_identity != encoded_resource_id:
+        raise ExternalDocumentFetchError("Invalid synchronized document metadata")
+    return locator, StoredWikiResourceRef(
+        identity=encoded_resource_id,
+        resource_id=resource_id,
+        adapter_type=adapter_type,
+        resource_kind=resource_kind,
+        resource_key=resource_key,
+        path=path,
+        project_path=project_path,
+        branch=branch,
+        file_extension=str(sync.get("file_extension") or ""),
+    )
+
+
 def is_synchronized_external_document(document: Any) -> bool:
     return bool(get_document_sync_config(document).get("enabled"))
 
@@ -194,6 +295,9 @@ class WikiExternalSyncProvider(
         owner: User,
         connection_id: str,
         selections: Sequence[str],
+        *,
+        project_path: str | None = None,
+        branch: str | None = None,
     ) -> list[ResolvedExternalDocument]:
         connection = WikiConnectionService.get_user_wiki_connection(
             owner, db=db, connection_id=connection_id
@@ -213,23 +317,42 @@ class WikiExternalSyncProvider(
         async def resolve_resource(resource_id: str) -> ResolvedExternalDocument:
             try:
                 async with semaphore:
-                    page = await connection.connector.get_page_metadata_by_id(
-                        connection.config, resource_id
+                    page = await connection.connector.resolve_resource(
+                        connection.config,
+                        resource_id,
+                        project_path=project_path,
+                        branch=branch,
                     )
             except WikiApiError as exc:
                 raise ExternalDocumentImportError(exc.message) from exc
             if page is None:
-                raise ExternalDocumentImportError(f"Wiki page not found: {resource_id}")
+                raise ExternalDocumentImportError(
+                    f"External Wiki resource not found: {resource_id}"
+                )
+            adapter_type = connection.connector.connector_type
+            uses_v2_identity = adapter_type != "wikijs"
             locator = ExternalSyncLocator(
-                self.provider_id, connection.connection_id, page.id
+                self.provider_id,
+                connection.connection_id,
+                page.resource_key if uses_v2_identity else page.id,
+                resource_kind=page.resource_kind if uses_v2_identity else "",
+                identity_version="v2" if uses_v2_identity else "v1",
             )
             return ResolvedExternalDocument(
                 locator=locator,
                 title=page.title or page.path,
-                source_url=build_page_url(connection.config.site_url, page.path),
+                source_url=page.source_url
+                or build_page_url(connection.config.site_url, page.path),
                 remote_version=page.updated_at or None,
                 metadata={
+                    "adapter_type": adapter_type,
+                    "resource_kind": page.resource_kind,
+                    "resource_key": page.resource_key or page.id,
+                    "resource_id": page.id,
                     "path": page.path,
+                    "project_path": project_path,
+                    "branch": branch,
+                    "file_extension": page.file_extension,
                     "locale": page.locale or "",
                     "site_url": connection.config.site_url.rstrip("/"),
                     "connection_revision": connection.revision,
@@ -334,10 +457,22 @@ class WikiExternalSyncProvider(
     ) -> dict[int, RemoteDocumentState]:
         results = dict(prepared.immediate_states)
         for connection, group in prepared.payload:
+            resources = [
+                candidate.resource_ref
+                or StoredWikiResourceRef(
+                    identity=encode_external_sync_resource_id(candidate.locator),
+                    resource_id=candidate.locator.resource_id,
+                    adapter_type=connection.connector.connector_type,
+                    resource_kind="page",
+                    resource_key=candidate.locator.resource_id,
+                    path=candidate.locator.resource_id,
+                )
+                for candidate in group
+            ]
             try:
-                probes = await connection.connector.inspect_page_metadata_by_ids(
+                probes = await connection.connector.inspect_resources(
                     connection.config,
-                    [candidate.locator.resource_id for candidate in group],
+                    resources,
                     batch_size=settings.WIKI_SYNC_REMOTE_BATCH_SIZE,
                 )
             except WikiApiError as exc:
@@ -349,8 +484,8 @@ class WikiExternalSyncProvider(
                         error_message=exc.message,
                     )
                 continue
-            for candidate in group:
-                probe = probes.get(candidate.locator.resource_id)
+            for candidate, resource in zip(group, resources, strict=True):
+                probe = probes.get(resource.identity)
                 if probe is None:
                     results[candidate.document_id] = RemoteDocumentState(
                         exists=True,
@@ -384,32 +519,35 @@ class WikiExternalSyncProvider(
 
     @staticmethod
     def _state_from_page(site_url: str, page: WikiPageMeta) -> RemoteDocumentState:
+        metadata = {
+            "path": page.path,
+            "locale": page.locale or "",
+            "title": page.title,
+            "url": page.source_url or build_page_url(site_url, page.path),
+            "resource_kind": page.resource_kind,
+            "resource_key": page.resource_key,
+            "file_extension": page.file_extension,
+        }
         if not page.updated_at:
             return RemoteDocumentState(
                 exists=True,
                 remote_version=None,
                 error_code="external_version_unavailable",
                 error_message=_wiki_sync_error_message("external_version_unavailable"),
-                metadata={
-                    "path": page.path,
-                    "locale": page.locale or "",
-                    "title": page.title,
-                    "url": build_page_url(site_url, page.path),
-                },
+                metadata=metadata,
             )
         return RemoteDocumentState(
             True,
             page.updated_at or None,
-            metadata={
-                "path": page.path,
-                "locale": page.locale or "",
-                "title": page.title,
-                "url": build_page_url(site_url, page.path),
-            },
+            metadata=metadata,
         )
 
     def prepare_content_fetch(
-        self, db: Session, user: User, external_resource_id: str
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+        external_metadata: dict[str, Any] | None = None,
     ) -> PreparedExternalDocumentFetch:
         if getattr(user, "is_active", True) is not True:
             raise ExternalDocumentFetchError("Wiki document owner is disabled")
@@ -421,39 +559,64 @@ class WikiExternalSyncProvider(
         )
         if connection is None:
             raise ExternalDocumentFetchError("Wiki connection is unavailable")
+        sync = (
+            dict(external_metadata.get(SYNC_CONFIG_KEY) or {})
+            if isinstance(external_metadata, dict)
+            else {}
+        )
+        if not sync and locator.identity_version == "v1":
+            sync = {
+                "enabled": True,
+                "connection_id": locator.connection_id,
+                "resource_id": locator.resource_id,
+            }
+        locator, resource = build_wiki_resource_ref(
+            self.provider_id,
+            external_resource_id,
+            sync,
+            expected_adapter_type=connection.connector.connector_type,
+        )
         return PreparedExternalDocumentFetch(
             external_resource_id=external_resource_id,
-            payload=(locator, connection),
+            payload=(locator, connection, resource),
         )
 
     async def fetch_prepared_content(
         self, prepared: PreparedExternalDocumentFetch
     ) -> ExternalDocumentContent:
-        locator, connection = prepared.payload
+        locator, connection, resource = prepared.payload
         try:
-            page = await connection.connector.get_page_by_id(
-                connection.config, locator.resource_id
+            fetched = await connection.connector.fetch_resource(
+                connection.config, resource
             )
         except WikiApiError as exc:
             raise ExternalDocumentFetchError(exc.message) from exc
-        if page is None:
+        if fetched is None:
             raise ExternalSourceUnavailableError(
                 "Wiki 源文档不存在",
                 error_code="external_source_missing",
             )
+        page = fetched.meta
         return ExternalDocumentContent(
             name=page.title or page.path,
-            file_extension="md",
-            content=page.content.encode("utf-8"),
+            file_extension=fetched.file_extension,
+            content=fetched.content,
             metadata={
                 "provider": self.provider_id,
                 "title": page.title,
-                "url": build_page_url(connection.config.site_url, page.path),
+                "url": page.source_url
+                or build_page_url(connection.config.site_url, page.path),
                 SYNC_CONFIG_KEY: {
                     "enabled": True,
                     "connection_id": locator.connection_id,
-                    "resource_id": locator.resource_id,
+                    "resource_id": resource.resource_id,
+                    "adapter_type": resource.adapter_type,
+                    "resource_kind": resource.resource_kind,
+                    "resource_key": resource.resource_key,
                     "path": page.path,
+                    "project_path": resource.project_path,
+                    "branch": resource.branch,
+                    "file_extension": fetched.file_extension,
                     "locale": page.locale or "",
                     "site_url": connection.config.site_url.rstrip("/"),
                     "observed_version": page.updated_at or None,

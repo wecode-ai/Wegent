@@ -9,6 +9,15 @@ import { apiClient } from './client'
 export interface WikiConnectorOption {
   type: string
   display_name: string
+  capabilities?: WikiConnectorCapabilities
+}
+
+export interface WikiConnectorCapabilities {
+  resource_kind: 'page' | 'file'
+  supports_locale: boolean
+  supports_project_selection: boolean
+  supports_branch_selection: boolean
+  supports_scheduled_sync: boolean
 }
 
 export interface WikiConnection {
@@ -17,6 +26,7 @@ export interface WikiConnection {
   site_url: string
   default_locale: string | null
   api_key_masked: string
+  capabilities?: WikiConnectorCapabilities
   available_connectors: WikiConnectorOption[]
 }
 
@@ -66,6 +76,11 @@ export interface WikiBoundDocument {
   resource_url: string
   status: string
   connection_id?: string | null
+  adapter_type?: string
+  resource_kind?: 'page' | 'file'
+  project_path?: string | null
+  branch?: string | null
+  file_extension?: string
 }
 
 export interface WikiBindingCreateResponse {
@@ -86,12 +101,30 @@ export interface WikiPageSummary {
   locale: string
   is_published: boolean
   page_url: string
+  resource_kind?: 'page' | 'file'
+  resource_key?: string
+  file_extension?: string
+  importable?: boolean
+  unsupported_reason?: string | null
+  is_directory?: boolean
 }
 
 export interface WikiPagesResponse {
   pages: WikiPageSummary[]
   next_offset: number | null
   warnings: string[]
+}
+
+export interface WikiProjectSummary {
+  path: string
+  name: string
+  default_branch: string | null
+  web_url: string
+}
+
+export interface WikiBranchSummary {
+  name: string
+  is_default: boolean
 }
 
 export const wikiApis = {
@@ -127,11 +160,18 @@ export const wikiApis = {
   bindKbWikiDocuments: async (
     knowledgeBaseId: number,
     pageIds: string[],
-    options: { connectionId: string; folderId?: number }
+    options: {
+      connectionId: string
+      folderId?: number
+      projectPath?: string
+      branch?: string
+    }
   ): Promise<WikiBindingCreateResponse> => {
     return apiClient.post(`/knowledge/${knowledgeBaseId}/wiki-bindings`, {
       page_ids: pageIds,
       connection_id: options.connectionId,
+      project_path: options.projectPath || null,
+      branch: options.branch || null,
       folder_id: options?.folderId ?? 0,
     })
   },
@@ -147,6 +187,8 @@ export const wikiApis = {
     offset?: number
     refresh?: boolean
     connection_id?: string
+    project_path?: string
+    branch?: string
   }): Promise<WikiPagesResponse> => {
     const query = new URLSearchParams()
     if (params.path) query.set('path', params.path)
@@ -155,7 +197,37 @@ export const wikiApis = {
     if (params.offset != null) query.set('offset', String(params.offset))
     if (params.refresh) query.set('refresh', 'true')
     if (params.connection_id) query.set('connection_id', params.connection_id)
+    if (params.project_path) query.set('project_path', params.project_path)
+    if (params.branch) query.set('branch', params.branch)
     const suffix = query.toString()
     return apiClient.get(`/wiki/pages${suffix ? `?${suffix}` : ''}`)
+  },
+
+  listProjects: async (params: {
+    connection_id: string
+    search?: string
+    limit?: number
+    offset?: number
+  }): Promise<{ projects: WikiProjectSummary[]; next_offset: number | null }> => {
+    const query = new URLSearchParams({ connection_id: params.connection_id })
+    if (params.search) query.set('search', params.search)
+    if (params.limit != null) query.set('limit', String(params.limit))
+    if (params.offset != null) query.set('offset', String(params.offset))
+    return apiClient.get(`/wiki/projects?${query}`)
+  },
+
+  listBranches: async (params: {
+    connection_id: string
+    project_path: string
+    limit?: number
+    offset?: number
+  }): Promise<{ branches: WikiBranchSummary[]; next_offset: number | null }> => {
+    const query = new URLSearchParams({
+      connection_id: params.connection_id,
+      project_path: params.project_path,
+    })
+    if (params.limit != null) query.set('limit', String(params.limit))
+    if (params.offset != null) query.set('offset', String(params.offset))
+    return apiClient.get(`/wiki/branches?${query}`)
   },
 }

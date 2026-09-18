@@ -45,6 +45,7 @@ const syncedWikiDocument: KnowledgeDocument = {
       sync: {
         enabled: true,
         observed_version: '2026-09-03T12:34:56Z',
+        last_synced_at: '2026-09-03T18:30:00Z',
       },
     },
   },
@@ -204,16 +205,16 @@ describe('DocumentItem external wiki metadata display', () => {
     expect(type.querySelector('svg')).toHaveClass('lucide-book-open')
   })
 
-  it('shows the observed source update time in compact mode', () => {
+  it('shows the latest successful index time in compact mode', () => {
     render(<DocumentItem document={syncedWikiDocument} compact />)
-    const expectedDate = formatLocal('2026-09-03T12:34:56Z').split(' ')[0]
+    const expectedDate = formatLocal('2026-09-03T18:30:00Z').split(' ')[0]
     expect(screen.getByText(expectedDate)).toBeInTheDocument()
   })
 
-  it('shows the observed source update time in table mode', () => {
+  it('shows the latest successful index time in table mode', () => {
     render(<DocumentItem document={syncedWikiDocument} />)
     expect(screen.getByTestId('updated-at-cell')).toHaveTextContent(
-      formatLocal('2026-09-03T12:34:56Z')
+      formatLocal('2026-09-03T18:30:00Z')
     )
   })
 
@@ -227,17 +228,21 @@ describe('DocumentItem external wiki metadata display', () => {
     expect(screen.getByText('15 B')).toBeInTheDocument()
   })
 
-  it('ignores an invalid observed version', () => {
+  it('shows no update time when the successful index time is invalid', () => {
     const document: KnowledgeDocument = {
       ...syncedWikiDocument,
       source_config: {
         external: {
           provider: 'wiki',
-          sync: { enabled: true, observed_version: 'not-a-date' },
+          sync: {
+            enabled: true,
+            observed_version: '2026-09-03T12:34:56Z',
+            last_synced_at: 'not-a-date',
+          },
         },
       },
     }
     render(<DocumentItem document={document} />)
-    expect(screen.getByTestId('updated-at-cell')).not.toHaveTextContent('Invalid Date')
+    expect(screen.getByTestId('updated-at-cell')).toHaveTextContent('-')
   })
 })

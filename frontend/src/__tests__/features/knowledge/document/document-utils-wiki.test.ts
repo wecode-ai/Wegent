@@ -34,6 +34,7 @@ function document(overrides: Partial<KnowledgeDocument> = {}): KnowledgeDocument
           observed_version: '2026-09-03T12:34:56Z',
           content_version: '2026-09-02T12:34:56Z',
           indexed_version: '2026-09-01T12:34:56Z',
+          last_synced_at: '2026-09-03T18:30:00Z',
         },
       },
     },
@@ -66,11 +67,11 @@ describe('synchronized Wiki document metadata', () => {
     ).toBe(false)
   })
 
-  it('uses the latest observed source version', () => {
-    expect(getDocumentDisplayUpdatedAt(document())).toBe('2026-09-03T12:34:56Z')
+  it('uses the latest successful index time', () => {
+    expect(getDocumentDisplayUpdatedAt(document())).toBe('2026-09-03T18:30:00Z')
   })
 
-  it('falls back to the normal document time when the observed version is invalid', () => {
+  it('does not fall back to the document update time without a valid index time', () => {
     const value = document({
       updated_at: '2026-09-05T00:00:00Z',
       source_config: {
@@ -82,11 +83,12 @@ describe('synchronized Wiki document metadata', () => {
             observed_version: 'invalid',
             content_version: 'invalid',
             indexed_version: '2026-09-04T00:00:00Z',
+            last_synced_at: 'invalid',
           },
         },
       },
     })
-    expect(getDocumentDisplayUpdatedAt(value)).toBe('2026-09-05T00:00:00Z')
+    expect(getDocumentDisplayUpdatedAt(value)).toBeNull()
   })
 
   it('recognizes a synchronized Wiki page confirmed missing upstream', () => {

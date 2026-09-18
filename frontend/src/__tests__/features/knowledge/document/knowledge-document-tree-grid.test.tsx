@@ -98,40 +98,48 @@ describe('KnowledgeDocumentTreeGrid', () => {
     )
   })
 
-  it('keeps the markdown type and adds a Wiki icon for synchronized documents', () => {
-    const documents = [
-      createDocument({
-        source_type: 'external',
-        file_extension: 'md',
-        source_config: {
-          external: {
-            provider: 'wiki',
-            title: 'Operations handbook',
-            sync: { enabled: true },
+  it.each([
+    [undefined, 'wikijs', 'lucide-book-open'],
+    ['gitlab_repo', 'gitlab-repo', 'lucide-folder-git-2'],
+    ['gitlab_wiki', 'gitlab-wiki', 'lucide-gitlab'],
+  ])(
+    'shows the document and connector types for synchronized documents (%s)',
+    (adapterType, connectorType, iconClass) => {
+      const documents = [
+        createDocument({
+          source_type: 'external',
+          file_extension: 'md',
+          source_config: {
+            external: {
+              provider: 'wiki',
+              title: 'Operations handbook',
+              sync: { enabled: true, adapter_type: adapterType },
+            },
           },
-        },
-      }),
-    ]
-    const { nodes, index } = buildKnowledgeResourceTree([], documents)
-    render(
-      <KnowledgeDocumentTreeGrid
-        nodes={nodes}
-        treeIndex={index}
-        folders={[]}
-        documents={documents}
-        {...requiredTreeGridProps}
-        showSelectionColumn={false}
-        showActionsColumn={false}
-        selectedFolderIds={new Set()}
-        selectedDocumentIds={new Set()}
-      />
-    )
+        }),
+      ]
+      const { nodes, index } = buildKnowledgeResourceTree([], documents)
+      render(
+        <KnowledgeDocumentTreeGrid
+          nodes={nodes}
+          treeIndex={index}
+          folders={[]}
+          documents={documents}
+          {...requiredTreeGridProps}
+          showSelectionColumn={false}
+          showActionsColumn={false}
+          selectedFolderIds={new Set()}
+          selectedDocumentIds={new Set()}
+        />
+      )
 
-    const type = screen.getByTestId('synced-wiki-document-type')
-    expect(type).toHaveTextContent('MD')
-    expect(type.querySelector('svg')).toHaveClass('lucide-book-open')
-    expect(type).toHaveAttribute('title', 'wikiSection.synced_badge')
-  })
+      const type = screen.getByTestId('synced-wiki-document-type')
+      expect(type).toHaveTextContent(`MD${connectorType}`)
+      expect(type).toHaveAttribute('data-connector-type', connectorType)
+      expect(type.querySelector('svg')).toHaveClass(iconClass)
+      expect(type).toHaveAttribute('title', connectorType)
+    }
+  )
 
   it('renders folders and documents through visible TreeGrid rows', () => {
     const folders = [createFolder()]
@@ -624,7 +632,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(onViewDetail).toHaveBeenCalledWith(documents[0])
   })
 
-  it('shows wiki source page metadata: real size and source update time', () => {
+  it('shows wiki source page metadata: real size and successful index time', () => {
     const formatLocal = (iso: string) =>
       new Date(iso).toLocaleString('sv-SE', { hour12: false }).replace(/-/g, '/')
 
@@ -640,7 +648,11 @@ describe('KnowledgeDocumentTreeGrid', () => {
         external: {
           provider: 'wiki',
           title: 'Synced Wiki',
-          sync: { enabled: true, observed_version: '2026-09-03T12:34:56Z' },
+          sync: {
+            enabled: true,
+            observed_version: '2026-09-03T12:34:56Z',
+            last_synced_at: '2026-09-03T18:30:00Z',
+          },
         },
       },
     })
@@ -662,7 +674,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
 
     // Real byte sizes, not the 0 B placeholder.
     expect(screen.getByText('15 B')).toBeInTheDocument()
-    const expectedTime = formatLocal('2026-09-03T12:34:56Z')
+    const expectedTime = formatLocal('2026-09-03T18:30:00Z')
     expect(screen.getByText(expectedTime)).toBeInTheDocument()
   })
 })

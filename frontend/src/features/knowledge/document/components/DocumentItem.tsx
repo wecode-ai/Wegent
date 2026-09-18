@@ -33,6 +33,7 @@ import { getProcessingErrorMessage } from '../utils/processing-error'
 import {
   getDocumentDisplayUpdatedAt,
   getExternalSourceInfo,
+  getSyncedWikiConnectorType,
   isSyncedWikiDocument,
   isWikiSourceMissing,
 } from '../utils/documentUtils'
@@ -144,7 +145,7 @@ export function DocumentItem({
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
   }
 
-  // Effective display update time: wiki rows prefer the source page time
+  // Effective display update time: wiki rows use the latest successful index time
   // (see getDocumentDisplayUpdatedAt); regular rows keep the '-' rule.
   const displayUpdatedAt = getDocumentDisplayUpdatedAt(document)
 
@@ -212,6 +213,7 @@ export function DocumentItem({
 
   // Whether to show download button
   const isSyncedWiki = isSyncedWikiDocument(document)
+  const syncedWikiConnectorType = getSyncedWikiConnectorType(document)
   const showDownload =
     allowDownload && !!document.attachment_id && (document.source_type === 'file' || isSyncedWiki)
   // Check document source type
@@ -406,8 +408,9 @@ export function DocumentItem({
                 </Badge>
               ) : isExternal ? (
                 <ExternalDocumentBadge
-                  extension={document.file_extension}
                   syncedWiki={isSyncedWiki}
+                  extension={document.file_extension}
+                  connectorType={syncedWikiConnectorType}
                   className="text-[9px] px-1 py-0"
                 />
               ) : (
@@ -674,7 +677,11 @@ export function DocumentItem({
             {t('knowledge:document.document.type.web')}
           </Badge>
         ) : isExternal ? (
-          <ExternalDocumentBadge extension={document.file_extension} syncedWiki={isSyncedWiki} />
+          <ExternalDocumentBadge
+            syncedWiki={isSyncedWiki}
+            extension={document.file_extension}
+            connectorType={syncedWikiConnectorType}
+          />
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}

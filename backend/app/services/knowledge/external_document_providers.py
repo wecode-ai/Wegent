@@ -226,6 +226,7 @@ class DetachedExternalDocumentProvider(ExternalDocumentProvider):
         db: Session,
         user: User,
         external_resource_id: str,
+        external_metadata: dict[str, Any] | None = None,
     ) -> PreparedExternalDocumentFetch:
         """Resolve database-backed metadata into a detached provider payload."""
 
@@ -242,7 +243,7 @@ class DetachedExternalDocumentProvider(ExternalDocumentProvider):
         external_resource_id: str,
     ) -> ExternalDocumentContent:
         """Fetch through the detached phases when called via the base contract."""
-        prepared = self.prepare_content_fetch(db, user, external_resource_id)
+        prepared = self.prepare_content_fetch(db, user, external_resource_id, None)
         return await self.fetch_prepared_content(prepared)
 
 

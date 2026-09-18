@@ -30,7 +30,7 @@ from app.services.knowledge.external_sync_providers import (
     ExternalSyncProvider,
     RemoteDocumentState,
     SyncCandidate,
-    decode_external_sync_resource_id,
+    build_wiki_resource_ref,
     get_document_sync_config,
     get_external_sync_provider,
     list_external_sync_provider_ids,
@@ -305,11 +305,14 @@ class ExternalDocumentSyncModule:
         for document in documents:
             sync = get_document_sync_config(document)
             try:
-                locator = decode_external_sync_resource_id(
-                    provider_id, str(document.external_resource_id or "")
+                locator, resource_ref = build_wiki_resource_ref(
+                    provider_id,
+                    str(document.external_resource_id or ""),
+                    sync,
                 )
             except Exception:
                 locator = None
+                resource_ref = None
             connection_id = str(
                 sync.get("connection_id")
                 or (locator.connection_id if locator is not None else "unknown")
@@ -321,15 +324,7 @@ class ExternalDocumentSyncModule:
                 connection_id=connection_id,
             )
             connection_report.scanned += 1
-            identity = (
-                str(sync.get("connection_id") or ""),
-                str(sync.get("resource_id") or ""),
-            )
-            if (
-                not sync.get("enabled")
-                or locator is None
-                or identity != (locator.connection_id, locator.resource_id)
-            ):
+            if locator is None or resource_ref is None:
                 report.failed += 1
                 connection_report.failed += 1
                 _merge_sync_config(
@@ -343,8 +338,13 @@ class ExternalDocumentSyncModule:
                     document_id=document.id,
                     owner_user_id=document.user_id,
                     locator=ExternalSyncLocator(
-                        provider_id, locator.connection_id, locator.resource_id
+                        provider_id,
+                        locator.connection_id,
+                        locator.resource_id,
+                        resource_kind=locator.resource_kind,
+                        identity_version=locator.identity_version,
                     ),
+                    resource_ref=resource_ref,
                 )
             )
             report.eligible += 1
@@ -403,21 +403,18 @@ class ExternalDocumentSyncModule:
     @staticmethod
     def _still_matches(document: KnowledgeDocument, candidate: SyncCandidate) -> bool:
         try:
-            locator = decode_external_sync_resource_id(
+            locator, resource_ref = build_wiki_resource_ref(
                 candidate.locator.provider_id,
                 str(document.external_resource_id or ""),
+                get_document_sync_config(document),
             )
         except Exception:
             return False
-        sync = get_document_sync_config(document)
         return bool(
             locator == candidate.locator
-            and sync.get("enabled")
             and (
-                str(sync.get("connection_id") or ""),
-                str(sync.get("resource_id") or ""),
+                candidate.resource_ref is None or resource_ref == candidate.resource_ref
             )
-            == (candidate.locator.connection_id, candidate.locator.resource_id)
         )
 
     async def _apply_state(
@@ -465,6 +462,9 @@ class ExternalDocumentSyncModule:
             observed_version=state.remote_version,
             path=metadata.get("path", sync.get("path")),
             locale=metadata.get("locale", sync.get("locale")),
+            resource_kind=metadata.get("resource_kind", sync.get("resource_kind")),
+            resource_key=metadata.get("resource_key", sync.get("resource_key")),
+            file_extension=metadata.get("file_extension", sync.get("file_extension")),
             last_checked_at=now,
             last_error_code=None,
         )
@@ -489,16 +489,33 @@ class ExternalDocumentSyncModule:
 
         report.updates_detected += 1
         connection_report.updates_detected += 1
+        refresh_required = (
+            remote_version != sync.get("content_version") or not document.attachment_id
+        )
+        logger.info(
+            "[External Sync] update detected document_id=%s knowledge_base_id=%s "
+            "name=%r provider=%s connector=%s connection_id=%r "
+            "resource_kind=%s path=%r previous_version=%r remote_version=%r "
+            "action=%s",
+            document.id,
+            document.kind_id,
+            document.name,
+            document.external_provider,
+            sync.get("adapter_type") or "wikijs",
+            sync.get("connection_id"),
+            sync.get("resource_kind") or "page",
+            sync.get("path") or "",
+            sync.get("indexed_version"),
+            remote_version,
+            "refresh" if refresh_required else "reindex",
+        )
 
         # Scheduling uses the existing state machines, which may commit or roll
         # back independently. Persist this batch's accumulated metadata first so
         # one document's dispatch failure cannot roll back earlier results.
         db.commit()
         try:
-            if (
-                remote_version != sync.get("content_version")
-                or not document.attachment_id
-            ):
+            if refresh_required:
                 refresh = external_document_import_service.queue_source_refresh(
                     db, document
                 )

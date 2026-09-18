@@ -4,6 +4,7 @@
 
 """Tests for provider-neutral daily external document synchronization."""
 
+import logging
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -163,6 +164,7 @@ async def test_daily_sync_queues_changed_remote_document(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     document = _create_synced_document(
         test_db, test_user, remote_version="2026-09-06T01:00:00Z"
@@ -194,7 +196,13 @@ async def test_daily_sync_queues_changed_remote_document(
         queue_refresh,
     )
 
-    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+    with caplog.at_level(
+        logging.INFO,
+        logger="app.services.knowledge.external_document_sync",
+    ):
+        report = await ExternalDocumentSyncModule().run_daily_sync(
+            test_db, scan_limit=100
+        )
 
     document = test_db.get(KnowledgeDocument, document.id)
     assert document is not None
@@ -211,6 +219,18 @@ async def test_daily_sync_queues_changed_remote_document(
         "2026-09-06T02:00:00Z"
     )
     queue_refresh.assert_called_once()
+    assert "[External Sync] update detected" in caplog.text
+    assert f"document_id={document.id}" in caplog.text
+    assert f"knowledge_base_id={document.kind_id}" in caplog.text
+    assert "name='Wiki Runbook v2'" in caplog.text
+    assert "provider=wiki" in caplog.text
+    assert "connector=wikijs" in caplog.text
+    assert "connection_id='conn-primary'" in caplog.text
+    assert "resource_kind=page" in caplog.text
+    assert "path='ops/runbook'" in caplog.text
+    assert "previous_version='2026-09-06T01:00:00Z'" in caplog.text
+    assert "remote_version='2026-09-06T02:00:00Z'" in caplog.text
+    assert "action=refresh" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -253,6 +273,7 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     document = _create_synced_document(
         test_db, test_user, remote_version="2026-09-06T02:00:00Z"
@@ -289,7 +310,13 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
         reindex,
     )
 
-    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+    with caplog.at_level(
+        logging.INFO,
+        logger="app.services.knowledge.external_document_sync",
+    ):
+        report = await ExternalDocumentSyncModule().run_daily_sync(
+            test_db, scan_limit=100
+        )
 
     assert report.reindexed == 1
     assert report.refreshed == 0
@@ -301,6 +328,8 @@ async def test_daily_sync_reindexes_local_content_after_failed_index(
     assert reindex.call_args.kwargs["db"] is test_db
     assert reindex.call_args.kwargs["user"].id == test_user.id
     assert reindex.call_args.kwargs["document_id"] == document.id
+    assert "[External Sync] update detected" in caplog.text
+    assert "action=reindex" in caplog.text
 
 
 @pytest.mark.asyncio
