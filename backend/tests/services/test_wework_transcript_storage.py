@@ -38,6 +38,10 @@ class _ObjectClient:
         self.requests.append((bucket, object_key))
         return self.response
 
+    def stat_object(self, bucket: str, object_key: str):
+        self.requests.append(("stat", bucket, object_key))
+        return object()
+
 
 class _StreamingResponse:
     def __init__(self, chunks: list[bytes]) -> None:
@@ -152,6 +156,18 @@ def test_stream_reads_and_releases_the_object(monkeypatch) -> None:
     assert client.requests == [("transcripts", "user/segment.tgz.enc")]
     assert response.closed is True
     assert response.released is True
+
+
+def test_exists_distinguishes_present_and_missing_objects(monkeypatch) -> None:
+    client = _ObjectClient()
+    storage = _storage(client, monkeypatch)
+
+    assert storage.exists("user/present.tgz.enc") is True
+    assert client.requests == [("stat", "transcripts", "user/present.tgz.enc")]
+
+    missing = _s3_error("NoSuchKey")
+    client.stat_object = lambda *_args: (_ for _ in ()).throw(missing)
+    assert storage.exists("user/missing.tgz.enc") is False
 
 
 def test_put_stream_reports_and_logs_the_s3_reason(monkeypatch, caplog) -> None:
