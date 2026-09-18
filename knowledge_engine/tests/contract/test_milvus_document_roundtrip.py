@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 
 import pytest
 
@@ -32,7 +31,6 @@ from knowledge_engine.storage.errors import (
 from shared.models import RetrievalScope
 
 from .conftest import (
-    VISIBILITY_WINDOW_SECONDS,
     DeterministicEmbedding,
     MilvusContractEnv,
     await_document_visibility,
@@ -264,10 +262,17 @@ def test_query_and_delete_of_missing_index_create_nothing(
     assert milvus_env.has_collection(knowledge_id) is False
 
 
-def test_partial_write_is_not_queryable(
+def test_a_failed_write_is_reported_and_its_retry_replaces_the_document(
     milvus_env: MilvusContractEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failed write never leaves retrievable content behind."""
+    """A failed write stays failed; the document is replaced by its retry.
+
+    Nothing compensates a failed write any more: the rows the server already
+    accepted stay stored until the same document is written again, and that
+    attempt removes the document's rows - the leftovers included - before it
+    writes once. The document lock the indexing task holds around one write is
+    the precondition that makes this retry the document's only writer.
+    """
     from knowledge_engine.storage.milvus_store import MilvusDocumentStore
 
     knowledge_id = milvus_env.new_knowledge_id()
@@ -286,27 +291,38 @@ def test_partial_write_is_not_queryable(
             milvus_env,
             knowledge_id=knowledge_id,
             document_id=505,
-            text="half written content must never be visible",
+            text="half written content that the retry has to replace",
             dimension=1536,
             backend=backend,
         )
 
     monkeypatch.undo()
-    # Wait out the visibility window before asserting emptiness: rows that the
-    # failed cleanup left behind would still be hidden if this ran earlier, so
-    # the negative assertion would pass without proving the cleanup worked.
-    time.sleep(VISIBILITY_WINDOW_SECONDS)
-    hits = _query(
+
+    left_behind = await_document_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref="505",
+        expected_chunks=1,
+    )
+    assert left_behind["chunk_count"] == 1, "the failed write stored what it accepted"
+    assert "half written" in left_behind["chunks"][0]["content"]
+
+    _, _, retried = _index_document(
         milvus_env,
         knowledge_id=knowledge_id,
-        query="half written content",
+        document_id=505,
+        text="retried content that replaces the failed attempt",
         dimension=1536,
         backend=backend,
     )
-    assert hits["records"] == [], "content stayed visible after a failed write"
-    assert backend.get_all_chunks(knowledge_id) == []
-    with pytest.raises(ValueError):
-        backend.get_document(knowledge_id, "505")
+
+    stored = backend.get_document(knowledge_id, "505")
+    assert stored["chunk_count"] == retried["chunk_count"]
+    assert [
+        chunk["content"]
+        for chunk in stored["chunks"]
+        if "half written" in chunk["content"]
+    ] == [], "the retry left the failed attempt's rows readable"
 
 
 def test_a_dropped_index_reads_as_unindexed_and_rebuilds_on_the_next_write(

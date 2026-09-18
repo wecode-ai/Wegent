@@ -64,19 +64,23 @@ class MilvusCleanup:
     ) -> int:
         """Remove every stored row of one document and prove it is gone.
 
-        A rewrite calls this before writing the new version, and a failed write
-        calls it to take its own rows back. The public indexing flow deletes the
-        old index first, but that delete is allowed to fail and is only logged,
-        and rows are keyed by knowledge base, document and chunk index: without
-        this the previous version of a document that got shorter stays readable
-        next to the new one. The scope is one knowledge base and one document,
-        so a shared physical collection keeps every other document.
+        This is the write path's own replacement step: a rewrite calls it once
+        before it writes the new version, and the write path is the only owner
+        of that removal. Rows are keyed by knowledge base, document and chunk
+        index, so without this the previous version of a document that got
+        shorter stays readable next to the new one. The scope is one knowledge
+        base and one document, so a shared physical collection keeps every other
+        document.
 
         Every row of the document is removed, not only the ones this write
         knows about: two writers of the same document are not coordinated, so a
         writer still in flight when a rewrite starts loses the rows it already
         wrote and the last writer wins. The parity spec accepts that window and
         promises the normal ordered flow only.
+
+        A removal that cannot prove itself raises, and the caller's write stops
+        there: nothing compensates a failed write afterwards, so the retry of
+        the same document is what clears rows a previous attempt left behind.
 
         ``require_bound`` is False for the write path, which confirmed the
         index contract of this collection earlier in the same write.

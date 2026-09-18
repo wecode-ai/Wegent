@@ -48,7 +48,6 @@ from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
-    StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
 from knowledge_engine.storage.milvus_cleanup import MilvusCleanup
@@ -210,11 +209,22 @@ class MilvusBackend(BaseStorageBackend):
         embed_model,
         **kwargs,
     ) -> Dict:
-        """Write one document into Milvus with a single write.
+        """Write one document into Milvus as a replacement, in a single write.
 
-        The version stored before this write is removed first, and a failed
-        write removes whatever this write left behind, so a caller never reads
-        two versions of one document at once.
+        The version stored before this write is removed first, inside this call,
+        and this backend is the only owner of that removal: a caller invokes the
+        write once per document and never deletes the document's previous rows
+        itself.
+
+        The precondition is the business document lock the indexing and rebuild
+        entries already hold around one write (``knowledge:index_document:
+        {document_id}``). This backend builds no transaction protocol of its own
+        and does not try to survive writers that bypass that lock.
+
+        Failure is reported, never compensated: a removal that fails ends the
+        write before the new rows land, and a write that fails after the removal
+        is raised as it is, so the task fails and the caller retries the whole
+        replacement.
         """
         materialized = [node for node in nodes if self._node_has_content(node)]
         if not materialized:
@@ -288,10 +298,14 @@ class MilvusBackend(BaseStorageBackend):
         buying it back with a write-side wait.
 
         Milvus has no transaction spanning the write, so the failure path is
-        explicit: the document's rows are removed again at this write
-        boundary. The price of dropping the old row-count check is that a
-        server that accepts a write and stores nothing is no longer detected
-        here; the parity spec accepts that in exchange for one write.
+        explicit too: the removal is proven before the rows go in, and a write
+        that fails afterwards is raised as it is instead of being cleaned up
+        here. The rows such a failed write left behind are cleared by the next
+        write of the same document, which repeats this whole replacement under
+        the caller's document lock. The price of dropping the old row-count
+        check is that a server which accepts a write and stores nothing is no
+        longer detected here; the parity spec accepts that in exchange for one
+        write.
         """
         with self._store.client() as client:
             self._store.ensure_index(
@@ -301,16 +315,16 @@ class MilvusBackend(BaseStorageBackend):
                 embedding_space=embedding_space,
             )
         self._remove_document_rows(collection_name, knowledge_id, doc_ref)
-        try:
-            with self._store.client() as client:
-                self._store.upsert_rows(client, collection_name, rows)
-        except Exception as write_error:
-            self._drop_failed_write(collection_name, knowledge_id, doc_ref, write_error)
+        with self._store.client() as client:
+            self._store.upsert_rows(client, collection_name, rows)
 
     def _remove_document_rows(
         self, collection_name: str, knowledge_id: str, doc_ref: str
     ) -> int:
         """Remove one document's rows at the write boundary.
+
+        A removal that fails or cannot prove it removed the rows raises, and the
+        write that asked for it never reaches the new rows.
 
         ``require_bound`` is False because this write confirmed the index
         contract of this collection just before. ``flush`` is False because
@@ -324,49 +338,6 @@ class MilvusBackend(BaseStorageBackend):
             require_bound=False,
             flush=False,
         )
-
-    def _drop_failed_write(
-        self,
-        collection_name: str,
-        knowledge_id: str,
-        doc_ref: str,
-        write_error: Exception,
-    ) -> None:
-        """Remove the rows of a failed write, or fail with that cleanup.
-
-        The write path never reports this failure as a success: either the
-        original write failure is re-raised, or - when the rows could not be
-        removed - a failure that names both is raised, because the document
-        may still be readable. That cleanup failure is retryable: re-running
-        the write removes the document's rows before it writes them again, so
-        the retry converges instead of layering a second version.
-
-        It runs while the caller handles that write failure, so the final bare
-        ``raise`` re-raises it - a cleanup that could not prove its removal is
-        the only failure this helper raises itself.
-
-        Neither this write nor the one it cleans up waits for a server-side
-        flush: Milvus persists in the background, so a crash before its own
-        flush can lose rows this write already reported as written. The
-        Elasticsearch backend issues no per-document flush either, and the
-        parity spec asks for nothing stronger.
-        """
-        try:
-            self._remove_document_rows(collection_name, knowledge_id, doc_ref)
-        except Exception as cleanup_error:
-            raise StorageBackendError(
-                f"Milvus write failed and the rows of document '{doc_ref}' in "
-                f"'{collection_name}' could not be removed afterwards; the "
-                "document may still be readable. Re-run the same write.",
-                details={
-                    "collection_name": collection_name,
-                    "doc_ref": doc_ref,
-                    "write_error": str(write_error),
-                    "cleanup_error": str(cleanup_error),
-                },
-                retryable=True,
-            ) from write_error
-        raise
 
     def _node_has_content(self, node: BaseNode) -> bool:
         """A chunk with neither retrieval nor display text is not indexable."""

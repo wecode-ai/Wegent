@@ -9,11 +9,13 @@ for the write and the delete, ``QueryExecutor`` for the read - so the
 assertions describe the content, the parent expansion and the scope a user
 ends up with instead of the SDK calls the adapter happens to make.
 
-The rewrite cases index the same document twice without a pre-delete, which is
-what the backend indexing flow does when removing the old index fails: it logs
-the failure and continues into the write. That is the failure this contract
-pins down: a rewrite may be temporarily unsearchable, but it must never report
-success while the previous version is still readable next to the new one.
+The rewrite cases index the same document twice through the write entry: the
+seam the indexing task calls while it holds the document lock
+(``knowledge:index_document:{document_id}``), one write per document. Clearing
+the previous version is MilvusBackend's own step inside that write, so this
+seam performs no pre-delete at all. A rewrite may be temporarily unsearchable,
+but it must never report success while the previous version is still readable
+next to the new one.
 """
 
 from __future__ import annotations
@@ -151,10 +153,10 @@ def _mentioning(records: list[dict], marker: str) -> list[dict]:
     return [record for record in records if marker in record["content"]]
 
 
-def test_shorter_rewrite_without_a_predelete_keeps_only_the_new_chunks(
+def test_a_shorter_rewrite_keeps_only_the_new_chunks(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """A rewrite that skipped its delete replaces the document, tail included."""
+    """A rewrite replaces the document, its old tail included."""
     knowledge_id = milvus_env.new_knowledge_id()
     long_text = _document_text(key="alpha", tail_marker="legacytailmarker")
     backend, model, long_result = _index_document(
@@ -176,7 +178,7 @@ def test_shorter_rewrite_without_a_predelete_keeps_only_the_new_chunks(
         model=model,
     )
 
-    # No pre-delete: the old index removal failed and the flow continued.
+    # No pre-delete here: the write itself replaces the previous version.
     _, _, short_result = _index_document(
         milvus_env,
         knowledge_id=knowledge_id,

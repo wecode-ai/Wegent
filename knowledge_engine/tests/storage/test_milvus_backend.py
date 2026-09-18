@@ -621,9 +621,7 @@ def test_index_returns_as_soon_as_the_rows_are_written():
 
     Retrieval reads at ``Bounded``, so the write returns as soon as the server
     accepted the rows and the next ~0.5s of reads may miss them; the parity
-    spec accepts that window instead of paying for it on every write. The
-    reasoning behind dropping the per-document flush is recorded on
-    ``MilvusBackend._drop_failed_write``.
+    spec accepts that window instead of paying for it on every write.
     """
     backend = _backend()
     store = FakeStore()
@@ -694,6 +692,14 @@ def _stored_chunk_row(doc_ref: str, chunk_index: int):
     return _stored_row(doc_ref, chunk_index, display_text="stale tail")
 
 
+def _stored_scopes(store: "FakeStore") -> set[tuple[str, str]]:
+    """The (knowledge base, document) pairs a store still keeps rows for."""
+    return {
+        (row[METADATA_FIELD]["knowledge_id"], row[METADATA_FIELD]["doc_ref"])
+        for row in store.rows
+    }
+
+
 def test_rewrite_drops_the_documents_previous_rows_before_writing():
     """A rewrite replaces one document instead of layering versions."""
     backend = _backend()
@@ -744,7 +750,7 @@ def test_rewrite_of_a_document_without_rows_issues_no_delete():
 
 
 def test_rewrite_fails_when_the_previous_rows_cannot_be_removed():
-    """An unverified cleanup fails loudly instead of writing mixed content."""
+    """An unproven removal ends the write instead of writing mixed content."""
 
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("42", 7)])
@@ -766,6 +772,174 @@ def test_rewrite_fails_when_the_previous_rows_cannot_be_removed():
     assert all(call[0] != "upsert_rows" for call in store.calls)
 
 
+def test_rewrite_stops_before_the_write_when_the_delete_rpc_fails():
+    """A delete that failed is not a delete that found nothing.
+
+    The previous rows are still stored, so writing the new ones would leave two
+    versions of the document readable at once. The write reports that failure
+    and never reaches the new rows.
+    """
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("42", 0)])
+    backend._store = store
+
+    def failing_delete(client, collection_name, filter_expr, *, flush=True):
+        store.calls.append(("delete_rows", collection_name, filter_expr))
+        store.deleted_filters.append(filter_expr)
+        raise StorageBackendError("simulated delete failure")
+
+    store.delete_rows = failing_delete
+
+    with pytest.raises(StorageBackendError) as failure:
+        backend.index_with_metadata(
+            nodes=_nodes(),
+            chunk_metadata=_chunk_metadata(),
+            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+    assert "simulated delete failure" in str(failure.value)
+    assert all(call[0] != "upsert_rows" for call in store.calls)
+    assert [row["id"] for row in store.rows] == ["42-0"]
+
+
+def test_rewrite_confirms_the_contract_before_it_deletes_the_old_rows():
+    """An incompatible collection fails while the stored rows are untouched.
+
+    The write path reads the contract the collection declares about itself
+    before it deletes anything, so a shared collection whose schema, dimension,
+    metric or embedding space disagrees with this write is refused without
+    losing the document - or any other document's - rows.
+    """
+    backend = _backend()
+    store = FakeStore(rows=[_stored_chunk_row("42", 0)])
+    backend._store = store
+
+    def refuse(client, collection_name, *, dimension, embedding_space):
+        store.calls.append(
+            ("ensure_index", collection_name, dimension, embedding_space)
+        )
+        raise IndexContractIncompatibleError(
+            collection_name,
+            "dimension mismatch",
+            details={"bound": 3, "requested": dimension},
+        )
+
+    store.ensure_index = refuse
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.index_with_metadata(
+            nodes=_nodes(),
+            chunk_metadata=_chunk_metadata(),
+            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+    assert store.deleted_filters == []
+    assert all(call[0] != "upsert_rows" for call in store.calls)
+    assert [row["id"] for row in store.rows] == ["42-0"]
+
+
+@pytest.mark.parametrize(
+    "strategy,index_kwargs",
+    [
+        ({"mode": "per_dataset", "prefix": "test"}, {}),
+        ({"mode": "fixed", "fixedName": "test_fixed_contract"}, {}),
+        ({"mode": "rolling", "prefix": "test", "rollingStep": 10}, {}),
+        ({"mode": "per_user", "prefix": "test"}, {"user_id": 7}),
+    ],
+    ids=["per_dataset", "fixed", "rolling", "per_user"],
+)
+def test_every_strategy_replaces_one_document_inside_its_knowledge_base(
+    strategy, index_kwargs
+):
+    """The replacement is scoped to one document of one knowledge base.
+
+    The shared strategies keep other knowledge bases - and the same document
+    reference in them - in the same physical collection, so the delete a
+    rewrite issues has to carry both the knowledge base and the document. No
+    strategy drops a collection here.
+    """
+    backend = MilvusBackend(
+        {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": strategy,
+            "ext": {},
+        }
+    )
+    store = FakeStore(
+        rows=[
+            _stored_chunk_row("42", 0),
+            _stored_chunk_row("43", 0),
+            _stored_row("42", 0, metadata={"knowledge_id": "2"}),
+        ]
+    )
+    backend._store = store
+
+    backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        **index_kwargs,
+    )
+
+    [scope] = store.deleted_filters
+    assert 'metadata["knowledge_id"] == "1"' in scope
+    assert 'metadata["doc_ref"] in ["42"]' in scope
+    replaced = [
+        row
+        for row in store.rows
+        if row[METADATA_FIELD]["knowledge_id"] == "1"
+        and row[METADATA_FIELD]["doc_ref"] == "42"
+    ]
+    assert len(replaced) == 2
+    assert _stored_scopes(store) == {("1", "42"), ("1", "43"), ("2", "42")}
+
+
+@pytest.mark.parametrize(
+    "strategy,index_kwargs",
+    [
+        ({"mode": "fixed", "fixedName": "test_fixed_contract"}, {}),
+        ({"mode": "rolling", "prefix": "test", "rollingStep": 10}, {}),
+        ({"mode": "per_user", "prefix": "test"}, {"user_id": 7}),
+    ],
+    ids=["fixed", "rolling", "per_user"],
+)
+def test_a_shared_strategy_deletes_one_document_inside_one_knowledge_base(
+    strategy, index_kwargs
+):
+    """A shared collection is never dropped and never cleared across datasets.
+
+    The delete entry point removes one document of one knowledge base, so the
+    same document reference another knowledge base stored in that shared
+    collection stays readable. The fake store has no drop RPC, so a strategy
+    that dropped the collection - which only ``per_dataset`` may do - would
+    fail this test instead of passing quietly.
+    """
+    backend = MilvusBackend(
+        {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": strategy,
+            "ext": {},
+        }
+    )
+    store = FakeStore(
+        rows=[
+            _stored_chunk_row("42", 0),
+            _stored_row("42", 0, metadata={"knowledge_id": "2"}),
+            _stored_chunk_row("43", 0),
+        ]
+    )
+    backend._store = store
+    backend.delete_parent_nodes = lambda *args, **kwargs: 0
+
+    result = backend.delete_document("1", "42", **index_kwargs)
+
+    assert result["deleted_chunks"] == 1
+    [scope] = store.deleted_filters
+    assert 'metadata["knowledge_id"] == "1"' in scope
+    assert 'metadata["doc_ref"] in ["42"]' in scope
+    assert _stored_scopes(store) == {("1", "43"), ("2", "42")}
+
+
 def test_index_rejects_configured_dimension_mismatch():
     backend = _backend(dim=4)
     backend._store = FakeStore()
@@ -778,8 +952,15 @@ def test_index_rejects_configured_dimension_mismatch():
         )
 
 
-def test_a_failed_write_removes_the_rows_it_left_behind():
-    """A write that fails at the storage boundary leaves nothing readable."""
+def test_a_failed_write_is_reported_without_a_compensating_delete():
+    """A failed write is raised as it is; nobody deletes for it.
+
+    The replacement delete runs before the write, so a write that fails after
+    it leaves whatever the server already accepted stored. The task reports
+    that failure and the next attempt of the same document clears those rows
+    with its own replacement delete; a second delete here would compete with a
+    rewrite another writer may already be performing.
+    """
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("43", 0)])
     backend._store = store
@@ -799,48 +980,60 @@ def test_a_failed_write_removes_the_rows_it_left_behind():
         )
 
     assert "simulated write failure" in str(failure.value)
-    assert [row.get("id") for row in store.rows] == ["43-0"]
-    cleanup_scope = store.deleted_filters[-1]
-    assert 'metadata["knowledge_id"] == "1"' in cleanup_scope
-    assert 'metadata["doc_ref"] in ["42"]' in cleanup_scope
+    # Document 42 had no rows before this write, so no delete ran at all and
+    # the half-written row stays stored until a retry replaces it.
+    assert store.deleted_filters == []
+    assert sorted(row[METADATA_FIELD]["doc_ref"] for row in store.rows) == [
+        "42",
+        "43",
+    ]
 
 
-def test_a_failed_write_reports_a_cleanup_that_cannot_remove_its_rows():
-    """A cleanup that fails must not report the write as merely failed.
+def test_a_retried_write_replaces_what_the_failed_attempt_left():
+    """The retry repeats the whole replacement, so convergence happens there.
 
-    The failure is also retryable: re-running the write removes the rows of
-    this document before writing them again, so a retry converges. The caller
-    reads that flag instead of parsing the message.
+    Nothing compensates a failed write, so the rows that attempt left behind
+    are still stored when the next attempt starts. That attempt deletes the
+    document's rows - the leftovers included - before it writes once, which is
+    what makes a failed task recoverable by retrying it.
     """
     backend = _backend()
-    store = FakeStore(rows=[_stored_chunk_row("43", 0)])
+    store = FakeStore(rows=[_stored_chunk_row("42", 9)])
     backend._store = store
+    original_upsert = store.upsert_rows
+    attempts: list[list[Dict[str, Any]]] = []
 
-    def partially_written_then_failed(client, collection_name, rows):
-        store.rows.extend(dict(row) for row in rows[:1])
-        raise StorageBackendError("simulated write failure")
+    def fail_the_first_write(client, collection_name, rows):
+        attempts.append([dict(row) for row in rows])
+        if len(attempts) == 1:
+            # The server accepted the whole batch before the RPC failed.
+            store.rows.extend(dict(row) for row in rows)
+            raise StorageBackendError("simulated write failure")
+        return original_upsert(client, collection_name, rows)
 
-    def keep_rows(client, collection_name, filter_expr, *, flush=True):
-        store.calls.append(("delete_rows", collection_name, filter_expr))
-        store.deleted_filters.append(filter_expr)
-        raise StorageBackendError("simulated cleanup failure")
-
-    store.upsert_rows = partially_written_then_failed
-    store.delete_rows = keep_rows
+    store.upsert_rows = fail_the_first_write
+    model = FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]])
 
     with pytest.raises(StorageBackendError) as failure:
         backend.index_with_metadata(
             nodes=_nodes(),
             chunk_metadata=_chunk_metadata(),
-            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+            embed_model=model,
         )
 
-    details = failure.value.details
-    assert details["doc_ref"] == "42"
-    assert "simulated write failure" in details["write_error"]
-    assert "simulated cleanup failure" in details["cleanup_error"]
-    assert "may still be readable" in str(failure.value)
-    assert failure.value.retryable is True
+    assert "simulated write failure" in str(failure.value)
+    # The attempt replaced the stale row first and then left its own rows.
+    assert len(store.rows) == 2
+    assert "42-9" not in {row["id"] for row in store.rows}
+
+    result = backend.index_with_metadata(
+        nodes=_nodes(),
+        chunk_metadata=_chunk_metadata(),
+        embed_model=model,
+    )
+
+    assert result["indexed_count"] == 2
+    assert {row["id"] for row in store.rows} == {row["id"] for row in attempts[1]}
 
 
 def test_retrieve_returns_raw_cosine_scores_above_threshold():
