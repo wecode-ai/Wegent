@@ -1862,6 +1862,17 @@ export function CloudTodoWorkspace({
     },
     [onMarkRuntimeTaskRead, runtimeAddressesForTaskBoardItem, runtimeTaskLifecycle]
   )
+  const openItemForProject = useCallback(
+    (project: LocatedCloudProject, item: LocatedLoopItem, openRuntimeItemInWorkbench = false) => {
+      if (isDefaultWorkItemProject(project)) markTaskBoardItemRead(item)
+      if (openRuntimeItemInWorkbench && isRuntimeMyWorkItem(item)) {
+        void openBoardRuntimeTask(item.runtime_address)
+        return
+      }
+      setSelectedItem(item)
+    },
+    [markTaskBoardItemRead, openBoardRuntimeTask]
+  )
   useEffect(() => {
     if (
       !selectedItem ||
@@ -3022,6 +3033,7 @@ export function CloudTodoWorkspace({
       return
     }
     if (
+      !selectedProject ||
       !selectedProjectId ||
       !selectedProjectKey ||
       (selectedProject?.location === 'cloud'
@@ -3040,7 +3052,7 @@ export function CloudTodoWorkspace({
       focusedItemRequestRef.current = requestKey
       setProjectView('board')
       setBoardParentId(focusedItem.parent_id)
-      setSelectedItem(focusedItem)
+      openItemForProject(selectedProject, focusedItem)
       onFocusedItemHandled?.()
     })
     return () => {
@@ -3052,6 +3064,7 @@ export function CloudTodoWorkspace({
     cloudWorkspace.state.project?.id,
     itemsProjectKey,
     onFocusedItemHandled,
+    openItemForProject,
     selectedProjectId,
     selectedProjectKey,
     selectedProject,
@@ -3838,18 +3851,13 @@ export function CloudTodoWorkspace({
 
   const openBoardItem = useCallback(
     (item: LocatedLoopItem) => {
-      if (item.can_view_detail === false) return
+      if (item.can_view_detail === false || !selectedProject) return
       setPinnedBoardPreview(null)
       setBackgroundTaskItemId(null)
       closeTaskPanel()
-      if (isMyTasksBoard) markTaskBoardItemRead(item)
-      if (isRuntimeMyWorkItem(item)) {
-        void openBoardRuntimeTask(item.runtime_address)
-        return
-      }
-      setSelectedItem(item)
+      openItemForProject(selectedProject, item, true)
     },
-    [closeTaskPanel, isMyTasksBoard, markTaskBoardItemRead, openBoardRuntimeTask]
+    [closeTaskPanel, openItemForProject, selectedProject]
   )
 
   function closeTopPanel() {
@@ -5591,7 +5599,10 @@ export function CloudTodoWorkspace({
               if (item.can_view_detail === false) return
               selectProject(project)
               setProjectView('board')
-              setSelectedItem({ ...item, project_store: project.project_store })
+              openItemForProject(project, {
+                ...item,
+                project_store: project.project_store,
+              })
               setGlobalSearchOpen(false)
             }}
           />

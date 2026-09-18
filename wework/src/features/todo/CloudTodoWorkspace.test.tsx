@@ -5524,6 +5524,9 @@ describe('CloudTodoWorkspace', () => {
       members: [],
       agents: [],
     }))
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [persistedIssue],
+    }))
     workbenchServices.projectSpaceApis = {
       local: workbenchServices.deliveryApi!,
       defaultLocation: 'local',
@@ -5531,7 +5534,10 @@ describe('CloudTodoWorkspace', () => {
     const onMarkRuntimeTaskRead = vi.fn((runtimeAddress: typeof firstAddress) =>
       lifecycleStore.markRead(runtimeAddress)
     )
-    const workspace = (lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>) => (
+    const workspace = (
+      lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>,
+      focusedItemId?: string
+    ) => (
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
@@ -5543,6 +5549,7 @@ describe('CloudTodoWorkspace', () => {
           projectStore: 'local',
           projectId: defaultProject.id,
         }}
+        focusedItemId={focusedItemId}
         onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
       />
     )
@@ -5575,6 +5582,40 @@ describe('CloudTodoWorkspace', () => {
     expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
     expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
     expect(workbenchServices.deliveryApi!.markLoopItemRead).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    onMarkRuntimeTaskRead.mockClear()
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot(), persistedIssue.id))
+
+    await waitFor(() => expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2))
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
+
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+    onMarkRuntimeTaskRead.mockClear()
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await userEvent.type(screen.getByTestId('cloud-global-search-input'), persistedIssue.id)
+    await userEvent.click(
+      await screen.findByTestId(`cloud-global-search-result-${persistedIssue.id}`)
+    )
+
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
   })
 
   it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {

@@ -419,7 +419,8 @@ impl LocalTaskStore {
             .filter(|item| item.cloud_project_id.as_deref() == Some(project_id))
             .ok_or(TaskRuntimeError::TaskNotFound)?;
         if project_id == DEFAULT_WORK_ITEM_PROJECT_ID {
-            return Ok(item);
+            drop(connection);
+            return self.get_task(project_id, task_id);
         }
         if item.metadata["is_unread"] == json!(true) {
             connection.execute(
