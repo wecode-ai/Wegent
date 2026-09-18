@@ -1086,6 +1086,31 @@ def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
     assert request.provider_native_knowledge is True
 
 
+@pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode"])
+def test_deferred_provider_skill_is_reactivated(shell_type: str) -> None:
+    """A provider Skill bound as available-only must still serve its MCP tools."""
+    request = ExecutionRequest(
+        bot=[{"shell_type": shell_type, "mcp_servers": []}],
+        skill_names=["wegent-knowledge"],
+        skill_configs=[
+            {
+                "name": "wegent-knowledge",
+                "mcp_deferred": True,
+                "mcpServers": {"wegent-knowledge": {"url": "https://example.com/mcp"}},
+            }
+        ],
+    )
+
+    activate_provider_native_knowledge(request, ["wegent-knowledge"])
+
+    assert request.provider_native_knowledge is True
+    assert "mcp_deferred" not in request.skill_configs[0]
+    if shell_type == "ClaudeCode":
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "wegent-knowledge"
+        ]
+
+
 def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
     skill_path = (
         Path(__file__).resolve().parents[3]

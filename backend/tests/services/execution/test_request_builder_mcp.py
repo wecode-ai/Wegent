@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services.execution.request_builder import TaskRequestBuilder
+from app.services.readers import kindReader
 from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import OpenAIRequestConverter
 
@@ -572,6 +573,40 @@ class TestPrepareMcpForClaudeCode:
     @patch.object(
         TaskRequestBuilder,
         "_check_mcp_server_reachable",
+        return_value=True,
+    )
+    def test_deferred_skill_mcp_is_not_merged(self, mock_check):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {
+            "shell_type": "ClaudeCode",
+            "mcp_servers": [
+                {
+                    "name": "ghost-server",
+                    "type": "http",
+                    "url": "http://ghost.example.com/mcp",
+                },
+            ],
+        }
+        skill_configs = [
+            {
+                "name": "demo-skill",
+                "mcp_deferred": True,
+                "mcpServers": {
+                    "demo-skill": {
+                        "type": "streamable-http",
+                        "url": "https://mcp.example.com/server/demo",
+                    },
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+
+        assert [s["name"] for s in bot_config["mcp_servers"]] == ["ghost-server"]
+
+    @patch.object(
+        TaskRequestBuilder,
+        "_check_mcp_server_reachable",
         return_value=False,
     )
     def test_unreachable_servers_removed(self, mock_check):
@@ -770,3 +805,232 @@ class TestResolveRequestPreloadSkills:
             }
         ]
         assert result.skill_names == ["dingtalk-docs"]
+
+
+class TestAvailableSkillMcpDeferral:
+    """Skills available for on-demand loading must not attach their MCP servers."""
+
+    @staticmethod
+    def _ghost_kind() -> SimpleNamespace:
+        return SimpleNamespace(
+            user_id=0,
+            name="chat-ghost",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": "chat-ghost", "namespace": "default"},
+                "spec": {"systemPrompt": "You are a chat bot."},
+            },
+        )
+
+    @staticmethod
+    def _build_builder(mocker) -> TaskRequestBuilder:
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = None
+        mocker.patch.object(
+            kindReader,
+            "get_by_name_and_namespace",
+            return_value=TestAvailableSkillMcpDeferral._ghost_kind(),
+        )
+        mocker.patch.object(
+            builder,
+            "_find_skill_by_ref",
+            return_value=SimpleNamespace(id=42, name="demo-skill"),
+        )
+        mocker.patch.object(
+            builder,
+            "_build_skill_data",
+            side_effect=lambda skill, user=None: {"name": "demo-skill"},
+        )
+        mocker.patch(
+            "app.services.execution.request_builder.build_skill_ref_meta",
+            return_value={
+                "skill_id": 42,
+                "namespace": "default",
+                "is_public": True,
+            },
+        )
+        return builder
+
+    def _resolve(self, builder, *, available=None, preload=None):
+        return builder._get_bot_skills(
+            bot=_bot_kind_with_ghost(user_id=0),
+            team=SimpleNamespace(namespace="default", user_id=0),
+            user=SimpleNamespace(id=7),
+            user_id=7,
+            user_preload_skills=preload,
+            user_available_skills=available,
+        )
+
+    def test_available_skill_defers_mcp_servers(self, mocker):
+        builder = self._build_builder(mocker)
+
+        skills, preloads, user_selected, _ = self._resolve(
+            builder,
+            available=[
+                {
+                    "name": "demo-skill",
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            ],
+        )
+
+        assert skills == [{"name": "demo-skill", "mcp_deferred": True}]
+        assert preloads == []
+        assert user_selected == []
+
+    def test_mcp_active_available_skill_keeps_mcp_servers(self, mocker):
+        builder = self._build_builder(mocker)
+
+        skills, _, _, _ = self._resolve(
+            builder,
+            available=[
+                {
+                    "name": "demo-skill",
+                    "namespace": "default",
+                    "is_public": True,
+                    "mcp_active": True,
+                }
+            ],
+        )
+
+        assert skills == [{"name": "demo-skill"}]
+
+    def test_preloaded_skill_keeps_mcp_servers(self, mocker):
+        builder = self._build_builder(mocker)
+
+        skills, preloads, _, _ = self._resolve(
+            builder,
+            preload=[
+                {
+                    "name": "demo-skill",
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            ],
+        )
+
+        assert skills == [{"name": "demo-skill"}]
+        assert preloads == ["demo-skill"]
+
+
+class TestClaimedSkillMcpReattachment:
+    """Skills claimed after resolution must get their MCP servers back."""
+
+    @staticmethod
+    def _deferred_skill_config(name: str = "demo-skill") -> dict:
+        return {
+            "name": name,
+            "mcp_deferred": True,
+            "mcpServers": {
+                name: {"type": "streamable-http", "url": f"https://mcp.test/{name}"}
+            },
+        }
+
+    @staticmethod
+    def _claude_request(params: dict) -> ExecutionRequest:
+        return ExecutionRequest(
+            bot=[{"shell_type": "ClaudeCode", "mcp_servers": []}],
+            **params,
+        )
+
+    def test_claimed_available_skill_reattaches_mcp(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+            }
+        )
+
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["demo-skill"])
+
+        assert "mcp_deferred" not in request.skill_configs[0]
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "demo-skill"
+        ]
+        assert request.bot[0]["mcp_servers"][0]["type"] == "http"
+
+    def test_reattached_mcp_is_not_mounted_twice(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+            }
+        )
+
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["demo-skill"])
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["demo-skill"])
+
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "demo-skill"
+        ]
+
+    def test_unclaimed_available_skill_keeps_mcp_detached(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+            }
+        )
+
+        TaskRequestBuilder.activate_claimed_skill_mcp(request, ["other-skill"])
+
+        assert request.skill_configs[0]["mcp_deferred"] is True
+        assert request.bot[0]["mcp_servers"] == []
+
+    def test_requested_skill_reattaches_mcp_without_rebuild(self):
+        request = self._claude_request(
+            {
+                "skill_names": ["demo-skill"],
+                "skill_configs": [self._deferred_skill_config()],
+                "preload_skills": ["demo-skill"],
+            }
+        )
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+
+        builder.resolve_request_preload_skills(
+            request=request,
+            bot=SimpleNamespace(),
+            team=SimpleNamespace(),
+            user=SimpleNamespace(),
+        )
+
+        assert "mcp_deferred" not in request.skill_configs[0]
+        assert [server["name"] for server in request.bot[0]["mcp_servers"]] == [
+            "demo-skill"
+        ]
+
+    def test_member_bot_claimed_skill_reattaches_mcp(self):
+        resolved_skills = [self._deferred_skill_config()]
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+
+        builder._extend_resolved_skills_from_bot_configs(
+            bot_configs=[
+                {"shell_type": "ClaudeCode", "skills": ["demo-skill"]},
+                {"shell_type": "ClaudeCode", "skills": ["demo-skill"]},
+            ],
+            resolved_skills=resolved_skills,
+            skill_refs={},
+            team=SimpleNamespace(namespace="default", user_id=0),
+            user=SimpleNamespace(id=7),
+        )
+
+        assert "mcp_deferred" not in resolved_skills[0]
+
+
+class TestInjectedSkillMcpActivation:
+    """Functionally injected Skills must keep their MCP tools reachable."""
+
+    def test_injected_skill_keeps_mcp_active(self):
+        injected = TaskRequestBuilder._inject_subscription_manager_skill()
+
+        assert len(injected) == 1
+        assert injected[0]["mcp_active"] is True
+
+    def test_subscription_task_skips_injection(self):
+        assert (
+            TaskRequestBuilder._inject_subscription_manager_skill(is_subscription=True)
+            == []
+        )
