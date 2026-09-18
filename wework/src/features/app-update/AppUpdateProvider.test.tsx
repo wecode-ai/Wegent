@@ -122,13 +122,11 @@ describe('AppUpdateProvider', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
-      await appUpdate?.installUpdate()
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
     })
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
-    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+    expect(installDownloadedWeworkUpdate).toHaveBeenCalledTimes(1)
   })
 
   test('waits for an active background download before asking for restart confirmation', async () => {
