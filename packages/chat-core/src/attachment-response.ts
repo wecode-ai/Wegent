@@ -1,7 +1,10 @@
 import type { Attachment } from './runtime'
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 type UploadAttachmentResponse = Omit<Attachment, 'created_at' | 'file_extension' | 'subtask_id'> &
-  Partial<Pick<Attachment, 'created_at' | 'file_extension' | 'subtask_id'>>
+  Partial<Pick<Attachment, 'file_extension' | 'subtask_id'>> & {
+    // The upload API may omit created_at or return null while parsing finishes.
+    created_at?: string | null
+  }
 
 export function isValidFileSize(size: number): boolean {
   return size <= MAX_FILE_SIZE
