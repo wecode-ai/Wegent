@@ -227,3 +227,9 @@ def get_wiki_db():
         yield db
     finally:
         db.close()
+
+
+if settings.KIND_READER_CACHE_ENABLED:
+    from app.services.readers.kind_cache import install_kind_change_listener
+
+    install_kind_change_listener()

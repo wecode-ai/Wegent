@@ -405,6 +405,12 @@ def _create_reader() -> IKindReader:
 
     base = KindReader()
 
+    if settings.KIND_READER_CACHE_ENABLED:
+        from app.services.readers.kind_cache import CachedKindReader
+
+        base = CachedKindReader(base)
+        logger.info("Kind reader Redis cache enabled")
+
     if settings.SERVICE_EXTENSION:
         try:
             import importlib
@@ -416,16 +422,6 @@ def _create_reader() -> IKindReader:
                 base = result
         except Exception as e:
             logger.warning(f"Failed to load kind reader extension: {e}")
-
-    if settings.KIND_READER_CACHE_ENABLED:
-        from app.services.readers.kind_cache import (
-            CachedKindReader,
-            install_kind_change_listener,
-        )
-
-        install_kind_change_listener()
-        logger.info("Kind reader Redis cache enabled")
-        return CachedKindReader(base)
 
     return base
 

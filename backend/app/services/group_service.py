@@ -1231,6 +1231,9 @@ def _transfer_resources_to_owner(
             )
 
     # Transfer all Kind resources in this namespace.
+    from app.services.readers.kind_cache import register_kind_cache_invalidation
+
+    register_kind_cache_invalidation(db)
     db.query(Kind).filter(
         Kind.namespace == group_name,
         Kind.user_id == from_user_id,

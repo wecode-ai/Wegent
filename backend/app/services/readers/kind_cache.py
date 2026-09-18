@@ -2,32 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Redis-backed caching wrapper for the Kind reader.
-
-``CachedKindReader`` caches the four pure lookup methods of ``IKindReader``
-(``get_by_id``, ``get_by_ids``, ``get_personal``, ``get_public``,
-``get_group``). Higher-level resolution (``get_by_name_and_namespace``,
-including Team sharing/permission logic) stays on the interface default
-implementation, which delegates to these leaf methods, so permission
-semantics are unchanged.
-
-Invalidation has two layers:
-
-1. SQLAlchemy ORM events on the ``Kind`` model call ``on_change`` for every
-   insert/update/delete in this process, which evicts the affected keys from
-   Redis (shared across all backend replicas).
-2. A positive TTL plus a shorter negative (miss) TTL bound the staleness of
-   any write path that bypasses ORM events.
-
-All Redis operations fail open: any error (including Redis being down) falls
-back to a direct database read, and repeated failures disable the cache for
-a short cooldown window to avoid paying a timeout on every request.
-"""
+"""Redis-backed cache and transaction-safe invalidation for Kind readers."""
 
 import json
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -42,9 +22,9 @@ from app.services.readers.kinds import IKindReader, KindType
 logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "wegent:kind_cache:"
+_GENERATION_KEY = f"{_KEY_PREFIX}generation"
+_PENDING_INVALIDATION_KEY = "kind_cache_pending_invalidation"
 _MISS_SENTINEL = "__kind_cache_miss__"
-# Disable the cache for this long after a Redis failure to avoid paying a
-# connection timeout on every lookup while Redis is down.
 _FAILURE_COOLDOWN_SECONDS = 30.0
 
 _KIND_COLUMNS = (
@@ -64,10 +44,10 @@ def _kind_to_payload(kind: Optional[Kind]) -> str:
     """Serialize a Kind row (or a miss) to a cache payload."""
     if kind is None:
         return _MISS_SENTINEL
-    data: Dict[str, Any] = {col: getattr(kind, col) for col in _KIND_COLUMNS}
-    for col in ("created_at", "updated_at"):
-        value = data[col]
-        data[col] = value.isoformat() if isinstance(value, datetime) else None
+    data: Dict[str, Any] = {column: getattr(kind, column) for column in _KIND_COLUMNS}
+    for column in ("created_at", "updated_at"):
+        value = data[column]
+        data[column] = value.isoformat() if isinstance(value, datetime) else None
     return json.dumps(data)
 
 
@@ -76,10 +56,10 @@ def _kind_from_payload(payload: str) -> Optional[Kind]:
     if payload == _MISS_SENTINEL:
         return None
     data = json.loads(payload)
-    for col in ("created_at", "updated_at"):
-        value = data.get(col)
-        data[col] = datetime.fromisoformat(value) if value else None
-    return Kind(**{col: data.get(col) for col in _KIND_COLUMNS})
+    for column in ("created_at", "updated_at"):
+        value = data.get(column)
+        data[column] = datetime.fromisoformat(value) if value else None
+    return Kind(**{column: data.get(column) for column in _KIND_COLUMNS})
 
 
 class KindCacheStore:
@@ -87,9 +67,9 @@ class KindCacheStore:
 
     def __init__(self) -> None:
         self._client: Optional[redis.Redis] = None
-        self._disabled_until: float = 0.0
+        self._disabled_until = 0.0
 
-    def _get_client(self) -> Optional[redis.Redis]:
+    def _get_client(self) -> redis.Redis:
         if self._client is None:
             self._client = redis.from_url(
                 settings.REDIS_URL,
@@ -102,48 +82,64 @@ class KindCacheStore:
     def _available(self) -> bool:
         return time.monotonic() >= self._disabled_until
 
-    def _on_error(self, op: str, exc: Exception) -> None:
+    def _on_error(self, operation: str, exc: Exception) -> None:
         self._disabled_until = time.monotonic() + _FAILURE_COOLDOWN_SECONDS
         logger.warning(
             "[KindCache] Redis %s failed, disabling cache for %.0fs: %s",
-            op,
+            operation,
             _FAILURE_COOLDOWN_SECONDS,
             exc,
         )
 
-    def get(self, key: str) -> tuple[bool, Optional[Kind]]:
-        """Return (hit, kind). ``hit`` is False when the lookup must go to DB."""
+    def get(self, key: str) -> tuple[bool, Optional[Kind], Optional[str]]:
+        """Return ``(hit, kind, generation)`` for a cache lookup."""
         if not self._available():
-            return False, None
+            return False, None, None
         try:
-            payload = self._get_client().get(key)
+            generation, payload = self._get_client().mget((_GENERATION_KEY, key))
         except Exception as exc:
-            self._on_error("get", exc)
-            return False, None
+            self._on_error("get cache entry", exc)
+            return False, None, None
+        generation = generation or "0"
         if payload is None:
-            return False, None
+            return False, None, generation
         try:
-            return True, _kind_from_payload(payload)
+            envelope = json.loads(payload)
+            if envelope.get("generation") != generation:
+                return False, None, generation
+            return True, _kind_from_payload(envelope["payload"]), generation
         except Exception as exc:
             logger.warning("[KindCache] Failed to decode payload for %s: %s", key, exc)
-            return False, None
+            return False, None, generation
 
-    def set(self, key: str, kind: Optional[Kind], ttl: int) -> None:
+    def set(
+        self,
+        key: str,
+        generation: str,
+        kind: Optional[Kind],
+        ttl: int,
+    ) -> None:
         if not self._available():
             return
         try:
-            self._get_client().setex(key, ttl, _kind_to_payload(kind))
+            payload = json.dumps(
+                {
+                    "generation": generation,
+                    "payload": _kind_to_payload(kind),
+                }
+            )
+            self._get_client().setex(key, ttl, payload)
         except Exception as exc:
             self._on_error("set", exc)
 
-    def delete(self, *keys: str) -> None:
-        keys = tuple(k for k in keys if k)
-        if not keys or not self._available():
+    def bump_generation(self) -> None:
+        """Invalidate all Kind cache entries after a successful DB commit."""
+        if not self._available():
             return
         try:
-            self._get_client().delete(*keys)
+            self._get_client().incr(_GENERATION_KEY)
         except Exception as exc:
-            self._on_error("delete", exc)
+            self._on_error("increment generation", exc)
 
 
 def _kind_value(kind: KindType | str) -> str:
@@ -151,15 +147,11 @@ def _kind_value(kind: KindType | str) -> str:
 
 
 class CachedKindReader(IKindReader):
-    """Caching decorator over any ``IKindReader`` implementation."""
+    """Caching decorator over a direct Kind reader."""
 
     def __init__(self, base: IKindReader, store: Optional[KindCacheStore] = None):
         self._base = base
         self._store = store or KindCacheStore()
-
-    # ------------------------------------------------------------------
-    # Key builders
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _id_key(kind: KindType | str, resource_id: int) -> str:
@@ -179,25 +171,24 @@ class CachedKindReader(IKindReader):
     def _group_key(kind: KindType | str, namespace: str, name: str) -> str:
         return f"{_KEY_PREFIX}group:{_kind_value(kind)}:{namespace}:{name}"
 
-    # ------------------------------------------------------------------
-    # Cached lookups
-    # ------------------------------------------------------------------
-
     def _cached(
         self,
         key: str,
-        loader,
+        loader: Callable[[], Optional[Kind]],
     ) -> Optional[Kind]:
-        hit, kind = self._store.get(key)
+        hit, kind, generation = self._store.get(key)
+        if generation is None:
+            return loader()
         if hit:
             return kind
+
         kind = loader()
         ttl = (
             settings.KIND_READER_CACHE_TTL_SECONDS
             if kind is not None
             else settings.KIND_READER_CACHE_MISS_TTL_SECONDS
         )
-        self._store.set(key, kind, ttl)
+        self._store.set(key, generation, kind, ttl)
         return kind
 
     def get_by_id(
@@ -215,8 +206,8 @@ class CachedKindReader(IKindReader):
             return []
         return [
             item
-            for rid in resource_ids
-            if (item := self.get_by_id(db, kind, rid)) is not None
+            for resource_id in resource_ids
+            if (item := self.get_by_id(db, kind, resource_id)) is not None
         ]
 
     def get_personal(
@@ -243,59 +234,70 @@ class CachedKindReader(IKindReader):
             lambda: self._base.get_group(db, kind, namespace, name),
         )
 
-    # ------------------------------------------------------------------
-    # Invalidation
-    # ------------------------------------------------------------------
-
     def on_change(
         self,
-        kind: KindType | str,
-        resource_id: Optional[int],
-        user_id: Optional[int],
+        kind: KindType,
+        resource_id: int,
+        user_id: int,
         namespace: str,
         name: str,
     ) -> None:
-        """Evict every cache key a changed Kind row could be stored under."""
-        keys = [
-            self._public_key(kind, namespace, name),
-            self._group_key(kind, namespace, name),
-        ]
-        if resource_id is not None:
-            keys.append(self._id_key(kind, resource_id))
-        if user_id:
-            keys.append(self._personal_key(kind, user_id, namespace, name))
-        self._store.delete(*keys)
+        """Keep reader extension hooks working for explicit invalidation callers."""
+        self._base.on_change(kind, resource_id, user_id, namespace, name)
+        self._store.bump_generation()
 
-
-# =============================================================================
-# ORM event-based invalidation
-# =============================================================================
 
 _listener_installed = False
+_invalidation_store = KindCacheStore()
 
 
-def _on_kind_orm_change(mapper: Any, connection: Any, target: Kind) -> None:
-    try:
-        from app.services.readers.kinds import kindReader
+def _mark_pending_invalidation(session: Session) -> None:
+    session.info[_PENDING_INVALIDATION_KEY] = True
 
-        kindReader.on_change(
-            target.kind,
-            target.id,
-            target.user_id,
-            target.namespace,
-            target.name,
-        )
-    except Exception as exc:
-        # Invalidation failures must never break the write path; the TTL is
-        # the safety net.
-        logger.warning("[KindCache] on_change failed: %s", exc)
+
+def _has_kind_change(session: Session) -> bool:
+    return any(
+        isinstance(instance, Kind)
+        for instance in (*session.new, *session.dirty, *session.deleted)
+    )
+
+
+def _after_bulk_kind_change(update_context: Any) -> None:
+    query = getattr(update_context, "query", None)
+    descriptions = getattr(query, "column_descriptions", ())
+    if any(description.get("entity") is Kind for description in descriptions):
+        _mark_pending_invalidation(update_context.session)
+
+
+def _after_commit(session: Session) -> None:
+    if not session.info.pop(_PENDING_INVALIDATION_KEY, False):
+        return
+    _invalidation_store.bump_generation()
+
+
+def _after_rollback(session: Session) -> None:
+    session.info.pop(_PENDING_INVALIDATION_KEY, None)
+
+
+def register_kind_cache_invalidation(session: Session) -> None:
+    """Mark a direct/bulk Kind write for invalidation after its transaction commits."""
+    if settings.KIND_READER_CACHE_ENABLED:
+        _mark_pending_invalidation(session)
 
 
 def install_kind_change_listener() -> None:
-    """Register Kind ORM events so any write evicts the cache (idempotent)."""
+    """Register transaction listeners once for all synchronous SQLAlchemy sessions."""
     global _listener_installed
     if _listener_installed:
         return
-    for name in ("after_insert", "after_update", "after_delete"):
-        event.listen(Kind, name, _on_kind_orm_change)
+
+    @event.listens_for(Session, "before_flush")
+    def mark_kind_changes(session: Session, flush_context: Any, instances: Any) -> None:
+        if _has_kind_change(session):
+            _mark_pending_invalidation(session)
+
+    event.listen(Session, "after_bulk_update", _after_bulk_kind_change)
+    event.listen(Session, "after_bulk_delete", _after_bulk_kind_change)
+    event.listen(Session, "after_commit", _after_commit)
+    event.listen(Session, "after_rollback", _after_rollback)
     _listener_installed = True
