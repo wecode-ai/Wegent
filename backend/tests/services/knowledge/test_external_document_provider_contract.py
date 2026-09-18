@@ -71,6 +71,7 @@ class ProviderContractSuite:
         monkeypatch: pytest.MonkeyPatch,
         provider,
         markdown: str,
+        title: str = "",
     ) -> None:
         """Make fetch_content return this body without external calls."""
         raise NotImplementedError
@@ -287,6 +288,35 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         content = await provider.fetch_content(test_db, test_user, "timestamped-copy")
 
         assert content.metadata["source_update_time"] == 1789562644000
+
+    @pytest.mark.asyncio
+    async def test_fetch_prefers_the_live_source_title(
+        self, test_db, test_user, monkeypatch
+    ):
+        """A rename in DingTalk reaches the copy without a directory refresh."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "renamed-copy", "重命名前的名字")
+        self.mock_fetch_body(monkeypatch, provider, "body", title="重命名后的名字")
+
+        content = await provider.fetch_content(test_db, test_user, "renamed-copy")
+
+        assert content.name == "重命名后的名字"
+        assert content.metadata["title"] == "重命名后的名字"
+
+    @pytest.mark.asyncio
+    async def test_fetch_keeps_the_cached_title_when_the_source_has_none(
+        self, test_db, test_user, monkeypatch
+    ):
+        """A source without a usable title never blanks the copy's name."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "untitled-copy", "缓存的旧名字")
+        self.mock_fetch_body(monkeypatch, provider, "body")
+
+        content = await provider.fetch_content(test_db, test_user, "untitled-copy")
+
+        assert content.name == "缓存的旧名字"
 
     @pytest.mark.asyncio
     async def test_fetch_requires_a_node_in_the_user_directory(
@@ -594,11 +624,12 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch: pytest.MonkeyPatch,
         provider,
         markdown: str,
+        title: str = "",
     ) -> None:
         async def fake_fetch(
             mcp_url: str, node_id: str, user: User
-        ) -> tuple[str, bytes, int | None]:
-            return "md", markdown.encode("utf-8"), 1789562644000
+        ) -> tuple[str, bytes, int | None, str]:
+            return "md", markdown.encode("utf-8"), 1789562644000, title
 
         monkeypatch.setattr(provider, "_fetch_document_content", fake_fetch)
 
@@ -639,6 +670,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
                 payload = (
                     {
                         "success": True,
+                        "name": "Imported Doc",
                         "nodeType": "file",
                         "contentType": "ALIDOC",
                         "extension": "adoc",
@@ -656,14 +688,17 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
         provider = self.make_provider()
-        extension, content, update_time = await provider._fetch_document_content(
-            "https://mcp.example.test/dingtalk",
-            "node-1",
-            SimpleNamespace(),
+        extension, content, update_time, source_title = (
+            await provider._fetch_document_content(
+                "https://mcp.example.test/dingtalk",
+                "node-1",
+                SimpleNamespace(),
+            )
         )
 
         assert (extension, content) == ("md", b"# Imported")
         assert update_time == 1789562644000
+        assert source_title == "Imported Doc"
         assert observed["transport"] == {
             "url": "https://mcp.example.test/dingtalk",
             "sse_read_timeout": 180,

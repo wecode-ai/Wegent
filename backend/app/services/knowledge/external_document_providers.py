@@ -222,6 +222,19 @@ def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
     return update_time
 
 
+def _live_title(info: dict[str, Any]) -> str:
+    """Read the source's own current title from its live node metadata.
+
+    A rename in DingTalk only shows up here: the directory cache is refreshed on
+    its own schedule and can still hold the previous name.
+    """
+    for key in ("name", "title"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 # Real captures from the DingTalk Docs MCP (2026-09-18): a deleted node
 # answers errorCode=invalidParameter.item.notFound ("workspace node has been
 # recycled"); a never-existing node answers invalidRequest.resource.notFound
@@ -446,7 +459,12 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             )
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
-                extension, content, update_time = await self._fetch_document_content(
+                (
+                    extension,
+                    content,
+                    update_time,
+                    source_title,
+                ) = await self._fetch_document_content(
                     mcp_url, external_resource_id, user
                 )
         except TimeoutError:
@@ -468,6 +486,10 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise ExternalDocumentFetchError(
                 f"DingTalk content read failed: {type(failure).__name__}"
             ) from None
+        # The source's own title wins over the cached directory name, so a
+        # rename reaches the copy without waiting for a directory refresh.
+        if source_title:
+            metadata = {**metadata, "title": source_title}
         if update_time is not None:
             metadata = {**metadata, "source_update_time": update_time}
         return ExternalDocumentContent(
@@ -479,11 +501,12 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
 
     async def _fetch_document_content(
         self, mcp_url: str, node_id: str, user: User
-    ) -> tuple[str, bytes, int | None]:
+    ) -> tuple[str, bytes, int | None, str]:
         """Verify live metadata before selecting the source reader.
 
-        Returns the body plus the live source timestamp read in the same
-        session, so the caller can record a baseline matching this body.
+        Returns the body plus the live source timestamp and title read in the
+        same session, so the caller records a baseline and a name that belong
+        to the body it just fetched.
         """
         from app.services.dingtalk_doc_service import DingTalkDocService
 
@@ -492,6 +515,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                 await session.call_tool("get_document_info", {"nodeId": node_id})
             )
             update_time = _read_update_time(info, node_id)
+            title = _live_title(info)
             extension = get_import_extension(info)
             if not extension:
                 raise ExternalDocumentFetchError(
@@ -510,7 +534,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     raise ExternalDocumentFetchError(
                         "DingTalk document content is empty or unreadable"
                     )
-                return "md", markdown.encode("utf-8"), update_time
+                return "md", markdown.encode("utf-8"), update_time, title
             if str(info.get("contentType")).strip().upper() == "ALIDOC":
                 source_extension = str(info.get("extension")).strip().lower()
                 service, label = _SPREADSHEET_MCP_SERVICES[source_extension]
@@ -524,7 +548,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     if source_extension == "axls"
                     else self._export_ai_table
                 )
-                return "xlsx", await export(export_url, node_id), update_time
+                return "xlsx", await export(export_url, node_id), update_time, title
             payload = self._parse_mcp_response(
                 await session.call_tool("download_file", {"nodeId": node_id}),
                 "download_file",
@@ -532,7 +556,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         urls = payload.get("resourceUrl")
         url = urls[0] if isinstance(urls, list) and urls else urls
         body = await download_content(url, payload.get("headers"))
-        return extension, body, update_time
+        return extension, body, update_time, title
 
     async def _export_sheet(self, url: str, node_id: str) -> bytes:
         """Export one workbook within fetch_content's existing timeout budget."""
