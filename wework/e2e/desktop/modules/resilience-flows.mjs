@@ -6,6 +6,8 @@ import {
   ANTHROPIC_EMPTY_PROMPT,
   CLOUD_MODEL_CASES,
   DEFAULT_STEP_TIMEOUT_MS,
+  MODEL_SERVICE_CONNECTION_ENDPOINT,
+  MODEL_SERVICE_CONNECTION_PROMPT,
   RATE_LIMIT_COMPLETION_TEXT,
   RATE_LIMIT_PROMPT,
   RECONNECT_COMPLETION_TEXT,
@@ -243,6 +245,44 @@ async function verifyRateLimitRecovery({ composerSelector, control }) {
   )
 }
 
+async function verifyModelServiceConnectionError({ composerSelector, control }) {
+  control.setScenario('model_service_connection_error')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    MODEL_SERVICE_CONNECTION_PROMPT,
+    'model_service_connection_error'
+  )
+  const titleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
+  const descriptionSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-description"]`
+  await control.command('waitFor', titleSelector, {
+    text: '无法连接模型服务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', descriptionSelector, {
+    text: MODEL_SERVICE_CONNECTION_ENDPOINT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const description = await control.command('getText', descriptionSelector)
+  assert.ok(
+    description.includes('连接错误'),
+    'The model-service failure did not identify the connection error'
+  )
+  assert.ok(
+    description.includes('网络或 VPN'),
+    'The model-service failure did not provide an actionable network or VPN recovery step'
+  )
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details-toggle"]`,
+      { value: 'aria-expanded' }
+    ),
+    'false',
+    'The model-service endpoint was only visible after expanding error details'
+  )
+}
+
 async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control }) {
   const anthropicModel = CLOUD_MODEL_CASES.find(model => model.protocol === 'anthropic')
   assert.ok(anthropicModel, 'The Anthropic cloud model fixture is missing')
@@ -290,5 +330,6 @@ export {
   verifyReconnectRecovery,
   verifyFollowUpSendRejectionNotice,
   verifyRateLimitRecovery,
+  verifyModelServiceConnectionError,
   verifyAnthropicEmptyResponseRecovery,
 }

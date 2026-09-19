@@ -45,6 +45,12 @@ export const conversationMessages: Record<
       "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小",
     "conversation.assistant_error.types.payload_too_large.description":
       "请减少附件或上下文内容后重试。",
+    "conversation.assistant_error.types.model_service_connection_error.title":
+      "无法连接模型服务",
+    "conversation.assistant_error.types.model_service_connection_error.description":
+      "连接错误：向模型服务发送请求失败。请检查网络或 VPN 连接后重试。",
+    "conversation.assistant_error.types.model_service_connection_error.description_with_endpoint":
+      "连接错误：向 {{endpoint}} 发送请求失败。请检查网络或 VPN 连接后重试。",
     "conversation.assistant_error.types.network_error.title":
       "网络连接失败：请检查网络连接后重试",
     "conversation.assistant_error.types.network_error.description":
@@ -402,6 +408,12 @@ export const conversationMessages: Record<
       "Content too large: conversation history or attachment exceeds the limit",
     "conversation.assistant_error.types.payload_too_large.description":
       "Reduce attachments or context content, then retry.",
+    "conversation.assistant_error.types.model_service_connection_error.title":
+      "Unable to connect to the model service",
+    "conversation.assistant_error.types.model_service_connection_error.description":
+      "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry.",
+    "conversation.assistant_error.types.model_service_connection_error.description_with_endpoint":
+      "Connection error: The request could not be sent to {{endpoint}}. Check your network or VPN connection and retry.",
     "conversation.assistant_error.types.network_error.title":
       "Network error: Please check your connection and try again",
     "conversation.assistant_error.types.network_error.description":

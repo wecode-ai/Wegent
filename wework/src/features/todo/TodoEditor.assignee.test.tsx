@@ -83,9 +83,9 @@ describe('workspace Issue assignee', () => {
     const summary = screen.getByTestId('cloud-todo-state-summary')
     const owner = within(summary).getByTestId('cloud-todo-state-assignee')
     expect(owner).toHaveTextContent('Codex 工程师')
-    const select = within(owner).getByRole('combobox', { name: '负责人' })
-    await screen.findByRole('option', { name: '张三' })
-    await user.selectOptions(select, 'user:5')
+    const select = within(owner).getByRole('button', { name: '负责人' })
+    await user.click(select)
+    await user.click(await screen.findByRole('option', { name: '张三' }))
     expect(owner.querySelector('strong')).toHaveTextContent('张三')
     await user.click(
       screen.getByTestId(
@@ -110,10 +110,10 @@ describe('workspace Issue assignee', () => {
   it('clears the owner and shows the add-owner entry', async () => {
     const api = setup({ assignee_user_id: 5, assignee_name: '张三', assignee_agent_id: null })
     const user = userEvent.setup()
-    await screen.findByRole('option', { name: '张三' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), '')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
     const owner = screen.getByTestId('cloud-todo-state-assignee')
-    expect(owner.querySelector('strong')).toHaveTextContent('添加负责人')
+    expect(owner.querySelector('strong')).toHaveTextContent('未指派')
     await user.click(screen.getByTestId('cloud-todo-save'))
     await vi.waitFor(() =>
       expect(api.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
@@ -131,7 +131,6 @@ describe('workspace Issue assignee', () => {
     { canEdit: true, role: 'Developer' },
   ])('keeps the owner visible without assignment permission: %j', async ({ canEdit, role }) => {
     setup({ can_edit: canEdit }, role)
-    await screen.findByRole('option', { name: '张三' })
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
     expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
   })

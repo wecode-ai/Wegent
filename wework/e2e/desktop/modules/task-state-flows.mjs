@@ -97,7 +97,8 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, 'priority-filter-01-background-task.png')
 
-    await control.command('click', '[data-testid="runtime-priority-filter-button"]')
+    await control.command('click', '[data-testid="runtime-task-view-menu-button"]')
+    await control.command('click', '[data-testid="runtime-task-view-priority"]')
     await control.command('waitFor', '[data-testid="runtime-priority-section"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
@@ -661,17 +662,14 @@ async function verifyBackgroundCompletionRestore({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-  const myWorkButton = '[data-testid="task-my-work-button"]'
-  await control.command('waitFor', myWorkButton, {
+  const taskViewMenuButton = '[data-testid="runtime-task-view-menu-button"]'
+  await control.command('waitFor', taskViewMenuButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', myWorkButton)
-  const reviewColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
-  await control.command('waitFor', reviewColumnSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('scrollIntoView', reviewColumnSelector)
-  await control.command('waitFor', reviewColumnSelector, {
+  await control.command('click', taskViewMenuButton)
+  await control.command('click', '[data-testid="runtime-task-view-board"]')
+  const completedColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
+  await control.command('waitFor', completedColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -683,7 +681,7 @@ async function verifyBackgroundCompletionRestore({
   assert.equal(
     runningColumnText.includes('WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE'),
     false,
-    'My Work revived a completed task from the stale running transcript'
+    'The local task board revived a completed task from the stale running transcript'
   )
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
