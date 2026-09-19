@@ -75,6 +75,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   scrollButtonClassName?: string
   scrollTestId?: string
   externalScrollRef?: RefObject<HTMLDivElement | null>
+  externalScrollInteractionRef?: RefObject<HTMLElement | null>
   turnNavigationPortalTarget?: Element | null
   conversationKey?: string | number | null
   devices?: MessageListProps['devices']
@@ -153,6 +154,9 @@ export function areScrollableMessageAreaPropsEqual(
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
     previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
+    previous.externalScrollInteractionRef !== next.externalScrollInteractionRef
+      ? 'externalScrollInteractionRef'
+      : null,
     previous.turnNavigationPortalTarget !== next.turnNavigationPortalTarget
       ? 'turnNavigationPortalTarget'
       : null,

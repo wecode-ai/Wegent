@@ -6,6 +6,7 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AuthContext } from '@/features/auth/useAuth'
 import { AppearanceProvider } from '@/features/appearance'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -17,6 +18,7 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
 import {
   resolveTemporaryChatActiveModel,
   resolveTemporaryChatModelSelection,
@@ -1186,6 +1188,7 @@ describe('DesktopWorkbenchLayout', () => {
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
     workspaceTabId?: string
     runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
+    runtimeTaskReminders?: RuntimeTaskReminderState
     lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
     isRuntimeTranscriptLoading?: boolean
@@ -1504,6 +1507,7 @@ describe('DesktopWorkbenchLayout', () => {
       unsubscribeRuntimeTaskNotifications:
         props.onUnsubscribeRuntimeTaskNotifications ??
         vi.fn().mockResolvedValue({ subscribed: false }),
+      runtimeTaskReminders: props.runtimeTaskReminders,
       refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
       getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
@@ -2634,7 +2638,16 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('h-full', 'overflow-x-hidden', 'overflow-y-auto', 'pt-11')
+    expect(desktopContent).toHaveClass('h-full', 'overflow-x-hidden', 'pt-11')
+    expect(desktopContent).toHaveClass('overflow-y-auto', 'scrollbar-none')
+    expect(screen.getByTestId('desktop-workbench-scrollbar')).toHaveClass(
+      'workbench-scrollbar',
+      'w-2',
+      'z-critical'
+    )
+    expect(desktopContent.parentElement).toContainElement(
+      screen.getByTestId('desktop-workbench-scrollbar')
+    )
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll').parentElement?.parentElement).toHaveClass(
       'flex',
@@ -3115,42 +3128,101 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
-  test('opens the existing My Tasks board inside the fixed task tab', async () => {
-    deliveryApiMock.available = true
-    deliveryApiMock.listCloudProjects.mockResolvedValue({
-      items: [
+  test('shows the existing local task data in the board presentation', async () => {
+    const titlebarActionsPortal = document.createElement('div')
+    titlebarActionsPortal.id = TITLEBAR_ACTIONS_PORTAL_ID
+    document.body.append(titlebarActionsPortal)
+    const markRuntimeTaskRead = vi.fn()
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
         {
-          id: 'default-work-items',
-          public_id: 'default-work-items',
-          project_key: 'WORK',
-          name: '我的任务',
-          description: '',
-          project_store: 'local',
-          task_provider: 'local',
-          provider_config: {},
-          created_by_user_id: 1,
-          status: 'active',
-          tags: [],
-          version: 1,
-          created_at: '2026-08-09T00:00:00Z',
-          updated_at: '2026-08-09T00:00:00Z',
-          metadata: { system_kind: 'default_work_items' },
+          deviceId: 'device-1',
+          workspacePath: '/workspace/local-task',
+          label: '本地任务',
+          available: true,
+          tasks: [
+            {
+              taskId: 'local-board-task',
+              workspacePath: '/workspace/local-task',
+              title: '本地看板任务',
+              runtime: 'codex',
+              status: 'done',
+              running: false,
+            },
+          ],
         },
       ],
-    })
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+      totalTasks: 1,
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, runtimeWork }}
+        projectWork={{ ...baseProps.projectWork, runtimeWork }}
+        runtimeTaskReminders={{
+          unreadTaskKeys: new Set(['device-1\0local-board-task']),
+          unreadCount: 1,
+          hasRunningTasks: false,
+          preferences: {
+            ...defaultAppPreferences,
+            taskCompletionNotificationsEnabled: true,
+          },
+          markRuntimeTaskRead,
+          items: [],
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
 
-    await userEvent.click(await screen.findByTestId('task-my-work-button'))
+    await userEvent.click(await screen.findByTestId('runtime-task-view-menu-button'))
+    await userEvent.click(await screen.findByTestId('runtime-task-view-board'))
 
-    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
-    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
-    expect(screen.queryByTestId('cloud-my-work-view')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('task-board-surface')).toHaveTextContent('本地看板任务')
+    expect(screen.getByTestId('cloud-board-horizontal-scrollbar')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-dropzone-in_review-scrollbar')).toBeInTheDocument()
+    expect(screen.getByTestId('task-view-board-transition')).toHaveClass('task-view-board-enter')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent('本地看板任务')
+    expect(
+      screen.getByTestId('cloud-todo-card-unread-runtime:device-1:local-board-task')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-add')).toHaveAccessibleName('新建任务')
+    expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
+    expect(deliveryApiMock.listCloudProjects).not.toHaveBeenCalled()
     expect(window.location.pathname).toBe('/')
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('new-chat-button'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-runtime:device-1:local-board-task'))
+    expect(markRuntimeTaskRead).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      taskId: 'local-board-task',
+      runtime: 'codex',
+      workspacePath: '/workspace/local-task',
+    })
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      taskId: 'local-board-task',
+      runtime: 'codex',
+      workspacePath: '/workspace/local-task',
+    })
+    expect(screen.queryByTestId('task-board-surface')).not.toBeInTheDocument()
 
-    expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.getByTestId('task-board-surface')).toHaveTextContent('本地看板任务')
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.queryByTestId('task-board-surface')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-workbench-content')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-view-workbench-transition')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.getByTestId('task-board-surface')).toHaveTextContent('本地看板任务')
+    expect(screen.getByTestId('task-view-board-transition')).toHaveClass('task-view-board-enter')
+
+    await userEvent.click(screen.getByTestId('cloud-todo-add'))
+
+    expect(screen.queryByTestId('task-board-surface')).not.toBeInTheDocument()
     expect(baseProps.onNewChat).toHaveBeenCalled()
   })
 
@@ -3535,6 +3607,30 @@ describe('DesktopWorkbenchLayout', () => {
         screen.getByTestId('toggle-right-workspace-panel-button')
       )
       expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    } finally {
+      feedbackPortal.remove()
+    }
+  })
+
+  test('keeps the global feedback action visible after switching to the local task board', async () => {
+    runtimeMocks.electron = true
+    const feedbackPortal = document.createElement('div')
+    feedbackPortal.id = TITLEBAR_FEEDBACK_PORTAL_ID
+    document.body.append(feedbackPortal)
+
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+
+      expect(feedbackPortal).toContainElement(screen.getByTestId('task-feedback-button'))
+
+      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+      expect(await screen.findByTestId('task-view-board-transition')).toHaveClass(
+        'task-view-board-enter'
+      )
+      await waitFor(() =>
+        expect(feedbackPortal).toContainElement(screen.getByTestId('task-feedback-button'))
+      )
     } finally {
       feedbackPortal.remove()
     }

@@ -242,21 +242,62 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
-  test('renders Board as the selected default work-items view', async () => {
-    const onOpenMyWork = vi.fn()
+  test('changes the primary task view action and icon after selecting Board', async () => {
+    const onToggleMyWork = vi.fn()
 
+    renderSidebar({ onToggleMyWork })
+
+    expect(screen.queryByTestId('task-my-work-button')).not.toBeInTheDocument()
+    const primaryButton = screen.getByTestId('runtime-priority-filter-button')
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    const boardItem = screen.getByTestId('runtime-task-view-board')
+    expect(boardItem).toHaveTextContent('看板')
+
+    await userEvent.click(boardItem)
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
+
+    await userEvent.click(primaryButton)
+    expect(onToggleMyWork).toHaveBeenCalledTimes(2)
+  })
+
+  test('selects priority as the primary action and closes the board surface', async () => {
+    const onToggleMyWork = vi.fn()
     renderSidebar({
       taskView: 'default-work-items',
-      onOpenMyWork,
+      onToggleMyWork,
     })
 
-    const myWorkButton = screen.getByTestId('task-my-work-button')
-    expect(myWorkButton).toHaveTextContent('看板')
-    expect(myWorkButton).toHaveAttribute('aria-current', 'page')
+    const primaryButton = screen.getByTestId('runtime-priority-filter-button')
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
 
-    await userEvent.click(myWorkButton)
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    const priorityItem = screen.getByTestId('runtime-task-view-priority')
 
-    expect(onOpenMyWork).toHaveBeenCalledOnce()
+    await userEvent.click(priorityItem)
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    expect(primaryButton.querySelector('.lucide-list-todo')).toBeInTheDocument()
+    expect(primaryButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('clears the priority filter before opening the selected board surface', async () => {
+    const onToggleMyWork = vi.fn()
+    renderSidebar({ onToggleMyWork })
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    await userEvent.click(screen.getByTestId('runtime-task-view-priority'))
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    await userEvent.click(screen.getByTestId('runtime-task-view-board'))
+
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {
@@ -1356,6 +1397,23 @@ describe('DesktopSidebar', () => {
     fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
 
     expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+  })
+
+  test('switches from the board surface to priority when using the shortcut', () => {
+    const onToggleMyWork = vi.fn()
+    renderSidebar({
+      taskView: 'default-work-items',
+      onToggleMyWork,
+    })
+
+    fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('uses the configured priority shortcut and ignores editable targets', () => {
