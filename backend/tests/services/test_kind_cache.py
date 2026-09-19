@@ -49,7 +49,7 @@ class FakeStore:
         entries, available = self.get_many([key])
         return key in entries, entries.get(key)
 
-    def set(self, key, kind, ttl):
+    def set(self, key, kind, ttl, *, overwrite=True):
         self.set_calls += 1
         self.data[key] = kind
 
@@ -409,6 +409,13 @@ class _FakeRedis:
     def setex(self, key, ttl, value):
         self.calls.append(("setex", key, ttl))
         self.data[key] = value
+
+    def set(self, key, value, ex=None, nx=False):
+        self.calls.append(("set", key, ex, nx))
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
 
     def delete(self, *keys):
         self.calls.append(("delete", list(keys)))

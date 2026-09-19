@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import hashlib
+import logging
 import os
 import tempfile
 import uuid
@@ -52,18 +53,25 @@ def isolated_kind_cache() -> Generator[None, None, None]:
     """
     from app.services.readers.kind_cache import (
         KindCacheStore,
+        cache_was_touched,
+        reset_cache_touched,
         set_cache_key_prefix,
     )
 
     prefix = f"wegent:kind_cache:test:{uuid.uuid4().hex}:"
     set_cache_key_prefix(prefix)
+    reset_cache_touched()
     try:
         yield
     finally:
-        try:
-            KindCacheStore().flush_prefix(prefix)
-        except Exception:
-            pass
+        if cache_was_touched():
+            try:
+                KindCacheStore().flush_prefix(prefix)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Failed to flush kind cache prefix %s: %s", prefix, exc
+                )
+        reset_cache_touched()
         set_cache_key_prefix(None)
 
 

@@ -72,6 +72,25 @@ def set_cache_key_prefix(prefix: Optional[str]) -> None:
     _key_prefix_override = prefix
 
 
+# Set when any cached read or write-through ran in this process; lets test
+# teardown skip Redis cleanup for tests that never touched the cache.
+_cache_touched = False
+
+
+def _mark_cache_touched() -> None:
+    global _cache_touched
+    _cache_touched = True
+
+
+def cache_was_touched() -> bool:
+    return _cache_touched
+
+
+def reset_cache_touched() -> None:
+    global _cache_touched
+    _cache_touched = False
+
+
 def _kind_to_payload(kind: Optional[Kind]) -> str:
     """Serialize a Kind row (or a miss) to a cache payload."""
     if kind is None:
@@ -155,11 +174,22 @@ class KindCacheStore:
         entries, _ = self.get_many([key])
         return key in entries, entries.get(key)
 
-    def set(self, key: str, kind: Optional[Kind], ttl: int) -> None:
+    def set(
+        self, key: str, kind: Optional[Kind], ttl: int, *, overwrite: bool = True
+    ) -> None:
+        """Store ``kind`` under ``key``.
+
+        Read-path population uses ``overwrite=False`` (SET NX) so a slow
+        reader cannot overwrite a newer value written by a committed
+        write-through; write-through always overwrites.
+        """
         if not self._available():
             return
         try:
-            self._get_client().setex(key, ttl, _kind_to_payload(kind))
+            if overwrite:
+                self._get_client().setex(key, ttl, _kind_to_payload(kind))
+            else:
+                self._get_client().set(key, _kind_to_payload(kind), ex=ttl, nx=True)
         except Exception as exc:
             self._on_error("set", exc)
 
@@ -254,13 +284,14 @@ class CachedKindReader(IKindReader):
         db: Session,
         loader: Callable[[], Optional[Kind]],
     ) -> Optional[Kind]:
+        _mark_cache_touched()
         hit, kind = self._store.get(key)
         if hit:
             return kind
 
         kind = loader()
         if _safe_to_cache(db, kind):
-            self._store.set(key, kind, _ttl_for(kind))
+            self._store.set(key, kind, _ttl_for(kind), overwrite=False)
         return kind
 
     def get_by_id(
@@ -278,6 +309,7 @@ class CachedKindReader(IKindReader):
         if not resource_ids:
             return []
 
+        _mark_cache_touched()
         ordered_ids = list(dict.fromkeys(resource_ids))
         keys = {
             resource_id: self._id_key(kind, resource_id) for resource_id in ordered_ids
@@ -300,7 +332,9 @@ class CachedKindReader(IKindReader):
                 row = loaded.get(resource_id)
                 found[resource_id] = row
                 if available and _safe_to_cache(db, row):
-                    self._store.set(keys[resource_id], row, _ttl_for(row))
+                    self._store.set(
+                        keys[resource_id], row, _ttl_for(row), overwrite=False
+                    )
 
         return [
             item
@@ -477,6 +511,7 @@ def _keys_for_identity(identity: Dict[str, Any]) -> List[str]:
 
 def _flush_snapshots_to_cache(snapshots: Dict[int, _Snapshot]) -> None:
     """Write committed Kind rows back to the cache and evict stale keys."""
+    _mark_cache_touched()
     store = _write_through_store
     for snapshot in snapshots.values():
         keys_to_delete: List[str] = []
