@@ -21,8 +21,9 @@ class _MemRedis:
     def get(self, key: str):
         return self.store.get(key)
 
-    def set(self, key: str, value, ex: int | None = None) -> None:
+    def set(self, key: str, value, ex: int | None = None) -> bool:
         self.store[key] = value
+        return True
 
 
 @pytest.fixture

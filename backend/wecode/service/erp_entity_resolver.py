@@ -72,14 +72,16 @@ class ErpEntityResolver(IExternalEntityResolver):
             logger.warning(f"erp cache get {key} failed: {e}")
             return None
 
-    def _cache_set(self, key: str, value, ttl: Optional[int] = None) -> None:
+    def _cache_set(self, key: str, value, ttl: Optional[int] = None) -> bool:
+        """Write a cache entry, returning the client's SET result."""
         client = self._redis_client
         if client is None:
-            return
+            return False
         try:
-            client.set(key, orjson.dumps(value), ex=ttl or self._CACHE_TTL)
+            return client.set(key, orjson.dumps(value), ex=ttl or self._CACHE_TTL)
         except Exception as e:
             logger.warning(f"erp cache set {key} failed: {e}")
+            return False
 
     def _get_membership_with_cache(
         self, user_id: int, ssn: str, dept_ids: list[str]
@@ -334,14 +336,15 @@ class ErpEntityResolver(IExternalEntityResolver):
                 return None
 
             if not (erp_employee and erp_employee.ssn):
-                logger.info(
-                    f"No ERP employee found for user_id={user_id} "
-                    f"with email={user_email}"
-                )
-                self._cache_set(
+                cached = self._cache_set(
                     no_profile_key,
                     NULL_MARKER,
                     ttl=self._NO_PROFILE_CACHE_TTL,
+                )
+                logger.info(
+                    f"No ERP employee found for user_id={user_id} "
+                    f"with email={user_email}, "
+                    f"no-profile cache written={cached}"
                 )
                 return None
 
