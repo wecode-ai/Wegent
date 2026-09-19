@@ -359,6 +359,10 @@ const buildProps = (): MobileChatInputControlsProps => ({
 })
 
 describe('MobileChatInputControls layout', () => {
+  it('mounts the model loader before an agent is resolved', () => {
+    render(<MobileChatInputControls {...buildProps()} selectedTeam={null} />)
+    expect(screen.getByTestId('mobile-model-selector')).toHaveAttribute('data-disabled', 'true')
+  })
   beforeEach(() => {
     mockMobileModelSelector.mockClear()
     mockMobileTeamSelector.mockClear()
