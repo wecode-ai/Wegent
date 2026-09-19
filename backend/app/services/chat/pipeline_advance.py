@@ -9,7 +9,7 @@ import logging
 from types import SimpleNamespace
 from typing import Any, Optional
 
-from sqlalchemy.orm import Session, make_transient
+from sqlalchemy.orm import Session, make_transient, object_session
 
 from app.api.ws.events import ServerEvents
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
@@ -375,7 +375,11 @@ def _trigger_next_stage(
     previous_bot_id: Optional[int],
 ) -> None:
     db.refresh(task)
-    db.refresh(team)
+    # ``team`` may come from the Kind reader cache as a detached instance;
+    # refresh only works for objects persistent in this session, and cached
+    # instances already carry every column.
+    if object_session(team) is db:
+        db.refresh(team)
     db.refresh(assistant_subtask)
     db.refresh(user)
     make_transient(task)
