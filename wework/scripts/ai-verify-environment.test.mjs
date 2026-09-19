@@ -35,12 +35,15 @@ describe('buildAiVerifyEnvironment', () => {
         ELECTRON_RUN_AS_NODE: '1',
         WEWORK_APP_HOT_RELOAD: '1',
         WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
+        WEWORK_CORE_PLUGIN_ROOT: '/Applications/WeWork.app/Contents/Resources/wework-core-plugins',
+        WEWORK_CORE_PLUGINS_SHA256: 'foreign-plugin-hash',
         WEWORK_DEV_DOCK_TITLE: 'Parent task · 1234',
         WEWORK_DEV_INSTANCE_LABEL: '123456',
         WEWORK_DEV_TITLE: 'Parent task',
         WEWORK_DEV_WORKTREE: '/tmp/worktrees/runtime-123456/project',
         WEWORK_EXECUTOR_PATH: '/Applications/WeWork.app/Contents/Resources/bin/wegent-executor',
         WEWORK_EXECUTOR_SIDECAR: '/tmp/foreign-sidecar',
+        WEWORK_HARNESS_RESOURCE_ROOT: '/Applications/WeWork.app/Contents/Resources/harness-runtime',
         WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/foreign-harness-runtime',
         WEWORK_NODE_PATH: '/Applications/WeWork.app/Contents/MacOS/WeWork',
         WEWORK_NODE_RUNTIME_KIND: 'electron',
@@ -91,12 +94,15 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
     expect(environment.WEWORK_APP_HOT_RELOAD).toBeUndefined()
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGINS_SHA256).toBeUndefined()
     expect(environment.WEWORK_DEV_DOCK_TITLE).toBeUndefined()
     expect(environment.WEWORK_DEV_INSTANCE_LABEL).toBeUndefined()
     expect(environment.WEWORK_DEV_TITLE).toBeUndefined()
     expect(environment.WEWORK_DEV_WORKTREE).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_PATH).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
+    expect(environment.WEWORK_HARNESS_RESOURCE_ROOT).toBeUndefined()
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toBeUndefined()
     expect(environment.WEWORK_NODE_PATH).toBeUndefined()
     expect(environment.WEWORK_NODE_RUNTIME_KIND).toBeUndefined()

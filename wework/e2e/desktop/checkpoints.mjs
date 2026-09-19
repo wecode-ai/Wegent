@@ -31,6 +31,7 @@ export const DESKTOP_CHECKPOINTS = [
   'codex-account-login',
   'permission-modes',
   'computer-use',
+  'system-record-replay',
   'task-status-sync',
   'task-board-association',
   'core-task-flow',

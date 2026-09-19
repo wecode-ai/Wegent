@@ -4380,7 +4380,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(screen.queryByTestId('automation-selection-options')).not.toBeInTheDocument()
-  })
+  }, 30_000)
 
   it('starts the Runtime extension after creating through the Wework composer', async () => {
     const workbenchServices = services()

@@ -410,6 +410,7 @@ async fn clone_repo(
 
     let mut command = Command::new("git");
     crate::process::hide_windows_console(&mut command);
+    isolate_git_repository_environment(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
     if let Some(branch) = branch.as_deref() {
@@ -501,6 +502,7 @@ async fn clone_repo(
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
     let mut command = Command::new("git");
     crate::process::hide_windows_console(&mut command);
+    isolate_git_repository_environment(&mut command);
     command
         .arg("-C")
         .arg(project_path)
@@ -538,6 +540,13 @@ async fn validate_existing_git_repository(project_path: &Path) -> Result<(), Str
             project_path.display()
         ))
     }
+}
+
+fn isolate_git_repository_environment(command: &mut Command) {
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE");
 }
 
 fn spawn_output_reader<R>(stream: Option<R>) -> Option<JoinHandle<Vec<u8>>>
@@ -736,6 +745,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
         let mut command = Command::new("git");
         crate::process::hide_windows_console(&mut command);
+        isolate_git_repository_environment(&mut command);
         let _ = command
             .arg("-C")
             .arg(project_path)
@@ -866,6 +876,27 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
+    }
+
+    #[test]
+    fn git_commands_do_not_inherit_parent_repository_environment() {
+        let mut command = Command::new("git");
+        command
+            .env("GIT_DIR", "/tmp/parent.git")
+            .env("GIT_WORK_TREE", "/tmp/parent")
+            .env("GIT_INDEX_FILE", "/tmp/parent.index");
+
+        isolate_git_repository_environment(&mut command);
+
+        let removed = command
+            .as_std()
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_owned())
+            .collect::<Vec<_>>();
+        assert!(removed.iter().any(|key| key == "GIT_DIR"));
+        assert!(removed.iter().any(|key| key == "GIT_WORK_TREE"));
+        assert!(removed.iter().any(|key| key == "GIT_INDEX_FILE"));
     }
 
     fn create_local_repository(
