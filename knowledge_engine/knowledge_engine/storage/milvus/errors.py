@@ -11,6 +11,8 @@ of the code that owns schema, filters and the shared connection.
 
 from __future__ import annotations
 
+from typing import Any
+
 import grpc
 from pymilvus.client.types import Status as MilvusStatus
 from pymilvus.exceptions import (
@@ -20,6 +22,45 @@ from pymilvus.exceptions import (
 )
 
 from knowledge_engine.storage.errors import StorageBackendError, StorageUnavailableError
+
+
+class IndexContractIncompatibleError(StorageBackendError):
+    """Raised when an existing physical index cannot serve the requested space."""
+
+    code = "index_contract_incompatible"
+    retryable = False
+
+    def __init__(
+        self,
+        collection_name: str,
+        reason: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = {"collection_name": collection_name, "reason": reason}
+        merged_details.update(details or {})
+        super().__init__(
+            f"Milvus index '{collection_name}' is not compatible: {reason}. "
+            "This index requires an explicit operational decision; it is never "
+            "overwritten or adopted automatically.",
+            details=merged_details,
+        )
+
+
+class IndexMissingError(StorageBackendError):
+    """Raised when a confirmed physical index disappeared from the service."""
+
+    code = "index_missing"
+    retryable = False
+
+    def __init__(self, collection_name: str, reason: str) -> None:
+        super().__init__(
+            f"Milvus index '{collection_name}' is missing: {reason}. "
+            "A knowledge base with a confirmed index must not degrade into an "
+            "empty result; this needs an operational decision.",
+            details={"collection_name": collection_name, "reason": reason},
+        )
+
 
 # SDK failures that mean the server could not answer this attempt. They are
 # safe to surface as retryable; nothing here claims the remote side stopped.

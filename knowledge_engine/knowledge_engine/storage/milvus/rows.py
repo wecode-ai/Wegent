@@ -205,12 +205,14 @@ class MilvusRowReader:
     ) -> List[Dict[str, Any]]:
         """Read stored chunks for direct injection in stable order.
 
-        ``max_chunks`` is a partial-result request: the caller asked for at most
-        that many rows, so the read stops there. The metadata condition is
-        compiled into the database filter, which means the cap counts matches
-        instead of counting rows the adapter later drops. The reading path owns
-        no separate document scope, so a ``doc_ref`` condition may narrow this
-        read; it still cannot leave the knowledge base.
+        ``max_chunks`` is a ceiling, not a truncation point: a match set that
+        exceeds it fails instead of returning the rows that happened to fit, so
+        the caller never mistakes a partial listing for the whole one. The
+        metadata condition is compiled into the database filter, which means
+        the ceiling counts matches instead of counting rows the adapter later
+        drops. The reading path owns no separate document scope, so a
+        ``doc_ref`` condition may narrow this read; it still cannot leave the
+        knowledge base.
         """
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         filter_expr = build_scope_filter(
@@ -220,7 +222,12 @@ class MilvusRowReader:
                 allow_document_scope=True,
             ),
         )
-        rows = self._read_rows(collection_name, filter_expr, limit=max_chunks)
+        rows = self._read_bounded_rows(
+            collection_name,
+            filter_expr,
+            budget=min(max_chunks, MAX_READ_LIMIT),
+            what="the chunk listing",
+        )
 
         chunks = []
         for row in rows:
@@ -237,38 +244,29 @@ class MilvusRowReader:
         chunks.sort(key=lambda chunk: (chunk["doc_ref"], chunk["chunk_id"]))
         return chunks
 
-    def _read_rows(
-        self,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        limit: int,
-        output_fields: Optional[Sequence[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Read at most ``limit`` stored rows.
-
-        The caller asked for at most that many rows, so one bounded request is
-        the whole answer: the rows come back in the server's order and the
-        caller shapes or sorts them, and a response with fewer rows is simply a
-        smaller match set.
-        """
-        store = self._store_for()
-        with store.client() as client:
-            if self._missing_index_for(client, collection_name):
-                return []
-            return store.query_rows(
-                client,
-                collection_name,
-                filter_expr,
-                output_fields=output_fields,
-                limit=limit,
-            )
-
     def _read_all_rows(
         self,
         collection_name: str,
         filter_expr: str,
         *,
+        output_fields: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read every matching row of a complete answer within the read budget."""
+        return self._read_bounded_rows(
+            collection_name,
+            filter_expr,
+            budget=MAX_READ_LIMIT,
+            what="a complete document or document list",
+            output_fields=output_fields,
+        )
+
+    def _read_bounded_rows(
+        self,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        budget: int,
+        what: str,
         output_fields: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Read every matching row through one bounded server iterator.
@@ -289,7 +287,7 @@ class MilvusRowReader:
                 collection_name,
                 filter_expr,
                 batch_size=ITERATOR_BATCH_SIZE,
-                limit=MAX_READ_LIMIT + 1,
+                limit=max(budget, 0) + 1,
                 output_fields=output_fields,
             )
             try:
@@ -298,13 +296,13 @@ class MilvusRowReader:
                     if not batch:
                         return rows
                     rows.extend(batch)
-                    if len(rows) > MAX_READ_LIMIT:
+                    if len(rows) > budget:
                         raise StorageBackendError(
-                            "Milvus read exceeded the budget; the complete result "
-                            "cannot be returned.",
+                            f"Milvus read exceeded its budget while reading {what}; "
+                            "the complete result cannot be returned.",
                             details={
                                 "collection_name": collection_name,
-                                "budget": MAX_READ_LIMIT,
+                                "budget": budget,
                             },
                         )
             finally:

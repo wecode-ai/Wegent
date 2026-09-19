@@ -43,7 +43,7 @@ from pymilvus import (
 from pymilvus.exceptions import AmbiguousIndexName
 from pymilvus.milvus_client.index import IndexParams
 
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
+from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 
 # Bump when the physical row layout changes in a way that requires rebuilding.
 SCHEMA_VERSION = 5

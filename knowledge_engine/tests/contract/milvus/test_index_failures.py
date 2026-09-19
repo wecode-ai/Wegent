@@ -28,7 +28,7 @@ from llama_index.core.schema import TextNode
 from pymilvus import DataType, Function, FunctionType, MilvusClient
 
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.errors import (
+from knowledge_engine.storage.milvus.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
 )

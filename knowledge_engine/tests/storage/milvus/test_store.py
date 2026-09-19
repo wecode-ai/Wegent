@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from knowledge_engine.storage.errors import (
+from knowledge_engine.storage.milvus.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
 )

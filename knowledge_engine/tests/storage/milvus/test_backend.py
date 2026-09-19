@@ -15,11 +15,11 @@ from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from knowledge_engine.embedding.vectors import EmptyIndexableContentError
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
-    IndexContractIncompatibleError,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
 from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
     DENSE_VECTOR_FIELD,
     DISPLAY_TEXT_FIELD,
@@ -37,10 +37,13 @@ _CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")
 _JSON_CLAUSE = re.compile(
     r'^metadata\["(?P<key>.+?)"\] (?P<operator>==|in) (?P<value>.+)$'
 )
+_FIELD_CLAUSE = re.compile(
+    r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*) (?P<operator>==|in) (?P<value>.+)$"
+)
 
 
-def _split_conjuncts(expression: str) -> list[str]:
-    """Split one boolean expression on its top level ``and``."""
+def _split_operator(expression: str, operator: str) -> list[str]:
+    """Split one boolean expression on its top level ``and`` or ``or``."""
     parts: list[str] = []
     current = ""
     depth = 0
@@ -53,7 +56,7 @@ def _split_conjuncts(expression: str) -> list[str]:
             depth -= 1
         if depth == 0 and current:
             match = _CLAUSE_SEPARATOR.match(expression, index)
-            if match and match.group(1) == "and":
+            if match and match.group(1) == operator:
                 parts.append(current)
                 current = ""
                 index = match.end()
@@ -62,6 +65,11 @@ def _split_conjuncts(expression: str) -> list[str]:
         index += 1
     parts.append(current)
     return [part.strip() for part in parts if part.strip()]
+
+
+def _split_conjuncts(expression: str) -> list[str]:
+    """Split one boolean expression on its top level ``and``."""
+    return _split_operator(expression, "and")
 
 
 def _parse_literal(raw_literal: str) -> Any:
@@ -437,7 +445,13 @@ class FakeStore:
     def _expression_matches(cls, row: Dict[str, Any], expression: str) -> bool:
         """Evaluate one boolean expression, the outermost group first."""
         expression = expression.strip()
-        conjuncts = _split_conjuncts(expression)
+        # ``or`` binds looser than ``and``, so it is the outermost split; the
+        # parent reads compile one exact ``(doc_ref and parent_node_id)`` group
+        # per reference and join them with ``or``.
+        disjuncts = _split_operator(expression, "or")
+        if len(disjuncts) > 1:
+            return any(cls._expression_matches(row, part) for part in disjuncts)
+        conjuncts = _split_operator(expression, "and")
         if len(conjuncts) > 1:
             return all(cls._expression_matches(row, part) for part in conjuncts)
         inner = _enclosing_group(expression)
@@ -448,12 +462,18 @@ class FakeStore:
     @classmethod
     def _clause_matches(cls, row: Dict[str, Any], clause: str) -> bool:
         comparison = _JSON_CLAUSE.match(clause)
+        if comparison:
+            # Every metadata clause addresses the row's JSON metadata column.
+            actual = cls._metadata_value(row, comparison.group("key"))
+        else:
+            comparison = _FIELD_CLAUSE.match(clause)
+            # The parent sidecar keeps its scope in top-level dynamic fields
+            # instead of a metadata column, so those clauses read the row.
+            actual = None if comparison is None else row.get(comparison.group("key"))
         if not comparison:
             raise AssertionError(
                 f"the fake store cannot evaluate the clause {clause!r}"
             )
-        # Every clause the compiler emits addresses the row's metadata column.
-        actual = cls._metadata_value(row, comparison.group("key"))
         expected = _parse_literal(comparison.group("value"))
         if comparison.group("operator") == "==":
             return actual == expected
@@ -1090,14 +1110,20 @@ def test_a_shared_strategy_deletes_one_document_inside_one_knowledge_base(
         ]
     )
     backend._store = store
-    backend.delete_parent_nodes = lambda *args, **kwargs: 0
 
     result = backend.delete_document("1", "42", **index_kwargs)
 
     assert result["deleted_chunks"] == 1
-    [scope] = store.deleted_filters
+    [scope] = [
+        expression
+        for expression in store.deleted_filters
+        if expression.startswith("metadata[")
+    ]
     assert 'metadata["knowledge_id"] == "1"' in scope
     assert 'metadata["doc_ref"] in ["42"]' in scope
+    # The parent sidecar of the same document is cleared in its own scope, so
+    # an expanded hit cannot outlive the child rows it was stored for.
+    assert 'knowledge_id == "1" and doc_ref in ["42"]' in store.deleted_filters
     assert _stored_scopes(store) == {("1", "43"), ("2", "42")}
 
 
@@ -2429,7 +2455,6 @@ def test_delete_missing_document_is_idempotent_and_creates_nothing():
     backend = _backend()
     store = FakeStore(collection_exists=False)
     backend._store = store
-    backend.delete_parent_nodes = lambda *args, **kwargs: 0
 
     result = backend.delete_document("1", "42")
 
@@ -2445,22 +2470,25 @@ def test_delete_document_removes_rows_and_reports_the_delete_rpcs_count() -> Non
         rows=[_stored_row("42", 0), _stored_row("42", 1), _stored_row("43", 0)]
     )
     backend._store = store
-    backend.delete_parent_nodes = lambda *args, **kwargs: 0
 
     result = backend.delete_document("1", "42")
 
     assert result["deleted_chunks"] == 2
     assert [row["id"] for row in store.rows] == ["43-0"]
-    assert len(store.deleted_filters) == 1
     assert 'metadata["doc_ref"] in ["42"]' in store.deleted_filters[0]
+    # The index rows and the parent sidecar are two collections: each is
+    # addressed once, in its own scope shape.
+    assert store.deleted_filters[1] == 'knowledge_id == "1" and doc_ref in ["42"]'
     # The contract read is the only extra lookup, and the delete entry point
     # flushes so the removal is durable when it is reported.
     assert [call[0] for call in store.calls] == [
         "read_contract",
         "delete_rows",
         "flush",
+        "delete_rows",
+        "flush",
     ]
-    assert store.has_collection_calls == []
+    assert store.has_collection_calls == [backend.get_parent_store_name("1")]
     assert store.queries == []
 
 
@@ -2477,7 +2505,6 @@ def test_delete_document_never_prepares_vectors(monkeypatch):
     backend = _backend()
     store = FakeStore(rows=[_stored_chunk_row("42", 0)])
     backend._store = store
-    backend.delete_parent_nodes = lambda *args, **kwargs: 0
 
     result = backend.delete_document("1", "42")
 
@@ -2715,8 +2742,48 @@ def test_get_all_chunks_keeps_a_match_behind_the_read_limit():
     )
 
     assert [chunk["chunk_id"] for chunk in chunks] == [99]
-    # The condition reaches the database, so the limit applies to matches.
-    assert 'metadata["node_role"] == "qa_pair"' in store.queries[-1]["filter"]
+    # The condition reaches the database, so the ceiling applies to matches;
+    # the complete read walks the bounded iterator instead of one unordered
+    # query, and stops there rather than truncating an over-budget match set.
+    assert 'metadata["node_role"] == "qa_pair"' in store.iterators[-1].filter_expr
+    assert store.iterators[-1].limit == 3
+    assert store.iterators[-1].closed is True
+    assert store.queries == []
+
+
+def test_get_all_chunks_fails_instead_of_truncating_an_over_budget_match_set():
+    """A listing over its ceiling fails instead of reporting a partial page."""
+    backend = _backend()
+    store = FakeStore(rows=_chunk_rows("42", range(5)))
+    backend._store = store
+
+    with pytest.raises(StorageBackendError, match="exceeded its budget"):
+        backend.get_all_chunks("1", max_chunks=3)
+
+    [iterator] = store.iterators
+    # One row past the ceiling is what proves the match set is too large, and
+    # the iterator is released whether the read answered or failed.
+    assert iterator.limit == 4
+    assert iterator.batch_size == ITERATOR_BATCH_SIZE
+    assert iterator.closed is True
+    assert store.queries == []
+
+
+def test_get_all_chunks_sorts_a_complete_read_by_document_and_chunk():
+    """A complete listing keeps one fixed order however the server answers."""
+    backend = _backend()
+    store = FakeStore(rows=_chunk_rows("43", [2, 0, 1]) + _chunk_rows("42", [1, 0]))
+    backend._store = store
+
+    chunks = backend.get_all_chunks("1", max_chunks=10)
+
+    assert [(chunk["doc_ref"], chunk["chunk_id"]) for chunk in chunks] == [
+        ("42", 0),
+        ("42", 1),
+        ("43", 0),
+        ("43", 1),
+        ("43", 2),
+    ]
 
 
 def test_get_all_chunks_compiles_the_supported_condition_contract():
@@ -2768,7 +2835,7 @@ def test_get_all_chunks_allows_a_doc_ref_condition_inside_the_knowledge_base():
     )
 
     assert {chunk["doc_ref"] for chunk in chunks} == {"43"}
-    expression = store.queries[-1]["filter"]
+    expression = store.iterators[-1].filter_expr
     assert 'metadata["knowledge_id"] == "1"' in expression
     assert 'metadata["doc_ref"] == "43"' in expression
 

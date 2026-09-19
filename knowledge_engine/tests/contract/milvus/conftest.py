@@ -200,6 +200,46 @@ def await_parent_removal(
         time.sleep(VISIBILITY_POLL_SECONDS)
 
 
+def await_parent_visibility(
+    backend: MilvusBackend,
+    *,
+    knowledge_id: str,
+    parent_refs: list[tuple[str, str]],
+    timeout: float = VISIBILITY_TIMEOUT_SECONDS,
+    **read_kwargs,
+) -> dict:
+    """Wait until the reading path serves the parent rows that were just written.
+
+    The sidecar lives in its own ``Bounded`` collection, so a read issued
+    inside the accepted visibility window can miss a fresh parent row for the
+    same reason the index can. The poll uses the product's own read entry and
+    never becomes a silent skip: a parent row that is still missing when the
+    deadline passes fails with the time it waited.
+    """
+    parent_node_ids = [parent_node_id for _, parent_node_id in parent_refs]
+    started = time.monotonic()
+    deadline = started + timeout
+    while True:
+        found = backend.get_parent_nodes(
+            knowledge_id,
+            parent_node_ids,
+            parent_refs=parent_refs,
+            **read_kwargs,
+        )
+        if set(found) == set(parent_node_ids):
+            return found
+        if time.monotonic() >= deadline:
+            waited = time.monotonic() - started
+            raise AssertionError(
+                f"parent nodes {parent_node_ids} of knowledge base "
+                f"{knowledge_id} were still not readable {waited:.2f}s after "
+                "their write returned; the measured visibility window is "
+                f"~{VISIBILITY_WINDOW_SECONDS}s, so this is a write that did "
+                "not land, not that window."
+            )
+        time.sleep(VISIBILITY_POLL_SECONDS)
+
+
 def drop_collection_with_contract(uri: str, collection_name: str) -> None:
     """Drop one stored collection, its parent sidecar and its contract.
 

@@ -58,6 +58,11 @@ class BaseStorageBackend(ABC):
     # Subclasses should override this with their supported methods
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = []
     supports_retrieval_scope: ClassVar[bool] = False
+    # Whether this backend removes a document's previous rows inside its own
+    # write. The indexing layer reads this capability off the backend class, so
+    # a new backend declares its own write shape instead of being listed in a
+    # second registry of storage type names.
+    owns_document_replacement: ClassVar[bool] = False
 
     # Index name prefix for different storage types (can be overridden)
     INDEX_PREFIX: ClassVar[str] = "index"

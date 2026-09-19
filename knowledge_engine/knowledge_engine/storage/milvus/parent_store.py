@@ -31,6 +31,13 @@ PARENT_KNOWLEDGE_ID_FIELD = "knowledge_id"
 PARENT_DOC_REF_FIELD = "doc_ref"
 
 
+def _reference_parts(reference: Any) -> tuple[str, str]:
+    """Read one ``(doc_ref, parent_node_id)`` reference, refusing other shapes."""
+    if not isinstance(reference, (tuple, list)) or len(reference) != 2:
+        raise ValueError("parent_refs must contain (doc_ref, parent_node_id) pairs.")
+    return str(reference[0] or ""), str(reference[1] or "")
+
+
 class MilvusParentStore:
     """Stores and loads parent chunks for hierarchical retrieval."""
 
@@ -124,8 +131,27 @@ class MilvusParentStore:
         parent_node_ids: List[str],
         **kwargs,
     ) -> Dict[str, Dict[str, Any]]:
-        """Load parent nodes by id."""
+        """Load the parent bodies of the document-scoped references asked for.
+
+        A parent node id is only unique inside the document that stored it, so
+        the read serves the ``(doc_ref, parent_node_id)`` pairs the caller
+        declared and matches both halves in one query. A pair whose id maps to
+        more than one document in the same request is ambiguous and is left
+        out instead of being answered from whichever document matched, and a
+        request that declares no pair expands nothing rather than reading by
+        id alone.
+        """
         if not parent_node_ids:
+            return {}
+
+        pairs = self._resolve_pairs(parent_node_ids, kwargs.get("parent_refs"))
+        if not pairs:
+            logger.warning(
+                "[Milvus] Parent read without document-scoped references is "
+                "not expanded: knowledge_id=%s, parent_node_ids=%d",
+                knowledge_id,
+                len(parent_node_ids),
+            )
             return {}
 
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
@@ -134,33 +160,67 @@ class MilvusParentStore:
             if not client.has_collection(collection_name, timeout=store.rpc_timeout):
                 return {}
 
-            parent_records: Dict[str, Dict[str, Any]] = {}
-            for parent_node_id in parent_node_ids:
-                results = client.query(
-                    collection_name=collection_name,
-                    filter=(
-                        f"{self.scope_filter(knowledge_id)} and "
-                        f"{PARENT_NODE_ID_FIELD} == "
-                        f'"{sanitize_filter_value(parent_node_id)}"'
-                    ),
-                    output_fields=[
-                        PARENT_NODE_ID_FIELD,
-                        "content",
-                        "title",
-                        "metadata_json",
-                    ],
-                    limit=1,
-                    timeout=store.rpc_timeout,
-                )
-                if not results:
-                    continue
-                record = results[0]
-                parent_records[parent_node_id] = {
-                    "content": record.get("content", ""),
-                    "title": record.get("title", ""),
-                    "metadata": json.loads(record.get("metadata_json") or "{}"),
-                }
-            return parent_records
+            results = client.query(
+                collection_name=collection_name,
+                filter=self._pair_filter(knowledge_id, pairs),
+                output_fields=[
+                    PARENT_NODE_ID_FIELD,
+                    PARENT_DOC_REF_FIELD,
+                    "content",
+                    "title",
+                    "metadata_json",
+                ],
+                limit=len(pairs),
+                timeout=store.rpc_timeout,
+            )
+
+        allowed = set(pairs)
+        parent_records: Dict[str, Dict[str, Any]] = {}
+        for record in results:
+            reference = (
+                str(record.get(PARENT_DOC_REF_FIELD) or ""),
+                str(record.get(PARENT_NODE_ID_FIELD) or ""),
+            )
+            if reference not in allowed:
+                continue
+            parent_records[reference[1]] = {
+                "content": record.get("content", ""),
+                "title": record.get("title", ""),
+                "metadata": json.loads(record.get("metadata_json") or "{}"),
+            }
+        return parent_records
+
+    @staticmethod
+    def _resolve_pairs(
+        parent_node_ids: List[str],
+        parent_refs: Any,
+    ) -> List[tuple[str, str]]:
+        """The unambiguous ``(doc_ref, parent_node_id)`` pairs of one read."""
+        wanted = {str(node_id) for node_id in parent_node_ids}
+        documents_by_parent: Dict[str, set[str]] = {}
+        for reference in parent_refs or []:
+            doc_ref, parent_node_id = _reference_parts(reference)
+            if not doc_ref or parent_node_id not in wanted:
+                continue
+            documents_by_parent.setdefault(parent_node_id, set()).add(doc_ref)
+        return [
+            (next(iter(documents)), parent_node_id)
+            for parent_node_id, documents in documents_by_parent.items()
+            if len(documents) == 1
+        ]
+
+    @staticmethod
+    def _pair_filter(knowledge_id: str, pairs: List[tuple[str, str]]) -> str:
+        """Compile the exact document-scoped pairs of one parent read."""
+        pair_conditions = " or ".join(
+            "("
+            f'{PARENT_DOC_REF_FIELD} == "{sanitize_filter_value(doc_ref)}"'
+            " and "
+            f'{PARENT_NODE_ID_FIELD} == "{sanitize_filter_value(parent_node_id)}"'
+            ")"
+            for doc_ref, parent_node_id in pairs
+        )
+        return f"{MilvusParentStore.scope_filter(knowledge_id)} and ({pair_conditions})"
 
     def delete(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
         """Delete the parent nodes of one document."""

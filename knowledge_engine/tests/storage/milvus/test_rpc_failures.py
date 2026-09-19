@@ -46,6 +46,16 @@ def _rpc_error(status_code: cygrpc.StatusCode, details: str) -> grpc.RpcError:
     return _InactiveRpcError(_RPCState((), None, None, status_code, details))
 
 
+class _EmptyRowIterator:
+    """Stands in for a server iterator that answered no rows."""
+
+    def next(self) -> list:
+        return []
+
+    def close(self) -> None:
+        pass
+
+
 class _RecordingClient:
     """A Milvus client that records the kwargs of every RPC it receives."""
 
@@ -78,9 +88,9 @@ class _RecordingClient:
         self._record("describe_index", kwargs)
         return recorded_indexes()[index_name]
 
-    def query(self, **kwargs) -> list:
-        self._record("query", kwargs)
-        return []
+    def query_iterator(self, **kwargs) -> _EmptyRowIterator:
+        self._record("query_iterator", kwargs)
+        return _EmptyRowIterator()
 
     def search(self, **kwargs) -> list:
         self._record("search", kwargs)
@@ -130,19 +140,23 @@ def _store(client: _RecordingClient) -> MilvusDocumentStore:
     )
 
 
-def test_query_rows_bounds_the_rpc_with_the_configured_timeout() -> None:
+def test_the_read_iterator_bounds_the_rpc_with_the_configured_timeout() -> None:
     client = _RecordingClient()
+    store = _store(client)
 
-    _store(client).query_rows(
+    iterator = store.open_row_iterator(
         client,
         "wegent_kb_1",
         'knowledge_id == "1"',
+        batch_size=100,
         limit=10,
     )
+    iterator.close()
 
-    # The caller read the collection's contract, so the query is the only RPC.
-    assert [name for name, _ in client.calls] == ["query"]
-    assert client.timeout_of("query") == TIMEOUT_SECONDS
+    # The caller read the collection's contract, so opening the iterator is the
+    # only RPC, and every batch it serves carries the same deadline.
+    assert [name for name, _ in client.calls] == ["query_iterator"]
+    assert client.timeout_of("query_iterator") == TIMEOUT_SECONDS
 
 
 def test_dense_and_sparse_search_bound_the_rpc():
@@ -221,8 +235,8 @@ def test_an_unresponsive_rpc_reports_the_sdk_failure():
     """A bounded RPC that still fails reports a retryable storage failure."""
 
     class _DeadClient(_RecordingClient):
-        def query(self, **kwargs):
-            self._record("query", kwargs)
+        def query_iterator(self, **kwargs):
+            self._record("query_iterator", kwargs)
             raise MilvusException(
                 code=StatusCode.DEADLINE_EXCEEDED,
                 message="deadline exceeded",
@@ -233,7 +247,7 @@ def test_an_unresponsive_rpc_reports_the_sdk_failure():
 
     with pytest.raises(StorageBackendError) as failure:
         with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=10)
+            store.open_row_iterator(used, "wegent_kb_1", "", batch_size=100, limit=10)
 
     assert failure.value.retryable is True
     deadline_code = _code_number(StatusCode.DEADLINE_EXCEEDED)
@@ -243,7 +257,7 @@ def test_an_unresponsive_rpc_reports_the_sdk_failure():
 
 def test_a_disconnected_service_reports_a_retryable_failure():
     class _DisconnectedClient(_RecordingClient):
-        def query(self, **kwargs):
+        def query_iterator(self, **kwargs):
             raise MilvusException(
                 code=StatusCode.UNAVAILABLE,
                 message="server unavailable",
@@ -254,7 +268,7 @@ def test_a_disconnected_service_reports_a_retryable_failure():
 
     with pytest.raises(StorageBackendError) as failure:
         with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=10)
+            store.open_row_iterator(used, "wegent_kb_1", "", batch_size=100, limit=10)
 
     assert failure.value.retryable is True
     assert f"code={_code_number(StatusCode.UNAVAILABLE)}" in str(failure.value)
@@ -263,7 +277,7 @@ def test_a_disconnected_service_reports_a_retryable_failure():
 
 def test_a_deterministic_sdk_rejection_keeps_its_own_code():
     class _RejectingClient(_RecordingClient):
-        def query(self, **kwargs):
+        def query_iterator(self, **kwargs):
             raise MilvusException(code=1100, message="invalid filter")
 
     client = _RejectingClient()
@@ -271,7 +285,7 @@ def test_a_deterministic_sdk_rejection_keeps_its_own_code():
 
     with pytest.raises(StorageBackendError) as failure:
         with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=10)
+            store.open_row_iterator(used, "wegent_kb_1", "", batch_size=100, limit=10)
 
     assert failure.value.retryable is False
     assert failure.value.details["sdk_code"] == "1100"
@@ -347,8 +361,8 @@ def test_an_exhausted_retry_becomes_a_retryable_storage_error_on_the_wire():
     )
 
     class _ExhaustedClient(_RecordingClient):
-        def query(self, **kwargs):
-            self._record("query", kwargs)
+        def query_iterator(self, **kwargs):
+            self._record("query_iterator", kwargs)
             raise sdk_error
 
     client = _ExhaustedClient()
@@ -356,7 +370,7 @@ def test_an_exhausted_retry_becomes_a_retryable_storage_error_on_the_wire():
 
     with pytest.raises(StorageBackendError) as failure:
         with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=5)
+            store.open_row_iterator(used, "wegent_kb_1", "", batch_size=100, limit=5)
 
     assert failure.value.retryable is True
     assert failure.value.code == "storage_unavailable"
@@ -385,7 +399,7 @@ def test_a_connection_failure_is_classified_as_retryable():
     from pymilvus.exceptions import ConnectError
 
     class _UnreachableClient(_RecordingClient):
-        def query(self, **kwargs):
+        def query_iterator(self, **kwargs):
             raise ConnectError("Fail connecting to server")
 
     client = _UnreachableClient()
@@ -393,6 +407,6 @@ def test_a_connection_failure_is_classified_as_retryable():
 
     with pytest.raises(StorageBackendError) as failure:
         with store.client() as used:
-            store.query_rows(used, "wegent_kb_1", "", limit=10)
+            store.open_row_iterator(used, "wegent_kb_1", "", batch_size=100, limit=10)
 
     assert failure.value.retryable is True

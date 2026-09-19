@@ -465,7 +465,7 @@ class TestRetrieveForChatShell:
         which the gateway asserts in ``test_remote_gateway``.
         """
         from app.core.config import settings
-        from knowledge_engine.storage.errors import IndexMissingError
+        from knowledge_engine.storage.milvus.errors import IndexMissingError
 
         monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
         payload = {

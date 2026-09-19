@@ -25,11 +25,11 @@ from pymilvus import AnnSearchRequest, MilvusClient, WeightedRanker
 from pymilvus.exceptions import MilvusException
 from pymilvus.orm.iterator import QueryIterator
 
-from knowledge_engine.storage.errors import (
+from knowledge_engine.storage.milvus.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
+    rpc_failure,
 )
-from knowledge_engine.storage.milvus.errors import rpc_failure
 from knowledge_engine.storage.milvus.native import (
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
@@ -433,37 +433,6 @@ class MilvusDocumentStore:
             client.flush(collection_name, timeout=self.rpc_timeout)
         deleted_count = result.get("delete_count", 0) if isinstance(result, dict) else 0
         return int(deleted_count)
-
-    def query_rows(
-        self,
-        client: MilvusClient,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        output_fields: Sequence[str] | None = None,
-        limit: int,
-        offset: int = 0,
-        consistency_level: str = READ_CONSISTENCY_LEVEL,
-    ) -> List[Dict[str, Any]]:
-        """Read one page of matching rows.
-
-        Milvus does not order a query result, so ``offset`` continues the
-        server's own order: it pages a static collection the way ``limit``
-        alone cannot, and the caller owns any order it promises on top. The
-        caller has already settled the collection's existence, so the query is
-        the only RPC here.
-        """
-        return list(
-            client.query(
-                collection_name=collection_name,
-                filter=filter_expr,
-                output_fields=list(output_fields or ROW_OUTPUT_FIELDS),
-                limit=limit,
-                offset=offset,
-                consistency_level=consistency_level,
-                timeout=self.rpc_timeout,
-            )
-        )
 
     def open_row_iterator(
         self,

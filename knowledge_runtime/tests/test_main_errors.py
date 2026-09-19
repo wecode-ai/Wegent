@@ -9,11 +9,13 @@ from fastapi import Request
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from knowledge_engine.storage.errors import (
-    IndexContractIncompatibleError,
-    IndexMissingError,
     StorageBackendError,
     StorageUnavailableError,
     UnsupportedStorageCapabilityError,
+)
+from knowledge_engine.storage.milvus.errors import (
+    IndexContractIncompatibleError,
+    IndexMissingError,
 )
 from knowledge_runtime.main import (
     embedding_dimension_mismatch_handler,

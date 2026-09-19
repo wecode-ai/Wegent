@@ -92,6 +92,28 @@ def test_only_the_self_replacing_storage_types_are_declared() -> None:
     assert storage_backend_owns_document_replacement("unknown") is False
 
 
+def test_document_replacement_capability_comes_from_the_backend_class(
+    monkeypatch,
+) -> None:
+    """The capability is declared once, by the backend that owns the write."""
+    from knowledge_engine.storage.factory import (
+        STORAGE_BACKEND_REGISTRY,
+        storage_backend_owns_document_replacement,
+    )
+
+    class ReplacingBackend:
+        owns_document_replacement = True
+
+    class PlainBackend:
+        owns_document_replacement = False
+
+    monkeypatch.setitem(STORAGE_BACKEND_REGISTRY, "replacing", ReplacingBackend)
+    monkeypatch.setitem(STORAGE_BACKEND_REGISTRY, "plain", PlainBackend)
+
+    assert storage_backend_owns_document_replacement("replacing") is True
+    assert storage_backend_owns_document_replacement("plain") is False
+
+
 def test_create_storage_backend_from_runtime_config_requires_url() -> None:
     from knowledge_engine.storage.factory import (
         create_storage_backend_from_runtime_config,

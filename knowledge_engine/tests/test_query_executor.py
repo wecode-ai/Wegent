@@ -381,6 +381,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
     storage_backend.get_parent_nodes.assert_called_once_with(
         knowledge_id="1",
         parent_node_ids=["parent-1"],
+        parent_refs=[("doc_1", "parent-1")],
     )
 
 
@@ -459,6 +460,7 @@ async def test_query_executor_only_merges_hierarchical_hits_and_preserves_record
     storage_backend.get_parent_nodes.assert_called_once_with(
         knowledge_id="1",
         parent_node_ids=["parent-1"],
+        parent_refs=[("doc_1", "parent-1")],
         user_id=11,
     )
 

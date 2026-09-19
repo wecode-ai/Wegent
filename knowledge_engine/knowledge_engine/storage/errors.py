@@ -33,29 +33,6 @@ class StorageBackendError(RuntimeError):
         super().__init__(message)
 
 
-class IndexContractIncompatibleError(StorageBackendError):
-    """Raised when an existing physical index cannot serve the requested space."""
-
-    code = "index_contract_incompatible"
-    retryable = False
-
-    def __init__(
-        self,
-        collection_name: str,
-        reason: str,
-        *,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        merged_details = {"collection_name": collection_name, "reason": reason}
-        merged_details.update(details or {})
-        super().__init__(
-            f"Milvus index '{collection_name}' is not compatible: {reason}. "
-            "This index requires an explicit operational decision; it is never "
-            "overwritten or adopted automatically.",
-            details=merged_details,
-        )
-
-
 class UnsupportedStorageCapabilityError(StorageBackendError):
     """Raised when a requested capability is not implemented for a backend."""
 
@@ -66,21 +43,6 @@ class UnsupportedStorageCapabilityError(StorageBackendError):
         super().__init__(
             f"Storage backend '{backend}' does not support '{capability}' yet.",
             details={"capability": capability, "backend": backend},
-        )
-
-
-class IndexMissingError(StorageBackendError):
-    """Raised when a confirmed physical index disappeared from the service."""
-
-    code = "index_missing"
-    retryable = False
-
-    def __init__(self, collection_name: str, reason: str) -> None:
-        super().__init__(
-            f"Milvus index '{collection_name}' is missing: {reason}. "
-            "A knowledge base with a confirmed index must not degrade into an "
-            "empty result; this needs an operational decision.",
-            details={"collection_name": collection_name, "reason": reason},
         )
 
 

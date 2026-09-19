@@ -17,7 +17,10 @@ the calls this layer makes around one document are what they observe.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from llama_index.core.schema import TextNode
 
 from knowledge_engine.index.indexer import DocumentIndexer
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -37,8 +40,9 @@ SPLITTER_CONFIG = {
 class FakeStorageBackend:
     """Records the storage calls one indexed document makes."""
 
-    def __init__(self, *results) -> None:
+    def __init__(self, *results, parent_result=None) -> None:
         self.results = list(results)
+        self.parent_result = parent_result
         self.calls: list[str] = []
 
     def index_with_metadata(self, **kwargs):
@@ -47,6 +51,12 @@ class FakeStorageBackend:
         if isinstance(result, Exception):
             raise result
         return result
+
+    def save_parent_nodes(self, **kwargs):
+        self.calls.append("save_parent_nodes")
+        if isinstance(self.parent_result, Exception):
+            raise self.parent_result
+        return {"stored_count": len(kwargs["parent_nodes"])}
 
 
 def _indexer(storage_backend: FakeStorageBackend) -> DocumentIndexer:
@@ -106,3 +116,44 @@ def test_a_retry_repeats_the_same_single_write():
 
     assert _index_one_document(indexer)["indexed_count"] == 2
     assert storage_backend.calls == ["index_with_metadata", "index_with_metadata"]
+
+
+def _use_hierarchical_ingestion(monkeypatch) -> None:
+    """Replace the splitter with one parent and one child node."""
+    import knowledge_engine.index.indexer as indexer_module
+
+    monkeypatch.setattr(
+        indexer_module,
+        "build_ingestion_result",
+        lambda **kwargs: SimpleNamespace(
+            parser_subtype="text",
+            parent_nodes=[TextNode(text="parent body")],
+            index_nodes=[TextNode(text="child body")],
+        ),
+    )
+
+
+def test_parent_nodes_are_saved_after_the_child_rows(monkeypatch):
+    """The parent sidecar only serves the child rows, so it is written second."""
+    _use_hierarchical_ingestion(monkeypatch)
+    storage_backend = FakeStorageBackend(
+        {"indexed_count": 1, "index_name": "wegent_kb_1", "status": "success"}
+    )
+
+    _index_one_document(_indexer(storage_backend))
+
+    assert storage_backend.calls == ["index_with_metadata", "save_parent_nodes"]
+
+
+def test_a_failed_parent_write_fails_the_task_after_the_child_rows(monkeypatch):
+    """A parent failure has no compensating delete; the retry owns recovery."""
+    _use_hierarchical_ingestion(monkeypatch)
+    storage_backend = FakeStorageBackend(
+        {"indexed_count": 1, "index_name": "wegent_kb_1", "status": "success"},
+        parent_result=StorageBackendError("simulated parent write failure"),
+    )
+
+    with pytest.raises(StorageBackendError):
+        _index_one_document(_indexer(storage_backend))
+
+    assert storage_backend.calls == ["index_with_metadata", "save_parent_nodes"]

@@ -18,8 +18,11 @@ from typing import Iterator
 import pytest
 from llama_index.core.schema import TextNode
 
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
+from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.errors import (
+    IndexContractIncompatibleError,
+)
 from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE
 
 from .conftest import MilvusContractEnv, drop_collection_with_contract, index_nodes
@@ -107,10 +110,10 @@ def test_chunk_listing_applies_a_condition_before_the_read_limit(
     assert {chunk["doc_ref"] for chunk in chunks} == {"8202"}
 
 
-def test_chunk_listing_keeps_the_partial_result_semantics(
+def test_chunk_listing_fails_instead_of_truncating_an_over_budget_match_set(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """At, under and over the cap: a caller asking for at most N gets at most N."""
+    """At, under and over the ceiling: a complete answer or an explicit failure."""
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     index_nodes(
@@ -120,10 +123,13 @@ def test_chunk_listing_keeps_the_partial_result_semantics(
         nodes=_nodes(30),
     )
 
-    capped = backend.get_all_chunks(knowledge_id, max_chunks=10)
-    capped_again = backend.get_all_chunks(knowledge_id, max_chunks=10)
     exactly_the_cap = backend.get_all_chunks(knowledge_id, max_chunks=30)
+    repeated = backend.get_all_chunks(knowledge_id, max_chunks=30)
     above_the_cap = backend.get_all_chunks(knowledge_id, max_chunks=100)
+
+    with pytest.raises(StorageBackendError, match="exceeded its budget"):
+        backend.get_all_chunks(knowledge_id, max_chunks=10)
+
     numeric_condition = backend.get_all_chunks(
         knowledge_id,
         max_chunks=5,
@@ -133,12 +139,11 @@ def test_chunk_listing_keeps_the_partial_result_semantics(
         },
     )
 
-    assert len(capped) == 10
-    assert [chunk["chunk_id"] for chunk in capped_again] == [
-        chunk["chunk_id"] for chunk in capped
-    ], "repeating the same read over static data must not drift"
+    assert [chunk["chunk_id"] for chunk in repeated] == list(
+        range(30)
+    ), "repeating the same complete read over static data must not drift"
     assert [chunk["chunk_id"] for chunk in exactly_the_cap] == list(range(30))
-    assert len(above_the_cap) == 30
+    assert [chunk["chunk_id"] for chunk in above_the_cap] == list(range(30))
     assert [chunk["chunk_id"] for chunk in numeric_condition] == [25, 29]
 
 
@@ -232,6 +237,28 @@ def test_reading_more_rows_than_one_iterator_batch_stays_complete(
         "8451": long_document_chunks,
         "8452": 3,
     }
+
+
+def test_chunk_listing_walks_every_iterator_batch_in_order(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """A listing beyond one iterator batch returns every row, deterministically."""
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+    long_document_chunks = ITERATOR_BATCH_SIZE + 50
+    index_nodes(
+        backend,
+        knowledge_id=knowledge_id,
+        doc_ref="8461",
+        nodes=_nodes(long_document_chunks),
+    )
+
+    chunks = backend.get_all_chunks(knowledge_id, max_chunks=long_document_chunks)
+    repeated = backend.get_all_chunks(knowledge_id, max_chunks=long_document_chunks)
+
+    assert len(chunks) == long_document_chunks
+    assert [chunk["chunk_id"] for chunk in chunks] == list(range(long_document_chunks))
+    assert repeated == chunks, "a static listing keeps its order across reads"
 
 
 def test_listing_a_static_dataset_across_iterator_batches_pages_once(

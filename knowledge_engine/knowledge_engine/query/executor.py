@@ -10,6 +10,7 @@ from typing import Any
 
 from knowledge_engine.retrieval.hierarchical import (
     collect_parent_node_ids,
+    collect_parent_references,
     merge_parent_records,
 )
 from knowledge_engine.retrieval.query_planning import build_qa_search_hint_plan
@@ -213,10 +214,16 @@ class QueryExecutor:
         if not parent_node_ids:
             return result
 
+        # A parent id only identifies a body inside the document that stored
+        # it, so the expansion carries the document half of every reference
+        # through the existing ``**kwargs`` seam instead of widening the read
+        # to the whole knowledge base.
+        parent_refs = collect_parent_references(records)
         parent_records = await asyncio.to_thread(
             self.storage_backend.get_parent_nodes,
             knowledge_id=knowledge_id,
             parent_node_ids=parent_node_ids,
+            parent_refs=parent_refs,
             **kwargs,
         )
         if not parent_records:

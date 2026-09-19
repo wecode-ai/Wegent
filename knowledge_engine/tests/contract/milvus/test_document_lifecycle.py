@@ -36,6 +36,7 @@ from .conftest import (
     MilvusContractEnv,
     await_document_visibility,
     await_parent_removal,
+    await_parent_visibility,
     drop_collection_with_contract,
 )
 
@@ -291,7 +292,10 @@ def test_child_hit_expands_to_the_parent_body_of_the_same_document(
     marker_record = marker_records[0]
     parent_node_id = marker_record["metadata"]["parent_node_id"]
     parents = backend.get_parent_nodes(
-        knowledge_id, [parent_node_id], user_id=CONTRACT_USER_ID
+        knowledge_id,
+        [parent_node_id],
+        parent_refs=[("910", parent_node_id)],
+        user_id=CONTRACT_USER_ID,
     )
     assert marker_record["content"] == parents[parent_node_id]["content"]
     # The parent body spans several child chunks, so it carries a paragraph
@@ -430,7 +434,10 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
     assert marker_children, "the child that carries the marker is stored"
     marker_parent_id = marker_children[0]["metadata"]["parent_node_id"]
     parent_bodies = backend.get_parent_nodes(
-        knowledge_id, [marker_parent_id], user_id=CONTRACT_USER_ID
+        knowledge_id,
+        [marker_parent_id],
+        parent_refs=[("914", marker_parent_id)],
+        user_id=CONTRACT_USER_ID,
     )
     assert marker_parent_id in parent_bodies, "the marker parent is stored"
     # A child that already carried its whole parent body could not tell the two
@@ -449,6 +456,7 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
         backend,
         knowledge_id=knowledge_id,
         parent_node_ids=parent_node_ids,
+        parent_refs=[("914", parent_node_id) for parent_node_id in parent_node_ids],
         user_id=CONTRACT_USER_ID,
     )
 
@@ -469,6 +477,50 @@ def test_child_hit_without_its_parent_answers_with_the_child_body(
     returned_parent_id = records[0]["metadata"]["parent_node_id"]
     assert returned_parent_id in parent_bodies
     assert records[0]["content"] != parent_bodies[returned_parent_id]["content"]
+
+
+def test_a_parent_id_shared_by_two_documents_is_not_expanded(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """A parent id only expands inside the document that stored that body."""
+    from llama_index.core.schema import TextNode
+
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+    for doc_ref in ("9301", "9302"):
+        backend.save_parent_nodes(
+            knowledge_id,
+            [
+                TextNode(
+                    id_="shared-parent",
+                    text=f"parent body of {doc_ref}",
+                    metadata={"doc_ref": doc_ref, "source_file": "doc.txt"},
+                )
+            ],
+            user_id=CONTRACT_USER_ID,
+        )
+    await_parent_visibility(
+        backend,
+        knowledge_id=knowledge_id,
+        parent_refs=[("9301", "shared-parent")],
+        user_id=CONTRACT_USER_ID,
+    )
+
+    ambiguous = backend.get_parent_nodes(
+        knowledge_id,
+        ["shared-parent"],
+        parent_refs=[("9301", "shared-parent"), ("9302", "shared-parent")],
+        user_id=CONTRACT_USER_ID,
+    )
+    unambiguous = backend.get_parent_nodes(
+        knowledge_id,
+        ["shared-parent"],
+        parent_refs=[("9301", "shared-parent")],
+        user_id=CONTRACT_USER_ID,
+    )
+
+    assert ambiguous == {}, "an ambiguous parent id is never answered from one document"
+    assert unambiguous["shared-parent"]["content"] == "parent body of 9301"
 
 
 def test_delete_removes_one_document_with_its_parents(
@@ -514,7 +566,10 @@ def test_delete_removes_one_document_with_its_parents(
         backend.get_document(knowledge_id, "920", user_id=CONTRACT_USER_ID)
     assert (
         backend.get_parent_nodes(
-            knowledge_id, parent_node_ids, user_id=CONTRACT_USER_ID
+            knowledge_id,
+            parent_node_ids,
+            parent_refs=[("920", parent_node_id) for parent_node_id in parent_node_ids],
+            user_id=CONTRACT_USER_ID,
         )
         == {}
     )

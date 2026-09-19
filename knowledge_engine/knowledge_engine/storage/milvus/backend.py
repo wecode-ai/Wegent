@@ -48,11 +48,11 @@ from knowledge_engine.storage.base import (
     BaseStorageBackend,
 )
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.errors import (
-    IndexContractIncompatibleError,
-    UnsupportedStorageCapabilityError,
-)
+from knowledge_engine.storage.errors import UnsupportedStorageCapabilityError
 from knowledge_engine.storage.milvus.cleanup import MilvusCleanup
+from knowledge_engine.storage.milvus.errors import (
+    IndexContractIncompatibleError,
+)
 from knowledge_engine.storage.milvus.filters import compile_metadata_conditions
 from knowledge_engine.storage.milvus.native import (
     CHUNK_INDEX_KEY,
@@ -166,6 +166,9 @@ class MilvusBackend(BaseStorageBackend):
 
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
     supports_retrieval_scope: ClassVar[bool] = True
+    # This write removes the document's previous rows itself, so the indexing
+    # layer must not delete them before calling it.
+    owns_document_replacement: ClassVar[bool] = True
     INDEX_PREFIX: ClassVar[str] = "collection"
 
     def __init__(self, config: Dict):
@@ -213,11 +216,6 @@ class MilvusBackend(BaseStorageBackend):
             collection_name_for=self.get_index_name,
             parent_collection_name_for=self.get_parent_store_name,
             parent_scope_filter=self._parent_store.scope_filter,
-            # Resolved per call so the storage interface stays the seam a
-            # caller (or a test) can replace, not the sidecar behind it.
-            parent_delete=lambda knowledge_id, doc_ref, **kwargs: (
-                self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-            ),
             ensure_can_drop_physical_index=self._ensure_can_drop_physical_index,
         )
 

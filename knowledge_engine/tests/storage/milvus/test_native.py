@@ -14,7 +14,7 @@ import json
 import pytest
 from pymilvus import DataType, FunctionType
 
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
+from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     BM25_FUNCTION_NAME,

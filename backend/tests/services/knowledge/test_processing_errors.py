@@ -128,7 +128,7 @@ def test_a_known_storage_code_wins_over_the_raw_message() -> None:
 
 def test_a_storage_backend_error_is_mapped_from_its_code() -> None:
     """The local in-process path carries the same classes and codes."""
-    from knowledge_engine.storage.errors import IndexMissingError
+    from knowledge_engine.storage.milvus.errors import IndexMissingError
 
     result = map_indexing_exception(
         IndexMissingError("wegent_kb_1", "collection is gone"),

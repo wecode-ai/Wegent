@@ -30,8 +30,8 @@ from pymilvus import DataType, MilvusClient
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
     SCHEMA_VERSION,
     MilvusIndexBinding,

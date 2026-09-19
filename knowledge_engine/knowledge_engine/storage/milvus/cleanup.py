@@ -13,9 +13,9 @@ the one the server returned, and no read-back or extra client re-verifies it.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Callable, Dict
 
-from knowledge_engine.storage.errors import IndexMissingError
+from knowledge_engine.storage.milvus.errors import IndexMissingError
 from knowledge_engine.storage.milvus.native import build_scope_filter
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
@@ -29,15 +29,13 @@ class MilvusCleanup:
         store_for: Callable[[], MilvusDocumentStore],
         collection_name_for: Callable[..., str],
         parent_collection_name_for: Callable[..., str],
-        parent_scope_filter: Callable[[str], str],
-        parent_delete: Callable[..., Any],
+        parent_scope_filter: Callable[..., str],
         ensure_can_drop_physical_index: Callable[[], None],
     ) -> None:
         self._store_for = store_for
         self._collection_name_for = collection_name_for
         self._parent_collection_name_for = parent_collection_name_for
         self._parent_scope_filter = parent_scope_filter
-        self._parent_delete = parent_delete
         self._ensure_can_drop_physical_index = ensure_can_drop_physical_index
 
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
@@ -46,7 +44,14 @@ class MilvusCleanup:
         deleted_chunks = self.clear_document_rows(
             collection_name, knowledge_id, doc_ref
         )
-        self._parent_delete(knowledge_id, doc_ref, **kwargs)
+        parent_collection_name = self._parent_collection_name_for(
+            knowledge_id, **kwargs
+        )
+        self._delete_rows(
+            parent_collection_name,
+            self._parent_scope_filter(knowledge_id, doc_ref),
+            require_bound=False,
+        )
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,

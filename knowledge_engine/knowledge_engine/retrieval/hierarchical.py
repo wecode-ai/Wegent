@@ -45,6 +45,35 @@ def collect_parent_node_ids(records: list[dict[str, Any]]) -> list[str]:
     return parent_node_ids
 
 
+def collect_parent_references(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """The ``(doc_ref, parent_node_id)`` pairs a record set asks to expand.
+
+    Expansion is document-scoped: a parent node id only identifies a body
+    inside the document that stored it, so the pair travels with the request
+    and the storage backend matches on both halves. Pairs repeat when several
+    child hits expand the same parent, so they are deduplicated, and a record
+    that names only one half is skipped rather than matched loosely.
+    """
+    references: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for record in records:
+        metadata = record.get("metadata") or {}
+        if metadata.get("chunk_strategy") != "hierarchical":
+            continue
+        parent_node_id = metadata.get("parent_node_id")
+        doc_ref = metadata.get("doc_ref")
+        if not parent_node_id or not doc_ref:
+            continue
+        reference = (str(doc_ref), str(parent_node_id))
+        if reference in seen:
+            continue
+        seen.add(reference)
+        references.append(reference)
+
+    return references
+
+
 def merge_parent_records(
     records: list[dict[str, Any]],
     parent_records: dict[str, dict[str, Any]],

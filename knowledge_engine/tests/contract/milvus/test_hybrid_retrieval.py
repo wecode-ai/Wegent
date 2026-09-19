@@ -22,8 +22,8 @@ from pymilvus import MilvusClient
 from knowledge_engine.embedding.space import derive_embedding_space_id
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 from shared.models import RetrievalScope
 
 from .conftest import (

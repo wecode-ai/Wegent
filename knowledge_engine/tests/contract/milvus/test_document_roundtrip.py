@@ -25,9 +25,9 @@ from knowledge_engine.embedding.vectors import (
 )
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.services.document_service import DocumentService
-from knowledge_engine.storage.errors import (
+from knowledge_engine.storage.errors import StorageBackendError
+from knowledge_engine.storage.milvus.errors import (
     IndexContractIncompatibleError,
-    StorageBackendError,
 )
 from shared.models import RetrievalScope
 

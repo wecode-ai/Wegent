@@ -14,7 +14,7 @@ and no consistency level.
 
 import pytest
 
-from knowledge_engine.storage.errors import IndexContractIncompatibleError
+from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
     SCHEMA_VERSION,
     MilvusIndexBinding,
@@ -48,6 +48,16 @@ class _IndexParams:
     """Stands in for the SDK index-param builder the store hands to the SDK."""
 
     def add_index(self, **kwargs) -> None:
+        pass
+
+
+class _EmptyRowIterator:
+    """Stands in for a server iterator that answered no rows."""
+
+    def next(self) -> list:
+        return []
+
+    def close(self) -> None:
         pass
 
 
@@ -92,9 +102,9 @@ class _RecordingClient:
         self._record("describe_index", kwargs)
         return recorded_indexes()[index_name]
 
-    def query(self, **kwargs) -> list:
-        self._record("query", kwargs)
-        return []
+    def query_iterator(self, **kwargs) -> _EmptyRowIterator:
+        self._record("query_iterator", kwargs)
+        return _EmptyRowIterator()
 
     def search(self, **kwargs) -> list:
         self._record("search", kwargs)
@@ -136,7 +146,7 @@ def test_the_contract_read_is_one_describe_and_no_row_read():
     assert binding == client.contract
     assert [name for name, _ in client.calls].count("describe_collection") == 1
     assert client.consistency_levels("describe_collection") == [None]
-    assert client.consistency_levels("query") == []
+    assert client.consistency_levels("query_iterator") == []
 
 
 def test_a_foreign_collection_is_refused_without_reading_its_rows():
@@ -147,15 +157,23 @@ def test_a_foreign_collection_is_refused_without_reading_its_rows():
     with pytest.raises(IndexContractIncompatibleError):
         _store(client).read_contract(client, COLLECTION_NAME)
 
-    assert client.consistency_levels("query") == []
+    assert client.consistency_levels("query_iterator") == []
 
 
-def test_paged_read_uses_the_read_consistency_level():
+def test_the_row_iterator_uses_the_read_consistency_level():
     client = _RecordingClient()
+    store = _store(client)
 
-    _store(client).query_rows(client, COLLECTION_NAME, 'knowledge_id == "1"', limit=10)
+    iterator = store.open_row_iterator(
+        client,
+        COLLECTION_NAME,
+        'knowledge_id == "1"',
+        batch_size=100,
+        limit=10,
+    )
+    iterator.close()
 
-    assert client.consistency_levels("query") == [READ_CONSISTENCY]
+    assert client.consistency_levels("query_iterator") == [READ_CONSISTENCY]
 
 
 def test_dense_search_uses_the_read_consistency_level():
@@ -226,5 +244,5 @@ def test_the_creation_race_is_settled_by_the_collection_own_contract():
             embedding_space_id="sha256:abc",
         )
 
-    assert client.consistency_levels("query") == []
+    assert client.consistency_levels("query_iterator") == []
     assert client.consistency_levels("upsert") == []

@@ -269,14 +269,6 @@ class DocumentIndexer:
         parent_nodes = ingestion_result.parent_nodes
         nodes = ingestion_result.index_nodes
 
-        if parent_nodes is not None:
-            chunk_metadata.apply_to_nodes(parent_nodes)
-            self.storage_backend.save_parent_nodes(
-                knowledge_id=chunk_metadata.knowledge_id,
-                parent_nodes=parent_nodes,
-                **kwargs,
-            )
-
         chunk_metadata.apply_to_nodes(nodes)
 
         add_span_event(
@@ -299,6 +291,19 @@ class DocumentIndexer:
             embed_model=self.embed_model,
             **kwargs,
         )
+
+        if parent_nodes is not None:
+            # The parent bodies only serve the child rows the write just
+            # stored, so they are replaced after those rows succeed. A parent
+            # write that fails keeps its own error: the document is stored but
+            # the task fails, and the next locked retry repeats the whole
+            # replacement, which is what clears any partial parent sidecar.
+            chunk_metadata.apply_to_nodes(parent_nodes)
+            self.storage_backend.save_parent_nodes(
+                knowledge_id=chunk_metadata.knowledge_id,
+                parent_nodes=parent_nodes,
+                **kwargs,
+            )
 
         result.update(
             {

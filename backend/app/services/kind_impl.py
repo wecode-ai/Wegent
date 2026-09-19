@@ -20,6 +20,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
 from app.stores.tasks import subtask_store, task_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
+from knowledge_engine.storage.factory import get_supported_storage_types
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
@@ -586,7 +587,10 @@ class RetrieverKindService(KindBaseService):
 
         # Validate storage type
         storage_type = retriever_crd.spec.storageConfig.type
-        valid_storage_types = ["elasticsearch", "qdrant"]
+        # The storage backends the engine can build are the single source of
+        # truth, so a backend added there is configurable here instead of
+        # being kept in step with a second hand-written list.
+        valid_storage_types = get_supported_storage_types()
         if storage_type not in valid_storage_types:
             raise ValueError(
                 f"Invalid storage type: {storage_type}. "

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 
 def test_import_knowledge_engine_root_package() -> None:
@@ -25,3 +26,12 @@ def test_import_knowledge_engine_subpackages() -> None:
 
     for module_name in module_names:
         assert importlib.import_module(module_name) is not None
+
+
+def test_milvus_adapter_keeps_its_own_sdk_dependency() -> None:
+    """The adapter talks to PyMilvus directly and never restores the wrapper."""
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+
+    assert "llama-index-vector-stores-milvus" not in text
+    assert "pymilvus>=2.6.3,<2.6.4" in text
