@@ -5,6 +5,41 @@
 from app.api.endpoints.adapter import teams as teams_endpoint
 
 
+def test_default_route_precedes_id_route_and_returns_nullable_team(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.dependencies import get_db
+    from app.core import security
+
+    monkeypatch.setattr(
+        teams_endpoint.settings, "DEFAULT_TEAM_CHAT", "assistant#default"
+    )
+    monkeypatch.setattr(teams_endpoint.settings, "DEFAULT_TEAM_CODE", "")
+    resolve = Mock(return_value={"id": 3, "name": "assistant", "namespace": "default"})
+    monkeypatch.setattr(teams_endpoint, "resolve_default_team", resolve)
+    app = FastAPI()
+    app.include_router(teams_endpoint.router, prefix="/teams")
+    app.dependency_overrides[get_db] = lambda: None
+    app.dependency_overrides[security.get_current_user] = lambda: SimpleNamespace(id=7)
+    client = TestClient(app)
+
+    response = client.get("/teams/default?mode=chat")
+    assert response.status_code == 200
+    assert "chat" in response.json()["default_for_modes"]
+    resolve.assert_called_once_with(
+        None, user_id=7, mode="chat", name="assistant", namespace="default"
+    )
+    assert client.get("/teams/default?mode=code").json() is None
+    assert resolve.call_count == 1
+    resolve.return_value = None
+    assert client.get("/teams/default?mode=chat").json() is None
+    assert client.get("/teams/default?mode=invalid").status_code == 422
+
+
 def test_default_team_config_includes_wework_mode(monkeypatch):
     monkeypatch.setattr(
         teams_endpoint.settings,
