@@ -420,7 +420,7 @@ class TestGetAuthContextServiceKey:
 
     def test_impersonated_user_is_created_without_email(
         self, test_db: Session, test_user: User
-    ):
+    ) -> None:
         """A synthesized username must not inherit a fabricated email address."""
         raw_key = "wg-auto-create-service-key"
         self._create_service_key(test_db, test_user, raw_key)
@@ -440,7 +440,7 @@ class TestGetAuthContextServiceKey:
 
     def test_impersonated_user_is_reused_on_later_calls(
         self, test_db: Session, test_user: User
-    ):
+    ) -> None:
         raw_key = "wg-reuse-service-key"
         self._create_service_key(test_db, test_user, raw_key)
 
