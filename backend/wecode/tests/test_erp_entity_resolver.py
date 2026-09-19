@@ -5,8 +5,10 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import orjson
 import pytest
 
+from wecode.cache.base import NULL_MARKER
 from wecode.service.erp_entity_resolver import ErpEntityResolver
 
 
@@ -231,3 +233,124 @@ class TestErpEntityResolver:
 
             _ = resolver._redis_client  # cached: no re-fetch
             assert mock_get.call_count == 1
+
+
+def _lazy_sync_db(user_email: str = "ghost@example.com"):
+    """Build a session mock that returns no profile and one user row."""
+    profile_query = MagicMock()
+    user_query = MagicMock()
+    profile_query.filter.return_value.first.return_value = None
+    user_query.filter.return_value.first.return_value = SimpleNamespace(
+        email=user_email
+    )
+
+    db = MagicMock()
+    # profile read, user read, profile re-read under the lock
+    db.query.side_effect = [profile_query, user_query, profile_query, profile_query]
+    return db
+
+
+def _acquired_lock() -> MagicMock:
+    lock = MagicMock()
+    lock.__enter__.return_value = True
+    lock.__exit__.return_value = None
+    return lock
+
+
+class TestNoProfileNegativeCache:
+    """A user the directory does not know must not be re-queried every request."""
+
+    def test_miss_is_cached_with_long_ttl(self):
+        client = MagicMock()
+        db = _lazy_sync_db()
+
+        with (
+            patch(
+                "wecode.service.erp_entity_resolver.get_redis_client",
+                return_value=client,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=_acquired_lock(),
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee",
+                return_value=None,
+            ) as mock_search,
+        ):
+            resolver = ErpEntityResolver()
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        mock_search.assert_called_once_with("ghost@example.com")
+        client.set.assert_called_once_with(
+            "erp:no_profile:1",
+            orjson.dumps(NULL_MARKER),
+            ex=ErpEntityResolver._NO_PROFILE_CACHE_TTL,
+        )
+        assert ErpEntityResolver._NO_PROFILE_CACHE_TTL > ErpEntityResolver._CACHE_TTL
+
+    def test_cached_miss_skips_upstream_search(self, resolver_with_mem_redis):
+        resolver = resolver_with_mem_redis
+        resolver._cache_set(
+            resolver._no_profile_cache_key(1),
+            NULL_MARKER,
+            ttl=resolver._NO_PROFILE_CACHE_TTL,
+        )
+        db = MagicMock()
+        profile_query = MagicMock()
+        profile_query.filter.return_value.first.return_value = None
+        db.query.side_effect = [profile_query]
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.search_employee"
+        ) as mock_search:
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        mock_search.assert_not_called()
+        # Short-circuits before the email lookup, so only the profile read ran.
+        assert db.query.call_count == 1
+
+    def test_profile_row_wins_over_cached_miss(self, resolver_with_mem_redis):
+        """A profile written later (CAS/OIDC login) must resolve immediately."""
+        resolver = resolver_with_mem_redis
+        resolver._cache_set(
+            resolver._no_profile_cache_key(1),
+            NULL_MARKER,
+            ttl=resolver._NO_PROFILE_CACHE_TTL,
+        )
+        db = MagicMock()
+        profile_query = MagicMock()
+        profile_query.filter.return_value.first.return_value = SimpleNamespace(
+            employee_id="230473"
+        )
+        db.query.side_effect = [profile_query]
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.search_employee"
+        ) as mock_search:
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result == "230473"
+        mock_search.assert_not_called()
+
+    def test_transient_error_is_not_cached(self, resolver_with_mem_redis):
+        """A directory outage must be retried, not pinned for the long TTL."""
+        resolver = resolver_with_mem_redis
+        db = _lazy_sync_db()
+
+        with (
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=_acquired_lock(),
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee",
+                side_effect=RuntimeError("directory unavailable"),
+            ),
+        ):
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        assert resolver._cache_get(resolver._no_profile_cache_key(1)) is None

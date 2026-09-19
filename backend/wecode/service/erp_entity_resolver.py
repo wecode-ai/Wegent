@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.distributed_lock import distributed_lock
 from app.models.user import User
 from app.services.external_entity_resolver import IExternalEntityResolver
-from wecode.cache.base import get_redis_client
+from wecode.cache.base import NULL_MARKER, get_redis_client
 from wecode.models.erp_user import WecodeErpUser
 from wecode.service.erp_client import erp_client
 from wecode.service.erp_user_service import ErpUserService
@@ -37,6 +37,11 @@ class ErpEntityResolver(IExternalEntityResolver):
     """
 
     _CACHE_TTL = 900  # 15 minutes; user-department relationships change infrequently
+    # "This account has no directory identity" is a much longer-lived fact than
+    # a department membership, so the miss is cached far longer. The check is
+    # skipped entirely once a profile row exists, so a later CAS/OIDC login
+    # still resolves immediately without invalidating this entry.
+    _NO_PROFILE_CACHE_TTL = 86400  # 24 hours
 
     def __init__(self):
         # Defer redis client acquisition so a transient startup outage
@@ -67,12 +72,12 @@ class ErpEntityResolver(IExternalEntityResolver):
             logger.warning(f"erp cache get {key} failed: {e}")
             return None
 
-    def _cache_set(self, key: str, value) -> None:
+    def _cache_set(self, key: str, value, ttl: Optional[int] = None) -> None:
         client = self._redis_client
         if client is None:
             return
         try:
-            client.set(key, orjson.dumps(value), ex=self._CACHE_TTL)
+            client.set(key, orjson.dumps(value), ex=ttl or self._CACHE_TTL)
         except Exception as e:
             logger.warning(f"erp cache set {key} failed: {e}")
 
@@ -241,6 +246,10 @@ class ErpEntityResolver(IExternalEntityResolver):
             return profile.employee_id
         return None
 
+    def _no_profile_cache_key(self, user_id: int) -> str:
+        """Cache key marking that the directory has no identity for the user."""
+        return f"erp:no_profile:{user_id}"
+
     def resolve_employee_id(
         self, db: Session, user_id: int, user_context: Optional[dict] = None
     ) -> Optional[str]:
@@ -266,6 +275,12 @@ class ErpEntityResolver(IExternalEntityResolver):
 
         If no profile exists, attempt lazy-sync from ERP OpenSearch API.
         Uses distributed locking to prevent concurrent ERP API storms.
+
+        A failed lookup is cached so repeated requests for an account the
+        directory does not know (service identities, for example) stop paying
+        for the upstream search and its lock contention. The profile read
+        below stays authoritative: once a profile row exists, this method
+        returns before the cached miss is consulted.
         """
         if user_context and "employee_id" in user_context:
             return user_context["employee_id"]
@@ -273,6 +288,14 @@ class ErpEntityResolver(IExternalEntityResolver):
         existing = self._read_profile_employee_id(db, user_id)
         if existing:
             return existing
+
+        no_profile_key = self._no_profile_cache_key(user_id)
+        if self._cache_get(no_profile_key) == NULL_MARKER:
+            logger.debug(
+                f"Skipping ERP profile sync for user_id={user_id}: "
+                f"no directory identity (cached)"
+            )
+            return None
 
         # Resolve user email BEFORE acquiring the lock so we don't hold the
         # caller's db connection across network I/O / sleeps.
@@ -314,6 +337,11 @@ class ErpEntityResolver(IExternalEntityResolver):
                 logger.info(
                     f"No ERP employee found for user_id={user_id} "
                     f"with email={user_email}"
+                )
+                self._cache_set(
+                    no_profile_key,
+                    NULL_MARKER,
+                    ttl=self._NO_PROFILE_CACHE_TTL,
                 )
                 return None
 
