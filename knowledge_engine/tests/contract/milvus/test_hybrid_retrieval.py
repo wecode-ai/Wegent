@@ -19,6 +19,7 @@ import pytest
 from llama_index.core.schema import TextNode
 from pymilvus import MilvusClient
 
+from knowledge_engine.embedding.space import derive_embedding_space_id
 from knowledge_engine.query.executor import QueryExecutor
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
@@ -61,6 +62,12 @@ class ControlledEmbedding:
     def __init__(self, vectors: dict[str, list[float]]):
         self._configured_dimension = DIMENSION
         self._vectors = {text: _normalized(v) for text, v in vectors.items()}
+        # The storage contract binds an index to one embedding space, so this
+        # double carries the identity the embedding factory would attach.
+        self.embedding_space_id = derive_embedding_space_id(
+            protocol="contract",
+            model_id=self.model_name,
+        )
 
     def get_query_embedding(self, query: str) -> list[float]:
         return list(self._vector_for(query.split("\n")[0]))
