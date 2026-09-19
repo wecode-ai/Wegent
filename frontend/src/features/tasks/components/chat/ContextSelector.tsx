@@ -135,15 +135,15 @@ export default function ContextSelector({
     }
   }, [taskId, isGroupChat])
 
-  // Fetch knowledge bases on mount (not on every open) - like ModelSelector
+  // The catalog is only needed while browsing knowledge bases.
   useEffect(() => {
-    fetchKnowledgeBases()
-  }, [fetchKnowledgeBases])
+    if (open) void fetchKnowledgeBases()
+  }, [open, fetchKnowledgeBases])
 
   // Fetch bound knowledge bases when taskId or isGroupChat changes
   useEffect(() => {
-    fetchBoundKnowledgeBases()
-  }, [fetchBoundKnowledgeBases])
+    if (open) void fetchBoundKnowledgeBases()
+  }, [open, fetchBoundKnowledgeBases])
 
   // Group knowledge bases by category (personal, group, organization)
   // and exclude bound ones and current notebook KB from user list

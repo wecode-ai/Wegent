@@ -17,7 +17,11 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
-from app.stores.tasks.interfaces import WorkspaceRefLookup
+from app.stores.tasks.interfaces import RecentTaskTeamRef, WorkspaceRefLookup
+from app.stores.tasks.recent_team_refs import (
+    list_recent_task_team_refs,
+    recent_owner_only_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -769,24 +773,26 @@ class SqlAlchemyTaskStore:
         limit: int,
         client_origin: Optional[str] = None,
     ) -> list[TaskResource]:
-        approved_member_exists = exists().where(
-            ResourceMember.resource_type == ResourceType.TASK,
-            ResourceMember.resource_id == TaskResource.id,
-            ResourceMember.status == MemberStatus.APPROVED,
-        )
-        query = db.query(TaskResource).filter(
-            TaskResource.kind == "Task",
-            TaskResource.user_id == user_id,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            TaskResource.is_group_chat.is_(False),
-            ~approved_member_exists,
-        )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        return (
-            query.order_by(TaskResource.updated_at.desc(), TaskResource.id.desc())
-            .limit(limit)
-            .all()
+        return recent_owner_only_query(
+            db,
+            TaskResource,
+            user_id=user_id,
+            limit=limit,
+            client_origin=client_origin,
+        ).all()
+
+    def list_recent_task_team_refs(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+    ) -> list[RecentTaskTeamRef]:
+        return list_recent_task_team_refs(
+            db,
+            TaskResource,
+            user_id=user_id,
+            limit=limit,
         )
 
     def list_recent_owner_only_used_tasks(

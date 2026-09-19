@@ -3372,7 +3372,7 @@ class KnowledgeService:
             organization_count=len(org_kbs),
         )
 
-        return AllGroupedKnowledgeResponse(
+        response = AllGroupedKnowledgeResponse(
             personal=AllGroupedPersonal(
                 created_by_me=created_by_me,
                 shared_with_me=shared_with_me,
@@ -3381,6 +3381,7 @@ class KnowledgeService:
             organization=organization,
             summary=summary,
         )
+        return response
 
     @staticmethod
     def can_manage_knowledge_base(

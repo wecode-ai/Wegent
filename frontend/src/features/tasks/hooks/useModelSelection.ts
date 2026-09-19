@@ -94,6 +94,8 @@ export interface UseModelSelectionOptions {
   selectedTeam: TeamWithBotDetails | null
   /** Whether the selector is disabled (e.g., viewing existing task) */
   disabled?: boolean
+  /** Load models only when this category is needed; independent of read-only UI. */
+  enabled?: boolean
   /** Model category type to filter models (default: 'llm') */
   modelCategoryType?: ModelCategoryType
   /** When true, only models that explicitly support video input are selectable */
@@ -218,6 +220,7 @@ export function useModelSelection({
   taskId,
   taskModelId,
   selectedTeam,
+  enabled = true,
   modelCategoryType = 'llm',
   requireVideoInput = false,
 }: UseModelSelectionOptions): UseModelSelectionReturn {
@@ -379,6 +382,7 @@ export function useModelSelection({
   // Model Fetching
   // -------------------------------------------------------------------------
   const fetchModels = useCallback(async () => {
+    if (!enabled) return
     setIsLoading(true)
     setError(null)
     try {
@@ -401,7 +405,7 @@ export function useModelSelection({
     } finally {
       setIsLoading(false)
     }
-  }, [t, modelCategoryType])
+  }, [t, modelCategoryType, enabled])
 
   // Load models on mount
   useEffect(() => {
