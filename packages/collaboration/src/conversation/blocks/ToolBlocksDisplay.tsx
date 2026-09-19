@@ -193,6 +193,25 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const activeShimmerRowId = useMemo(() => {
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index]
+      if (row.type === 'activity_group') {
+        if (row.blocks.some(block => block.status !== 'done' && block.status !== 'error')) {
+          return row.id
+        }
+        continue
+      }
+      if (
+        (row.block.type === 'tool' || row.block.type === 'file_changes') &&
+        row.block.status !== 'done' &&
+        row.block.status !== 'error'
+      ) {
+        return row.id
+      }
+    }
+    return null
+  }, [rows])
   const hasSubagentActivity = displayItems.some(item => item.type === 'subagent_group')
   const sourceFileEditDurations = useMemo(
     () => fileEditDurationsBySourceBlock ?? getFileEditDurationsBySourceBlock(blocks),
@@ -316,6 +335,7 @@ export function ToolBlocksDisplay({
               <ToolActivityGroup
                 key={item.id}
                 row={item}
+                activityShimmerEnabled={item.id === activeShimmerRowId}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
               />
             ) : item.block.type === 'subagent' ? (
@@ -325,11 +345,16 @@ export function ToolBlocksDisplay({
                 onOpenSubagent={onOpenSubagent}
               />
             ) : isContextCompactionToolBlock(item.block) ? (
-              <ContextCompactionIndicator key={item.id} block={item.block} />
+              <ContextCompactionIndicator
+                key={item.id}
+                block={item.block}
+                activityShimmerEnabled={item.id === activeShimmerRowId}
+              />
             ) : (
               <ToolBlockItem
                 key={item.id}
                 block={item.block}
+                activityShimmerEnabled={item.id === activeShimmerRowId}
                 stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
@@ -342,6 +367,7 @@ export function ToolBlocksDisplay({
     [
       displayItems,
       expanded,
+      activeShimmerRowId,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
       fileEditDurations,
@@ -380,6 +406,7 @@ export function ToolBlocksDisplay({
       {previewRows.length > 0 ? (
         <LiveProcessingPreview
           rows={previewRows}
+          activeShimmerRowId={activeShimmerRowId}
           showThinking={
             isStreaming &&
             hasToolActivity &&

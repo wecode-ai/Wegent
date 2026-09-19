@@ -27,6 +27,7 @@ const RECONNECTING_DISPLAY_DELAY_MS = 10_000;
 interface ToolBlockItemProps {
   block: Exclude<ProcessingBlock, SubagentBlock>;
   compact?: boolean;
+  activityShimmerEnabled?: boolean;
   durationStartedAt?: number;
   durationEndAt?: number;
   fileEditDurations?: FileEditDurationsByBlock;
@@ -43,6 +44,7 @@ interface ToolBlockItemProps {
 export function ToolBlockItem({
   block,
   compact = false,
+  activityShimmerEnabled = true,
   durationStartedAt,
   durationEndAt,
   fileEditDurations,
@@ -57,6 +59,7 @@ export function ToolBlockItem({
   const [userExpanded, setUserExpanded] =
     usePersistentProcessingExpansion(stateKey);
   const isRunning = block.status !== "done" && block.status !== "error";
+  const showActivityShimmer = isRunning && activityShimmerEnabled;
   const reconnectingBlockId =
     block.type === "tool" &&
     block.toolName === "runtime_reconnecting" &&
@@ -100,6 +103,7 @@ export function ToolBlockItem({
     return (
       <ProcessFileChangesBlockItem
         block={block}
+        activityShimmerEnabled={activityShimmerEnabled}
         fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
       />
@@ -135,9 +139,13 @@ export function ToolBlockItem({
         data-testid="runtime-reconnecting-status"
         role="status"
       >
-        <ActivityShimmerText variant="tool">
-          {t("tool_activity.reconnecting")}
-        </ActivityShimmerText>
+        {showActivityShimmer ? (
+          <ActivityShimmerText variant="tool">
+            {t("tool_activity.reconnecting")}
+          </ActivityShimmerText>
+        ) : (
+          <span>{t("tool_activity.reconnecting")}</span>
+        )}
       </div>
     );
   }
@@ -167,7 +175,7 @@ export function ToolBlockItem({
   const labelContent = (
     <>
       {icon}
-      {isRunning ? (
+      {showActivityShimmer ? (
         <ActivityShimmerText variant="tool" className="min-w-0 truncate">
           {label}
         </ActivityShimmerText>

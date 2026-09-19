@@ -10,10 +10,12 @@ import { basename } from "./toolBlockText";
 
 export function ProcessFileChangesBlockItem({
   block,
+  activityShimmerEnabled = true,
   fileEditDurations,
   onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: "file_changes" }>;
+  activityShimmerEnabled?: boolean;
   fileEditDurations?: FileEditDurationsByBlock;
   onExpandedChange?: (expanded: boolean) => void;
 }) {
@@ -35,11 +37,15 @@ export function ProcessFileChangesBlockItem({
       data-testid="process-file-changes-block"
     >
       <div className="flex min-w-0 flex-col">
-        {summary.files.map((file) => {
+        {summary.files.map((file, index) => {
           const previewLines = fileDiffPreviewLines(file, summary);
           const fileExpanded =
             expandedFilePath === file.path && previewLines.length > 0;
           const editDuration = fileEditDurations?.get(block.id)?.get(file.path);
+          const showActivityShimmer =
+            isRunning &&
+            activityShimmerEnabled &&
+            index === summary.files.length - 1;
           return (
             <div
               key={`${file.old_path ?? ""}:${file.path}`}
@@ -59,7 +65,7 @@ export function ProcessFileChangesBlockItem({
                 className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-                {isRunning ? (
+                {showActivityShimmer ? (
                   <ActivityShimmerText
                     variant="tool"
                     className="min-w-0 truncate"

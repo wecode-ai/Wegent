@@ -66,10 +66,12 @@ export function countProcessingToolCalls(
 export function ToolActivityGroup({
   row,
   initialExpanded = true,
+  activityShimmerEnabled = true,
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: "activity_group" }>;
   initialExpanded?: boolean;
+  activityShimmerEnabled?: boolean;
   onOpenWorkspaceFile?: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(initialExpanded);
@@ -116,6 +118,7 @@ export function ToolActivityGroup({
           ) : (
             <ToolActivityDetails
               blocks={row.blocks}
+              activityShimmerEnabled={activityShimmerEnabled}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )}
@@ -125,7 +128,13 @@ export function ToolActivityGroup({
   );
 }
 
-export function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
+export function ContextCompactionIndicator({
+  block,
+  activityShimmerEnabled = true,
+}: {
+  block: ToolBlock;
+  activityShimmerEnabled?: boolean;
+}) {
   const label = getContextCompactionLabel(block);
   const isRunning = block.status !== "done" && block.status !== "error";
   const textClassName =
@@ -146,7 +155,7 @@ export function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
           strokeWidth={1.7}
           aria-hidden="true"
         />
-        {isRunning ? (
+        {isRunning && activityShimmerEnabled ? (
           <ActivityShimmerText variant="thinking" className="min-w-0 truncate">
             {label}
           </ActivityShimmerText>
@@ -175,11 +184,23 @@ function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
 
 function ToolActivityDetails({
   blocks,
+  activityShimmerEnabled,
   onOpenWorkspaceFile,
 }: {
   blocks: ToolBlock[];
+  activityShimmerEnabled: boolean;
   onOpenWorkspaceFile?: (path: string) => void;
 }) {
+  let activeShimmerBlockId: string | undefined;
+  if (activityShimmerEnabled) {
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      const block = blocks[index];
+      if (block.status === "done" || block.status === "error") continue;
+      activeShimmerBlockId = block.id;
+      break;
+    }
+  }
+
   return (
     <>
       {blocks.map((block) => {
@@ -188,6 +209,7 @@ function ToolActivityDetails({
             <ToolBlockItem
               key={block.id}
               block={block}
+              activityShimmerEnabled={block.id === activeShimmerBlockId}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           );
@@ -213,6 +235,7 @@ function ToolActivityDetails({
           <ToolBlockItem
             key={block.id}
             block={block}
+            activityShimmerEnabled={block.id === activeShimmerBlockId}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
           />
         );

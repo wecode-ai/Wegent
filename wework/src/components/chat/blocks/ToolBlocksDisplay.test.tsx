@@ -944,6 +944,9 @@ describe('ToolBlocksDisplay', () => {
     )
 
     expect(screen.getAllByText(/正在编辑 file-/)).toHaveLength(5)
+    expect(document.querySelectorAll('.tool-activity-shimmer')).toHaveLength(1)
+    expect(screen.getByText('正在编辑 file-4.ts')).toHaveClass('tool-activity-shimmer')
+    expect(screen.getByText('正在编辑 file-0.ts')).not.toHaveClass('tool-activity-shimmer')
 
     rerender(<ToolBlocksDisplay blocks={[finalSummaryBlock]} isStreaming={false} forceExpanded />)
 
@@ -1736,6 +1739,9 @@ describe('ToolBlocksDisplay', () => {
       expect(row).toHaveClass('overflow-x-clip')
       expect(row).not.toHaveClass('overflow-x-hidden', 'overflow-y-auto')
     })
+    expect(preview.querySelectorAll('.tool-activity-shimmer')).toHaveLength(1)
+    expect(screen.getByText('正在运行 command-4')).toHaveClass('tool-activity-shimmer')
+    expect(screen.getByText('正在运行 command-1')).not.toHaveClass('tool-activity-shimmer')
 
     Object.defineProperty(scrollArea, 'scrollHeight', { configurable: true, value: 160 })
     rerender(
@@ -1752,6 +1758,8 @@ describe('ToolBlocksDisplay', () => {
       />
     )
     expect(scrollArea.scrollTop).toBe(160)
+    expect(preview.querySelectorAll('.tool-activity-shimmer')).toHaveLength(1)
+    expect(screen.getByText('正在运行 command-5')).toHaveClass('tool-activity-shimmer')
   })
 
   test('scrolls the live preview when the thinking row appears without a new tool row', () => {

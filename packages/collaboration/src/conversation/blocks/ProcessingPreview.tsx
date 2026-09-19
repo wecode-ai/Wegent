@@ -142,6 +142,7 @@ function ToolActivityStats({
 
 export function LiveProcessingPreview({
   rows,
+  activeShimmerRowId,
   showThinking,
   thinkingContent,
   onOpenWorkspaceFile,
@@ -150,6 +151,7 @@ export function LiveProcessingPreview({
   onOpenSubagent,
 }: {
   rows: ProcessingDisplayRow[];
+  activeShimmerRowId: string | null;
   showThinking: boolean;
   thinkingContent: string;
   onOpenWorkspaceFile?: (path: string) => void;
@@ -203,6 +205,7 @@ export function LiveProcessingPreview({
           <LiveProcessingPreviewRow
             key={row.id}
             row={row}
+            activityShimmerEnabled={row.id === activeShimmerRowId}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
@@ -228,6 +231,7 @@ export function LiveProcessingPreview({
 
 function LiveProcessingPreviewRow({
   row,
+  activityShimmerEnabled,
   durationStartedAt,
   durationEndAt,
   fileEditDurations,
@@ -237,6 +241,7 @@ function LiveProcessingPreviewRow({
   onOpenSubagent,
 }: {
   row: ProcessingDisplayRow;
+  activityShimmerEnabled: boolean;
   durationStartedAt?: number;
   durationEndAt?: number;
   fileEditDurations: FileEditDurationsByBlock;
@@ -256,6 +261,7 @@ function LiveProcessingPreviewRow({
         <ToolActivityGroup
           row={row}
           initialExpanded={false}
+          activityShimmerEnabled={activityShimmerEnabled}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       </div>
@@ -264,13 +270,19 @@ function LiveProcessingPreviewRow({
 
   if (row.block.type === "tool") {
     if (isContextCompactionToolBlock(row.block)) {
-      return <ContextCompactionIndicator block={row.block} />;
+      return (
+        <ContextCompactionIndicator
+          block={row.block}
+          activityShimmerEnabled={activityShimmerEnabled}
+        />
+      );
     }
 
     return (
       <ToolBlockItem
         block={row.block}
         compact
+        activityShimmerEnabled={activityShimmerEnabled}
         durationStartedAt={durationStartedAt}
         durationEndAt={durationEndAt}
         fileEditDurations={fileEditDurations}
@@ -293,6 +305,7 @@ function LiveProcessingPreviewRow({
   return (
     <ToolBlockItem
       block={row.block}
+      activityShimmerEnabled={activityShimmerEnabled}
       durationStartedAt={durationStartedAt}
       durationEndAt={durationEndAt}
       fileEditDurations={fileEditDurations}
