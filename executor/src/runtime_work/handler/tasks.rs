@@ -241,23 +241,7 @@ impl RuntimeWorkRpcHandler {
         })?;
         let local_task_id = thread_id.clone();
         let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
-        let messages = transcript_messages(thread, &self.device_id);
-        let transcript = transcript_response(TranscriptResponseInput {
-            local_task_id: local_task_id.clone(),
-            workspace_path: source.workspace_path.clone(),
-            runtime: "codex".to_owned(),
-            messages: messages.clone(),
-            context_usage: transcript_context_usage(thread),
-            running: codex_thread_has_in_progress_turn(thread),
-            pagination: TranscriptPagination::Opaque {
-                before_cursor: None,
-                after_cursor: None,
-            },
-            full_content: false,
-            turn_item_source: TranscriptTurnItemSource::CodexItems,
-            turn_navigation: transcript_turn_navigation(&messages),
-        });
-        let mut link = forked_task_link(
+        let link = forked_task_link(
             &source,
             local_task_id.clone(),
             thread_id.clone(),
@@ -268,8 +252,8 @@ impl RuntimeWorkRpcHandler {
                 "lastTurnId": last_turn_id,
             }),
         );
-        set_transcript_snapshot_messages(&mut link.runtime_handle, &thread_id, messages);
         self.upsert_local_task(link);
+        let transcript = self.transcript(json!({ "taskId": local_task_id })).await?;
         log_executor_event(
             "runtime task fork completed",
             &[

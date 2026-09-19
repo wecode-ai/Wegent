@@ -254,6 +254,35 @@ describe('createAgentResourceApi', () => {
     expect(client.get).toHaveBeenCalledWith('/v1/kinds/skills/unified?scope=all')
   })
 
+  it('lists only groups where the current user can create Agent resources', async () => {
+    const client = {
+      get: vi.fn(async () => ({
+        items: [
+          {
+            name: 'engineering',
+            display_name: '研发团队',
+            my_role: 'Developer',
+          },
+          {
+            name: 'observers',
+            display_name: '观察者',
+            my_role: 'Reporter',
+          },
+        ],
+      })),
+    } as unknown as HttpClient
+    const api = createAgentResourceApi(client)
+
+    await expect(api.listOwnerGroups()).resolves.toEqual([
+      {
+        name: 'engineering',
+        displayName: '研发团队',
+        role: 'Developer',
+      },
+    ])
+    expect(client.get).toHaveBeenCalledWith('/groups?page=1&limit=100')
+  })
+
   it('loads the unified executable model catalog', async () => {
     const client = {
       get: vi.fn(async () => ({

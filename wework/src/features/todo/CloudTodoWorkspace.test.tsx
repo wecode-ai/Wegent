@@ -2039,7 +2039,9 @@ describe('CloudTodoWorkspace', () => {
       update: vi.fn(),
     } as never
     const localApi = localServices.deliveryApi!
-    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listCloudProjects = vi.fn(async () => ({
+      items: [localProject, { ...localProject, id: 'default-work-items', name: 'My tasks' }],
+    }))
     localApi.listLoopItems = vi.fn(async () => ({ items: [localItem] }))
     const cloudServices = services()
     const cloudApi = cloudServices.deliveryApi!
@@ -5132,13 +5134,12 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    fireEvent.click(screen.getByTestId('cloud-todo-column-add-pending'))
+    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
     delete workbenchServices.projectSpaceDetailServices?.cloud
-    const input = screen.getByTestId('workspace-issue-input')
-    await user.click(input)
+    await user.click(screen.getByTestId('workspace-issue-input'))
     await user.paste('Unavailable AI Issue')
-    fireEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('运行服务当前不可用')
     expect(screen.queryByTestId('issue-execution-config-dialog')).not.toBeInTheDocument()

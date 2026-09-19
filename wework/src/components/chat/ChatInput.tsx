@@ -136,6 +136,7 @@ export interface ProjectWorkControls {
 }
 
 export interface ChatInputProps {
+  presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -155,12 +156,14 @@ export interface ChatInputProps {
   inputTestId?: string
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
+  submitLabel?: string
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
   projectPhrases?: QuickPhrase[]
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
+  projectWorkBar?: ReactNode
   showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
@@ -185,6 +188,7 @@ export interface ChatInputProps {
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  mentionScope?: 'all' | 'external'
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
@@ -239,6 +243,7 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   {
     value,
+    presentation,
     onChange,
     onBlur,
     onCompositionStart,
@@ -254,6 +259,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     inputTestId,
     nativeEmptyCaret = false,
     submitButtonTestId,
+    submitLabel,
     variant = 'compact',
     collapseWhenIdle = false,
     projectPhrases,
@@ -281,6 +287,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceFileApi,
     cloudMentionCandidates,
     externalMentionCandidates,
+    mentionScope,
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectExternalMention,
@@ -293,6 +300,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onDismissInputLeadingContext,
     toolbarLeadingContext,
     projectWorkBarMiddleContext,
+    projectWorkBar,
     projectWorkBarTrailingContext,
     projectWorkBarEndContext,
     modelSelectorOverride,
@@ -490,6 +498,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }
 
   const composerProps = {
+    presentation,
     value,
     onChange,
     onBlur,
@@ -504,11 +513,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     inputTestId,
     nativeEmptyCaret,
     submitButtonTestId,
+    submitLabel,
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
     externalMentionCandidates,
+    mentionScope,
     conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
@@ -669,6 +680,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             showProjectWorkBar={showProjectWorkBar}
             showExecutionTools={showExecutionTools}
             projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+            projectWorkBar={projectWorkBar}
             projectWorkBarTrailingContext={projectWorkBarTrailingContext}
             projectWorkBarEndContext={projectWorkBarEndContext}
             modelSelectorOverride={modelSelectorOverride}

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-export function useAutoResizeTextarea(value: string, maxHeight: number) {
+export function useAutoResizeTextarea(value: string, maxHeight: number | null) {
   const textareaRef = useRef<HTMLElement>(null)
   const frameRef = useRef<number | null>(null)
 
@@ -12,6 +12,11 @@ export function useAutoResizeTextarea(value: string, maxHeight: number) {
       frameRef.current = null
       const textarea = textareaRef.current
       if (!textarea) return
+      if (maxHeight === null) {
+        textarea.style.height = ''
+        textarea.style.maxHeight = ''
+        return
+      }
 
       if (textarea.tagName !== 'TEXTAREA') {
         textarea.style.height = ''

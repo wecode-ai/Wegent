@@ -26,7 +26,7 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   })
   const cardId = await control.command(
     'markElementWithText',
-    '[data-testid^="cloud-todo-card-drop-"]',
+    `${boardSurfaceSelector} [data-testid^="cloud-todo-card-drop-"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_TASK',
       value: 'local-unread-card',
@@ -35,7 +35,7 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   )
   assert.ok(cardId.startsWith('cloud-todo-card-drop-'))
   const itemId = cardId.slice('cloud-todo-card-drop-'.length)
-  const cardSelector = '[data-e2e-anchor-id="local-unread-card"]'
+  const cardSelector = `${boardSurfaceSelector} [data-testid="${cardId}"]`
   const unreadId = `cloud-todo-card-unread-${itemId}`
   const unreadSelector = `${cardSelector} [data-testid="${unreadId}"]`
   await control.command('waitFor', unreadSelector)
@@ -56,11 +56,6 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await captureVerificationScreenshot(control, 'local-board-unread-02-opened.png')
   await control.command('click', boardButtonSelector, { visible: true })
   await control.command('waitFor', boardSurfaceSelector, {
-    visible: true,
-  })
-  await control.command('markElementWithText', '[data-testid^="cloud-todo-card-drop-"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    value: 'local-unread-card',
     visible: true,
   })
   await control.command('waitFor', cardSelector)

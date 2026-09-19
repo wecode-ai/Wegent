@@ -110,6 +110,8 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  assignee_group_id?: string | null
+  assignee_group_name?: string | null
   id: string
   cloud_project_id: CloudProjectId
   sequence_number: number

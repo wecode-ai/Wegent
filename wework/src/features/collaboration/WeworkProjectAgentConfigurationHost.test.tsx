@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import {
   createWeworkProjectAgentConfigurationHost,
   weworkProjectAgentConfigurationHost,
@@ -393,5 +394,110 @@ describe('weworkProjectAgentConfigurationHost', () => {
       )
     )
     expect(onSaved).toHaveBeenCalledWith({ name: 'Reviewer', teamId: 52 })
+  })
+
+  it('reuses the project Agent editor and persists selected plugins for a local Agent', async () => {
+    const onCreated = vi.fn(async () => undefined)
+    const create = vi.fn(async () => ({ id: 'local-agent-1' }))
+    const localAgentApi = {
+      list: vi.fn(async () => []),
+      create,
+      update: vi.fn(),
+      archive: vi.fn(),
+    }
+    const modelApi = {
+      listModels: vi.fn(async () => ({ data: [] })),
+    }
+    const plugin = {
+      id: 'review-tools@personal',
+      pluginName: 'review-tools',
+      marketplaceId: 'personal',
+      displayName: 'Review Tools',
+    }
+    const pluginApi = {
+      listPlugins: vi.fn(async () => [plugin]),
+    }
+    const host = createWeworkProjectAgentConfigurationHost(
+      undefined,
+      localAgentApi as never,
+      modelApi as never,
+      pluginApi
+    )
+
+    render(
+      host.renderLocalAgentCreator!({
+        onClose: vi.fn(),
+        onCreated,
+      })
+    )
+
+    await waitFor(() => expect(screen.getByText('Review Tools')).toBeInTheDocument())
+    expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
+    const runtime = screen.getByTestId('cloud-project-chat-agent-environment')
+    expect(runtime).toHaveTextContent('Codex')
+    expect(runtime.tagName).toBe('SPAN')
+    expect(screen.queryByText('Claude Code')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
+    expect(screen.queryByText('仅展示当前在线的设备')).not.toBeInTheDocument()
+    expect(screen.queryByText('我的本地')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('cloud-project-chat-agent-name'), {
+      target: { value: '本地评审智能体' },
+    })
+    fireEvent.click(screen.getByTestId(`cloud-project-chat-agent-plugin-${plugin.id}`))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        DEFAULT_WORK_ITEM_PROJECT_ID,
+        expect.objectContaining({
+          name: '本地评审智能体',
+          runtime: 'codex',
+          executionMode: 'auto',
+          executionEnvironment: 'local',
+          executionDeviceId: null,
+          plugins: [plugin],
+        })
+      )
+    )
+    expect(onCreated).toHaveBeenCalledOnce()
+  })
+
+  it('saves an existing manual-approval agent with automatic execution', async () => {
+    const agent = {
+      id: 'manual-agent',
+      name: 'Existing agent',
+      runtime: 'codex',
+      model: null,
+      capabilityDescription: '',
+      systemPrompt: '',
+      plugins: [],
+      executionMode: 'manual_approval',
+      maxConcurrentExecutions: 1,
+      visibility: 'creator_admin',
+      version: 3,
+    }
+    const update = vi.fn(async () => agent)
+    const host = createWeworkProjectAgentConfigurationHost(
+      undefined,
+      { list: vi.fn(async () => [agent]), create: vi.fn(), update, archive: vi.fn() } as never,
+      { listModels: vi.fn(async () => ({ data: [] })) } as never
+    )
+    const onSaved = vi.fn(async () => undefined)
+    render(host.renderLocalAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-name')).toHaveValue(agent.name)
+    )
+    expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
+    expect(screen.queryByText('手动批准')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        DEFAULT_WORK_ITEM_PROJECT_ID,
+        agent.id,
+        expect.objectContaining({ version: 3, executionMode: 'auto' })
+      )
+    )
+    expect(onSaved).toHaveBeenCalledOnce()
   })
 })
