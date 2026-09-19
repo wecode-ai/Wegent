@@ -1041,6 +1041,33 @@ export function createLocalDeliveryApi(
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
+    async assignLoopItem(
+      projectId: CloudProjectId,
+      itemId: string,
+      data: {
+        version: number
+        assigneeType: 'user' | 'agent' | 'team'
+        assigneeId: string
+        notifyAssignee?: boolean
+      }
+    ) {
+      const assignment =
+        data.assigneeType === 'user'
+          ? { assignee_user_id: Number(data.assigneeId) }
+          : data.assigneeType === 'agent'
+            ? { assignee_agent_id: data.assigneeId }
+            : { assignee_group_id: data.assigneeId }
+      const record = await request<LocalLoopItemRecord>('todos.update', {
+        project_id: projectId,
+        task_id: itemId,
+        todo: {
+          version: data.version,
+          ...assignment,
+        },
+      })
+      taskProjects.set(record.id, projectId)
+      return localTask(record)
+    },
     async markLoopItemRead(itemId: string) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.mark_read', {
