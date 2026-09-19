@@ -748,9 +748,13 @@ def get_auth_context(
 
             # Create new user with minimal info
             # auth_source uses "api:{service_key_name}" to track which service key created this user
+            # The impersonated identity has no mailbox of its own, so it is
+            # created without an email. A synthesized address would be
+            # indistinguishable from a real one to downstream consumers such as
+            # employee-directory lookups and notifications.
             new_user = User(
                 user_name=target_username,
-                email=f"{target_username}@api.auto",  # Placeholder email
+                email=None,
                 password_hash=get_password_hash(
                     str(uuid.uuid4())
                 ),  # Random password for security

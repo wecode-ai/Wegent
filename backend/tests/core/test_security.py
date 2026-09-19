@@ -417,3 +417,46 @@ class TestGetAuthContextServiceKey:
         )
 
         assert auth_context.user.id == test_user.id
+
+    def test_impersonated_user_is_created_without_email(
+        self, test_db: Session, test_user: User
+    ):
+        """A synthesized username must not inherit a fabricated email address."""
+        raw_key = "wg-auto-create-service-key"
+        self._create_service_key(test_db, test_user, raw_key)
+
+        auth_context = get_auth_context(
+            db=test_db,
+            api_key=raw_key,
+            wegent_username="auth_intro_audit",
+        )
+
+        created = auth_context.user
+        assert created.user_name == "auth_intro_audit"
+        assert created.id != test_user.id
+        assert created.email is None
+        assert created.auth_source == "api:Service Key"
+        assert created.is_active is True
+
+    def test_impersonated_user_is_reused_on_later_calls(
+        self, test_db: Session, test_user: User
+    ):
+        raw_key = "wg-reuse-service-key"
+        self._create_service_key(test_db, test_user, raw_key)
+
+        first = get_auth_context(
+            db=test_db,
+            api_key=raw_key,
+            wegent_username="auth_intro_audit",
+        )
+        second = get_auth_context(
+            db=test_db,
+            api_key=raw_key,
+            wegent_username="auth_intro_audit",
+        )
+
+        assert second.user.id == first.user.id
+        assert (
+            test_db.query(User).filter(User.user_name == "auth_intro_audit").count()
+            == 1
+        )
