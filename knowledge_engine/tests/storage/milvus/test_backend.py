@@ -2106,6 +2106,24 @@ def test_retrieve_rejects_the_or_combination():
     assert store.searches == []
 
 
+def test_retrieve_rejects_an_or_that_names_no_conditions():
+    """An or without conditions states a combination, not "no constraint"."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError, match="'conditions'"):
+        backend.retrieve(
+            knowledge_id="1",
+            query="q",
+            embed_model=FakeEmbedModel([[1.0, 0.0]]),
+            retrieval_setting={"score_threshold": 0.0},
+            metadata_condition={"operator": "or"},
+        )
+
+    assert store.searches == []
+
+
 def test_retrieve_compiles_a_key_no_row_carries():
     """A key outside the ingestion vocabulary narrows the same query.
 

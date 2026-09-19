@@ -18,6 +18,40 @@ from knowledge_engine.retrieval.filters import (
     validate_metadata_condition,
 )
 
+# The shared vocabulary Milvus cannot compile, with what each other backend
+# still produces for it. Both tables are keyed by the operator, so a backend
+# whose expectation goes missing fails here instead of dropping out silently.
+OPERATORS_MILVUS_CANNOT_COMPILE = (
+    "ne",
+    "nin",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "contains",
+    "text_match",
+)
+ELASTICSEARCH_CLAUSES = {
+    "ne": {"bool": {"must_not": {"term": {"metadata.lang.keyword": "zh"}}}},
+    "nin": {"bool": {"must_not": {"terms": {"metadata.lang.keyword": "zh"}}}},
+    "gt": {"range": {"metadata.lang": {"gt": "zh"}}},
+    "gte": {"range": {"metadata.lang": {"gte": "zh"}}},
+    "lt": {"range": {"metadata.lang": {"lt": "zh"}}},
+    "lte": {"range": {"metadata.lang": {"lte": "zh"}}},
+    "contains": {"wildcard": {"metadata.lang.keyword": "*zh*"}},
+    "text_match": {"match": {"metadata.lang": "zh"}},
+}
+QDRANT_FILTER_OPERATORS = {
+    "ne": FilterOperator.NE,
+    "nin": FilterOperator.NIN,
+    "gt": FilterOperator.GT,
+    "gte": FilterOperator.GTE,
+    "lt": FilterOperator.LT,
+    "lte": FilterOperator.LTE,
+    "contains": FilterOperator.CONTAINS,
+    "text_match": FilterOperator.TEXT_MATCH,
+}
+
 
 @pytest.mark.parametrize(
     ("raw_operator", "expected"),
@@ -60,6 +94,10 @@ def test_iter_valid_conditions_skips_conditions_without_a_constraint() -> None:
         # A stated field must never be dropped, with or without conditions.
         {"conditions": [], "doc_ref": "x"},
         {"operator": "and", "conditions": [{"key": "a"}], "category": "tech"},
+        # A missing conditions list is "no constraint" only for a plain and.
+        {"operator": "or"},
+        {"operator": "OR"},
+        {"operator": "xor"},
         # Only an absent value and an empty mapping express no constraint.
         [],
         "",
@@ -90,6 +128,19 @@ def test_validate_metadata_condition_accepts_an_absent_condition() -> None:
     validate_metadata_condition(None)
     validate_metadata_condition({})
     validate_metadata_condition({"operator": "and"})
+
+
+@pytest.mark.parametrize("operator", OPERATORS_MILVUS_CANNOT_COMPILE)
+def test_validate_metadata_condition_keeps_the_operators_milvus_cannot_compile(
+    operator: str,
+) -> None:
+    """``eq``/``in`` is Milvus's limit, so the shared contract stays wider."""
+    validate_metadata_condition(
+        {
+            "operator": "or",
+            "conditions": [{"key": "lang", "operator": operator, "value": "zh"}],
+        }
+    )
 
 
 def test_build_elasticsearch_filters_normalizes_mixed_case_operators() -> None:
@@ -162,6 +213,43 @@ def test_build_elasticsearch_filters_normalizes_operator_aliases() -> None:
         {"term": {"metadata.lang.keyword": "zh"}},
         {"bool": {"must_not": {"term": {"metadata.status.keyword": "archived"}}}},
     ]
+
+
+@pytest.mark.parametrize("operator", OPERATORS_MILVUS_CANNOT_COMPILE)
+def test_build_elasticsearch_filters_keeps_the_operators_milvus_cannot_compile(
+    operator: str,
+) -> None:
+    """Elasticsearch keeps compiling every operator it served before."""
+    filters = build_elasticsearch_filters(
+        "kb_1",
+        {
+            "operator": "and",
+            "conditions": [{"key": "lang", "operator": operator, "value": "zh"}],
+        },
+    )
+
+    assert filters == [
+        {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+        ELASTICSEARCH_CLAUSES[operator],
+    ]
+
+
+@pytest.mark.parametrize("operator", OPERATORS_MILVUS_CANNOT_COMPILE)
+def test_parse_metadata_filters_keeps_the_operators_milvus_cannot_compile(
+    operator: str,
+) -> None:
+    """Qdrant keeps the operator vocabulary it served before."""
+    filters = parse_metadata_filters(
+        "kb_1",
+        {
+            "operator": "and",
+            "conditions": [{"key": "lang", "operator": operator, "value": "zh"}],
+        },
+    )
+
+    user_filters = filters.filters[1]
+    assert isinstance(user_filters, MetadataFilters)
+    assert user_filters.filters[0].operator == QDRANT_FILTER_OPERATORS[operator]
 
 
 def test_parse_metadata_filters_normalizes_operator_aliases() -> None:

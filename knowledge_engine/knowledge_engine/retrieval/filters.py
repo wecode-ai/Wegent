@@ -298,7 +298,9 @@ def validate_metadata_condition(
     back.
 
     Only ``None``, an empty mapping and a mapping carrying just the combination
-    operator express no constraint.
+    ``and`` express no constraint, because naming another combination without
+    the conditions it would combine also states something this contract cannot
+    honour.
     """
 
     if metadata_condition is None:
@@ -316,10 +318,31 @@ def validate_metadata_condition(
             f"unsupported keys: {', '.join(unsupported)}."
         )
 
-    if _normalize_condition_operator(metadata_condition.get("operator")) == "not":
+    _validate_condition_shape(
+        metadata_condition, reject_document_scope=reject_document_scope
+    )
+
+
+def _validate_condition_shape(
+    metadata_condition: Dict[str, Any],
+    *,
+    reject_document_scope: bool,
+) -> None:
+    """Refuse a shape this contract states but cannot honour.
+
+    Every shape check lives here so the entry point reads as the contract it
+    documents, and so the combination operator is normalized exactly once.
+    """
+    operator = _normalize_condition_operator(metadata_condition.get("operator"))
+    if operator == "not":
         raise ValueError("metadata_condition operator 'not' is not supported.")
 
     if "conditions" not in metadata_condition:
+        if operator != "and":
+            raise ValueError(
+                "metadata_condition requires 'conditions' unless the operator "
+                "is 'and'."
+            )
         return
 
     conditions = metadata_condition["conditions"]
