@@ -875,18 +875,17 @@ export async function createDesktopScenario({
     await control.command('fill', scoped('[data-testid="collaboration-group-description"]'), {
       value: 'Codex 先完成实现，Claude Code 再复核并收敛。',
     })
-    await control.command('select', scoped('[data-testid="collaboration-group-leader"]'), {
-      value: `agent:${codexMemberId}`,
-    })
+    await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
     await control.command(
-      'fill',
-      scoped(`[data-testid="collaboration-group-create-responsibility-agent-${codexMemberId}"]`),
-      { value: '先实现并给出可验证结果' }
+      'click',
+      scoped(`[data-testid="collaboration-group-leader-agent-${codexMemberId}"]`)
     )
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
     await control.command(
       'click',
       scoped(`[data-testid="collaboration-group-create-member-agent-${claudeMemberId}"]`)
     )
+    await control.command('click', scoped('[data-testid="collaboration-group-members-done"]'))
     await control.command(
       'fill',
       scoped(`[data-testid="collaboration-group-create-responsibility-agent-${claudeMemberId}"]`),
