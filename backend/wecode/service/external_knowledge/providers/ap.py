@@ -28,11 +28,15 @@ from wecode.schemas.external_knowledge import (
     ExternalSearchRecord,
     ExternalSearchResult,
 )
-from wecode.service.erp_entity_resolver import ErpEntityResolver
+from wecode.service.erp_entity_resolver import (
+    EmployeeIdResolutionStatus,
+    ErpEntityResolver,
+)
 from wecode.service.external_knowledge.base import ExternalKnowledgeProvider, RawNode
 from wecode.service.external_knowledge.client import ApKnowledgeMcpClient
 from wecode.service.external_knowledge.exceptions import (
     ExternalKnowledgeEmployeeRequiredError,
+    ExternalKnowledgeEmployeeResolutionUnavailableError,
     ExternalKnowledgeError,
     ExternalKnowledgeNotConfiguredError,
 )
@@ -445,10 +449,15 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
         if not user_id:
             raise ExternalKnowledgeEmployeeRequiredError()
 
-        employee_id = self._erp_resolver.resolve_employee_id_for_user(user_id)
-        if not employee_id:
-            raise ExternalKnowledgeEmployeeRequiredError()
-        return employee_id
+        result = self._erp_resolver.resolve_employee_id_result_for_user(user_id)
+        if result.employee_id:
+            return result.employee_id
+        if result.status in {
+            EmployeeIdResolutionStatus.IN_PROGRESS,
+            EmployeeIdResolutionStatus.UNAVAILABLE,
+        }:
+            raise ExternalKnowledgeEmployeeResolutionUnavailableError()
+        raise ExternalKnowledgeEmployeeRequiredError()
 
     async def _resolve_retrieval_kb_ids(
         self,

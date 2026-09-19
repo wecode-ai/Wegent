@@ -10,6 +10,8 @@ org_department entity type by checking ERP department membership.
 """
 
 import logging
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 import orjson
@@ -25,6 +27,19 @@ from wecode.service.erp_client import EmployeeSearchOutcome, erp_client
 from wecode.service.erp_user_service import ErpUserService
 
 logger = logging.getLogger(__name__)
+
+
+class EmployeeIdResolutionStatus(str, Enum):
+    RESOLVED = "resolved"
+    NOT_FOUND = "not_found"
+    IN_PROGRESS = "in_progress"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class EmployeeIdResolution:
+    status: EmployeeIdResolutionStatus
+    employee_id: Optional[str] = None
 
 
 class ErpEntityResolver(IExternalEntityResolver):
@@ -257,6 +272,12 @@ class ErpEntityResolver(IExternalEntityResolver):
         """Resolve a user's employee_id from profile or ERP lazy sync."""
         return self._get_user_ssn(db, user_id, user_context)
 
+    def resolve_employee_id_result(
+        self, db: Session, user_id: int, user_context: Optional[dict] = None
+    ) -> EmployeeIdResolution:
+        """Resolve employee identity without conflating temporary failures."""
+        return self._resolve_employee_id_result(db, user_id, user_context)
+
     def resolve_employee_id_for_user(
         self, user_id: int, user_context: Optional[dict] = None
     ) -> Optional[str]:
@@ -269,9 +290,27 @@ class ErpEntityResolver(IExternalEntityResolver):
         finally:
             db.close()
 
+    def resolve_employee_id_result_for_user(
+        self, user_id: int, user_context: Optional[dict] = None
+    ) -> EmployeeIdResolution:
+        """Resolve identity status with a short-lived database session."""
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            return self.resolve_employee_id_result(db, user_id, user_context)
+        finally:
+            db.close()
+
     def _get_user_ssn(
         self, db: Session, user_id: int, user_context: Optional[dict] = None
     ) -> Optional[str]:
+        """Get user SSN while preserving the legacy optional-string API."""
+        return self._resolve_employee_id_result(db, user_id, user_context).employee_id
+
+    def _resolve_employee_id_result(
+        self, db: Session, user_id: int, user_context: Optional[dict] = None
+    ) -> EmployeeIdResolution:
         """Get user SSN (employee_id) from context or database.
 
         If no profile exists, attempt lazy-sync from ERP OpenSearch API.
@@ -284,11 +323,14 @@ class ErpEntityResolver(IExternalEntityResolver):
         returns before the cached miss is consulted.
         """
         if user_context and "employee_id" in user_context:
-            return user_context["employee_id"]
+            return EmployeeIdResolution(
+                EmployeeIdResolutionStatus.RESOLVED,
+                user_context["employee_id"],
+            )
 
         existing = self._read_profile_employee_id(db, user_id)
         if existing:
-            return existing
+            return EmployeeIdResolution(EmployeeIdResolutionStatus.RESOLVED, existing)
 
         no_profile_key = self._no_profile_cache_key(user_id)
         if self._cache_get(no_profile_key) == NULL_MARKER:
@@ -296,7 +338,7 @@ class ErpEntityResolver(IExternalEntityResolver):
                 f"Skipping ERP profile sync for user_id={user_id}: "
                 f"no directory identity (cached)"
             )
-            return None
+            return EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND)
 
         # Resolve user email BEFORE acquiring the lock so we don't hold the
         # caller's db connection across network I/O.
@@ -306,7 +348,7 @@ class ErpEntityResolver(IExternalEntityResolver):
             logger.info(
                 f"No email found for user_id={user_id}, cannot sync ERP profile"
             )
-            return None
+            return EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND)
 
         lock_name = f"erp_profile_sync:{user_id}"
         with distributed_lock.acquire_context(lock_name, expire_seconds=30) as acquired:
@@ -315,7 +357,7 @@ class ErpEntityResolver(IExternalEntityResolver):
                     "ERP profile sync skipped: user_id=%s outcome=lock_busy",
                     user_id,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.IN_PROGRESS)
 
             try:
                 search_result = erp_client.search_employee_result(user_email)
@@ -326,14 +368,14 @@ class ErpEntityResolver(IExternalEntityResolver):
                     user_id,
                     type(e).__name__,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
 
             if search_result.outcome is EmployeeSearchOutcome.REQUEST_FAILED:
                 logger.warning(
                     "ERP profile sync failed: user_id=%s outcome=request_failed",
                     user_id,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
 
             erp_employee = search_result.employee
             if search_result.outcome is EmployeeSearchOutcome.NOT_FOUND:
@@ -348,14 +390,14 @@ class ErpEntityResolver(IExternalEntityResolver):
                     user_id,
                     cached,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND)
 
             if not (erp_employee and erp_employee.ssn):
                 logger.warning(
                     "ERP profile sync failed: user_id=%s outcome=invalid_response",
                     user_id,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
 
             # Use an independent session so commits do not affect the
             # caller's transaction.
@@ -375,7 +417,10 @@ class ErpEntityResolver(IExternalEntityResolver):
                     f"Lazy-synced ERP profile for user_id={user_id}: "
                     f"emp={self._mask_ssn(erp_employee.ssn)}"
                 )
-                return erp_employee.ssn
+                return EmployeeIdResolution(
+                    EmployeeIdResolutionStatus.RESOLVED,
+                    erp_employee.ssn,
+                )
             except IntegrityError:
                 indb.rollback()
                 # Another request may have created the profile concurrently
@@ -385,13 +430,16 @@ class ErpEntityResolver(IExternalEntityResolver):
                     .first()
                 )
                 if concurrent and concurrent.employee_id:
-                    return concurrent.employee_id
-                return None
+                    return EmployeeIdResolution(
+                        EmployeeIdResolutionStatus.RESOLVED,
+                        concurrent.employee_id,
+                    )
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
             except Exception as e:
                 indb.rollback()
                 logger.warning(
                     f"Failed to lazy-sync ERP profile for user_id={user_id}: {e}"
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
             finally:
                 indb.close()

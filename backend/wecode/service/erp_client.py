@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from wecode.config.erp_config import erp_config
 
@@ -175,7 +175,9 @@ class ErpClient:
             payload_type = type(payload).__name__
             if not isinstance(payload, dict):
                 raise TypeError("response root must be an object")
-            data = payload.get("data", {}) or {}
+            if "data" not in payload:
+                raise TypeError("response data is required")
+            data = payload["data"]
             payload_type = type(data).__name__
             if not isinstance(data, dict):
                 raise TypeError("response data must be an object")
@@ -419,23 +421,29 @@ class ErpClient:
             return EmployeeSearchResult(EmployeeSearchOutcome.REQUEST_FAILED)
         if data is None:
             return EmployeeSearchResult(EmployeeSearchOutcome.INVALID_RESPONSE)
-        employees = data.get("employees", [])
+        if "employees" not in data or not isinstance(data["employees"], list):
+            return EmployeeSearchResult(EmployeeSearchOutcome.INVALID_RESPONSE)
+        employees = data["employees"]
         if not employees:
             return EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND)
 
+        if not all(isinstance(employee, dict) for employee in employees):
+            return EmployeeSearchResult(EmployeeSearchOutcome.INVALID_RESPONSE)
+
         keyword_lower = keyword.lower() if keyword else ""
-        for emp in employees:
-            info = EmployeeInfo.model_validate(emp)
+        try:
+            parsed_employees = [EmployeeInfo.model_validate(emp) for emp in employees]
+        except ValidationError:
+            return EmployeeSearchResult(EmployeeSearchOutcome.INVALID_RESPONSE)
+
+        for info in parsed_employees:
             if keyword_lower and (
                 (info.ssn and info.ssn.lower() == keyword_lower)
                 or (info.name and info.name.lower() == keyword_lower)
                 or (info.email and info.email.lower() == keyword_lower)
             ):
                 return EmployeeSearchResult(EmployeeSearchOutcome.FOUND, info)
-        return EmployeeSearchResult(
-            EmployeeSearchOutcome.FOUND,
-            EmployeeInfo.model_validate(employees[0]),
-        )
+        return EmployeeSearchResult(EmployeeSearchOutcome.FOUND, parsed_employees[0])
 
     def get_department_display_name(self, department_id: str) -> Optional[str]:
         """Get display name for a department by ID.

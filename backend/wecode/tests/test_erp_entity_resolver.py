@@ -13,7 +13,10 @@ from wecode.service.erp_client import (
     EmployeeSearchOutcome,
     EmployeeSearchResult,
 )
-from wecode.service.erp_entity_resolver import ErpEntityResolver
+from wecode.service.erp_entity_resolver import (
+    EmployeeIdResolutionStatus,
+    ErpEntityResolver,
+)
 
 
 class _MemRedis:
@@ -176,6 +179,7 @@ class TestErpEntityResolver:
         db.query.side_effect = [profile_query, user_query, profile_query]
 
         with (
+            patch.object(resolver, "_cache_get", return_value=None),
             patch(
                 "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
                 return_value=lock,
@@ -216,6 +220,7 @@ class TestErpEntityResolver:
 
         with (
             patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch.object(resolver, "_cache_get", return_value=None),
             patch(
                 "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
                 return_value=lock,
@@ -230,6 +235,53 @@ class TestErpEntityResolver:
         assert result is None
         search.assert_not_called()
         assert "outcome=lock_busy" in caplog.text
+
+    def test_lock_busy_is_reported_as_in_progress(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            email="user@example.com"
+        )
+        lock = MagicMock()
+        lock.__enter__.return_value = False
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch.object(resolver, "_cache_get", return_value=None),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+        ):
+            result = resolver.resolve_employee_id_result(db, 1)
+
+        assert result.status is EmployeeIdResolutionStatus.IN_PROGRESS
+        assert result.employee_id is None
+
+    def test_not_found_does_not_open_a_second_database_session(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            email="missing@example.com"
+        )
+
+        with (
+            patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch.object(resolver, "_cache_get", return_value=None),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=_acquired_lock(),
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND),
+            ),
+            patch("app.db.session.SessionLocal", side_effect=TimeoutError),
+        ):
+            result = resolver.resolve_employee_id_result(db, 1)
+
+        assert result.status is EmployeeIdResolutionStatus.NOT_FOUND
 
     def test_not_found_is_negatively_cached(self, resolver_with_mem_redis):
         db = MagicMock()

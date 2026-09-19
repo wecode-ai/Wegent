@@ -6,6 +6,7 @@ import time
 from unittest.mock import patch
 
 import httpx
+import pytest
 
 from wecode.service.erp_client import (
     EmployeeInfo,
@@ -208,6 +209,28 @@ class TestErpClient:
         response = httpx.Response(200, json={"data": ["unexpected"]})
 
         with patch("httpx.Client.request", return_value=response):
+            result = client.search_employee_result("user@example.com")
+
+        assert result.outcome is EmployeeSearchOutcome.INVALID_RESPONSE
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"data": None},
+            {"data": {"employees": None}},
+        ],
+    )
+    def test_employee_search_rejects_ambiguous_empty_responses(self, payload):
+        client = ErpClient()
+        client.base_url = "https://erp.example.com"
+        client._access_token = "token"
+        client._token_expires_at = time.time() + 3600
+
+        with patch(
+            "httpx.Client.request",
+            return_value=httpx.Response(200, json=payload),
+        ):
             result = client.search_employee_result("user@example.com")
 
         assert result.outcome is EmployeeSearchOutcome.INVALID_RESPONSE
