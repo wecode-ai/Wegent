@@ -683,7 +683,6 @@ async function verifyCloudCheckpoint({
     case 'cloud-worktree-queued-cancel':
     case 'cloud-worktree-tools':
     case 'cloud-worktree-archive-restore':
-    case 'cloud-worktree-device-restart':
       await verifyCloudWorktreeCheckpoint({
         checkpoint,
         cloudEnvironment,

@@ -36,7 +36,7 @@ const SLASH_ONLY_PATTERN = /^\s*\/[^/\r\n]*\s*$/
 export function findStandaloneTrigger(
   value: string,
   cursor: number,
-  trigger: '@' | '$' | '/',
+  trigger: '@' | '$' | '/' | '#',
   kind: ComposerTriggerKind,
   allowWhitespaceInQuery?: (query: string) => boolean
 ): ComposerTextTrigger | null {
@@ -162,9 +162,13 @@ export function resolveComposerAutocompleteTrigger(
   current: { value: string; selectionOffset: number },
   currentMenu: { kind: ComposerTriggerKind; trigger: ComposerTextTrigger } | null,
   supportsSkills: boolean,
-  cloudProjectScopeLabels: string[]
+  cloudProjectScopeLabels: string[],
+  supportsIssueReferences = false
 ) {
   const nextTrigger = chooseNearestTrigger([
+    supportsIssueReferences
+      ? findStandaloneTrigger(current.value, current.selectionOffset, '#', 'mention')
+      : null,
     findStandaloneTrigger(
       current.value,
       current.selectionOffset,

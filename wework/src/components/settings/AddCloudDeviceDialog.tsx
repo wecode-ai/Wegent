@@ -25,7 +25,7 @@ interface AddCloudDeviceDialogProps {
   hasCloudDevice?: boolean
   cloudConnection: CloudDeviceDialogConnection
   onClose: () => void
-  onCreated: (devices?: DeviceInfo[]) => void | Promise<void>
+  onCreated: (devices?: DeviceInfo[], createdDeviceId?: number) => void | Promise<void>
   onCreatingChange?: (creating: boolean) => void
 }
 
@@ -105,7 +105,7 @@ export function AddCloudDeviceDialog({
           }
           const versionMismatch = device.executor_version === 'dev' || device.update_available
           setRemoteStatus(versionMismatch ? 'version_mismatch' : 'online')
-          await onCreatedRef.current(devices)
+          await onCreatedRef.current(devices, device.id)
           if (!cancelled) onCloseRef.current()
           return
         } catch {
@@ -134,11 +134,11 @@ export function AddCloudDeviceDialog({
     setLoading(true)
     setError(null)
     try {
-      await createCloudDeviceApi(cloudConnection).createCloudDevice()
+      const created = await createCloudDeviceApi(cloudConnection).createCloudDevice()
       track('feature_action_completed', { domain: 'cloud_device', action: 'create' })
       onCreatingChange?.(true)
       onClose()
-      onCreated()
+      onCreated(undefined, created.id)
     } catch (e) {
       track('operation_failed', { operation: 'cloud_device_action' })
       setError(e instanceof Error ? e.message : t('workbench.add_device_cloud_create_failed'))

@@ -1718,6 +1718,7 @@ describe('ConnectionsSettingsPage', () => {
       '本地设备代理'
     )
     expect(screen.getByTestId('proxy-config-cloud-required')).toHaveTextContent('云端设备代理')
+    await userEvent.click(screen.getByTestId('local-proxy-mode-custom'))
     await userEvent.type(
       screen.getByTestId('local-proxy-config-url-input'),
       'http://127.0.0.1:7890'
@@ -1725,7 +1726,9 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('local-proxy-config-save-button'))
 
     expect(requestLocalExecutor).not.toHaveBeenCalled()
-    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('本地设备代理已保存')
+    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent(
+      '本地设备网络设置已保存'
+    )
     const restartCodexButton = screen.getByTestId('local-proxy-config-restart-codex-button')
     expect(restartCodexButton).toHaveTextContent('重启 Codex')
     await userEvent.click(restartCodexButton)
@@ -1735,11 +1738,52 @@ describe('ConnectionsSettingsPage', () => {
       })
     )
     expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
-    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
-      'http://127.0.0.1:7890'
+    expect(screen.getByTestId('local-proxy-config-status')).toHaveTextContent('自定义代理')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      'http://127.0.0.1:7890（自定义代理）'
     )
     expect(userApi.getProxyConfig).not.toHaveBeenCalled()
     expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
+  })
+
+  test('forces direct local Codex connections without resolving the system proxy', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    const resolveProxy = vi.fn().mockResolvedValue('http://system-proxy.example.com:7890')
+    window.weworkElectronNetwork = { resolveProxy }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('跟随系统')
+
+    await userEvent.click(screen.getByTestId('local-proxy-mode-direct'))
+    await userEvent.click(screen.getByTestId('local-proxy-config-save-button'))
+
+    expect(screen.getByTestId('local-proxy-config-status')).toHaveTextContent('强制直连')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      '直连（已忽略系统代理）'
+    )
+    const restartCodexButton = screen.getByTestId('local-proxy-config-restart-codex-button')
+    await userEvent.click(restartCodexButton)
+
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+        proxyUrl: null,
+      })
+    )
+    expect(resolveProxy).toHaveBeenCalledTimes(1)
   })
 
   test('shows the effective system proxy used by local Codex', async () => {
@@ -1764,9 +1808,37 @@ describe('ConnectionsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('settings-nav-proxy'))
 
-    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('系统代理')
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('跟随系统')
     expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
-      'http://system-proxy.example.com:7890'
+      'http://system-proxy.example.com:7890（系统代理）'
+    )
+  })
+
+  test('explains when system proxy rules choose a direct connection', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    window.weworkElectronNetwork = {
+      resolveProxy: vi.fn().mockResolvedValue(null),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('跟随系统')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      '直连（系统未使用代理）'
     )
   })
 

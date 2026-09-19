@@ -35,7 +35,6 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
-  runtime-terminal-convergence
   running-conversation-history
   running-plan-history
   codex-notification-isolation
@@ -86,7 +85,6 @@ cloud_worktree_segments=(
   cloud-worktree-queued-cancel
   cloud-worktree-tools
   cloud-worktree-archive-restore
-  cloud-worktree-device-restart
 )
 cloud_segments=(
   cloud-project-creation
@@ -118,7 +116,7 @@ cloud_segments=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   core-task-flow
-  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  embedded-browser,cloud-project-creation
   goal-lifecycle,cloud-worktree-archive-restore
   rendering-extensions
   project-automation
@@ -145,7 +143,7 @@ core_shards=(
   conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
-  window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
+  window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle

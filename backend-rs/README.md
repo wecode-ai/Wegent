@@ -60,10 +60,11 @@ under the same prefix remain with Python.
 ## Observability foundation
 
 The Rust binary initializes `brz-logs`, writing its `info.log`, `warn.log`, and
-`error.log` files to the Backend `LOG_DIR` supplied by the repository launcher.
-The hybrid launcher defaults to `logs/backend` when that variable is absent;
-`BREEZE_LOG_DIR` can override it. `brz-metrics` is pinned to the
-process-global-registry release used by the registered Rust APIs.
+`error.log` files to a `rust` subdirectory of the Backend `LOG_DIR` supplied by
+the repository launcher. The hybrid launcher nests it under `logs/backend/rust`
+when the Backend `LOG_DIR` is absent; `BREEZE_LOG_DIR` can override it.
+`brz-metrics` is pinned to the process-global-registry release used by the
+registered Rust APIs.
 
 ## Library boundary
 

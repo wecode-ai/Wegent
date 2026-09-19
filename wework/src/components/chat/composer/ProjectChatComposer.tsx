@@ -39,6 +39,7 @@ import { ProjectComposerBody } from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
 
 interface ProjectChatComposerProps {
+  presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -54,6 +55,7 @@ interface ProjectChatComposerProps {
   inputTestId?: string
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
+  submitLabel?: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -77,6 +79,7 @@ interface ProjectChatComposerProps {
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  mentionScope?: 'all' | 'external'
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
@@ -98,6 +101,7 @@ interface ProjectChatComposerProps {
   projectWork: ProjectWorkControls
   projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
+  projectWorkBar?: ReactNode
   showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
@@ -119,6 +123,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
   function ProjectChatComposer(
     {
       value,
+      presentation,
       onChange,
       onBlur,
       onCompositionStart,
@@ -133,6 +138,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       inputTestId,
       nativeEmptyCaret,
       submitButtonTestId,
+      submitLabel,
       models,
       selectedModel,
       activeModel,
@@ -156,6 +162,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       cloudMentionCandidates,
       conversationMentionCandidates,
       externalMentionCandidates,
+      mentionScope,
       cloudProjectCandidates,
       cloudSpaceEnabled,
       onSelectExternalMention,
@@ -186,6 +193,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onDismissInputLeadingContext,
       toolbarLeadingContext,
       projectWorkBarMiddleContext,
+      projectWorkBar,
       projectWorkBarTrailingContext,
       projectWorkBarEndContext,
       modelSelectorOverride,
@@ -242,6 +250,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       <>
         <ComposerErrorBanner error={phraseError} />
         <ProjectComposerBody
+          presentation={presentation}
           ref={composerRef}
           translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
           value={value}
@@ -277,7 +286,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           onRemoveAttachment={onRemoveAttachment}
           transferServices={desktopComposerTransferServices}
           workBar={
-            showProjectWorkBar && (
+            projectWorkBar ??
+            (showProjectWorkBar && (
               <ProjectWorkBar
                 projects={projectWork.projects}
                 devices={projectWork.devices}
@@ -302,7 +312,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 className="min-h-10 rounded-t-[26px] bg-surface px-4"
                 buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
               />
-            )
+            ))
           }
           renderAttachments={onShowTextAttachment => (
             <AttachmentBadges
@@ -327,6 +337,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               cloudMentionCandidates={cloudMentionCandidates}
               conversationMentionCandidates={conversationMentionCandidates}
               externalMentionCandidates={externalMentionCandidates}
+              mentionScope={mentionScope}
               cloudProjectCandidates={cloudProjectCandidates}
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectExternalMention={onSelectExternalMention}
@@ -354,6 +365,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               className={toolbarProps.className}
               canSend={toolbarProps.canSend}
               sendButtonTestId={submitButtonTestId}
+              sendButtonLabel={submitLabel}
               disabled={disabled}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}

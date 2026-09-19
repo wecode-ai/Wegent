@@ -33,7 +33,30 @@ function elementChildren(element: ReactElement): ReactElement[] {
   );
 }
 
+function descendants(element: ReactElement): ReactElement[] {
+  return [
+    element,
+    ...elementChildren(element).flatMap((child) => descendants(child)),
+  ];
+}
+
 describe("KanbanColumnDropzone", () => {
+  it("constrains the Radix content wrapper so long cards cannot widen the column", () => {
+    const element = KanbanColumnDropzone({
+      children: (
+        <article>{"LongTaskTitleWithoutWordBreaks".repeat(20)}</article>
+      ),
+      dnd: dndAdapter(),
+      dropId: "todo-column:pending",
+      testId: "cloud-todo-column-dropzone-pending",
+    });
+    const [viewport] = elementChildren(element);
+
+    expect(viewport.props.className).toContain("[&>div]:!block");
+    expect(viewport.props.className).toContain("[&>div]:w-full");
+    expect(viewport.props.className).toContain("pr-1.5");
+  });
+
   it("preserves the Wework dropzone classes, test id and active drag hint", () => {
     const element = KanbanColumnDropzone({
       children: <article>Issue</article>,
@@ -42,21 +65,51 @@ describe("KanbanColumnDropzone", () => {
       dropId: "todo-column:pending",
       testId: "cloud-todo-column-dropzone-pending",
     });
-    const children = elementChildren(element);
+    const nodes = descendants(element);
 
     expect(element.props["data-testid"]).toBe(
       "cloud-todo-column-dropzone-pending",
     );
     expect(element.props.className).toContain(
-      "relative min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-2 pb-2 pt-2 transition-colors",
+      "relative flex min-h-0 flex-1 flex-col transition-colors",
     );
     expect(element.props.className).toContain(
       "rounded-xl bg-muted ring-1 ring-inset ring-focus/50",
     );
-    expect(children[0].props["data-testid"]).toBe(
-      "cloud-todo-column-drag-hint-pending",
-    );
-    expect(children[0].props.children).toBe("移到这里：等待开始");
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] === "cloud-todo-column-drag-hint-pending",
+      )?.props.children,
+    ).toBe("移到这里：等待开始");
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "cloud-todo-column-dropzone-pending-viewport",
+      ),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "cloud-todo-column-dropzone-pending-content",
+      ),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "cloud-todo-column-dropzone-pending-scrollbar",
+      ),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "cloud-todo-column-dropzone-pending-scrollbar-thumb",
+      ),
+    ).toBeDefined();
   });
 });
 
@@ -148,7 +201,7 @@ describe("KanbanBoard", () => {
     expect(element.props.sensors).toEqual(["pointer"]);
     expect(element.props.onDragEnd).toBe(contextProps.onDragEnd);
     expect(columns.props.className).toBe(
-      "flex h-full min-h-0 items-start gap-3.5 px-6",
+      "flex h-full min-h-0 w-max min-w-full items-start gap-3.5 px-6",
     );
     expect(elementChildren(columns)[0].type).toBe(KanbanColumn);
     expect(overlay.type).toBe(DragOverlay);
