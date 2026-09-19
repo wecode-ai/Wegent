@@ -1,4 +1,4 @@
-import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { getLocalProxyConfig } from '@/features/model-settings/localProxySettings'
 
 export type LocalCodexProxySource = 'direct' | 'system' | 'wework'
 
@@ -20,11 +20,17 @@ declare global {
 export async function resolveEffectiveLocalCodexProxy(
   targetUrl: string = CODEX_API_URL
 ): Promise<EffectiveLocalCodexProxy> {
-  const configuredProxy = getLocalProxyUrl().trim()
-  if (configuredProxy) {
+  const config = getLocalProxyConfig()
+  if (config.mode === 'custom') {
     return {
-      proxyUrl: configuredProxy,
+      proxyUrl: config.proxyUrl,
       source: 'wework',
+    }
+  }
+  if (config.mode === 'direct') {
+    return {
+      proxyUrl: null,
+      source: 'direct',
     }
   }
 
