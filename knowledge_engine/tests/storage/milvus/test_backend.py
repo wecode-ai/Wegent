@@ -2747,7 +2747,13 @@ def test_get_all_chunks_compiles_the_supported_condition_contract():
 
 
 def test_get_all_chunks_allows_a_doc_ref_condition_inside_the_knowledge_base():
-    """The read path keeps the listing contract the other backends serve."""
+    """The read path keeps the listing contract the other backends serve.
+
+    Retrieval refuses a ``doc_ref`` condition because there the document scope
+    is an explicit input a condition must not impersonate. The reading path has
+    no such input, so the condition narrows the same query - still anded to the
+    knowledge base the adapter forces, so it cannot leave it.
+    """
     backend = _backend()
     store = FakeStore(rows=_chunk_rows("42", [0]) + _chunk_rows("43", [0, 1]))
     backend._store = store
@@ -2762,7 +2768,9 @@ def test_get_all_chunks_allows_a_doc_ref_condition_inside_the_knowledge_base():
     )
 
     assert {chunk["doc_ref"] for chunk in chunks} == {"43"}
-    assert 'metadata["doc_ref"] == "43"' in store.queries[-1]["filter"]
+    expression = store.queries[-1]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["doc_ref"] == "43"' in expression
 
 
 def test_list_documents_aggregates_stored_rows():
