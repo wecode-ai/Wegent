@@ -104,7 +104,12 @@ def recorded_functions() -> List[Dict[str, Any]]:
 
 
 def recorded_indexes() -> Dict[str, Dict[str, Any]]:
-    """The index metadata the pinned server answers, keyed by index name."""
+    """The index metadata the pinned server answers, keyed by the name it gives.
+
+    Milvus names an index after the field it covers when the create declares no
+    name of its own, so the key is both the index name and the covered field
+    for the index this schema writes.
+    """
     return {
         "dense_vector": {
             "index_type": "AUTOINDEX",

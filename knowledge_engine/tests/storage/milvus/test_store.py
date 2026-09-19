@@ -12,7 +12,6 @@ validates is not a claim the contract can make. The row layout and the filter
 vocabulary it works with are tested in ``test_native.py``.
 """
 
-import logging
 from typing import Any
 
 import pytest
