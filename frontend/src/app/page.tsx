@@ -110,7 +110,7 @@ export default function Home() {
       </div>
 
       <div className="w-full max-w-2xl text-center">
-        <h1 className="text-5xl font-medium text-text-primary mb-4">
+        <h1 className="text-[30px]/9 md:text-[36px]/10 font-medium text-text-primary mb-4">
           <span className="font-bold">We</span>gent, more than an{' '}
           <span className="font-bold">A</span>gent.
         </h1>
