@@ -366,6 +366,27 @@ def test_dirty_row_is_not_written_to_cache():
     session.close()
 
 
+def test_flushed_but_uncommitted_row_is_not_cached():
+    """An explicit flush must not leak uncommitted rows into the cache."""
+    store = FakeStore()
+    session = _make_session()
+    session.add(_persisted_kind())
+    session.commit()
+
+    reader, base = _make_reader(store)
+    row = session.query(Kind).one()
+
+    row.json = {"flushed": True}
+    session.flush()  # snapshot recorded, row looks clean to is_modified
+    base.get_by_id.return_value = row
+
+    assert reader.get_by_id(session, KindType.BOT, row.id) is row
+    assert store.set_calls == 0
+
+    session.rollback()
+    session.close()
+
+
 def test_service_extension_wraps_the_cached_reader():
     extension = MagicMock()
     extension.wrap.side_effect = lambda base: base

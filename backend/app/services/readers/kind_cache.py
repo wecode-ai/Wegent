@@ -231,6 +231,9 @@ def _ttl_for(kind: Optional[Kind]) -> int:
 
 def _safe_to_cache(db: Session, kind: Optional[Kind]) -> bool:
     """Never cache a row that carries uncommitted changes in this session."""
+    info = getattr(db, "info", None)
+    if isinstance(info, dict) and info.get(_PENDING_SNAPSHOTS_KEY):
+        return False
     if kind is None or not isinstance(kind, Kind):
         return True
     if object_session(kind) is not db:
