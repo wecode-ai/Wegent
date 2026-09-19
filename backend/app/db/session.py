@@ -227,3 +227,11 @@ def get_wiki_db():
         yield db
     finally:
         db.close()
+
+
+if settings.KIND_READER_CACHE_ENABLED:
+    # Attach write-through listeners to this factory only; sessions created
+    # from other factories (e.g. tests) do not inherit them.
+    from app.services.readers.kind_cache import install_default_kind_change_listener
+
+    install_default_kind_change_listener()

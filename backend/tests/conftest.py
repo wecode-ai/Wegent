@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import hashlib
+import logging
 import os
 import tempfile
 import uuid
@@ -39,6 +40,39 @@ def use_fast_test_password_hashing() -> Generator[None, None, None]:
     pwd_context.update(bcrypt__rounds=4)
     yield
     pwd_context.update(bcrypt__rounds=original_rounds)
+
+
+@pytest.fixture(scope="function", autouse=True)
+def isolated_kind_cache() -> Generator[None, None, None]:
+    """Give every test its own Kind cache namespace and clean it up after.
+
+    The global ``kindReader`` is a singleton backed by the shared Redis from
+    ``REDIS_URL``. Without a per-test prefix, entries written by one test
+    (deterministic keys, 300s TTL) would be visible to later tests. Each test
+    gets a unique prefix, and its keys are deleted when the test finishes.
+    """
+    from app.services.readers.kind_cache import (
+        KindCacheStore,
+        cache_was_touched,
+        reset_cache_touched,
+        set_cache_key_prefix,
+    )
+
+    prefix = f"wegent:kind_cache:test:{uuid.uuid4().hex}:"
+    set_cache_key_prefix(prefix)
+    reset_cache_touched()
+    try:
+        yield
+    finally:
+        if cache_was_touched():
+            try:
+                KindCacheStore().flush_prefix(prefix)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Failed to flush kind cache prefix %s: %s", prefix, exc
+                )
+        reset_cache_touched()
+        set_cache_key_prefix(None)
 
 
 class FakeIMSessionRedisClient:

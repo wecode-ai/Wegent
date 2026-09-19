@@ -299,6 +299,10 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    # Kind reader cache (Team/Bot/Ghost/Model/Skill config lookups)
+    KIND_READER_CACHE_ENABLED: bool = True
+    KIND_READER_CACHE_TTL_SECONDS: int = Field(default=300, ge=1)
+    KIND_READER_CACHE_MISS_TTL_SECONDS: int = Field(default=30, ge=1)
     TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
     TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
     # Keep false during mixed-version Backend rollout; enable after all replicas upgrade.
