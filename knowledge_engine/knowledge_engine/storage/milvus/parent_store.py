@@ -31,13 +31,6 @@ PARENT_KNOWLEDGE_ID_FIELD = "knowledge_id"
 PARENT_DOC_REF_FIELD = "doc_ref"
 
 
-def _reference_parts(reference: Any) -> tuple[str, str]:
-    """Read one ``(doc_ref, parent_node_id)`` reference, refusing other shapes."""
-    if not isinstance(reference, (tuple, list)) or len(reference) != 2:
-        raise ValueError("parent_refs must contain (doc_ref, parent_node_id) pairs.")
-    return str(reference[0] or ""), str(reference[1] or "")
-
-
 class MilvusParentStore:
     """Stores and loads parent chunks for hierarchical retrieval."""
 
@@ -76,16 +69,24 @@ class MilvusParentStore:
         self,
         knowledge_id: str,
         parent_nodes: List[BaseNode],
+        doc_ref: str = "",
         **kwargs,
     ) -> Dict[str, Any]:
-        """Persist parent nodes for later expansion of child hits."""
+        """Persist parent nodes for later expansion of child hits.
+
+        The write replaces the parent bodies of the document the caller is
+        indexing, and that document arrives explicitly. A call site that does
+        not pass it still gets every document the nodes themselves name, so
+        the removal scope matches what the insert writes instead of only what
+        the first node happened to carry.
+        """
         if not parent_nodes:
             return {"stored_count": 0}
 
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         store = self._store
         with store.client() as client:
-            if not client.has_collection(collection_name, timeout=store.rpc_timeout):
+            if not store.has_collection(client, collection_name):
                 client.create_collection(
                     collection_name=collection_name,
                     # Milvus requires a dimension of at least 2; this sidecar
@@ -98,13 +99,14 @@ class MilvusParentStore:
             else:
                 # The lookup above already settled existence, so the removal of
                 # the document's previous parents costs no second check.
-                self._delete_with_client(
-                    store,
-                    client,
-                    collection_name,
-                    knowledge_id,
-                    parent_nodes[0].metadata.get("doc_ref", ""),
-                )
+                for existing_ref in self._document_refs(parent_nodes, doc_ref):
+                    self._delete_with_client(
+                        store,
+                        client,
+                        collection_name,
+                        knowledge_id,
+                        existing_ref,
+                    )
 
             client.insert(
                 collection_name=collection_name,
@@ -124,6 +126,19 @@ class MilvusParentStore:
                 timeout=store.rpc_timeout,
             )
         return {"stored_count": len(parent_nodes)}
+
+    @staticmethod
+    def _document_refs(parent_nodes: List[BaseNode], doc_ref: str) -> List[str]:
+        """The documents whose previous parent rows this write replaces."""
+        if doc_ref:
+            return [str(doc_ref)]
+        refs: List[str] = []
+        for node in parent_nodes:
+            node_ref = node.metadata.get("doc_ref")
+            if node_ref is None or str(node_ref) in refs:
+                continue
+            refs.append(str(node_ref))
+        return refs
 
     def get(
         self,
@@ -157,7 +172,7 @@ class MilvusParentStore:
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         store = self._store
         with store.client() as client:
-            if not client.has_collection(collection_name, timeout=store.rpc_timeout):
+            if not store.has_collection(client, collection_name):
                 return {}
 
             results = client.query(
@@ -199,7 +214,11 @@ class MilvusParentStore:
         wanted = {str(node_id) for node_id in parent_node_ids}
         documents_by_parent: Dict[str, set[str]] = {}
         for reference in parent_refs or []:
-            doc_ref, parent_node_id = _reference_parts(reference)
+            # ``collect_parent_references`` is the only producer of these
+            # references: a two-item ``(doc_ref, parent_node_id)`` tuple.
+            doc_ref, parent_node_id = reference
+            doc_ref = str(doc_ref or "")
+            parent_node_id = str(parent_node_id or "")
             if not doc_ref or parent_node_id not in wanted:
                 continue
             documents_by_parent.setdefault(parent_node_id, set()).add(doc_ref)
@@ -227,7 +246,7 @@ class MilvusParentStore:
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         store = self._store
         with store.client() as client:
-            if not client.has_collection(collection_name, timeout=store.rpc_timeout):
+            if not store.has_collection(client, collection_name):
                 return 0
             return self._delete_with_client(
                 store, client, collection_name, knowledge_id, doc_ref

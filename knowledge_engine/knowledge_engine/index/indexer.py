@@ -302,6 +302,9 @@ class DocumentIndexer:
             self.storage_backend.save_parent_nodes(
                 knowledge_id=chunk_metadata.knowledge_id,
                 parent_nodes=parent_nodes,
+                # The document being indexed is the removal scope, so the
+                # sidecar never has to infer it from the first node.
+                doc_ref=chunk_metadata.doc_ref,
                 **kwargs,
             )
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from knowledge_engine.storage.base import MAX_READ_LIMIT
 from knowledge_engine.storage.errors import StorageBackendError
 from knowledge_engine.storage.milvus.filters import compile_metadata_conditions
 from knowledge_engine.storage.milvus.native import (
@@ -35,7 +36,6 @@ from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 logger = logging.getLogger(__name__)
 
-MAX_READ_LIMIT = 10000
 # Rows one iterator RPC asks for. A complete read walks the server's own primary
 # key cursor in batches of this size instead of re-applying an offset to an
 # unordered result.
@@ -108,7 +108,12 @@ class MilvusRowReader:
             knowledge_id=knowledge_id,
             doc_refs=[doc_ref],
         )
-        rows = self._read_all_rows(collection_name, filter_expr)
+        rows = self._read_bounded_rows(
+            collection_name,
+            filter_expr,
+            budget=MAX_READ_LIMIT,
+            what="a complete document",
+        )
 
         if not rows:
             raise ValueError(f"Document {doc_ref} not found")
@@ -156,9 +161,11 @@ class MilvusRowReader:
             raise ValueError("page must be at least 1")
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         filter_expr = build_scope_filter(knowledge_id=knowledge_id)
-        rows = self._read_all_rows(
+        rows = self._read_bounded_rows(
             collection_name,
             filter_expr,
+            budget=MAX_READ_LIMIT,
+            what="a complete document list",
             output_fields=[METADATA_FIELD],
         )
 
@@ -243,22 +250,6 @@ class MilvusRowReader:
             )
         chunks.sort(key=lambda chunk: (chunk["doc_ref"], chunk["chunk_id"]))
         return chunks
-
-    def _read_all_rows(
-        self,
-        collection_name: str,
-        filter_expr: str,
-        *,
-        output_fields: Optional[Sequence[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Read every matching row of a complete answer within the read budget."""
-        return self._read_bounded_rows(
-            collection_name,
-            filter_expr,
-            budget=MAX_READ_LIMIT,
-            what="a complete document or document list",
-            output_fields=output_fields,
-        )
 
     def _read_bounded_rows(
         self,

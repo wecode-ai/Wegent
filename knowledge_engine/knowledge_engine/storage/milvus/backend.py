@@ -45,6 +45,7 @@ from knowledge_engine.retrieval.search_hints import (
 )
 from knowledge_engine.storage.base import (
     DISPLAY_TEXT_METADATA_KEY,
+    MAX_READ_LIMIT,
     BaseStorageBackend,
 )
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -71,11 +72,7 @@ from knowledge_engine.storage.milvus.native import (
     node_row_id,
 )
 from knowledge_engine.storage.milvus.parent_store import MilvusParentStore
-from knowledge_engine.storage.milvus.rows import (
-    MAX_READ_LIMIT,
-    MilvusRowReader,
-    row_metadata,
-)
+from knowledge_engine.storage.milvus.rows import MilvusRowReader, row_metadata
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 from shared.models import RetrievalScope
 
@@ -770,7 +767,10 @@ class MilvusBackend(BaseStorageBackend):
         """
         records = []
         for hit in hits:
-            score = float(hit.get("__score__", 0.0))
+            # The store is the only producer of these hits and always stamps
+            # the score it read; a missing one is a shaping defect that must
+            # surface instead of being read as a zero that the threshold drops.
+            score = float(hit["__score__"])
             if score < score_threshold:
                 continue
             metadata = row_metadata(hit)

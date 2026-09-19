@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 
 RETRIEVAL_TEXT_METADATA_KEY = "retrieval_text"
 DISPLAY_TEXT_METADATA_KEY = "display_text"
+# The business ceiling of a complete chunk listing. It bounds the same
+# interface for every backend, so it is declared once beside that interface
+# instead of being repeated as a literal in each implementation.
+MAX_READ_LIMIT = 10000
 
 
 def resolve_retrieval_text(
@@ -479,7 +483,7 @@ class BaseStorageBackend(ABC):
     def get_all_chunks(
         self,
         knowledge_id: str,
-        max_chunks: int = 10000,
+        max_chunks: int = MAX_READ_LIMIT,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:

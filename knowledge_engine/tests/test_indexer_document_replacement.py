@@ -44,6 +44,7 @@ class FakeStorageBackend:
         self.results = list(results)
         self.parent_result = parent_result
         self.calls: list[str] = []
+        self.parent_calls: list[dict] = []
 
     def index_with_metadata(self, **kwargs):
         self.calls.append("index_with_metadata")
@@ -54,6 +55,7 @@ class FakeStorageBackend:
 
     def save_parent_nodes(self, **kwargs):
         self.calls.append("save_parent_nodes")
+        self.parent_calls.append(dict(kwargs))
         if isinstance(self.parent_result, Exception):
             raise self.parent_result
         return {"stored_count": len(kwargs["parent_nodes"])}
@@ -143,6 +145,9 @@ def test_parent_nodes_are_saved_after_the_child_rows(monkeypatch):
     _index_one_document(_indexer(storage_backend))
 
     assert storage_backend.calls == ["index_with_metadata", "save_parent_nodes"]
+    # The sidecar replaces the document being indexed, so the removal scope
+    # travels explicitly instead of being inferred from the first node.
+    assert storage_backend.parent_calls[0]["doc_ref"] == "42"
 
 
 def test_a_failed_parent_write_fails_the_task_after_the_child_rows(monkeypatch):

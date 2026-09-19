@@ -16,6 +16,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
+from llama_index.core.schema import TextNode
+
 from knowledge_engine.storage.milvus.parent_store import MilvusParentStore
 
 
@@ -25,6 +27,7 @@ class FakeParentClient:
     def __init__(self, records: List[Dict[str, Any]]) -> None:
         self.records = list(records)
         self.queries: List[Dict[str, Any]] = []
+        self.inserted: List[Dict[str, Any]] = []
 
     def has_collection(
         self, collection_name: str, timeout: float | None = None
@@ -36,23 +39,98 @@ class FakeParentClient:
         self.queries.append(kwargs)
         return list(self.records)
 
+    def insert(self, **kwargs: Any) -> Dict[str, Any]:
+        self.inserted.extend(kwargs["data"])
+        return {"insert_count": len(kwargs["data"])}
+
 
 class FakeParentStore:
     def __init__(self, client: FakeParentClient) -> None:
         self.client_instance = client
         self.rpc_timeout = 10.0
+        self.deletes: List[Dict[str, Any]] = []
+
+    def has_collection(self, client: FakeParentClient, collection_name: str) -> bool:
+        return True
+
+    def delete_rows(
+        self,
+        client: FakeParentClient,
+        collection_name: str,
+        filter_expr: str,
+        *,
+        flush: bool = True,
+    ) -> int:
+        self.deletes.append(
+            {
+                "collection_name": collection_name,
+                "filter": filter_expr,
+                "flush": flush,
+            }
+        )
+        return 0
 
     @contextmanager
     def client(self):
         yield self.client_instance
 
 
-def _parent_store(client: FakeParentClient) -> MilvusParentStore:
-    return MilvusParentStore(
-        store=FakeParentStore(client),
-        collection_name_for=lambda knowledge_id, **kwargs: "wegent_kb_1__parents",
-        display_text_for=lambda node: node.get_content(),
+def _parent_store_with_backing(
+    client: FakeParentClient,
+) -> tuple[MilvusParentStore, FakeParentStore]:
+    backing = FakeParentStore(client)
+    return (
+        MilvusParentStore(
+            store=backing,
+            collection_name_for=lambda knowledge_id, **kwargs: "wegent_kb_1__parents",
+            display_text_for=lambda node: node.get_content(),
+        ),
+        backing,
     )
+
+
+def _parent_store(client: FakeParentClient) -> MilvusParentStore:
+    parent_store, _ = _parent_store_with_backing(client)
+    return parent_store
+
+
+def _parent_node(node_id: str, *, doc_ref: str | None = None) -> TextNode:
+    metadata = {} if doc_ref is None else {"doc_ref": doc_ref}
+    return TextNode(id_=node_id, text=f"body of {node_id}", metadata=metadata)
+
+
+def test_a_parent_write_replaces_the_document_it_was_given() -> None:
+    """The removal scope is the indexed document, not the first node's field."""
+    parent_store, backing = _parent_store_with_backing(FakeParentClient([]))
+    nodes = [_parent_node("parent-a"), _parent_node("parent-b", doc_ref="doc_1")]
+
+    parent_store.save("1", nodes, doc_ref="doc_1")
+
+    [deleted] = backing.deletes
+    assert deleted["collection_name"] == "wegent_kb_1__parents"
+    assert 'knowledge_id == "1"' in deleted["filter"]
+    assert 'doc_ref in ["doc_1"]' in deleted["filter"]
+
+
+def test_a_parent_write_without_an_explicit_document_uses_every_node() -> None:
+    """An older call site still replaces every document the nodes name."""
+    parent_store, backing = _parent_store_with_backing(FakeParentClient([]))
+    nodes = [_parent_node("parent-a"), _parent_node("parent-b", doc_ref="doc_2")]
+
+    parent_store.save("1", nodes)
+
+    [deleted] = backing.deletes
+    assert 'doc_ref in ["doc_2"]' in deleted["filter"]
+
+
+def test_a_parent_write_ignores_nodes_that_name_no_document() -> None:
+    """A node without a document never widens the removal to an empty scope."""
+    parent_store, backing = _parent_store_with_backing(FakeParentClient([]))
+
+    result = parent_store.save("1", [_parent_node("parent-a")])
+
+    assert result == {"stored_count": 1}
+    assert backing.deletes == []
 
 
 def _record(doc_ref: str, parent_node_id: str, content: str) -> Dict[str, Any]:

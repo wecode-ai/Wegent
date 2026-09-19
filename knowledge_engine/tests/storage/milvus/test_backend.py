@@ -13,6 +13,7 @@ from llama_index.core.schema import TextNode
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from knowledge_engine.embedding.vectors import EmptyIndexableContentError
+from knowledge_engine.storage.base import MAX_READ_LIMIT
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
     StorageBackendError,
@@ -29,7 +30,7 @@ from knowledge_engine.storage.milvus.native import (
     MilvusIndexBinding,
     index_contract_description,
 )
-from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE, MAX_READ_LIMIT
+from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 from shared.models import RetrievalScope
 
@@ -228,7 +229,6 @@ class FakeStore:
         self.contract_reads = 0
         self.has_collection_calls: list[str] = []
         self.deleted_filters: list[str] = []
-        self.queries: list[dict] = []
         self.dropped_collections: list[str] = []
         self.iterators: list["FakeRowIterator"] = []
         self.iterator_failure = iterator_failure
@@ -322,31 +322,6 @@ class FakeStore:
         self.dropped_collections.append(collection_name)
         self.collection_exists = False
 
-    def query_rows(
-        self,
-        client,
-        collection_name,
-        filter_expr,
-        *,
-        output_fields=None,
-        limit,
-        offset=0,
-    ):
-        """Answer one page the way Milvus does: filter, then offset and limit."""
-        self.queries.append(
-            {
-                "filter": filter_expr,
-                "fields": output_fields,
-                "limit": limit,
-                "offset": offset,
-            }
-        )
-        matching = [row for row in self.rows if self._filter_matches(row, filter_expr)]
-        return [
-            {key: value for key, value in row.items() if key in (output_fields or row)}
-            for row in matching[offset : offset + limit]
-        ]
-
     def open_row_iterator(
         self,
         client,
@@ -383,7 +358,9 @@ class FakeStore:
         output_fields=None,
     ):
         self.searches.append({"filter": filter_expr, "limit": limit})
-        return self.rows[:limit]
+        # The real store stamps every hit with the score it read, so the double
+        # carries one too: a hit without a score is a defect, not a zero.
+        return [{"__score__": 0.9, **row} for row in self.rows[:limit]]
 
     def sparse_search(
         self,
@@ -403,7 +380,7 @@ class FakeStore:
                 "fields": output_fields,
             }
         )
-        return self.sparse_hits[:limit]
+        return [{"__score__": 0.9, **row} for row in self.sparse_hits[:limit]]
 
     def hybrid_search(
         self,
@@ -429,7 +406,7 @@ class FakeStore:
                 "fields": output_fields,
             }
         )
-        return self.hybrid_hits[:limit]
+        return [{"__score__": 0.9, **row} for row in self.hybrid_hits[:limit]]
 
     @classmethod
     def _filter_matches(cls, row: Dict[str, Any], filter_expr: str) -> bool:
@@ -2337,8 +2314,6 @@ def test_get_all_chunks_validates_a_condition_before_its_empty_value():
             },
         )
 
-    assert store.queries == []
-
 
 def test_get_all_chunks_rejects_a_condition_object_without_a_conditions_list():
     """The reading path refuses a bare mapping instead of listing everything."""
@@ -2352,8 +2327,6 @@ def test_get_all_chunks_rejects_a_condition_object_without_a_conditions_list():
             max_chunks=10,
             metadata_condition={"doc_ref": "doc_123"},
         )
-
-    assert store.queries == []
 
 
 def test_retrieve_answers_empty_for_a_scope_that_names_no_document():
@@ -2375,7 +2348,6 @@ def test_retrieve_answers_empty_for_a_scope_that_names_no_document():
     assert store.searches == []
     assert store.sparse_searches == []
     assert store.hybrid_searches == []
-    assert store.queries == []
 
 
 def test_retrieve_answers_a_scope_without_document_ids_from_the_knowledge_base():
@@ -2489,7 +2461,6 @@ def test_delete_document_removes_rows_and_reports_the_delete_rpcs_count() -> Non
         "flush",
     ]
     assert store.has_collection_calls == [backend.get_parent_store_name("1")]
-    assert store.queries == []
 
 
 def test_delete_document_never_prepares_vectors(monkeypatch):
@@ -2528,7 +2499,6 @@ def test_delete_knowledge_clears_only_the_knowledge_base_scope() -> None:
         'metadata["knowledge_id"] == "1"',
         'knowledge_id == "1"',
     ]
-    assert store.queries == []
 
 
 def test_drop_knowledge_index_refuses_a_shared_collection():
@@ -2610,7 +2580,6 @@ def test_a_complete_read_uses_one_bounded_iterator_instead_of_offset_pages():
 
     backend.get_document("1", "42")
 
-    assert store.queries == [], "a complete read no longer pages with offsets"
     [iterator] = store.iterators
     assert iterator.batch_size == ITERATOR_BATCH_SIZE
     assert (
@@ -2748,7 +2717,6 @@ def test_get_all_chunks_keeps_a_match_behind_the_read_limit():
     assert 'metadata["node_role"] == "qa_pair"' in store.iterators[-1].filter_expr
     assert store.iterators[-1].limit == 3
     assert store.iterators[-1].closed is True
-    assert store.queries == []
 
 
 def test_get_all_chunks_fails_instead_of_truncating_an_over_budget_match_set():
@@ -2766,7 +2734,6 @@ def test_get_all_chunks_fails_instead_of_truncating_an_over_budget_match_set():
     assert iterator.limit == 4
     assert iterator.batch_size == ITERATOR_BATCH_SIZE
     assert iterator.closed is True
-    assert store.queries == []
 
 
 def test_get_all_chunks_sorts_a_complete_read_by_document_and_chunk():
