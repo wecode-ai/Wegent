@@ -2771,6 +2771,19 @@ def test_list_documents_pages_every_document_exactly_once():
     assert [page["total"] for page in pages] == [len(doc_refs)] * 2
 
 
+def test_list_documents_rejects_a_page_below_the_first_one():
+    """Pagination is one-based, so a lower page fails before any read."""
+    backend = _backend()
+    store = FakeStore(rows=_document_rows(["10", "20"]))
+    backend._store = store
+
+    for page in (0, -1):
+        with pytest.raises(ValueError):
+            backend.list_documents("1", page=page)
+
+    assert store.calls == []
+
+
 def test_list_documents_fails_instead_of_reporting_a_truncated_total():
     """Beyond the read budget the total would be a lie, so the read fails."""
     backend = _backend()

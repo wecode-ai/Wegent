@@ -149,6 +149,11 @@ class MilvusRowReader:
         the budget fails explicitly instead of reporting the truncated scan as
         its total.
         """
+        # Pagination is one-based, so anything below the first page is a caller
+        # error: slicing the ordered documents with it would answer a negative
+        # page with an arbitrary tail instead of failing.
+        if page < 1:
+            raise ValueError("page must be at least 1")
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         filter_expr = build_scope_filter(knowledge_id=knowledge_id)
         rows = self._read_all_rows(
