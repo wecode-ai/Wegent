@@ -5132,11 +5132,13 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await user.click((await screen.findAllByText('Wegent V4'))[0])
-    await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
+    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.click(screen.getByTestId('cloud-todo-column-add-pending'))
     delete workbenchServices.projectSpaceDetailServices?.cloud
-    await user.type(screen.getByTestId('workspace-issue-input'), 'Unavailable AI Issue')
-    await user.click(screen.getByTestId('workspace-issue-submit'))
+    const input = screen.getByTestId('workspace-issue-input')
+    await user.click(input)
+    await user.paste('Unavailable AI Issue')
+    fireEvent.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('运行服务当前不可用')
     expect(screen.queryByTestId('issue-execution-config-dialog')).not.toBeInTheDocument()
