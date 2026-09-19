@@ -3,7 +3,9 @@ import {
   Link2,
   ChevronDown,
   ChevronRight,
-  FolderOpen,
+  Laptop,
+  Cloud,
+  Check,
   FileText,
   MessageSquare,
   AtSign,
@@ -20,6 +22,17 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
   const { t } = useTranslation('common')
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
   const input = useRef<ComposerInputHandle>(null)
+  const selectedProject = props.projects.find(project => project.id === props.projectId)
+  const projectLocation = (project: IssueHomeTaskComposerProps['projects'][number]) => {
+    const location = t(
+      project.project_store === 'local'
+        ? 'issue_creation.local_space'
+        : 'issue_creation.cloud_space'
+    )
+    const workspace = props.workspaces?.find(item => item.id === project.workspace_id)
+    return workspace && workspace.name !== location ? `${location} · ${workspace.name}` : location
+  }
+  const ProjectIcon = selectedProject?.project_store === 'local' ? Laptop : Cloud
   useImperativeHandle(ref, () => ({
     get element() {
       return input.current?.element ?? null
@@ -88,14 +101,21 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
                   disabled={props.disabled}
                   aria-expanded={Boolean(anchor)}
                   aria-haspopup="dialog"
-                  aria-label={props.projectLabel}
+                  aria-label={
+                    selectedProject
+                      ? `${props.projectLabel}: ${selectedProject.name} · ${projectLocation(selectedProject)}`
+                      : props.projectLabel
+                  }
                   onClick={event => setAnchor(event.currentTarget)}
                   className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md bg-surface px-2 text-sm text-text-primary hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary md:min-h-7"
                 >
-                  <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-                  <span className="truncate">
-                    {props.projects.find(project => project.id === props.projectId)?.name}
-                  </span>
+                  <ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                  <span className="truncate">{selectedProject?.name}</span>
+                  {selectedProject && (
+                    <span className="truncate text-xs text-text-muted">
+                      {projectLocation(selectedProject)}
+                    </span>
+                  )}
                   <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                 </button>
               </div>
@@ -177,22 +197,34 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
           testId="collaboration-issue-project-picker"
           onClose={closePicker}
         >
-          {props.projects.map(project => (
-            <button
-              key={project.id}
-              type="button"
-              data-testid={`collaboration-issue-project-${project.id}`}
-              disabled={props.disabled}
-              aria-pressed={project.id === props.projectId}
-              className="flex min-h-8 w-full items-center rounded-md px-2 py-1 text-left text-base text-text-primary hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
-              onClick={() => {
-                props.onSelectProject(project.id)
-                closePicker()
-              }}
-            >
-              {project.name}
-            </button>
-          ))}
+          {props.projects.map(project => {
+            const Icon = project.project_store === 'local' ? Laptop : Cloud
+            return (
+              <button
+                key={project.id}
+                type="button"
+                data-testid={`collaboration-issue-project-${project.id}`}
+                disabled={props.disabled}
+                aria-pressed={project.id === props.projectId}
+                className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-base text-text-primary hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                onClick={() => {
+                  props.onSelectProject(project.id)
+                  closePicker()
+                }}
+              >
+                <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{project.name}</span>
+                  <span className="block truncate text-xs text-text-muted">
+                    {projectLocation(project)}
+                  </span>
+                </span>
+                {project.id === props.projectId && (
+                  <Check aria-hidden="true" className="h-4 w-4 shrink-0" />
+                )}
+              </button>
+            )
+          })}
         </AnchorPopover>
       )}
     </section>

@@ -25,13 +25,42 @@ const createProps = (): IssueHomeTaskComposerProps => ({
   projectLabel: '目标项目',
   projectId: 'p1',
   projects: [
-    { id: 'p1', name: '项目一' },
-    { id: 'p2', name: '项目二' },
+    { id: 'p1', name: '项目一', project_store: 'local' },
+    { id: 'p2', name: '项目二', project_store: 'backend', workspace_id: 'cloud-team' },
   ] as IssueHomeTaskComposerProps['projects'],
   onSelectProject: vi.fn(),
 })
 
 describe('Wework Issue home task composer', () => {
+  test('distinguishes same-name local and cloud projects and retains the selected space', async () => {
+    const props = createProps()
+    props.projects = props.projects.map(project => ({ ...project, name: '同名项目' }))
+    props.workspaces = [
+      { id: 'cloud-team', name: '研发团队' },
+    ] as IssueHomeTaskComposerProps['workspaces']
+    const { rerender } = render(<WeworkIssueHomeComposer {...props} />)
+    const trigger = screen.getByTestId('collaboration-issue-project-trigger')
+    expect(trigger).toHaveTextContent('本地空间')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('collaboration-issue-project-p1')).toHaveTextContent('本地空间')
+    expect(screen.getByTestId('collaboration-issue-project-p2')).toHaveTextContent(
+      '云端空间 · 研发团队'
+    )
+    await userEvent.click(screen.getByTestId('collaboration-issue-project-p2'))
+    expect(props.onSelectProject).toHaveBeenCalledWith('p2')
+    rerender(<WeworkIssueHomeComposer {...props} projectId="p2" />)
+    expect(trigger).toHaveTextContent('云端空间 · 研发团队')
+    expect(trigger).toHaveAccessibleName('目标项目: 同名项目 · 云端空间 · 研发团队')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('collaboration-issue-project-p2')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('collaboration-issue-project-p1')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+  })
   test('shows the first live mention in the compact owner button and persists manual changes', async () => {
     const ref = createRef<import('@wegent/collaboration/composer').ComposerInputHandle>()
     const onSubmit = vi.fn(async () => true)

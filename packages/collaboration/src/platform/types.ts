@@ -38,6 +38,10 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  cloudAccess?: {
+    authenticated: boolean;
+    requestLogin(): void;
+  };
   renderIssueComposer?(
     props: import("./IssueHomeComposer").IssueHomeTaskComposerProps,
   ): ReactNode;

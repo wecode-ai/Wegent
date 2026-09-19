@@ -1,5 +1,7 @@
 {
   "issue_creation": {
+    "local_space": "本地空间",
+    "cloud_space": "云端空间",
     "headline": "连接想法，推进协作",
     "subtitle": "描述目标，@ 分配负责人，# 关联 Issue。",
     "human_title": "提出需求",
@@ -127,6 +129,7 @@
     "project_chat_agent_visibility_public": "全部成员",
     "project_chat_agent_runtime_group": "运行环境",
     "project_chat_agent_runtime_provider": "运行方式",
+    "project_chat_agent_codex_only": "由 Codex 执行任务",
     "project_chat_agent_runtime_provider_relation": "选择由 Wework 运行或调用 Wegent 智能体",
     "project_chat_agent_provider_wework": "Wework",
     "project_chat_agent_runtime_configuration": "配置方式",

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { GroupParticipantsEditor } from "./GroupParticipantsEditor";
 
 import {
   clearMemberResultsForEmptyQuery,
@@ -459,6 +460,9 @@ export function WorkspaceCollaborationGroupsConfiguration({
   canManage: canManageOverride,
   initialCreateOpen = false,
   onCreateOpenChange,
+  initialSelectedGroupId = null,
+  onDetailClose,
+  detailPresentation = "page",
 }: {
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
@@ -470,13 +474,14 @@ export function WorkspaceCollaborationGroupsConfiguration({
   canManage?: boolean;
   initialCreateOpen?: boolean;
   onCreateOpenChange?(open: boolean): void;
+  initialSelectedGroupId?: string | null;
+  onDetailClose?(): void;
+  detailPresentation?: "page" | "dialog";
 }) {
   const messages = copy[locale];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [leader, setLeader] = useState("");
-  const [createLeaderResponsibility, setCreateLeaderResponsibility] =
-    useState("");
   const [createMembers, setCreateMembers] = useState<
     CollaborationGroup["members"]
   >([]);
@@ -495,7 +500,9 @@ export function WorkspaceCollaborationGroupsConfiguration({
   const [formOpen, setFormOpen] = useState(initialCreateOpen);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(
+    initialSelectedGroupId,
+  );
   const [detailTab, setDetailTab] = useState<
     "members" | "rules" | "environment"
   >("members");
@@ -622,6 +629,16 @@ export function WorkspaceCollaborationGroupsConfiguration({
     candidate: (typeof candidates)[number],
     selected: boolean,
   ) => {
+    if (!selected) {
+      setCreateStages((current) =>
+        current.map((stage) =>
+          stage.assignee?.kind === candidate.kind &&
+          stage.assignee.id === candidate.id
+            ? { ...stage, assignee: null }
+            : stage,
+        ),
+      );
+    }
     setCreateMembers((current) => {
       if (selected) {
         return current.some(
@@ -649,10 +666,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
     candidate: (typeof candidates)[number],
     responsibility: string,
   ) => {
-    if (candidate.value === leader) {
-      setCreateLeaderResponsibility(responsibility);
-      return;
-    }
     setCreateMembers((current) =>
       current.map((member) =>
         member.kind === candidate.kind && member.id === candidate.id
@@ -729,30 +742,44 @@ export function WorkspaceCollaborationGroupsConfiguration({
   };
 
   return (
-    <section className="collaboration-platform-panel">
+    <section
+      className={`collaboration-platform-panel${
+        detailPresentation === "dialog"
+          ? " collaboration-group-dialog-content"
+          : ""
+      }`}
+    >
       {selectedGroup ? (
         <div
-          className="collaboration-group-detail"
+          className={`collaboration-group-detail${
+            detailPresentation === "dialog"
+              ? " collaboration-group-detail-dialog"
+              : ""
+          }`}
           data-testid={`collaboration-group-detail-${selectedGroup.id}`}
         >
-          <div className="collaboration-resource-heading">
-            <div>
-              <button
-                type="button"
-                className="collaboration-link-button collaboration-group-back"
-                data-testid="collaboration-group-detail-back"
-                onClick={() => setSelectedGroupId(null)}
-              >
-                ← {messages.backToGroups}
-              </button>
-              <h2>{selectedGroup.name}</h2>
-              <p>
-                {selectedGroup.owner_type === "project"
-                  ? messages.projectOwned
-                  : messages.workspaceOwned}
-              </p>
+          {detailPresentation === "page" ? (
+            <div className="collaboration-resource-heading">
+              <div>
+                <button
+                  type="button"
+                  className="collaboration-link-button collaboration-group-back"
+                  data-testid="collaboration-group-detail-back"
+                  onClick={() =>
+                    onDetailClose ? onDetailClose() : setSelectedGroupId(null)
+                  }
+                >
+                  ← {messages.backToGroups}
+                </button>
+                <h2>{selectedGroup.name}</h2>
+                <p>
+                  {selectedGroup.owner_type === "project"
+                    ? messages.projectOwned
+                    : messages.workspaceOwned}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : null}
           <form
             className="collaboration-group-detail-form"
             onSubmit={(event) => {
@@ -795,19 +822,32 @@ export function WorkspaceCollaborationGroupsConfiguration({
             }}
           >
             <aside className="collaboration-group-detail-section collaboration-group-detail-profile">
-              <span className="collaboration-group-detail-avatar">
-                {draftName.slice(0, 1).toUpperCase()}
-              </span>
-              <div className="collaboration-group-section-heading">
-                <div>
+              {detailPresentation === "page" ? (
+                <>
+                  <span className="collaboration-group-detail-avatar">
+                    {draftName.slice(0, 1).toUpperCase()}
+                  </span>
+                  <div className="collaboration-group-section-heading">
+                    <div>
+                      <h3>{locale === "zh-CN" ? "基本信息" : "Basics"}</h3>
+                      <p>
+                        {selectedGroup.owner_type === "project"
+                          ? messages.projectOwned
+                          : messages.workspaceOwned}
+                      </p>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="collaboration-group-dialog-section-title">
                   <h3>{locale === "zh-CN" ? "基本信息" : "Basics"}</h3>
-                  <p>
+                  <span>
                     {selectedGroup.owner_type === "project"
                       ? messages.projectOwned
                       : messages.workspaceOwned}
-                  </p>
+                  </span>
                 </div>
-              </div>
+              )}
               <div className="collaboration-group-profile-fields">
                 <label>
                   <span>{messages.groupName}</span>
@@ -853,20 +893,22 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   </small>
                 </label>
               </div>
-              <dl className="collaboration-group-detail-meta">
-                <div>
-                  <dt>{messages.membersLabel}</dt>
-                  <dd>{draftMembers.length}</dd>
-                </div>
-                <div>
-                  <dt>{messages.stages}</dt>
-                  <dd>{draftStages.length}</dd>
-                </div>
-                <div>
-                  <dt>{locale === "zh-CN" ? "版本" : "Version"}</dt>
-                  <dd>{selectedGroup.version}</dd>
-                </div>
-              </dl>
+              {detailPresentation === "page" ? (
+                <dl className="collaboration-group-detail-meta">
+                  <div>
+                    <dt>{messages.membersLabel}</dt>
+                    <dd>{draftMembers.length}</dd>
+                  </div>
+                  <div>
+                    <dt>{messages.stages}</dt>
+                    <dd>{draftStages.length}</dd>
+                  </div>
+                  <div>
+                    <dt>{locale === "zh-CN" ? "版本" : "Version"}</dt>
+                    <dd>{selectedGroup.version}</dd>
+                  </div>
+                </dl>
+              ) : null}
             </aside>
 
             <div className="collaboration-group-detail-main">
@@ -975,7 +1017,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
                                 </small>
                               </span>
                             </label>
-                            {selectedMember ? (
+                            {selectedMember &&
+                            candidate.value !== draftLeader ? (
                               <input
                                 data-testid={`collaboration-group-detail-responsibility-${candidate.kind}-${candidate.id}`}
                                 value={selectedMember.responsibility}
@@ -1357,13 +1400,13 @@ export function WorkspaceCollaborationGroupsConfiguration({
                       leader: {
                         kind: leaderKind as "human" | "agent",
                         id: leaderId,
-                        responsibility: createLeaderResponsibility.trim(),
+                        responsibility: "",
                       },
                       members: [
                         {
                           kind: leaderKind as "human" | "agent",
                           id: leaderId,
-                          responsibility: createLeaderResponsibility.trim(),
+                          responsibility: "",
                         },
                         ...createMembers,
                       ],
@@ -1378,7 +1421,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
                       setName("");
                       setDescription("");
                       setLeader("");
-                      setCreateLeaderResponsibility("");
                       setCreateMembers([]);
                       setCreateTab("members");
                       setCreateInstructions("");
@@ -1471,114 +1513,40 @@ export function WorkspaceCollaborationGroupsConfiguration({
                                 }
                               />
                             </label>
-                            <label>
-                              <span>{messages.leader}</span>
-                              <select
-                                data-testid="collaboration-group-leader"
-                                value={leader}
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  setLeader(value);
-                                  setCreateLeaderResponsibility("");
-                                  setCreateMembers((current) =>
-                                    current.filter(
-                                      (member) =>
-                                        `${member.kind}:${member.id}` !== value,
-                                    ),
-                                  );
-                                }}
-                              >
-                                <option value="" />
-                                {candidates.map((candidate) => (
-                                  <option
-                                    key={candidate.value}
-                                    value={candidate.value}
-                                  >
-                                    {candidate.name} ·{" "}
-                                    {candidate.kind === "human"
-                                      ? locale === "zh-CN"
-                                        ? "成员"
-                                        : "Person"
-                                      : locale === "zh-CN"
-                                        ? "智能体"
-                                        : "Agent"}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
                           </div>
-                          <div className="collaboration-group-create-member-list">
-                            {candidates.map((candidate) => {
-                              const isLeader = candidate.value === leader;
-                              const selectedMember = createMembers.find(
-                                (member) =>
-                                  member.kind === candidate.kind &&
-                                  member.id === candidate.id,
+                          <GroupParticipantsEditor
+                            candidates={candidates}
+                            leader={leader}
+                            members={createMembers}
+                            locale={locale}
+                            onLeaderChange={(candidate) => {
+                              if (candidate.value === leader) return;
+                              const previous = candidates.find(
+                                (item) => item.value === leader,
                               );
-                              const checked =
-                                isLeader || Boolean(selectedMember);
-                              return (
-                                <div
-                                  key={candidate.value}
-                                  className="collaboration-group-member-row"
-                                >
-                                  <label>
-                                    <input
-                                      type="checkbox"
-                                      data-testid={`collaboration-group-create-member-${candidate.kind}-${candidate.id}`}
-                                      checked={checked}
-                                      disabled={isLeader}
-                                      onChange={(event) =>
-                                        updateCreateMemberSelection(
-                                          candidate,
-                                          event.target.checked,
-                                        )
-                                      }
-                                    />
-                                    <span className="collaboration-resource-avatar collaboration-group-member-avatar">
-                                      {candidate.name.slice(0, 1).toUpperCase()}
-                                    </span>
-                                    <span>
-                                      <strong>{candidate.name}</strong>
-                                      <small>
-                                        {isLeader
-                                          ? locale === "zh-CN"
-                                            ? "负责人"
-                                            : "Leader"
-                                          : candidate.kind === "human"
-                                            ? locale === "zh-CN"
-                                              ? "成员"
-                                              : "Person"
-                                            : locale === "zh-CN"
-                                              ? "智能体"
-                                              : "Agent"}
-                                      </small>
-                                    </span>
-                                  </label>
-                                  {checked ? (
-                                    <input
-                                      data-testid={`collaboration-group-create-responsibility-${candidate.kind}-${candidate.id}`}
-                                      value={
-                                        isLeader
-                                          ? createLeaderResponsibility
-                                          : (selectedMember?.responsibility ??
-                                            "")
-                                      }
-                                      placeholder={
-                                        messages.memberResponsibility
-                                      }
-                                      onChange={(event) =>
-                                        updateCreateMemberResponsibility(
-                                          candidate,
-                                          event.target.value,
-                                        )
-                                      }
-                                    />
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
+                              setCreateMembers((current) => [
+                                ...current.filter(
+                                  (member) =>
+                                    `${member.kind}:${member.id}` !==
+                                    candidate.value,
+                                ),
+                                ...(previous
+                                  ? [
+                                      {
+                                        kind: previous.kind,
+                                        id: previous.id,
+                                        responsibility: "",
+                                      },
+                                    ]
+                                  : []),
+                              ]);
+                              setLeader(candidate.value);
+                            }}
+                            onMemberChange={updateCreateMemberSelection}
+                            onResponsibilityChange={
+                              updateCreateMemberResponsibility
+                            }
+                          />
                         </section>
                       ) : null}
 
@@ -1752,8 +1720,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                                                 | "human"
                                                 | "agent",
                                               id: leader.split(":")[1],
-                                              responsibility:
-                                                createLeaderResponsibility,
+                                              responsibility: "",
                                             },
                                             ...createMembers,
                                           ].find(

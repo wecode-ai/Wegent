@@ -188,7 +188,9 @@ export function createLocalWorkspaceApi(
         device_key: device.device_id,
         name: device.name,
         kind: 'local_device' as const,
-        coding_tools: device.capabilities ?? [],
+        // Device capabilities are internal transport features. The catalog
+        // exposes the agent runtime users can actually select.
+        coding_tools: ['codex'],
         owner_type: 'workspace' as const,
         owner_id: LOCAL_WORKSPACE_ID,
         owner_name: localWorkspaceName,
@@ -604,6 +606,16 @@ export function createLocalWorkspaceApi(
       initializeExecutionEnvironment: unavailable,
       importMessages: unavailable,
       listCollaborationGroups: projectCollaborationGroups,
+      async addCollaborationGroup(projectId, groupId) {
+        const available = await projectCollaborationGroups(DEFAULT_WORK_ITEM_PROJECT_ID)
+        const group = available.find(candidate => candidate.id === groupId)
+        if (!group) throw new Error('Collaboration group was not found')
+        const groups = await projectCollaborationGroups(projectId)
+        if (!groups.some(candidate => candidate.id === groupId)) {
+          await persistProjectCollaborationGroups(projectId, [...groups, group])
+        }
+        return group
+      },
       createCollaborationGroup: createLocalCollaborationGroup,
       updateCollaborationGroup: updateLocalCollaborationGroup,
       removeCollaborationGroup: removeLocalCollaborationGroup,
@@ -835,13 +847,12 @@ export function createWeworkPlatformApi(
           : (cloudApi.projects.listCollaborationGroups?.(projectId) ?? [])
       },
       async addCollaborationGroup(projectId, groupId) {
-        if ((await projectLocation(projectId)) === 'local') {
-          throw new Error('Local projects create their own collaboration groups')
-        }
-        if (!cloudApi.projects.addCollaborationGroup) {
+        const target =
+          (await projectLocation(projectId)) === 'local' ? localApi.projects : cloudApi.projects
+        if (!target.addCollaborationGroup) {
           throw new Error('Collaboration group API is unavailable')
         }
-        return cloudApi.projects.addCollaborationGroup(projectId, groupId)
+        return target.addCollaborationGroup(projectId, groupId)
       },
       async createCollaborationGroup(projectId, input) {
         const target =
@@ -1504,6 +1515,7 @@ export function WeworkSharedProject({
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
   const { i18n } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
   const api = props.services.sharedWorkspaceApi
   const locale = useMemo(() => (i18n.language.startsWith('zh') ? 'zh-CN' : 'en'), [i18n.language])
   const collaborationUserName =
@@ -1665,6 +1677,17 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 
   return (
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
+      {cloudLoginOpen && (
+        <CloudConnectionDialog
+          open
+          onlineCloudDeviceCount={0}
+          onClose={() => setCloudLoginOpen(false)}
+          onOpenSettings={() => {
+            setCloudLoginOpen(false)
+            props.onOpenSettings?.({ settingsPage: 'connections' })
+          }}
+        />
+      )}
       <CollaborationPlatformApp
         api={platformApi}
         refreshKey={JSON.stringify([
@@ -1675,6 +1698,10 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          cloudAccess: {
+            authenticated: cloudConnection.isConnected,
+            requestLogin: () => setCloudLoginOpen(true),
+          },
           renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
           location,
           capabilities: {
@@ -1753,7 +1780,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-text-secondary">
                     {locale === 'zh-CN'
-                      ? '当前设备已自动加入本地空间，无需重复创建。安装并启用本机执行环境后，智能体和小队即可在这台设备上运行。'
+                      ? '当前设备已自动加入本地空间，无需重复创建。安装并启用本机执行环境后，智能体和协作小组即可在这台设备上运行。'
                       : 'This device is already part of the local space. Install and enable its execution environments to run Agents and teams locally.'}
                   </p>
                   <div className="mt-5 flex justify-end">
@@ -1822,3 +1849,4 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
 }
 import { WeworkIssueHomeComposer } from './WeworkIssueHomeComposer'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'

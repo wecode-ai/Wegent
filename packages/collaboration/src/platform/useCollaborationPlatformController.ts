@@ -449,6 +449,34 @@ export function useCollaborationPlatformController({
     state,
     commands: {
       reload: load,
+      async archiveProject(project: CollaborationProject) {
+        await api.projects.archive(project.id, project.version);
+        setState((current) => ({
+          ...current,
+          projects: current.projects.filter((item) => item.id !== project.id),
+          navigationProjects: current.navigationProjects.filter(
+            (item) => item.id !== project.id,
+          ),
+          workspace:
+            current.workspace && current.workspace.id === project.workspace_id
+              ? {
+                  ...current.workspace,
+                  project_count: Math.max(
+                    0,
+                    current.workspace.project_count - 1,
+                  ),
+                }
+              : current.workspace,
+          workspaces: current.workspaces.map((workspace) =>
+            workspace.id === project.workspace_id
+              ? {
+                  ...workspace,
+                  project_count: Math.max(0, workspace.project_count - 1),
+                }
+              : workspace,
+          ),
+        }));
+      },
       async createWorkspace(input: { name: string; description?: string }) {
         if (!api.workspaces) throw new Error("Workspace API is unavailable");
         const workspace = await api.workspaces.create(input);

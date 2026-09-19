@@ -24,6 +24,7 @@ import type { CollaborationTranslate } from "../i18n";
 import type {
   CollaborationMember,
   CollaborationProject,
+  CollaborationWorkspace,
   CollaborationIssue,
 } from "../types";
 import { parseComposerMentions } from "../composer/composerMentions";
@@ -38,6 +39,7 @@ const emptyGroups: CollaborationGroup[] = [];
 type PendingFile = Attachment & ComposerAttachment & { id: number; file: File };
 export interface IssueHomeTaskComposerProps {
   projects: CollaborationProject[];
+  workspaces?: CollaborationWorkspace[];
   projectId: string;
   onSelectProject(id: string): void;
   projectLabel: string;
@@ -81,6 +83,7 @@ export function IssueHomeComposer({
   groups = emptyGroups,
   issues = [],
   projects,
+  workspaces,
   projectId,
   onSelectProject,
   translate,
@@ -103,6 +106,7 @@ export function IssueHomeComposer({
   groups?: CollaborationGroup[];
   issues?: CollaborationIssue[];
   projects: CollaborationProject[];
+  workspaces?: CollaborationWorkspace[];
   projectId: string;
   onSelectProject(id: string): void;
   translate: CollaborationTranslate;
@@ -256,6 +260,7 @@ export function IssueHomeComposer({
       <>
         {renderTaskComposer({
           projects,
+          workspaces,
           projectId,
           onSelectProject,
           projectLabel,

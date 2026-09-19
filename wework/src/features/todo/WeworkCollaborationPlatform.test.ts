@@ -202,7 +202,7 @@ function createLocalDetailServices() {
           name: 'Local device',
           device_type: 'local',
           status: 'online',
-          capabilities: ['codex'],
+          capabilities: ['runtime-work', 'device-commands'],
         },
       ]),
     },
@@ -1458,6 +1458,57 @@ describe('Wework collaboration workspace API', () => {
       api?.workspaces?.listCollaborationGroups('wework-local-workspace')
     ).resolves.toEqual([])
     expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
+  })
+
+  it('adds a local space group to a project without duplicating or deleting its source', async () => {
+    const records = [DEFAULT_WORK_ITEM_PROJECT_ID, 'local-project'].map(id => ({
+      id,
+      name: id,
+      project_store: 'local' as const,
+      version: 1,
+      collaboration_groups: [] as unknown[],
+    }))
+    const update = vi.fn(async (id: string, input: Record<string, unknown>) => {
+      const project = records.find(record => record.id === id)!
+      Object.assign(project, input, { version: project.version + 1 })
+      return project
+    })
+    const cloudAdd = vi.fn()
+    const api = createWeworkPlatformApi(
+      {
+        projects: { addCollaborationGroup: cloudAdd },
+        workspaces: {},
+      } as unknown as SharedWorkspaceApi,
+      {
+        listCloudProjects: vi.fn(async () => ({ items: records })),
+        updateCloudProject: update,
+      } as unknown as DeliveryApi,
+      1,
+      'admin',
+      null
+    )!
+    const group = await api.workspaces!.createCollaborationGroup('wework-local-workspace', {
+      name: '111',
+      coordinationMode: 'manager',
+      leader: { kind: 'human', id: '1' },
+      members: [{ kind: 'human', id: '1' }],
+    })
+    update.mockClear()
+    await expect(api.projects.addCollaborationGroup!('local-project', group.id)).resolves.toEqual(
+      group
+    )
+    await api.projects.addCollaborationGroup!('local-project', group.id)
+    expect(update).toHaveBeenCalledTimes(1)
+    await expect(api.projects.listCollaborationGroups!('local-project')).resolves.toEqual([group])
+    await expect(api.projects.addCollaborationGroup!('local-project', 'missing')).rejects.toThrow(
+      'not found'
+    )
+    await api.projects.removeCollaborationGroup!('local-project', group.id)
+    await expect(api.projects.listCollaborationGroups!('local-project')).resolves.toEqual([])
+    await expect(
+      api.workspaces!.listCollaborationGroups('wework-local-workspace')
+    ).resolves.toEqual([group])
+    expect(cloudAdd).not.toHaveBeenCalled()
   })
 
   it('exposes locally persisted Agents through the collaboration resource catalog', async () => {

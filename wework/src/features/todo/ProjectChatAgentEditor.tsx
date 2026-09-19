@@ -36,12 +36,10 @@ export function ProjectChatAgentEditor({
   const [name, setName] = useState('')
   const [capabilityDescription, setCapabilityDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [runtime, setRuntime] = useState<LocalProjectChatAgent['runtime']>('codex')
   const [model, setModel] = useState('')
   const [models, setModels] = useState<Array<{ name: string; displayName?: string }>>([])
   const [plugins, setPlugins] = useState<RuntimeProjectPluginRef[]>([])
   const [selectedPlugins, setSelectedPlugins] = useState<RuntimeProjectPluginRef[]>([])
-  const [executionMode, setExecutionMode] = useState<LocalProjectChatAgent['executionMode']>('auto')
   const [maxConcurrentExecutions, setMaxConcurrentExecutions] = useState(1)
   const [visibility, setVisibility] = useState<LocalProjectChatAgent['visibility']>('creator_admin')
   const [version, setVersion] = useState(1)
@@ -93,10 +91,8 @@ export function ProjectChatAgentEditor({
           setName(agent.name)
           setCapabilityDescription(agent.capabilityDescription)
           setSystemPrompt(agent.systemPrompt)
-          setRuntime(agent.runtime)
           setModel(agent.model ?? '')
           setSelectedPlugins(agent.plugins)
-          setExecutionMode(agent.executionMode)
           setMaxConcurrentExecutions(agent.maxConcurrentExecutions)
           setVisibility(agent.visibility)
           setVersion(agent.version)
@@ -135,14 +131,14 @@ export function ProjectChatAgentEditor({
     try {
       const input = {
         name: name.trim(),
-        runtime,
+        runtime: 'codex' as const,
         model: model || null,
         capabilityDescription: capabilityDescription.trim(),
         systemPrompt,
         visibility,
         executionEnvironment: 'local' as const,
-        executionMode,
-        executionDeviceId: 'local-device',
+        executionMode: 'auto' as const,
+        executionDeviceId: null,
         maxConcurrentExecutions,
         workspacePolicy: 'project' as const,
         plugins: selectedPlugins,
@@ -226,27 +222,14 @@ export function ProjectChatAgentEditor({
             <SectionTitle title={t('workbench.project_chat_agent_runtime_group')} />
             <SettingsGroup>
               <SettingsRow
-                description={t('workbench.project_chat_agent_runtime_provider_relation')}
+                description={t('workbench.project_chat_agent_codex_only')}
                 label={t('workbench.project_chat_agent_runtime_provider')}
               >
-                <MenuSelect
-                  disabled={busy || loadingAgent}
-                  onChange={value => setRuntime(value as LocalProjectChatAgent['runtime'])}
-                  options={[
-                    { value: 'codex', label: 'Codex' },
-                    { value: 'claude_code', label: 'Claude Code' },
-                  ]}
-                  pill
-                  testId="cloud-project-chat-agent-environment"
-                  value={runtime}
-                />
-              </SettingsRow>
-              <SettingsRow
-                description={t('workbench.project_chat_agent_device_relation')}
-                label={t('workbench.project_chat_agent_device')}
-              >
-                <span className="rounded-full bg-surface px-2 py-1 text-sm font-medium">
-                  {t('workbench.project_chat_agent_env_local')}
+                <span
+                  className="rounded-full bg-surface px-2 py-1 text-sm font-medium"
+                  data-testid="cloud-project-chat-agent-environment"
+                >
+                  Codex
                 </span>
               </SettingsRow>
             </SettingsGroup>
@@ -341,24 +324,6 @@ export function ProjectChatAgentEditor({
                   placeholder={t('workbench.project_chat_agent_model_placeholder')}
                   testId="cloud-project-chat-agent-model"
                   value={model}
-                />
-              </SettingsRow>
-              <SettingsRow label={t('workbench.project_chat_agent_mode')}>
-                <MenuSelect
-                  disabled={busy || loadingAgent}
-                  onChange={value =>
-                    setExecutionMode(value as LocalProjectChatAgent['executionMode'])
-                  }
-                  options={[
-                    { value: 'auto', label: t('workbench.project_chat_agent_mode_auto') },
-                    {
-                      value: 'manual_approval',
-                      label: t('workbench.project_chat_agent_mode_manual'),
-                    },
-                  ]}
-                  pill
-                  testId="cloud-project-chat-agent-mode"
-                  value={executionMode}
                 />
               </SettingsRow>
               <SettingsRow

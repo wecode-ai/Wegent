@@ -1952,7 +1952,7 @@ export function TodoEditor(props: TodoEditorProps) {
                   value:
                     `group:${item.assignee_group_id}` as IssueAssigneeTarget,
                   label: item.assignee_group_name || item.assignee_group_id,
-                  group: t("issue_creation.group", "小队"),
+                  group: t("issue_creation.group", "协作小组"),
                 },
               ]
             : []),

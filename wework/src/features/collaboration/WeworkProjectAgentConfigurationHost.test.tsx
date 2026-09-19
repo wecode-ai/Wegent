@@ -433,6 +433,13 @@ describe('weworkProjectAgentConfigurationHost', () => {
 
     await waitFor(() => expect(screen.getByText('Review Tools')).toBeInTheDocument())
     expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
+    const runtime = screen.getByTestId('cloud-project-chat-agent-environment')
+    expect(runtime).toHaveTextContent('Codex')
+    expect(runtime.tagName).toBe('SPAN')
+    expect(screen.queryByText('Claude Code')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
+    expect(screen.queryByText('仅展示当前在线的设备')).not.toBeInTheDocument()
+    expect(screen.queryByText('我的本地')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('cloud-project-chat-agent-name'), {
       target: { value: '本地评审智能体' },
@@ -446,12 +453,51 @@ describe('weworkProjectAgentConfigurationHost', () => {
         expect.objectContaining({
           name: '本地评审智能体',
           runtime: 'codex',
+          executionMode: 'auto',
           executionEnvironment: 'local',
-          executionDeviceId: 'local-device',
+          executionDeviceId: null,
           plugins: [plugin],
         })
       )
     )
     expect(onCreated).toHaveBeenCalledOnce()
+  })
+
+  it('saves an existing manual-approval agent with automatic execution', async () => {
+    const agent = {
+      id: 'manual-agent',
+      name: 'Existing agent',
+      runtime: 'codex',
+      model: null,
+      capabilityDescription: '',
+      systemPrompt: '',
+      plugins: [],
+      executionMode: 'manual_approval',
+      maxConcurrentExecutions: 1,
+      visibility: 'creator_admin',
+      version: 3,
+    }
+    const update = vi.fn(async () => agent)
+    const host = createWeworkProjectAgentConfigurationHost(
+      undefined,
+      { list: vi.fn(async () => [agent]), create: vi.fn(), update, archive: vi.fn() } as never,
+      { listModels: vi.fn(async () => ({ data: [] })) } as never
+    )
+    const onSaved = vi.fn(async () => undefined)
+    render(host.renderLocalAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-name')).toHaveValue(agent.name)
+    )
+    expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
+    expect(screen.queryByText('手动批准')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        DEFAULT_WORK_ITEM_PROJECT_ID,
+        agent.id,
+        expect.objectContaining({ version: 3, executionMode: 'auto' })
+      )
+    )
+    expect(onSaved).toHaveBeenCalledOnce()
   })
 })

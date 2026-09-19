@@ -157,4 +157,81 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .unwrap()
         .iter()
         .any(|item| item["id"] == first["id"]));
+
+    // Reproduce a directory imported before it became part of a named project.
+    let state_path = codex_home.path().join(".codex-global-state.json");
+    std::fs::write(
+        &state_path,
+        json!({
+            "electron-saved-workspace-roots": ["/work/repo"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let before = server.dispatch("projects.list", json!({})).await.unwrap();
+    let alias = before
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["metadata"]["code_project_key"] == "/work/repo")
+        .unwrap();
+    let alias_id = alias["id"].clone();
+    let alias_issue = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": alias_id, "todo": {"title":"Keep existing issue"}
+            }),
+        )
+        .await
+        .unwrap();
+    std::fs::write(
+        &state_path,
+        json!({
+            "electron-saved-workspace-roots": ["/work/repo"],
+            "project-order": ["multi-root", "old-name", "/work/repo"],
+            "local-projects": {
+                "multi-root": {"name":"Main project"},
+                "old-name": {"name":"Old project"}
+            },
+            "project-writable-roots": {
+                "multi-root": [{"path":"/work/repo"}, {"path":"/work/video"}],
+                "old-name": [{"path":"/work/repo/"}]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let catalog = server.dispatch("projects.list", json!({})).await.unwrap();
+    assert!(!catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|project| project["id"] == alias_id
+            || project["metadata"]["code_project_key"] == "old-name"));
+    let main = catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["metadata"]["code_project_key"] == "multi-root")
+        .unwrap();
+    assert_eq!(
+        main["metadata"]["workspace_roots"],
+        json!(["/work/repo", "/work/video"])
+    );
+    let preserved = server
+        .dispatch(
+            "todos.get",
+            json!({
+                "project_id": alias_id, "task_id": alias_issue["id"]
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preserved["title"], "Keep existing issue");
+    assert!(catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|project| project["id"] == existing["id"]));
 }
