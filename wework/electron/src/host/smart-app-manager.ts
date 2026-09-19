@@ -5,6 +5,7 @@ import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from
 import { createServer } from 'node:net'
 import { dirname, join, resolve, sep } from 'node:path'
 import type { WorkbenchRuntimeLaunch } from '../runtime/workbench-runtime.js'
+import { cloudFetch } from './cloud-http.js'
 import {
   materializeManifestPackages,
   prepareWorkbenchDshLaunch,
@@ -313,7 +314,7 @@ export class SmartAppManager {
       directory,
       `market-${input.smartAppId}-${input.releaseId}-${input.sha256}.zip`
     )
-    const response = await fetch(url)
+    const response = await cloudFetch(url)
     if (!response.ok || !response.body) {
       throw new Error(`Smart app download failed with HTTP ${response.status}`)
     }
@@ -560,10 +561,13 @@ export class SmartAppManager {
     const url = new URL(uploadUrl)
     if (!isSecureTransferUrl(url)) throw new Error('Smart app upload must use HTTPS')
     const bytes = await readFile(resolve(archivePath))
-    const response = await fetch(url, {
+    const response = await cloudFetch(url, {
       method: 'PUT',
       headers: { 'content-type': 'application/zip' },
       body: bytes,
+      // The link is scoped to one submission, and a 307 or 308 would resend the archive to another
+      // host, so refuse redirects instead of following them.
+      redirect: 'error',
     })
     if (!response.ok) throw new Error(`Smart app upload failed with HTTP ${response.status}`)
   }

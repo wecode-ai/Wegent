@@ -10,8 +10,13 @@ import {
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
   readWeworkSyncResponse,
+  requestWeworkSync,
   WEWORK_SYNC_REQUEST_TIMEOUT_MS,
 } from './wework-sync-request.js'
+
+const electronMocks = vi.hoisted(() => ({ netFetch: vi.fn<typeof fetch>() }))
+
+vi.mock('electron', () => ({ net: { fetch: electronMocks.netFetch } }))
 
 describe('Wework sync request normalization', () => {
   test('preserves allowed transcript and plugin-storage query parameters', () => {
@@ -140,5 +145,29 @@ describe('Wework sync request normalization', () => {
     await expect(readWeworkSyncResponse(new Response('oversized'), path, 4)).rejects.toThrow(
       'exceeds its declared size'
     )
+  })
+
+  test('sends synchronization requests through the Chromium network stack', async () => {
+    electronMocks.netFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ turns: [] }), { status: 200 })
+    )
+
+    const response = await requestWeworkSync(
+      {
+        apiBaseUrl: 'https://cloud.example.com/api',
+        path: '/wework-transcripts/task-1/archives/4/turns?after=0',
+        method: 'GET',
+      },
+      'Bearer token'
+    )
+
+    expect(response).toEqual({ status: 200, body: { turns: [] } })
+    const [url, init] = electronMocks.netFetch.mock.calls[0]
+    expect(url).toBe(
+      'https://cloud.example.com/api/wework-transcripts/task-1/archives/4/turns?after=0'
+    )
+    expect(init?.method).toBe('GET')
+    expect(init?.headers).toEqual({ authorization: 'Bearer token' })
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
   })
 })

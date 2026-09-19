@@ -388,7 +388,12 @@ export function createDesktopScenario({
         }
         if (body.sequence === 1 && !firstCommitResponseDropped) {
           firstCommitResponseDropped = true
+          // The commit is durable, but its object is lost and the client must never observe the
+          // response. A Chromium network stack replays a request that dies before any response byte
+          // arrives, so flush the response head and then drop the connection with the body missing.
           objects.delete(objectId)
+          response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          response.flushHeaders()
           response.destroy()
           return true
         }
