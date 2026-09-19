@@ -6,15 +6,17 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.adapter import task_runtime, tasks
 from app.core import security
 from app.models.task import TaskResource
+from app.stores.tasks.interfaces import TaskRuntimeState
 
 
 @pytest.fixture
-def runtime_app(test_db):
+def runtime_app(test_db: Session) -> FastAPI:
     test_db.add(
         TaskResource(
             id=42,
@@ -52,8 +54,11 @@ def runtime_app(test_db):
     ],
 )
 async def test_runtime_api_preserves_checkpoint_and_runs_db_off_loop(
-    runtime_app, monkeypatch, stream, expected
-):
+    runtime_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: dict[str, str | None] | None,
+    expected: dict[str, str | int] | None,
+) -> None:
     storage = SimpleNamespace(
         get_task_streaming_status=AsyncMock(return_value=stream),
         get_streaming_content=AsyncMock(return_value="你🙂a"),
@@ -62,9 +67,11 @@ async def test_runtime_api_preserves_checkpoint_and_runs_db_off_loop(
     original = task_runtime.task_access_store.get_runtime_state
     worker_threads = []
 
-    def observe_thread(*args, **kwargs):
+    def observe_thread(
+        db: Session, *, task_id: int, user_id: int
+    ) -> TaskRuntimeState | None:
         worker_threads.append(threading.get_ident())
-        return original(*args, **kwargs)
+        return original(db, task_id=task_id, user_id=user_id)
 
     monkeypatch.setattr(
         task_runtime.task_access_store, "get_runtime_state", observe_thread
@@ -93,8 +100,11 @@ async def test_runtime_api_preserves_checkpoint_and_runs_db_off_loop(
 
 @pytest.mark.parametrize("task_id,user_id", [(42, 20), (999, 10)])
 async def test_runtime_api_denies_access_before_reading_stream(
-    runtime_app, monkeypatch, task_id, user_id
-):
+    runtime_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    task_id: int,
+    user_id: int,
+) -> None:
     runtime_app.dependency_overrides[security.get_current_user] = (
         lambda: SimpleNamespace(id=user_id)
     )

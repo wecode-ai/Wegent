@@ -420,7 +420,12 @@ def _build_codex_runtime_model_config(
                         if base_url:
                             resolved_config["responses_url"] = f"{base_url}/v1/messages"
         except Exception:
-            pass
+            logger.warning(
+                "[build_execution_request] Failed while resolving or assembling "
+                "Codex runtime model config for %s; continuing with fallback handling",
+                model_name,
+                exc_info=True,
+            )
 
     if resolved_config is None:
         resolved_config = {

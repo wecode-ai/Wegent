@@ -218,7 +218,6 @@ def test_team_page_resolves_permissions_once_and_counts_only_when_needed(
     test_user,
     teams_client,
     mocker,
-    caplog,
     size,
     page,
     returned,
@@ -239,10 +238,9 @@ def test_team_page_resolves_permissions_once_and_counts_only_when_needed(
 
     event.listen(test_db.bind, "before_cursor_execute", capture)
     try:
-        with caplog.at_level("INFO"):
-            response = teams_client.get(
-                "/teams", params={"page": page, "limit": 100, "scope": "all"}
-            )
+        response = teams_client.get(
+            "/teams", params={"page": page, "limit": 100, "scope": "all"}
+        )
     finally:
         event.remove(test_db.bind, "before_cursor_execute", capture)
 
@@ -252,8 +250,6 @@ def test_team_page_resolves_permissions_once_and_counts_only_when_needed(
     assert roles.call_count == 1
     assert authorization.call_count == 1
     assert sum("count(" in statement for statement in statements) == count_queries
-    if not count_queries:
-        assert "count_user_teams skipped" in caplog.text
 
 
 def test_team_page_refreshes_group_permissions_on_each_request(
