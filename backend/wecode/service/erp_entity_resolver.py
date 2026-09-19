@@ -10,7 +10,6 @@ org_department entity type by checking ERP department membership.
 """
 
 import logging
-import time
 from typing import Optional
 
 import orjson
@@ -22,7 +21,7 @@ from app.models.user import User
 from app.services.external_entity_resolver import IExternalEntityResolver
 from wecode.cache.base import NULL_MARKER, get_redis_client
 from wecode.models.erp_user import WecodeErpUser
-from wecode.service.erp_client import erp_client
+from wecode.service.erp_client import EmployeeSearchOutcome, erp_client
 from wecode.service.erp_user_service import ErpUserService
 
 logger = logging.getLogger(__name__)
@@ -300,7 +299,7 @@ class ErpEntityResolver(IExternalEntityResolver):
             return None
 
         # Resolve user email BEFORE acquiring the lock so we don't hold the
-        # caller's db connection across network I/O / sleeps.
+        # caller's db connection across network I/O.
         user = db.query(User).filter(User.id == user_id).first()
         user_email = user.email if user else None
         if not user_email:
@@ -312,39 +311,49 @@ class ErpEntityResolver(IExternalEntityResolver):
         lock_name = f"erp_profile_sync:{user_id}"
         with distributed_lock.acquire_context(lock_name, expire_seconds=30) as acquired:
             if not acquired:
-                # Another worker is syncing; back off and retry the read a
-                # few times before giving up.
-                for delay in (0.5, 1.0, 2.0):
-                    time.sleep(delay)
-                    existing = self._read_profile_employee_id(db, user_id)
-                    if existing:
-                        return existing
-                return None
-
-            # Double-check after acquiring the lock in case another worker
-            # finished syncing between our first read and lock acquisition.
-            existing = self._read_profile_employee_id(db, user_id)
-            if existing:
-                return existing
-
-            try:
-                erp_employee = erp_client.search_employee(user_email)
-            except Exception as e:
-                logger.warning(
-                    f"Failed to lazy-sync ERP profile for user_id={user_id}: {e}"
+                logger.info(
+                    "ERP profile sync skipped: user_id=%s outcome=lock_busy",
+                    user_id,
                 )
                 return None
 
-            if not (erp_employee and erp_employee.ssn):
+            try:
+                search_result = erp_client.search_employee_result(user_email)
+            except Exception as e:
+                logger.warning(
+                    "ERP profile sync failed: user_id=%s outcome=request_failed "
+                    "error_type=%s",
+                    user_id,
+                    type(e).__name__,
+                )
+                return None
+
+            if search_result.outcome is EmployeeSearchOutcome.REQUEST_FAILED:
+                logger.warning(
+                    "ERP profile sync failed: user_id=%s outcome=request_failed",
+                    user_id,
+                )
+                return None
+
+            erp_employee = search_result.employee
+            if search_result.outcome is EmployeeSearchOutcome.NOT_FOUND:
                 cached = self._cache_set(
                     no_profile_key,
                     NULL_MARKER,
                     ttl=self._NO_PROFILE_CACHE_TTL,
                 )
                 logger.info(
-                    f"No ERP employee found for user_id={user_id} "
-                    f"with email={user_email}, "
-                    f"no-profile cache written={cached}"
+                    "ERP profile sync completed: user_id=%s outcome=not_found "
+                    "no_profile_cache_written=%s",
+                    user_id,
+                    cached,
+                )
+                return None
+
+            if not (erp_employee and erp_employee.ssn):
+                logger.warning(
+                    "ERP profile sync failed: user_id=%s outcome=invalid_response",
+                    user_id,
                 )
                 return None
 

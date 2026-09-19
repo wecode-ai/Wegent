@@ -18,7 +18,7 @@ class ErpConfig(BaseSettings):
     ERP_OPENSEARCH_BASE_URL: str = ""
     ERP_CLIENT_ID: str = ""
     ERP_CLIENT_secret: str = ""
-    ERP_API_TIMEOUT: int = 30
+    ERP_API_TIMEOUT: float = 1.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -9,6 +9,10 @@ import orjson
 import pytest
 
 from wecode.cache.base import NULL_MARKER
+from wecode.service.erp_client import (
+    EmployeeSearchOutcome,
+    EmployeeSearchResult,
+)
 from wecode.service.erp_entity_resolver import ErpEntityResolver
 
 
@@ -177,8 +181,10 @@ class TestErpEntityResolver:
                 return_value=lock,
             ),
             patch(
-                "wecode.service.erp_entity_resolver.erp_client.search_employee",
-                return_value=erp_employee,
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(
+                    EmployeeSearchOutcome.FOUND, erp_employee
+                ),
             ) as mock_search,
             patch("app.db.session.SessionLocal", return_value=independent_db),
             patch(
@@ -198,6 +204,98 @@ class TestErpEntityResolver:
             email="user@example.com",
         )
         independent_db.close.assert_called_once()
+
+    def test_lock_busy_returns_without_sleep_or_erp_request(self, caplog):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        user = SimpleNamespace(email="user@example.com")
+        db.query.return_value.filter.return_value.first.return_value = user
+        lock = MagicMock()
+        lock.__enter__.return_value = False
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result"
+            ) as search,
+            caplog.at_level("INFO", logger="wecode.service.erp_entity_resolver"),
+        ):
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        search.assert_not_called()
+        assert "outcome=lock_busy" in caplog.text
+
+    def test_not_found_is_negatively_cached(self, resolver_with_mem_redis):
+        db = MagicMock()
+        user = SimpleNamespace(email="missing@example.com")
+        db.query.return_value.filter.return_value.first.return_value = user
+        lock = MagicMock()
+        lock.__enter__.return_value = True
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(
+                resolver_with_mem_redis,
+                "_read_profile_employee_id",
+                return_value=None,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND),
+            ) as search,
+        ):
+            assert resolver_with_mem_redis.resolve_employee_id(db, 7) is None
+            assert resolver_with_mem_redis.resolve_employee_id(db, 7) is None
+
+        search.assert_called_once_with("missing@example.com")
+        assert (
+            resolver_with_mem_redis._cache_get(
+                resolver_with_mem_redis._no_profile_cache_key(7)
+            )
+            == NULL_MARKER
+        )
+
+    def test_request_failure_is_not_negatively_cached(self, resolver_with_mem_redis):
+        db = MagicMock()
+        user = SimpleNamespace(email="user@example.com")
+        db.query.return_value.filter.return_value.first.return_value = user
+        lock = MagicMock()
+        lock.__enter__.return_value = True
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(
+                resolver_with_mem_redis,
+                "_read_profile_employee_id",
+                return_value=None,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.REQUEST_FAILED),
+            ),
+        ):
+            assert resolver_with_mem_redis.resolve_employee_id(db, 8) is None
+
+        assert (
+            resolver_with_mem_redis._cache_get(
+                resolver_with_mem_redis._no_profile_cache_key(8)
+            )
+            is None
+        )
 
     def test_resolve_employee_id_for_user_manages_session(self):
         resolver = ErpEntityResolver()
@@ -275,8 +373,8 @@ class TestNoProfileNegativeCache:
                 return_value=_acquired_lock(),
             ),
             patch(
-                "wecode.service.erp_entity_resolver.erp_client.search_employee",
-                return_value=None,
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND),
             ) as mock_search,
         ):
             resolver = ErpEntityResolver()
@@ -304,7 +402,7 @@ class TestNoProfileNegativeCache:
         db.query.side_effect = [profile_query]
 
         with patch(
-            "wecode.service.erp_entity_resolver.erp_client.search_employee"
+            "wecode.service.erp_entity_resolver.erp_client.search_employee_result"
         ) as mock_search:
             result = resolver.resolve_employee_id(db, 1)
 
@@ -329,7 +427,7 @@ class TestNoProfileNegativeCache:
         db.query.side_effect = [profile_query]
 
         with patch(
-            "wecode.service.erp_entity_resolver.erp_client.search_employee"
+            "wecode.service.erp_entity_resolver.erp_client.search_employee_result"
         ) as mock_search:
             result = resolver.resolve_employee_id(db, 1)
 
@@ -347,7 +445,7 @@ class TestNoProfileNegativeCache:
                 return_value=_acquired_lock(),
             ),
             patch(
-                "wecode.service.erp_entity_resolver.erp_client.search_employee",
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
                 side_effect=RuntimeError("directory unavailable"),
             ),
         ):
