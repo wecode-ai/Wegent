@@ -165,10 +165,11 @@ class ExternalDocumentImportService:
 
         db.refresh(document)
         document.is_active = False
-        # Invalidate until the fetched body lands with its corresponding timestamp.
-        document.update_external_source_config(
-            **(external_meta or {}), source_update_time=None
-        )
+        # Invalidate until the fetched body lands with its corresponding
+        # timestamp. Overwrite the key first: the saved baseline may carry it.
+        refreshed_metadata = dict(external_meta or {})
+        refreshed_metadata["source_update_time"] = None
+        document.update_external_source_config(**refreshed_metadata)
         db.commit()
         db.refresh(document)
         self._dispatch_import_task(db, document)
@@ -181,6 +182,24 @@ class ExternalDocumentImportService:
             document.attachment_id,
         )
         return ExternalDocumentRefreshResult(document, started=True)
+
+    def request_source_refresh(
+        self, db: Session, user: User, document_id: int
+    ) -> KnowledgeDocument:
+        """Force an imported external document to fetch its source again."""
+        document = self._load_manageable_external_document(
+            db, user, document_id, action="synchronized"
+        )
+        # Any imported external document can re-fetch its source: DingTalk
+        # copies follow the same refresh path as the scheduled copy update.
+        refresh = self.refresh_existing_document(
+            db, document, document.external_source_config
+        )
+        if not refresh.started:
+            raise ExternalDocumentImportError(
+                "This document is still being processed; retry later", status_code=409
+            )
+        return refresh.document
 
     def import_documents(
         self,
@@ -258,34 +277,9 @@ class ExternalDocumentImportService:
         Raises:
             ExternalDocumentImportError: With the HTTP status to surface.
         """
-        document = (
-            db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id == document_id)
-            .first()
+        document = self._load_manageable_external_document(
+            db, user, document_id, action="retried"
         )
-        if document is None:
-            raise ExternalDocumentImportError("Document not found", status_code=404)
-
-        kb, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
-            knowledge_base_id=document.kind_id,
-            user_id=user.id,
-        )
-        if not kb or not has_access:
-            raise ExternalDocumentImportError("Document not found", status_code=404)
-        if not KnowledgeService.can_manage_knowledge_base_documents(
-            db, document.kind_id, user.id
-        ):
-            raise ExternalDocumentImportError(
-                "You do not have permission to manage documents in this "
-                "knowledge base",
-                status_code=403,
-            )
-
-        if not document.has_external_identity:
-            raise ExternalDocumentImportError(
-                "Only imported external documents can be retried"
-            )
 
         decision = prepare_document_index_enqueue(db=db, document_id=document.id)
         if not decision.should_enqueue:
@@ -309,6 +303,44 @@ class ExternalDocumentImportService:
             document.id,
             decision.generation,
         )
+        return document
+
+    def _load_manageable_external_document(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        *,
+        action: str,
+    ) -> KnowledgeDocument:
+        """Load a copy the user may act on, or raise the status to surface.
+
+        The manual retry and the manual source sync are the same per-document
+        write on the same kind of copy, so both resolve the document and its
+        permissions here; ``action`` only names the operation in the message.
+        """
+        document = db.get(KnowledgeDocument, document_id)
+        if document is None:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=user.id,
+        )
+        if not kb or not has_access:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, document.kind_id, user.id
+        ):
+            raise ExternalDocumentImportError(
+                "You do not have permission to manage documents in this "
+                "knowledge base",
+                status_code=403,
+            )
+        if not document.has_external_identity:
+            raise ExternalDocumentImportError(
+                f"Only imported external documents can be {action}"
+            )
         return document
 
     def _resolve_batch_items(
@@ -577,7 +609,9 @@ def run_external_document_import(
             generation,
         )
     except ExternalSourceUnavailableError as exc:
-        _mark_external_source_unavailable(db, document_id, provider_id, generation)
+        _mark_external_source_unavailable(
+            db, document_id, provider_id, generation, error=exc
+        )
         logger.warning(
             "[External Import] Source of document %s is no longer accessible: %s",
             document_id,
@@ -599,23 +633,32 @@ def _mark_external_source_unavailable(
     document_id: int,
     provider_id: str,
     generation: int,
+    *,
+    error: ExternalSourceUnavailableError,
 ) -> None:
     """Mark the source inaccessible and record the initial import failure.
 
     The placeholder is kept for an explicit retry. The source is only marked
     when this attempt's failure actually landed; a stale generation must not
-    overwrite the outcome of a newer attempt.
+    overwrite the outcome of a newer attempt. The provider's own message
+    (with its logId) is what the user sees, per DingTalk's troubleshooting
+    guidance.
     """
+    message = str(error).strip()
     mark_document_index_failed(
         db=db,
         document_id=document_id,
         generation=generation,
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
-            code="external_source_unavailable",
+            code=error.error_code,
             message=(
-                "The external source is no longer accessible. Restore access "
-                "and retry the import."
+                message[:1000]
+                if message
+                else (
+                    "The external source is no longer accessible. Restore "
+                    "access and retry the import."
+                )
             ),
             retryable=True,
             generation=generation,

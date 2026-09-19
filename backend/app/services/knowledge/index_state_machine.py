@@ -568,9 +568,11 @@ def mark_document_index_failed(
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
     document.index_status = DocumentIndexStatus.FAILED
     document.updated_at = _utcnow()
-    if (
-        document.has_external_identity
-        and persisted_error.code == "external_source_unavailable"
+    # Every "the source is gone" code marks the copy, not only the legacy
+    # spelling: the provider mints more than one, and matching a single
+    # hard-coded code silently drops the source state.
+    if document.has_external_identity and persisted_error.code.startswith(
+        "external_source_"
     ):
         document.update_external_source_config(
             status="inaccessible", last_error=persisted_error.message

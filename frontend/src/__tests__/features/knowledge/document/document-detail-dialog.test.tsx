@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import type { DocumentSummary, KnowledgeDocument } from '@/types/knowledge'
@@ -11,6 +11,9 @@ import { toast } from 'sonner'
 
 const mockRouterPush = jest.fn()
 const mockDownloadDocument = jest.fn()
+const mockRefreshDetail = jest.fn()
+const mockSynchronizeExternalDocument = jest.fn()
+const mockToast = jest.fn()
 let mockDocumentSummary: DocumentSummary | null = null
 const mockDialogContent = jest.fn(
   ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
@@ -57,6 +60,11 @@ jest.mock('@/apis/knowledge', () => ({
     chunk_storage_enabled: false,
   }),
   listKnowledgeBases: (...args: unknown[]) => mockListKnowledgeBases(...args),
+  synchronizeExternalDocument: (...args: unknown[]) => mockSynchronizeExternalDocument(...args),
+}))
+
+jest.mock('@/hooks/use-toast', () => ({
+  toast: (...args: unknown[]) => mockToast(...args),
 }))
 
 jest.mock('@/apis/knowledge-base', () => ({
@@ -85,7 +93,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
     hasMoreContent: false,
     loadMore: jest.fn(),
     loadAllContent: jest.fn(),
-    refresh: jest.fn(),
+    refresh: mockRefreshDetail,
   }),
 }))
 
@@ -148,6 +156,9 @@ beforeEach(() => {
   mockRouterPush.mockClear()
   mockDialogContent.mockClear()
   mockDownloadDocument.mockReset()
+  mockRefreshDetail.mockReset()
+  mockSynchronizeExternalDocument.mockReset()
+  mockToast.mockReset()
   mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
 })
@@ -321,6 +332,32 @@ describe('DocumentDetailDialog external source info', () => {
     )
 
     expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
+  })
+
+  it('reports a failed source check as a synchronization failure', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: {
+            external: {
+              ...externalMeta,
+              status: 'sync_error',
+              last_error: 'DingTalk metadata read timed out',
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    // The preview shares the source-state mapping with the list and the tree.
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent(
+      'document.document.sourceSyncFailed'
+    )
   })
 
   it('hides the source info for regular documents', () => {
@@ -722,5 +759,156 @@ describe('DocumentDetailDialog wiki-link routing', () => {
 
     // router.push should NOT have been called since no link was clicked
     expect(mockRouterPush).not.toHaveBeenCalled()
+  })
+})
+
+function createDingtalkCopy(overrides?: Partial<KnowledgeDocument>): KnowledgeDocument {
+  return {
+    ...baseDocument,
+    id: 41,
+    name: '钉钉文档',
+    attachment_id: 410,
+    source_type: 'external',
+    source_config: {
+      external: {
+        provider: 'dingtalk',
+        resource_id: 'node-41',
+        title: '钉钉文档',
+        url: 'https://alidocs.dingtalk.com/i/nodes/node-41',
+        status: 'accessible',
+        last_success_at: '2026-09-04T00:00:00Z',
+      },
+    },
+    ...overrides,
+  }
+}
+
+const syncedWikiDocument: KnowledgeDocument = {
+  ...baseDocument,
+  id: 26,
+  attachment_id: 260,
+  source_type: 'external',
+  source_config: {
+    external: {
+      provider: 'wiki',
+      title: 'Synchronized Wiki',
+      sync: { enabled: true },
+    },
+  },
+}
+
+describe('DocumentDetailDialog manual source sync', () => {
+  it('offers no manual sync for documents that are not DingTalk copies', () => {
+    const { rerender } = render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('document-detail-sync-dingtalk-11')).not.toBeInTheDocument()
+
+    rerender(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={syncedWikiDocument}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+    expect(screen.queryByTestId('document-detail-sync-dingtalk-26')).not.toBeInTheDocument()
+  })
+
+  it('syncs the DingTalk copy and refreshes the preview and the owning list', async () => {
+    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    const onDocumentSynced = jest.fn()
+
+    render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={createDingtalkCopy()}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={onDocumentSynced}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('document-detail-sync-dingtalk-41'))
+
+    await waitFor(() => expect(mockSynchronizeExternalDocument).toHaveBeenCalledWith(41))
+    await waitFor(() => expect(mockRefreshDetail).toHaveBeenCalled())
+    expect(onDocumentSynced).toHaveBeenCalled()
+  })
+
+  it('disables the entry and reports progress while the sync request runs', async () => {
+    let resolveSync: () => void = () => {}
+    mockSynchronizeExternalDocument.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSync = resolve
+        })
+    )
+
+    render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={createDingtalkCopy()}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('document-detail-sync-dingtalk-41'))
+
+    const syncButton = screen.getByTestId('document-detail-sync-dingtalk-41')
+    await waitFor(() => expect(syncButton).toBeDisabled())
+    expect(syncButton).toHaveAttribute('aria-label', 'document.document.syncing')
+    expect(mockSynchronizeExternalDocument).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(syncButton)
+    expect(mockSynchronizeExternalDocument).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveSync()
+    })
+    await waitFor(() => expect(syncButton).not.toBeDisabled())
+  })
+
+  it('keeps the failure reason and leaves the list untouched when the sync fails', async () => {
+    mockSynchronizeExternalDocument.mockRejectedValue(new Error('无法连接钉钉'))
+    const onDocumentSynced = jest.fn()
+
+    render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={createDingtalkCopy()}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={onDocumentSynced}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('document-detail-sync-dingtalk-41'))
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        description: '无法连接钉钉',
+      })
+    )
+    expect(onDocumentSynced).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.getByTestId('document-detail-sync-dingtalk-41')).not.toBeDisabled()
+    )
   })
 })

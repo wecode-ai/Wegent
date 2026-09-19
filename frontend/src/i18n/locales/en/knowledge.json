@@ -340,7 +340,9 @@
           "indexLockTimeout": "The document indexing task waited too long. Please retry.",
           "indexDispatchFailed": "The document indexing task could not be submitted. Please retry later.",
           "processingFailed": "Document processing failed. Please retry.",
-          "externalImportFailed": "The external document could not be imported. Please retry later."
+          "externalImportFailed": "The external document could not be imported. Please retry later.",
+          "externalSourceMissing": "The source document was deleted, so it cannot be synced.",
+          "externalSourceUnavailable": "The source document is not accessible, so it cannot be synced."
         },
         "model": "Model"
       },
@@ -352,6 +354,11 @@
       "reindexFailed": "Failed to start reindex",
       "retryImportSuccess": "Import retry started",
       "retryImportFailed": "Failed to start import retry",
+      "syncNow": "Sync now",
+      "syncRetry": "Retry sync",
+      "syncing": "Syncing",
+      "syncSuccess": "Synchronization started",
+      "syncFailed": "Failed to start synchronization",
       "excelFileSizeExceeded": "File size exceeds the limit: Excel files ({{extension}}) must be {{limit}}MB or smaller for indexing. Current file size: {{size}}MB. Please reduce the file size or split into smaller files.",
       "openLink": "Open Link",
       "download": "Download",
@@ -372,6 +379,8 @@
       },
       "sourceInaccessible": "Source unavailable",
       "sourceInaccessibleHint": "The external source was deleted or access was revoked; restore access, then retry the import",
+      "sourceSyncFailed": "Synchronization failed",
+      "sourceSyncFailedHint": "The latest synchronization failed; existing local content remains available and will be retried",
       "externalSource": {
         "lastImportedAt": "Last imported {{time}}",
         "accessible": "Source available"

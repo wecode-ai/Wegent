@@ -71,6 +71,7 @@ class ProviderContractSuite:
         monkeypatch: pytest.MonkeyPatch,
         provider,
         markdown: str,
+        title: str = "",
     ) -> None:
         """Make fetch_content return this body without external calls."""
         raise NotImplementedError
@@ -289,6 +290,35 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         assert content.metadata["source_update_time"] == 1789562644000
 
     @pytest.mark.asyncio
+    async def test_fetch_prefers_the_live_source_title(
+        self, test_db, test_user, monkeypatch
+    ):
+        """A rename in DingTalk reaches the copy without a directory refresh."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "renamed-copy", "重命名前的名字")
+        self.mock_fetch_body(monkeypatch, provider, "body", title="重命名后的名字")
+
+        content = await provider.fetch_content(test_db, test_user, "renamed-copy")
+
+        assert content.name == "重命名后的名字"
+        assert content.metadata["title"] == "重命名后的名字"
+
+    @pytest.mark.asyncio
+    async def test_fetch_keeps_the_cached_title_when_the_source_has_none(
+        self, test_db, test_user, monkeypatch
+    ):
+        """A source without a usable title never blanks the copy's name."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "untitled-copy", "缓存的旧名字")
+        self.mock_fetch_body(monkeypatch, provider, "body")
+
+        content = await provider.fetch_content(test_db, test_user, "untitled-copy")
+
+        assert content.name == "缓存的旧名字"
+
+    @pytest.mark.asyncio
     async def test_fetch_requires_a_node_in_the_user_directory(
         self, test_db, test_user, monkeypatch
     ):
@@ -298,6 +328,236 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
         with pytest.raises(ExternalSourceUnavailableError):
             await provider.fetch_content(test_db, test_user, "not-in-cache")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "envelope",
+        [
+            # Real capture (2026-09-18): a deleted document, recycled upstream.
+            {
+                "success": False,
+                "errorCode": "invalidParameter.item.notFound",
+                "errorMsg": "workspace node has been recycled",
+                "logId": "2135ce2f17897129652262261e04fa",
+            },
+            # Real capture: a well-formed dentryUuid that never existed.
+            {
+                "success": False,
+                "errorCode": "invalidRequest.resource.notFound",
+                "errorMsg": "Data not found",
+                "logId": "2135ce2f17897129141858836e057e",
+            },
+        ],
+    )
+    async def test_node_metadata_naming_a_gone_source_signals_unavailable(
+        self, test_user, monkeypatch, envelope
+    ):
+        """A positively gone node keeps its reason distinct from a fetch failure."""
+        self.configure_user(monkeypatch, test_user)
+        self.answer_document_info(monkeypatch, envelope)
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await self.make_provider().get_update_time(test_user, "probe-node")
+
+        assert excinfo.value.error_code == "external_source_missing"
+        # The user-facing record keeps the provider's own message and logId:
+        # DingTalk support asks for the logId when troubleshooting.
+        assert envelope["errorMsg"] in str(excinfo.value)
+        assert envelope["logId"] in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "result",
+        [
+            # Real capture: a malformed nodeId is an input problem, not a
+            # gone source.
+            {
+                "success": False,
+                "errorCode": "invalidRequest.inputArgs.invalid",
+                "errorMsg": (
+                    "nodeId 格式不合法，非 URL 格式时 nodeId 须为 dentryUuid：32 位"
+                    "字母数字字符串。收到：nonexistent-node-12345（22 个字符）。"
+                ),
+                "logId": "2135ce2f17897129143658854e057e",
+            },
+            # Real capture (read path): the message names both not-exist and
+            # no-access under an input-args code. Without a captured revoked
+            # permission sample no permission classification is made.
+            {
+                "success": False,
+                "errorCode": "invalidRequest.inputArgs.invalid",
+                "errorMsg": (
+                    "指定的节点不存在或无权访问，请确认节点 ID 正确且您有权访问"
+                    "该节点。dentryUuid: 00000000000000000000000000000000"
+                ),
+                "logId": "2127f60017897129501712230e04ea",
+            },
+            # Unknown code: only captured codes may mark a source gone.
+            {"success": False, "errorCode": "server.internal.error"},
+            # No structured code at all.
+            {"success": False, "message": "rate limited, please retry"},
+            {"success": False},
+            SimpleNamespace(
+                isError=True,
+                content=[SimpleNamespace(type="text", text="internal server error")],
+            ),
+        ],
+    )
+    async def test_metadata_failure_without_source_evidence_stays_transient(
+        self, test_user, monkeypatch, result
+    ):
+        """Only captured error codes may turn a probe failure into a gone source."""
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        self.configure_user(monkeypatch, test_user)
+        self.answer_document_info(monkeypatch, result)
+
+        with pytest.raises(ExternalDocumentFetchError) as excinfo:
+            await self.make_provider().get_update_time(test_user, "probe-node")
+
+        assert not isinstance(excinfo.value, ExternalSourceUnavailableError)
+        # A structured envelope failure keeps its provider detail for the
+        # user-facing record instead of collapsing to a generic wrapper.
+        if isinstance(result, dict) and result.get("errorCode"):
+            assert result["errorCode"] in str(excinfo.value)
+            if result.get("errorMsg"):
+                assert result["errorMsg"] in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_fetch_turns_a_deleted_node_into_a_missing_source(
+        self, test_db, test_user, monkeypatch
+    ):
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "deleted-copy", "Deleted Doc")
+        # Real capture: the node was deleted upstream and recycled.
+        self.answer_document_info(
+            monkeypatch,
+            {
+                "success": False,
+                "errorCode": "invalidParameter.item.notFound",
+                "errorMsg": "workspace node has been recycled",
+                "logId": "2135ce2f17897129652262261e04fa",
+            },
+        )
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await provider.fetch_content(test_db, test_user, "deleted-copy")
+
+        assert excinfo.value.error_code == "external_source_missing"
+        assert "workspace node has been recycled" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_fetch_reports_the_class_of_an_unexpected_read_failure(
+        self, test_db, test_user, monkeypatch, caplog
+    ):
+        """An unexpected failure stays visible instead of reading as a hiccup."""
+        from app.services.knowledge.external_document_providers import (
+            ExternalDocumentFetchError,
+        )
+
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "broken-read", "Broken Doc")
+
+        async def broken_read(mcp_url, node_id, user):
+            # The MCP session wraps in-session failures in a task group.
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [ValueError("unexpected read failure")],
+            )
+
+        monkeypatch.setattr(provider, "_fetch_document_content", broken_read)
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(ExternalDocumentFetchError) as excinfo:
+                await provider.fetch_content(test_db, test_user, "broken-read")
+
+        # The class is how a deleted source is told apart from a broken session.
+        assert "ValueError" in str(excinfo.value)
+        assert "leaves=ValueError" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_fetch_unwraps_a_task_group_hiding_a_gone_source(
+        self, test_db, test_user, monkeypatch
+    ):
+        """The session teardown wrapper must not mask the classified reason."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.create_resource(test_db, test_user, "wrapped-read", "Wrapped Doc")
+
+        async def wrapped_read(mcp_url, node_id, user):
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [
+                    ExternalSourceUnavailableError(
+                        "workspace node has been recycled",
+                        error_code="external_source_missing",
+                    ),
+                    ValueError("teardown noise"),
+                ],
+            )
+
+        monkeypatch.setattr(provider, "_fetch_document_content", wrapped_read)
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await provider.fetch_content(test_db, test_user, "wrapped-read")
+
+        assert excinfo.value.error_code == "external_source_missing"
+        assert "workspace node has been recycled" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_metadata_probe_unwraps_a_task_group_hiding_a_gone_source(
+        self, test_user, monkeypatch
+    ):
+        """The probe keeps the reason the session teardown wrapped."""
+        provider = self.make_provider()
+        self.configure_user(monkeypatch, test_user)
+        self.answer_document_info(monkeypatch, {})
+
+        def wrapped_info(result: Any) -> dict[str, Any]:
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [
+                    ExternalSourceUnavailableError(
+                        "workspace node has been recycled",
+                        error_code="external_source_missing",
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(provider, "_read_document_info", wrapped_info)
+
+        with pytest.raises(ExternalSourceUnavailableError) as excinfo:
+            await provider.get_update_time(test_user, "probe-node")
+
+        assert excinfo.value.error_code == "external_source_missing"
+
+    @staticmethod
+    def answer_document_info(monkeypatch: pytest.MonkeyPatch, result: Any) -> None:
+        """Answer every MCP call with one canned ``get_document_info`` result."""
+        if not isinstance(result, SimpleNamespace):
+            result = SimpleNamespace(
+                isError=False,
+                # The provider sends raw UTF-8, so payloads arrive verbatim.
+                content=[
+                    SimpleNamespace(
+                        type="text", text=json.dumps(result, ensure_ascii=False)
+                    )
+                ],
+            )
+        session = SimpleNamespace(call_tool=AsyncMock(return_value=result))
+
+        @asynccontextmanager
+        async def connected(url):
+            yield session
+
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_providers.open_dingtalk_session",
+            connected,
+        )
 
     def make_provider(self):
         from app.services.knowledge.external_document_providers import (
@@ -364,11 +624,12 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch: pytest.MonkeyPatch,
         provider,
         markdown: str,
+        title: str = "",
     ) -> None:
         async def fake_fetch(
             mcp_url: str, node_id: str, user: User
-        ) -> tuple[str, bytes, int | None]:
-            return "md", markdown.encode("utf-8"), 1789562644000
+        ) -> tuple[str, bytes, int | None, str]:
+            return "md", markdown.encode("utf-8"), 1789562644000, title
 
         monkeypatch.setattr(provider, "_fetch_document_content", fake_fetch)
 
@@ -409,6 +670,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
                 payload = (
                     {
                         "success": True,
+                        "name": "Imported Doc",
                         "nodeType": "file",
                         "contentType": "ALIDOC",
                         "extension": "adoc",
@@ -426,14 +688,17 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
         provider = self.make_provider()
-        extension, content, update_time = await provider._fetch_document_content(
-            "https://mcp.example.test/dingtalk",
-            "node-1",
-            SimpleNamespace(),
+        extension, content, update_time, source_title = (
+            await provider._fetch_document_content(
+                "https://mcp.example.test/dingtalk",
+                "node-1",
+                SimpleNamespace(),
+            )
         )
 
         assert (extension, content) == ("md", b"# Imported")
         assert update_time == 1789562644000
+        assert source_title == "Imported Doc"
         assert observed["transport"] == {
             "url": "https://mcp.example.test/dingtalk",
             "sse_read_timeout": 180,

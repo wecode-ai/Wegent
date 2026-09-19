@@ -433,16 +433,22 @@ class TestExternalSourceUnavailable:
         test_db.refresh(document)
         return document
 
+    @pytest.mark.parametrize(
+        "error_code", ["external_source_unavailable", "external_source_missing"]
+    )
     def test_unavailable_initial_import_is_retryable_and_marked_inaccessible(
         self,
         test_db: Session,
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
+        error_code: str,
     ) -> None:
         document = self._create_live_document(test_db, test_user)
         provider = SimpleNamespace(
             fetch_content=AsyncMock(
-                side_effect=ExternalSourceUnavailableError("node not found")
+                side_effect=ExternalSourceUnavailableError(
+                    "node not found", error_code=error_code
+                )
             ),
         )
         monkeypatch.setattr(
@@ -460,13 +466,11 @@ class TestExternalSourceUnavailable:
         assert document.is_active is False
         external = document.source_config["external"]
         assert external["status"] == "inaccessible"
-        assert external["last_error"] == (
-            "The external source is no longer accessible. Restore access "
-            "and retry the import."
-        )
+        # The provider's own message is what the user sees, verbatim.
+        assert external["last_error"] == "node not found"
         error = document.processing_error_payload
         assert error is not None
-        assert error["code"] == "external_source_unavailable"
+        assert error["code"] == error_code
 
     def test_transient_fetch_failure_does_not_mark_inaccessible(
         self,

@@ -19,6 +19,7 @@ import {
   Maximize2,
   Minimize2,
   CircleAlert,
+  RefreshCw,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -64,10 +65,18 @@ import {
 } from '@/utils/languageDetection'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
-import { isDocumentEditable, getExternalSourceInfo } from '../utils/documentUtils'
+import {
+  getExternalSourceInfo,
+  isDocumentEditable,
+  isDocumentIndexInFlight,
+  isDingtalkCopyDocument,
+} from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
+import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
+import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
+import { useExternalDocumentSync } from '../hooks/useExternalDocumentSync'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -101,6 +110,12 @@ interface DocumentDetailDialogProps {
   allowDownload?: boolean
   /** Server-supplied display text for the preview watermark. */
   watermarkText?: string | null
+  /**
+   * Refetch the owning document list after a manual source sync is queued.
+   * Passing it opts this preview into the manual sync entry; surfaces without
+   * a document list (for example the chat preview) omit it.
+   */
+  onDocumentSynced?: () => void
 }
 
 export function DocumentDetailDialog({
@@ -115,9 +130,12 @@ export function DocumentDetailDialog({
   isOrganization = false,
   allowDownload = true,
   watermarkText,
+  onDocumentSynced,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const downloadDocument = useKnowledgeDocumentDownload()
+  const { isSyncing: isDocumentSyncing, syncDocument } = useExternalDocumentSync()
+  const getDingtalkSyncLabel = useDingtalkSyncLabel()
   const protectedPreview = !allowDownload
   const effectiveWatermarkText = watermarkText || t('document.document.detail.protectedWatermark')
   const [copiedContent, setCopiedContent] = useState(false)
@@ -199,6 +217,13 @@ export function DocumentDetailDialog({
     return date && !Number.isNaN(date.getTime()) ? formatDateTime(date.getTime()) : null
   }, [externalSourceInfo])
   const isSourceView = contentSourceMode === 'source' && canPreviewSource
+  // Manual source refresh of a DingTalk copy: the same entry the document list
+  // offers, so the preview can queue it without leaving the dialog.
+  const canSyncSource =
+    !!onDocumentSynced && canEdit && !!document && isDingtalkCopyDocument(document)
+  const sourceSyncBusy =
+    !!document && (isDocumentSyncing(document.id) || isDocumentIndexInFlight(document))
+  const sourceSyncLabel = document ? getDingtalkSyncLabel(document, sourceSyncBusy) : ''
 
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
@@ -252,6 +277,15 @@ export function DocumentDetailDialog({
 
   const handleRefresh = () => {
     refresh()
+  }
+
+  const handleSourceSync = async () => {
+    if (!document) return
+    // A failed request keeps the existing copy and reports the reason through
+    // the shared entry, so the preview only reacts to a queued refresh.
+    if (!(await syncDocument(document))) return
+    refresh()
+    onDocumentSynced?.()
   }
 
   const handleSourceDownload = useCallback(async () => {
@@ -449,16 +483,7 @@ export function DocumentDetailDialog({
                             </span>
                           </>
                         )}
-                        {externalSourceInfo.status === 'inaccessible' ? (
-                          <Badge
-                            variant="default"
-                            size="sm"
-                            className="bg-red-500/10 text-red-600 border-red-500/20"
-                            data-testid="external-source-inaccessible"
-                          >
-                            {t('document.document.sourceInaccessible')}
-                          </Badge>
-                        ) : externalSourceInfo.status === 'accessible' ? (
+                        {externalSourceInfo.status === 'accessible' ? (
                           <Badge
                             variant="default"
                             size="sm"
@@ -466,13 +491,35 @@ export function DocumentDetailDialog({
                           >
                             {t('document.document.externalSource.accessible')}
                           </Badge>
-                        ) : null}
+                        ) : (
+                          <ExternalSourceStatusBadge
+                            document={document}
+                            testId="external-source-inaccessible"
+                          />
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
 
                 <div className="flex flex-shrink-0 items-center gap-2 max-md:w-full">
+                  {!isEditing && !isFullscreen && canSyncSource && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSourceSync}
+                      disabled={sourceSyncBusy}
+                      aria-label={sourceSyncLabel}
+                      className="flex-shrink-0 max-md:min-h-[44px] max-md:min-w-[44px]"
+                      data-testid={`document-detail-sync-dingtalk-${document.id}`}
+                    >
+                      <RefreshCw
+                        className={cn('h-3.5 w-3.5 md:mr-1', sourceSyncBusy && 'animate-spin')}
+                      />
+                      <span className="hidden md:inline">{sourceSyncLabel}</span>
+                    </Button>
+                  )}
                   {!isEditing && canPreviewSource && (
                     <div
                       className={cn(
