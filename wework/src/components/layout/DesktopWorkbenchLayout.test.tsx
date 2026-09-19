@@ -569,10 +569,12 @@ vi.mock('@pierre/trees/react', async () => {
     paths: string[]
     search: string | null
     selectedPaths: string[]
+    getSelectedPaths: () => string[]
     onSelectionChange?: (paths: string[]) => void
     getItem: (path: string) => {
       expand: () => void
       select: () => void
+      deselect: () => void
     }
     scrollToPath: () => void
     selectPath: (path: string) => void
@@ -637,10 +639,18 @@ vi.mock('@pierre/trees/react', async () => {
           paths,
           search: null,
           selectedPaths: initialSelectedPaths ?? [],
+          getSelectedPaths: () => modelRef.current!.selectedPaths,
           onSelectionChange,
           getItem: (path: string) => ({
             expand: vi.fn(),
             select: () => selectModelPath(modelRef.current!, path),
+            deselect: () => {
+              const model = modelRef.current!
+              model.selectedPaths = model.selectedPaths.filter(
+                selectedPath => selectedPath !== path
+              )
+              model.onSelectionChange?.(model.selectedPaths)
+            },
           }),
           scrollToPath: vi.fn(),
           selectPath: (path: string) => selectModelPath(modelRef.current!, path),

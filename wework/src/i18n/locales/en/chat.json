@@ -220,7 +220,6 @@
     "previous_turn_label": "Previous turn",
     "branch_label": "Branch",
     "branch_unknown": "Current workspace",
-    "large_diff_single_file_notice": "This diff is large, so only one file is shown at a time",
     "file_list_label": "Changed files",
     "file_search_placeholder": "Filter files...",
     "file_search_empty": "No matching files",

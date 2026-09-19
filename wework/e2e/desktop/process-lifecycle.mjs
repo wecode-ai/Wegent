@@ -144,7 +144,7 @@ export async function stopProcess(child) {
   }
 }
 
-export async function stopProcessGroup(child) {
+export async function stopProcessGroup(child, signal = 'SIGTERM') {
   if (!child) return
   if (process.platform === 'win32') {
     await stopWindowsProcessTree(child)
@@ -156,7 +156,7 @@ export async function stopProcessGroup(child) {
   }
 
   const processGroupId = child.pid
-  signalProcessGroup(processGroupId, 'SIGTERM')
+  signalProcessGroup(processGroupId, signal)
   if (child.exitCode === null && child.signalCode === null) {
     try {
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
