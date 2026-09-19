@@ -125,14 +125,16 @@ class TestErpEntityResolver:
     def test_match_entity_bindings_no_ssn(self):
         resolver = ErpEntityResolver()
         db = MagicMock()
-        with patch.object(resolver, "_get_user_ssn", return_value=None):
+        with patch.object(resolver, "resolve_employee_id", return_value=None):
             result = resolver.match_entity_bindings(db, 1, "org_department", ["d1"])
             assert result == []
 
     def test_match_entity_bindings_filters_to_member_depts(self, resolver_no_redis):
         db = MagicMock()
         with (
-            patch.object(resolver_no_redis, "_get_user_ssn", return_value="12345678"),
+            patch.object(
+                resolver_no_redis, "resolve_employee_id", return_value="12345678"
+            ),
             patch(
                 "wecode.service.erp_entity_resolver.erp_client.batch_check_membership"
             ) as mock_check,
@@ -348,24 +350,6 @@ class TestErpEntityResolver:
             )
             is None
         )
-
-    def test_resolve_employee_id_for_user_manages_session(self):
-        resolver = ErpEntityResolver()
-        db = MagicMock()
-
-        with (
-            patch("app.db.session.SessionLocal", return_value=db),
-            patch.object(
-                resolver,
-                "resolve_employee_id",
-                return_value="230473",
-            ) as mock_resolve,
-        ):
-            result = resolver.resolve_employee_id_for_user(1)
-
-        assert result == "230473"
-        mock_resolve.assert_called_once_with(db, 1, None)
-        db.close.assert_called_once()
 
     def test_redis_lazy_load(self):
         """Constructor must not eagerly call get_redis_client.

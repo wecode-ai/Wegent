@@ -155,7 +155,7 @@ class ErpEntityResolver(IExternalEntityResolver):
             return []
         if not dept_ids:
             return []
-        ssn = self._get_user_ssn(db, user_id, user_context)
+        ssn = self.resolve_employee_id(db, user_id, user_context)
         if not ssn:
             return []
         membership = self._get_membership_with_cache(user_id, ssn, dept_ids)
@@ -270,25 +270,13 @@ class ErpEntityResolver(IExternalEntityResolver):
         self, db: Session, user_id: int, user_context: Optional[dict] = None
     ) -> Optional[str]:
         """Resolve a user's employee_id from profile or ERP lazy sync."""
-        return self._get_user_ssn(db, user_id, user_context)
+        return self._resolve_employee_id_result(db, user_id, user_context).employee_id
 
     def resolve_employee_id_result(
         self, db: Session, user_id: int, user_context: Optional[dict] = None
     ) -> EmployeeIdResolution:
         """Resolve employee identity without conflating temporary failures."""
         return self._resolve_employee_id_result(db, user_id, user_context)
-
-    def resolve_employee_id_for_user(
-        self, user_id: int, user_context: Optional[dict] = None
-    ) -> Optional[str]:
-        """Resolve a user's employee_id with a short-lived database session."""
-        from app.db.session import SessionLocal
-
-        db = SessionLocal()
-        try:
-            return self.resolve_employee_id(db, user_id, user_context)
-        finally:
-            db.close()
 
     def resolve_employee_id_result_for_user(
         self, user_id: int, user_context: Optional[dict] = None
@@ -301,12 +289,6 @@ class ErpEntityResolver(IExternalEntityResolver):
             return self.resolve_employee_id_result(db, user_id, user_context)
         finally:
             db.close()
-
-    def _get_user_ssn(
-        self, db: Session, user_id: int, user_context: Optional[dict] = None
-    ) -> Optional[str]:
-        """Get user SSN while preserving the legacy optional-string API."""
-        return self._resolve_employee_id_result(db, user_id, user_context).employee_id
 
     def _resolve_employee_id_result(
         self, db: Session, user_id: int, user_context: Optional[dict] = None
