@@ -15,10 +15,12 @@ from enum import Enum
 from typing import Optional
 
 import orjson
+from fastapi import status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.distributed_lock import distributed_lock
+from app.core.exceptions import CustomHTTPException
 from app.models.user import User
 from app.services.external_entity_resolver import IExternalEntityResolver
 from wecode.cache.base import NULL_MARKER, get_redis_client
@@ -27,6 +29,17 @@ from wecode.service.erp_client import EmployeeSearchOutcome, erp_client
 from wecode.service.erp_user_service import ErpUserService
 
 logger = logging.getLogger(__name__)
+
+
+class ErpIdentityResolutionUnavailableError(CustomHTTPException):
+    """Raised when ERP identity resolution is temporarily unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ERP identity resolution is temporarily unavailable",
+            error_code="erp_identity_unavailable",
+        )
 
 
 class EmployeeIdResolutionStatus(str, Enum):
@@ -155,9 +168,15 @@ class ErpEntityResolver(IExternalEntityResolver):
             return []
         if not dept_ids:
             return []
-        ssn = self._get_user_ssn(db, user_id, user_context)
-        if not ssn:
+        resolution = self._resolve_employee_id_result(db, user_id, user_context)
+        if resolution.status in {
+            EmployeeIdResolutionStatus.IN_PROGRESS,
+            EmployeeIdResolutionStatus.UNAVAILABLE,
+        }:
+            raise ErpIdentityResolutionUnavailableError()
+        if not resolution.employee_id:
             return []
+        ssn = resolution.employee_id
         membership = self._get_membership_with_cache(user_id, ssn, dept_ids)
         matched = [d for d in dept_ids if membership.get(d, False)]
         if matched:
