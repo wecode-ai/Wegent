@@ -10,14 +10,18 @@ instead of answering with no matches.
 
 The index contract lives in the description of the collection it describes, so
 the failures worth reporting here are the ones that are still observable: a
-collection whose contract this code cannot read, and a contract that does not
-match the collection it is stored with. A collection dropped outside the
+collection whose contract this code cannot read, a contract that does not match
+the collection it is stored with, and a collection that declares the current
+version while missing a piece of the structure that version writes - the shape
+a create interrupted halfway leaves behind. A collection dropped outside the
 product leaves nothing behind - no second record of the index exists to detect
 it - and this file asserts that reading such a knowledge base answers as
 unindexed instead of inventing a failure.
 """
 
 from __future__ import annotations
+
+from typing import Any, Callable
 
 import pytest
 from llama_index.core.schema import TextNode
@@ -32,19 +36,26 @@ from knowledge_engine.storage.milvus.native import (
     ANALYZER_TYPE,
     BM25_FUNCTION_NAME,
     DENSE_VECTOR_FIELD,
+    DISPLAY_TEXT_FIELD,
     INDEX_TYPE,
+    MAX_ID_LENGTH,
+    MAX_TEXT_LENGTH,
+    METADATA_FIELD,
     METRIC_TYPE,
+    RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
     SPARSE_INDEX_TYPE,
     SPARSE_METRIC_TYPE,
     SPARSE_VECTOR_FIELD,
     MilvusIndexBinding,
+    build_collection_schema,
     index_contract_description,
     index_contract_from_description,
 )
 from tests.contract.milvus.conftest import (
     CONTRACT_DIMENSION,
     DeterministicEmbedding,
+    MilvusContractEnv,
     index_nodes,
 )
 
@@ -369,3 +380,222 @@ def test_a_physical_drop_needs_the_contract_the_index_declares(milvus_env) -> No
         assert not client.has_collection(parent_collection_name)
     finally:
         client.close()
+
+
+def _index_params(client: MilvusClient, *, sparse_metric: str | None) -> object:
+    """The dense index, and the sparse one when the case declares it."""
+    index_params = client.prepare_index_params()
+    index_params.add_index(
+        field_name=DENSE_VECTOR_FIELD,
+        index_type=INDEX_TYPE,
+        metric_type=METRIC_TYPE,
+    )
+    if sparse_metric is not None:
+        index_params.add_index(
+            field_name=SPARSE_VECTOR_FIELD,
+            index_type=SPARSE_INDEX_TYPE,
+            metric_type=sparse_metric,
+        )
+    return index_params
+
+
+def _current_schema(client: MilvusClient, binding: MilvusIndexBinding) -> Any:
+    """The schema this code writes, for a case that removes one piece of it."""
+    return client.create_schema(
+        auto_id=False,
+        enable_dynamic_field=False,
+        description=index_contract_description(binding),
+    )
+
+
+def _add_current_columns(
+    schema: Any,
+    binding: MilvusIndexBinding,
+    *,
+    skip: frozenset[str] = frozenset(),
+) -> None:
+    """Declare the columns of this schema version, minus the skipped ones.
+
+    The columns are literal recordings of the pinned server's own answer for
+    this schema version rather than a reading of the schema builder: these
+    cases exist to hand a half-built collection to the validator, so the
+    fixture must not follow the writer when the writer changes.
+    """
+    columns = [
+        ("id", DataType.VARCHAR, {"is_primary": True, "max_length": MAX_ID_LENGTH}),
+        (
+            RETRIEVAL_TEXT_FIELD,
+            DataType.VARCHAR,
+            {
+                "max_length": MAX_TEXT_LENGTH,
+                "enable_analyzer": True,
+                "analyzer_params": {"type": ANALYZER_TYPE},
+            },
+        ),
+        (
+            DISPLAY_TEXT_FIELD,
+            DataType.VARCHAR,
+            {"max_length": MAX_TEXT_LENGTH},
+        ),
+        (METADATA_FIELD, DataType.JSON, {"nullable": True}),
+        (DENSE_VECTOR_FIELD, DataType.FLOAT_VECTOR, {"dim": binding.dimension}),
+        (SPARSE_VECTOR_FIELD, DataType.SPARSE_FLOAT_VECTOR, {}),
+    ]
+    for name, datatype, params in columns:
+        if name in skip:
+            continue
+        schema.add_field(name, datatype, **params)
+
+
+def _create_collection_missing_the_sparse_index(
+    client: MilvusClient, collection_name: str, binding: MilvusIndexBinding
+) -> None:
+    """A collection whose sparse index never finished building.
+
+    The create declared both indexes, so this is exactly what an interrupted
+    create leaves behind: the collection, the fields and the BM25 function are
+    all there, and one vector field cannot answer a search.
+    """
+    client.create_collection(
+        collection_name=collection_name,
+        schema=build_collection_schema(binding),
+        index_params=_index_params(client, sparse_metric=SPARSE_METRIC_TYPE),
+        consistency_level="Strong",
+    )
+    client.release_collection(collection_name)
+    client.drop_index(collection_name, SPARSE_VECTOR_FIELD)
+
+
+def _create_collection_missing_the_bm25_function(
+    client: MilvusClient, collection_name: str, binding: MilvusIndexBinding
+) -> None:
+    """A collection whose sparse vector no BM25 function maintains.
+
+    The sparse column is indexed as a plain sparse vector instead, so the
+    keyword capability the schema version declares does not exist here.
+    """
+    schema = _current_schema(client, binding)
+    _add_current_columns(schema, binding)
+    client.create_collection(
+        collection_name=collection_name,
+        schema=schema,
+        index_params=_index_params(client, sparse_metric="IP"),
+        consistency_level="Strong",
+    )
+
+
+def _create_collection_missing_the_metadata_column(
+    client: MilvusClient, collection_name: str, binding: MilvusIndexBinding
+) -> None:
+    """A collection whose row layout left out a column this version writes."""
+    schema = _current_schema(client, binding)
+    _add_current_columns(schema, binding, skip=frozenset({METADATA_FIELD}))
+    schema.add_function(
+        Function(
+            name=BM25_FUNCTION_NAME,
+            function_type=FunctionType.BM25,
+            input_field_names=[RETRIEVAL_TEXT_FIELD],
+            output_field_names=[SPARSE_VECTOR_FIELD],
+            params={},
+        )
+    )
+    client.create_collection(
+        collection_name=collection_name,
+        schema=schema,
+        index_params=_index_params(client, sparse_metric=SPARSE_METRIC_TYPE),
+        consistency_level="Strong",
+    )
+
+
+@pytest.mark.parametrize(
+    "build_collection, expected_mismatch",
+    [
+        (_create_collection_missing_the_sparse_index, "has no index"),
+        (_create_collection_missing_the_bm25_function, BM25_FUNCTION_NAME),
+        (_create_collection_missing_the_metadata_column, METADATA_FIELD),
+    ],
+    ids=["sparse index", "bm25 function", "metadata column"],
+)
+def test_a_half_built_index_is_refused_before_anything_is_written(
+    milvus_env: MilvusContractEnv,
+    build_collection: Callable[[MilvusClient, str, MilvusIndexBinding], None],
+    expected_mismatch: str,
+) -> None:
+    """A collection that declares this version but is missing a piece is refused.
+
+    The contract says which schema version a collection claims to be, and a
+    half-built collection claims it while a field, the BM25 function or an
+    index is missing. The write path reads the real structure before it deletes
+    or writes a row, reports the missing piece, and leaves the collection
+    exactly as it found it: nothing is created, upgraded or adopted.
+    """
+    knowledge_id = milvus_env.new_knowledge_id()
+    collection_name = milvus_env.collection_name(knowledge_id)
+    model = DeterministicEmbedding(CONTRACT_DIMENSION)
+    binding = MilvusIndexBinding(
+        schema_version=SCHEMA_VERSION,
+        dimension=CONTRACT_DIMENSION,
+        # The contract itself is the current one: what this case varies is the
+        # structure, so only the structure check can refuse the collection.
+        embedding_space_id=model.embedding_space_id,
+    )
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        build_collection(client, collection_name, binding)
+        before = client.describe_collection(collection_name)
+    finally:
+        client.close()
+
+    backend = milvus_env.backend()
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        backend.index_with_metadata(
+            nodes=_nodes(1),
+            chunk_metadata=ChunkMetadata(
+                knowledge_id=knowledge_id,
+                doc_ref="1",
+                source_file="half-built.txt",
+                created_at="2026-01-01T00:00:00Z",
+            ),
+            embed_model=model,
+        )
+
+    assert failure.value.code == "index_contract_incompatible"
+    assert failure.value.retryable is False
+    assert any(
+        expected_mismatch in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+    client = MilvusClient(uri=milvus_env.uri)
+    try:
+        assert client.has_collection(collection_name), "refused means intact"
+        assert (
+            client.describe_collection(collection_name) == before
+        ), "a refused write changes nothing about the collection"
+        # The row count needs no loaded collection and no column, so it holds
+        # for every way this case can be half built.
+        assert (
+            client.get_collection_stats(collection_name)["row_count"] == 0
+        ), "a refused write stores no row"
+    finally:
+        client.close()
+
+
+def test_a_created_collection_passes_the_structure_check_on_the_next_write(
+    milvus_env: MilvusContractEnv,
+) -> None:
+    """The structure a create really produced is the one the next write finds.
+
+    The second document adopts the collection the first write created, so this
+    is the structure check running against a real collection built by this
+    code: the fields, the BM25 function and both finished indexes all match,
+    and the write proceeds.
+    """
+    knowledge_id = milvus_env.new_knowledge_id()
+    backend = milvus_env.backend()
+
+    index_nodes(backend, knowledge_id=knowledge_id, doc_ref="1", nodes=_nodes())
+    index_nodes(backend, knowledge_id=knowledge_id, doc_ref="2", nodes=_nodes())
+
+    documents = backend.list_documents(knowledge_id)["documents"]
+    assert {document["doc_ref"] for document in documents} == {"1", "2"}

@@ -16,12 +16,14 @@ import pytest
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
-    DENSE_VECTOR_FIELD,
     SCHEMA_VERSION,
     MilvusIndexBinding,
-    index_contract_description,
 )
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
+from tests.storage.milvus.recorded_collection import (
+    recorded_description,
+    recorded_indexes,
+)
 
 CONTRACT_DIMENSION = 4
 COLLECTION_NAME = "wegent_kb_1"
@@ -80,19 +82,15 @@ class _RecordingClient:
 
     def describe_collection(self, collection_name: str, **kwargs) -> dict:
         self._record("describe_collection", kwargs)
-        return {
-            "description": (
-                self.description
-                if self.description is not None
-                else index_contract_description(self.contract)
-            ),
-            "fields": [
-                {
-                    "name": DENSE_VECTOR_FIELD,
-                    "params": {"dim": self.contract.dimension},
-                }
-            ],
-        }
+        return recorded_description(self.contract, description=self.description)
+
+    def list_indexes(self, collection_name: str, **kwargs) -> list[str]:
+        self._record("list_indexes", kwargs)
+        return list(recorded_indexes())
+
+    def describe_index(self, collection_name: str, index_name: str, **kwargs) -> dict:
+        self._record("describe_index", kwargs)
+        return recorded_indexes()[index_name]
 
     def query(self, **kwargs) -> list:
         self._record("query", kwargs)

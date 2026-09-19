@@ -6,7 +6,7 @@
 
 Keeping this separate from the Milvus adapter's request lifecycle keeps the
 one question that matters here - could the server answer this attempt? - out
-of the code that owns schema, filters and client lifetimes.
+of the code that owns schema, filters and the shared connection.
 """
 
 from __future__ import annotations

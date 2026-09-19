@@ -16,6 +16,7 @@ import asyncio
 import threading
 
 import pytest
+from llama_index.core.schema import TextNode
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from knowledge_engine.embedding.vectors import (
@@ -34,6 +35,7 @@ from .conftest import (
     DeterministicEmbedding,
     MilvusContractEnv,
     await_document_visibility,
+    index_nodes,
 )
 
 pytestmark = pytest.mark.milvus
@@ -562,11 +564,19 @@ def test_legacy_collection_without_contract_is_rejected(
 def test_concurrent_index_creation_keeps_one_valid_collection(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """Same-contract writers race behind a barrier: one collection stays valid.
+    """Same-contract writers race: a writer stores only what it confirmed.
 
-    Milvus creates an identical collection idempotently, so both writers may
-    succeed; a bounded wait may also make one of them fail explicitly. Both
-    outcomes are legal, but the losers must fail loudly - never silently.
+    Milvus accepts an identical collection twice, but the index declarations
+    those creates send race on the server too: measured on the pinned 2.5.4
+    fixture, two identical ``CreateIndex`` calls can leave each index recorded
+    twice, and the server then refuses to describe that name at all. Nothing
+    here guesses which of the two indexes was meant, so a writer that meets
+    that state fails before it deletes or writes a row - the next attempt
+    refuses the same collection just as explicitly - while a writer that
+    confirmed the collection wrote its document. Either way the rows that are
+    stored belong exactly to the writers that reported success, and those
+    documents stay readable: a read confirms the contract and the capability
+    it uses, not the whole physical structure.
     """
     from pymilvus import MilvusClient
 
@@ -602,16 +612,46 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
     for thread in threads:
         thread.join()
 
-    assert successes, f"at least one writer must win; errors={errors}"
+    assert successes or errors, "every writer either stored its document or failed"
     for error in errors:
-        assert isinstance(error, IndexContractIncompatibleError), error
+        assert isinstance(error, StorageBackendError), error
 
     client = MilvusClient(uri=milvus_env.uri)
     try:
-        collections = client.list_collections()
+        rows = client.query(
+            collection_name=backend.get_index_name(knowledge_id),
+            filter=f'metadata["knowledge_id"] == "{knowledge_id}"',
+            output_fields=["metadata"],
+            limit=10,
+            consistency_level="Strong",
+        )
+        index_names = client.list_indexes(backend.get_index_name(knowledge_id))
     finally:
         client.close()
-    assert collections.count(backend.get_index_name(knowledge_id)) == 1
+    stored_document_ids = {row["metadata"]["doc_ref"] for row in rows}
+    assert stored_document_ids == {str(document_id) for document_id in successes}, (
+        "a writer that failed stored nothing, and a writer that succeeded "
+        "stored its document"
+    )
+
+    if len(index_names) != len(set(index_names)):
+        # The state the fixture measured: the server recorded an index twice
+        # while two identical creates raced. Nothing here guesses which of the
+        # two was meant, so the next write refuses the collection instead of
+        # writing rows it cannot account for.
+        with pytest.raises(IndexContractIncompatibleError) as failure:
+            index_nodes(
+                milvus_env.backend(),
+                knowledge_id=knowledge_id,
+                doc_ref="9001",
+                nodes=[
+                    TextNode(text="unconfirmable index", metadata={"chunk_index": 0})
+                ],
+            )
+        assert any(
+            "more than one" in mismatch
+            for mismatch in failure.value.details["mismatches"]
+        ), failure.value.details
 
     hits = _query(
         milvus_env,
@@ -620,9 +660,9 @@ def test_concurrent_index_creation_keeps_one_valid_collection(
         dimension=1536,
         backend=backend,
     )
-    assert {record["metadata"]["doc_ref"] for record in hits["records"]} == {
-        str(document_id) for document_id in successes
-    }
+    assert {record["metadata"]["doc_ref"] for record in hits["records"]} == (
+        stored_document_ids
+    )
 
 
 def test_concurrent_incompatible_creation_fails_explicitly(
@@ -630,9 +670,10 @@ def test_concurrent_incompatible_creation_fails_explicitly(
 ) -> None:
     """Same dimension, different model space: one wins, the other writes nothing.
 
-    The loser reads the collection's own contract back and refuses it, so no row
-    of the losing document may be stored: the collection holds exactly the
-    winning writer's document.
+    The winner owns the name; the loser either has its create rejected as a
+    different collection or reads the winner's contract back and refuses it.
+    Either way the loser fails this attempt and no row of its document may be
+    stored: the collection holds exactly the winning writer's document.
     """
     from pymilvus import MilvusClient
 
@@ -657,7 +698,7 @@ def test_concurrent_incompatible_creation_fails_explicitly(
             result = "ok"
             with lock:
                 stored_document_ids.append(document_id)
-        except (IndexContractIncompatibleError, EmbeddingDimensionMismatchError) as exc:
+        except (StorageBackendError, EmbeddingDimensionMismatchError) as exc:
             result = f"incompatible:{type(exc).__name__}:{exc}"
         except BaseException as exc:  # noqa: BLE001 - surfaced in the assertion
             result = f"error:{type(exc).__name__}"
@@ -701,8 +742,10 @@ def test_a_creation_declares_its_contract_in_the_same_request(
     A separate registry could describe a collection that was never created, or
     a collection whose creator died before writing its row. The description
     travels with the collection, so the creator has already declared exactly
-    what it created by the time the create returns, and a name that was never
-    created declares nothing at all.
+    what it created by the time the create returns - including the structure
+    the create really produced, which the creator reads back and validates
+    before it reports the index usable - and a name that was never created
+    declares nothing at all.
     """
     from knowledge_engine.embedding.space import read_embedding_space_id
 
@@ -717,7 +760,12 @@ def test_a_creation_declares_its_contract_in_the_same_request(
         owner_contract = store.build_binding(
             dimension=1536, embedding_space_id=owner_space
         )
-        store._create_collection(client, owner_contract)
+        store.ensure_index(
+            client,
+            collection_name,
+            dimension=1536,
+            embedding_space_id=owner_space,
+        )
         # The creator's contract is readable the moment the collection is.
         assert store.read_contract(client, collection_name) == owner_contract
         assert store.read_contract(client, f"{collection_name}__never") is None

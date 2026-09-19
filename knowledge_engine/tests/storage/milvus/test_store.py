@@ -4,11 +4,12 @@
 
 """Unit tests for the bounded Milvus client layer (no server).
 
-These cover ``MilvusDocumentStore``: client lifetimes, the RPC shape it sends,
-and the index-contract state machine. The contract lives in the collection it
-describes, so ``describe_collection`` is the only lookup involved. The row
-layout and the filter vocabulary it works with are tested in
-``test_native.py``.
+These cover ``MilvusDocumentStore``: the shared connection it reuses, the RPC
+shape it sends, and the index-contract state machine. The contract lives in the
+collection it describes, so ``describe_collection`` is the only lookup a reader
+involved; a writer also reads the index metadata, because the structure it
+validates is not a claim the contract can make. The row layout and the filter
+vocabulary it works with are tested in ``test_native.py``.
 """
 
 import logging
@@ -28,10 +29,14 @@ from knowledge_engine.storage.milvus.native import (
     SCHEMA_VERSION,
     SPARSE_VECTOR_FIELD,
     MilvusIndexBinding,
-    index_contract_description,
     index_contract_from_description,
 )
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
+from tests.storage.milvus.recorded_collection import (
+    recorded_description,
+    recorded_fields,
+    recorded_indexes,
+)
 
 # Literal on purpose: this test pins the level a complete read sends, so reading
 # the constant from the module would let a wrong production value pass.
@@ -77,6 +82,148 @@ class _FakeClient:
         return False
 
 
+def _aliases_recorded_by_factory(aliases: list[str], created: list[_FakeClient]):
+    """A client factory that records the alias and the client it built."""
+
+    def factory(**kwargs):
+        aliases.append(kwargs["alias"])
+        client = _FakeClient(**kwargs)
+        created.append(client)
+        return client
+
+    return factory
+
+
+def _open_one_operation(store: MilvusDocumentStore) -> None:
+    with store.client():
+        pass
+
+
+def test_one_connection_identity_shares_one_alias():
+    """One service, database and credential is one reused connection.
+
+    The alias is what PyMilvus registers a connection under, so spelling the
+    same service differently - an uppercase host, a trailing slash - must land
+    on the same alias instead of opening a second connection.
+    """
+    aliases: list[str] = []
+    factory = _aliases_recorded_by_factory(aliases, [])
+
+    for uri, db_name, token in (
+        ("http://milvus.test:19530", "kb", "reader:secret"),
+        ("http://MILVUS.test:19530/", "kb", "reader:secret"),
+    ):
+        _open_one_operation(
+            MilvusDocumentStore(
+                uri=uri,
+                db_name=db_name,
+                token=token,
+                client_factory=factory,
+            )
+        )
+
+    assert len(set(aliases)) == 1, aliases
+
+
+def test_a_different_service_database_or_credential_is_not_one_alias():
+    """Authentication identity is part of the connection, not a detail.
+
+    PyMilvus answers a second ``MilvusClient`` of the same alias from the
+    connection it already registered, and it does not compare the credential,
+    so two identities must never be handed the same alias.
+    """
+    aliases: list[str] = []
+    factory = _aliases_recorded_by_factory(aliases, [])
+
+    for uri, db_name, token in (
+        ("http://milvus.test:19530", "kb", "reader:secret"),
+        ("http://milvus.test:19531", "kb", "reader:secret"),
+        ("http://milvus.test:19530", "other", "reader:secret"),
+        ("http://milvus.test:19530", "kb", "reader:another-secret"),
+    ):
+        _open_one_operation(
+            MilvusDocumentStore(
+                uri=uri,
+                db_name=db_name,
+                token=token,
+                client_factory=factory,
+            )
+        )
+
+    assert len(set(aliases)) == 4, aliases
+
+
+def test_credentials_inside_the_uri_stay_distinct_while_the_host_folds():
+    """Only the host is case-insensitive: userinfo is an identity.
+
+    A URI may carry its own credentials, and lowercasing the whole authority
+    would fold two different identities into one alias while case-folding a
+    host name is what makes two spellings of the same service meet.
+    """
+    aliases: list[str] = []
+    factory = _aliases_recorded_by_factory(aliases, [])
+
+    for uri in (
+        "http://MILVUS.test:19530",
+        "http://milvus.test:19530",
+        "http://Reader:pw@milvus.test:19530",
+        "http://reader:pw@milvus.test:19530",
+    ):
+        _open_one_operation(MilvusDocumentStore(uri=uri, client_factory=factory))
+
+    upper_host, lower_host, reader_credential, other_credential = aliases
+    assert upper_host == lower_host, "one service spelled two ways is one alias"
+    assert (
+        reader_credential != upper_host
+    ), "a URI that carries a credential is another connection identity"
+    assert (
+        reader_credential != other_credential
+    ), "two credentials in the URI are two identities"
+
+
+def test_the_alias_never_carries_the_credential():
+    """The alias identifies the credential without containing it."""
+    aliases: list[str] = []
+    factory = _aliases_recorded_by_factory(aliases, [])
+
+    _open_one_operation(
+        MilvusDocumentStore(
+            uri="http://milvus.test:19530",
+            token="reader:super-secret",
+            client_factory=factory,
+        )
+    )
+
+    [alias] = aliases
+    assert "super-secret" not in alias
+    assert "reader" not in alias
+
+
+def test_operations_reuse_one_connection_and_close_none():
+    """A bounded operation joins the shared connection and leaves it open.
+
+    PyMilvus owns the connection the alias registers; closing the client an
+    operation borrowed would tear that connection down under every other
+    operation that reused the alias, so no operation closes it.
+    """
+    aliases: list[str] = []
+    created: list[_FakeClient] = []
+    store = MilvusDocumentStore(
+        uri="http://milvus.test:19530",
+        client_factory=_aliases_recorded_by_factory(aliases, created),
+    )
+
+    with store.client() as first:
+        pass
+    with store.client() as second:
+        pass
+
+    assert first is not second, "each operation is handed its own client object"
+    assert created[0].closed is False
+    assert created[1].closed is False
+    assert aliases[0] == aliases[1]
+
+
 def test_read_only_verify_does_not_create_resources():
     """A missing index reports absence and touches nothing else."""
     created: list[_FakeClient] = []
@@ -95,11 +242,11 @@ def test_read_only_verify_does_not_create_resources():
         assert store.read_contract(client, "wegent_kb_1") is None
 
     assert len(created) == 1
-    assert created[0].closed is True
+    assert created[0].closed is False
     assert created[0].kwargs["db_name"] == "default"
 
 
-def test_client_is_closed_when_the_operation_raises():
+def test_a_failing_operation_does_not_close_the_shared_connection():
     created: list[_FakeClient] = []
 
     def factory(**kwargs):
@@ -113,7 +260,7 @@ def test_client_is_closed_when_the_operation_raises():
         with store.client():
             raise RuntimeError("boom")
 
-    assert created[0].closed is True
+    assert created[0].closed is False
 
 
 class _IteratorClient:
@@ -357,9 +504,13 @@ class _CollectionClient:
 
     ``exists`` says whether a collection answers under that name and
     ``contract`` what it declares (``None``: it exists without a readable
-    contract). ``create_raises`` with ``winner_contract`` models the losing side
-    of a create race: this writer's create is rejected because another writer
-    took the name first, and the read-back then finds what that writer declared.
+    contract). ``create_fails`` models the losing side of a create race: this
+    writer's create is rejected because another writer took the name first, so
+    the name answers with ``winner_contract`` from then on.
+
+    Everything else the stub answers was recorded from the pinned 2.5.4 server
+    for the schema this code writes, so a test can replace one part of it - a
+    dropped field, a missing index - and watch the writer refuse the rest.
     """
 
     def __init__(
@@ -367,15 +518,24 @@ class _CollectionClient:
         *,
         exists: bool = False,
         contract: MilvusIndexBinding | None = None,
-        create_raises: bool = False,
+        create_fails: bool = False,
         winner_contract: MilvusIndexBinding | None = None,
+        fields: list[dict] | None = None,
+        functions: list[dict] | None = None,
+        indexes: dict[str, dict] | None = None,
+        index_names: list[str] | None = None,
     ) -> None:
         self.exists = exists
         self.contract = contract
-        self.create_raises = create_raises
+        self.create_fails = create_fails
         self.winner_contract = winner_contract
+        self.fields = fields
+        self.functions = functions
+        self.indexes = indexes
+        self.index_names = index_names
         self.schemas: list[Any] = []
         self.descriptions = 0
+        self.index_lookups = 0
         self.queries: list[dict] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
@@ -383,11 +543,11 @@ class _CollectionClient:
 
     def create_collection(self, **kwargs) -> None:
         self.schemas.append(kwargs["schema"])
-        if self.create_raises:
+        if self.create_fails:
             # Another writer took the name first; this collection is theirs.
             self.exists = True
             self.contract = self.winner_contract
-            raise RuntimeError("collection already exists")
+            raise RuntimeError("create duplicate collection with different parameters")
         self.exists = True
         self.contract = index_contract_from_description(kwargs["schema"].description)
 
@@ -396,23 +556,23 @@ class _CollectionClient:
 
     def describe_collection(self, collection_name: str, **kwargs) -> dict:
         self.descriptions += 1
-        return {
-            "description": (
-                None
-                if self.contract is None
-                else index_contract_description(self.contract)
-            ),
-            "fields": [
-                {
-                    "name": DENSE_VECTOR_FIELD,
-                    "params": {
-                        "dim": (
-                            None if self.contract is None else self.contract.dimension
-                        )
-                    },
-                }
-            ],
-        }
+        if not self.has_collection(collection_name):
+            raise RuntimeError(f"collection {collection_name} does not exist")
+        return recorded_description(
+            self.contract,
+            fields=self.fields,
+            functions=self.functions,
+        )
+
+    def list_indexes(self, collection_name: str, **kwargs) -> list[str]:
+        self.index_lookups += 1
+        return list(self.index_names or self._indexes())
+
+    def describe_index(self, collection_name: str, index_name: str, **kwargs) -> dict:
+        return self._indexes()[index_name]
+
+    def _indexes(self) -> dict[str, dict]:
+        return dict(self.indexes if self.indexes is not None else recorded_indexes())
 
     def query(self, **kwargs):
         self.queries.append(kwargs)
@@ -457,41 +617,109 @@ def test_confirming_a_read_contract_rejects_another_embedding_space():
         )
 
 
-def test_ensure_index_creates_a_collection_that_declares_the_contract():
-    """The creator owns the collection and the contract it carries."""
+def _ensure(store: MilvusDocumentStore, client: _CollectionClient, binding):
+    return store.ensure_index(
+        client,
+        COLLECTION_NAME,
+        dimension=binding.dimension,
+        embedding_space_id=binding.embedding_space_id,
+    )
+
+
+def test_ensure_index_creates_a_collection_and_confirms_its_real_structure():
+    """The creator reads its own collection back and checks what it is.
+
+    A declaration is not a structure: the creator confirms the fields, the BM25
+    function and the state of both indexes before it reports the index usable.
+    """
     binding = _binding()
     client = _CollectionClient()
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
-    declared = store.ensure_index(
-        client,
-        COLLECTION_NAME,
-        dimension=binding.dimension,
-        embedding_space_id=binding.embedding_space_id,
-    )
+    declared = _ensure(store, client, binding)
 
     assert declared == binding
     assert len(client.schemas) == 1
-    # Creating reads the collection back once to confirm its own contract.
-    assert client.descriptions == 1
+    assert client.descriptions == 1, "the created collection is read back once"
+    assert client.index_lookups == 1, "the created indexes are read back"
 
 
 def test_ensure_index_adopts_a_collection_that_declares_this_contract():
-    """A compatible collection is used as it is; nothing is created."""
+    """An existing collection is confirmed against its real structure."""
     binding = _binding()
     client = _CollectionClient(exists=True, contract=binding)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
-    declared = store.ensure_index(
-        client,
-        COLLECTION_NAME,
-        dimension=binding.dimension,
-        embedding_space_id=binding.embedding_space_id,
-    )
+    declared = _ensure(store, client, binding)
 
     assert declared == binding
     assert client.schemas == []
     assert client.descriptions == 1
+    assert client.index_lookups == 1
+
+
+def test_a_failed_create_is_reported_as_it_is():
+    """A create that fails is the failure the caller sees.
+
+    Milvus rejects a create that duplicates a name with different parameters.
+    This writer does not read the name back to guess whether it won anyway: the
+    rejection is raised, nothing is described, and no row can follow it.
+    """
+    binding = _binding()
+    client = _CollectionClient(create_fails=True, winner_contract=binding)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(RuntimeError, match="create duplicate collection"):
+        _ensure(store, client, binding)
+
+    assert len(client.schemas) == 1, "the create really was attempted"
+    assert client.descriptions == 0, "the failure was not guessed into success"
+    assert client.index_lookups == 0
+
+
+def test_a_retry_adopts_the_collection_the_winner_created():
+    """The loser of a create race is served by the next complete attempt.
+
+    The collection the winner created declares the requested contract, so the
+    retry reads it, validates its real structure and proceeds. Nothing about
+    the failure is remembered: the retry is the ordinary adoption path.
+    """
+    binding = _binding()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+    with pytest.raises(RuntimeError):
+        _ensure(
+            store,
+            _CollectionClient(create_fails=True, winner_contract=binding),
+            binding,
+        )
+    retry_client = _CollectionClient(exists=True, contract=binding)
+
+    declared = _ensure(store, retry_client, binding)
+
+    assert declared == binding
+    assert retry_client.schemas == [], "the retry creates nothing"
+    assert retry_client.descriptions == 1
+    assert retry_client.index_lookups == 1
+
+
+def test_a_retry_refuses_the_collection_the_winner_created_otherwise():
+    """The retry confirms the real collection, not the fact that it exists."""
+    binding = _binding()
+    winner = _binding(embedding_space_id="sha256:the-winner")
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+    with pytest.raises(RuntimeError):
+        _ensure(
+            store,
+            _CollectionClient(create_fails=True, winner_contract=winner),
+            binding,
+        )
+
+    with pytest.raises(IndexContractIncompatibleError):
+        _ensure(
+            store,
+            _CollectionClient(exists=True, contract=winner),
+            binding,
+        )
 
 
 def test_ensure_index_still_rejects_an_unknown_collection():
@@ -501,93 +729,160 @@ def test_ensure_index_still_rejects_an_unknown_collection():
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     with pytest.raises(IndexContractIncompatibleError):
-        store.ensure_index(
-            client,
-            COLLECTION_NAME,
-            dimension=binding.dimension,
-            embedding_space_id=binding.embedding_space_id,
-        )
+        _ensure(store, client, binding)
 
     assert client.schemas == [], "a foreign collection is never re-created"
+    assert client.index_lookups == 0, "a refused contract needs no index lookup"
 
 
-def test_ensure_index_confirms_the_contract_of_a_collection_it_did_not_create():
-    """The loser of a create race uses the winner's contract, if it matches.
+def test_a_half_built_collection_missing_an_index_is_refused():
+    """A create that registered the collection but not both indexes fails here.
 
-    Milvus rejects a duplicate name, so a create that lost the race raises. The
-    read-back is what decides: the same contract serves the loser, any other
-    contract fails it. Nothing waits for the winner.
+    The contract can only say which schema version a collection claims to be,
+    so an index that never finished is caught by reading the index metadata,
+    not by trusting the claim.
     """
     binding = _binding()
-    client = _CollectionClient(create_raises=True, winner_contract=binding)
+    indexes = recorded_indexes()
+    del indexes["sparse_vector"]
+    client = _CollectionClient(exists=True, contract=binding, indexes=indexes)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
-    declared = store.ensure_index(
-        client,
-        COLLECTION_NAME,
-        dimension=binding.dimension,
-        embedding_space_id=binding.embedding_space_id,
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert failure.value.retryable is False
+    assert any(
+        "sparse_vector" in mismatch and "no index" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_collection_whose_index_is_not_finished_is_refused():
+    """An index still building cannot answer a search, so it is not usable."""
+    binding = _binding()
+    indexes = recorded_indexes()
+    indexes["sparse_vector"]["state"] = "InProgress"
+    client = _CollectionClient(exists=True, contract=binding, indexes=indexes)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "sparse_vector" in mismatch and "InProgress" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_collection_whose_index_measures_differently_is_refused():
+    """The metric decides what a score means, so a drifted one is not this index."""
+    binding = _binding()
+    indexes = recorded_indexes()
+    indexes["dense_vector"]["metric_type"] = "L2"
+    client = _CollectionClient(exists=True, contract=binding, indexes=indexes)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "dense_vector" in mismatch and "L2" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_collection_holding_one_index_name_twice_is_refused():
+    """More than one index under one name cannot be described, so it is refused.
+
+    Two identical creates racing on the server can leave each index recorded
+    twice, and the server then refuses to describe that name at all. Nothing
+    here guesses which of the two answers would have been the right one: the
+    index state of such a collection cannot be confirmed, so a writer fails
+    instead of writing rows into it.
+    """
+    binding = _binding()
+    client = _CollectionClient(
+        exists=True,
+        contract=binding,
+        index_names=["dense_vector", "dense_vector", "sparse_vector"],
     )
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
-    assert declared == binding
-    assert len(client.schemas) == 1, "the create really was attempted"
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "dense_vector" in mismatch and "more than one" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_collection_whose_row_layout_differs_is_refused():
+    """A column this schema writes is missing from the real collection."""
+    binding = _binding()
+    fields = [
+        field
+        for field in recorded_fields(binding.dimension)
+        if field["name"] != "metadata"
+    ]
+    client = _CollectionClient(exists=True, contract=binding, fields=fields)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "missing" in mismatch and "metadata" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_collection_without_the_bm25_function_is_refused():
+    """Keyword retrieval is a function of the collection, not of a reader."""
+    binding = _binding()
+    client = _CollectionClient(exists=True, contract=binding, functions=[])
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "retrieval_text_bm25" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_collection_that_analyzes_its_retrieval_text_differently_is_refused():
+    """The analyzer decides which terms BM25 indexes, so it is checked."""
+    binding = _binding()
+    fields = recorded_fields(binding.dimension)
+    retrieval_text = next(
+        field for field in fields if field["name"] == "retrieval_text"
+    )
+    retrieval_text["params"]["analyzer_params"] = '{"type":"standard"}'
+    client = _CollectionClient(exists=True, contract=binding, fields=fields)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "retrieval_text" in mismatch and "standard" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
+def test_a_read_path_reads_the_contract_without_the_index_state():
+    """A reader checks the capability it needs, not the physical structure."""
+    binding = _binding()
+    client = _CollectionClient(exists=True, contract=binding)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    assert store.read_contract(client, COLLECTION_NAME) == binding
+
     assert client.descriptions == 1
-
-
-def test_ensure_index_rejects_a_collection_created_by_another_contract():
-    """The creation race cannot be confirmed by a different contract.
-
-    Contract A owns the collection. Contract B must not be able to confirm that
-    physical collection just because the dimension matches, and neither may a
-    writer of A: the contract the collection declares is what decides.
-    """
-    binding = _binding()
-    other = _binding(embedding_space_id="sha256:late-writer")
-    client = _CollectionClient(create_raises=True, winner_contract=binding)
-    store = MilvusDocumentStore(uri="http://milvus.test:19530")
-
-    with pytest.raises(IndexContractIncompatibleError):
-        store.ensure_index(
-            client,
-            COLLECTION_NAME,
-            dimension=other.dimension,
-            embedding_space_id=other.embedding_space_id,
-        )
-
-    assert len(client.schemas) == 1
-
-
-def test_a_lost_create_race_is_logged_apart_from_a_contract_mismatch(caplog):
-    """On-call can tell "lost the create race" from "contract is incompatible"."""
-    binding = _binding()
-    store = MilvusDocumentStore(uri="http://milvus.test:19530")
-
-    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus.store"):
-        store.ensure_index(
-            _CollectionClient(create_raises=True, winner_contract=binding),
-            COLLECTION_NAME,
-            dimension=binding.dimension,
-            embedding_space_id=binding.embedding_space_id,
-        )
-        races = [record.getMessage() for record in caplog.records]
-
-    assert any("lost the create race" in message for message in races), races
-
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus.store"):
-        with pytest.raises(IndexContractIncompatibleError):
-            store.ensure_index(
-                _CollectionClient(
-                    exists=True,
-                    contract=_binding(embedding_space_id="sha256:the-winner"),
-                ),
-                COLLECTION_NAME,
-                dimension=binding.dimension,
-                embedding_space_id=binding.embedding_space_id,
-            )
-        mismatches = [record.getMessage() for record in caplog.records]
-
-    assert not any("lost the create race" in message for message in mismatches)
+    assert client.index_lookups == 0
 
 
 def test_ensure_index_reports_a_collection_that_cannot_be_read_back():
@@ -604,9 +899,4 @@ def test_ensure_index_reports_a_collection_that_cannot_be_read_back():
             return False
 
     with pytest.raises(IndexMissingError):
-        store.ensure_index(
-            _VanishingClient(),
-            COLLECTION_NAME,
-            dimension=binding.dimension,
-            embedding_space_id=binding.embedding_space_id,
-        )
+        _ensure(store, _VanishingClient(), binding)

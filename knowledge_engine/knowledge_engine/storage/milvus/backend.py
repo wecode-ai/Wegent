@@ -344,8 +344,8 @@ class MilvusBackend(BaseStorageBackend):
         rows, so the version a caller reads is always one version of one
         document. ``MilvusCleanup`` owns the delete entry point's version of
         that removal; this write owns its own, on the same client that
-        confirmed the index contract, so the whole replacement costs one client
-        lifetime and no reconnection between its steps.
+        confirmed the index contract, so the whole replacement needs no second
+        connection between its steps.
 
         The rows are written once and never published in a second pass, and the
         write returns as soon as the server accepted them. Retrieval reads at
@@ -505,9 +505,9 @@ class MilvusBackend(BaseStorageBackend):
         if request.empty_scope:
             return {"records": []}
 
-        # One request owns exactly one client: the contract read and the
-        # answering branch share it, and the context manager still closes it
-        # on every exit. Concurrent requests keep independent connections.
+        # One request uses one client: the contract read and the answering
+        # branch share it, and every request of this connection identity shares
+        # the one connection PyMilvus registers under its alias.
         with self._store.client() as client:
             binding = self._read_bound_index(client, request.collection_name)
             if binding is None:

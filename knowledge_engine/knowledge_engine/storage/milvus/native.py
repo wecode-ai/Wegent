@@ -6,12 +6,12 @@
 
 This module owns what a stored row is: the physical schema, the index contract
 that binds a collection to one embedding space and schema version, row
-identifiers, the filter expressions the read and write paths share, and the one
-describe that reads a contract back. The contract has exactly one home - the
-description of the collection it describes, written when that collection is
-created and read back from it - so nothing outside the collection records what a
-collection contains. The bounded client lifecycle and the write and search RPCs
-live in ``store``; nothing here resolves retrieval text or calls an
+identifiers, the filter expressions the read and write paths share, and the
+reads that answer what a collection really contains. The contract has exactly
+one home - the description of the collection it describes, written when that
+collection is created and read back from it - so nothing outside the collection
+records what a collection contains. The shared connection and the write and
+search RPCs live in ``store``; nothing here resolves retrieval text or calls an
 embedding provider, so an adapter can be tested against real Milvus without a
 model.
 
@@ -19,7 +19,10 @@ The persisted contract is only what makes a stored index incompatible with a
 request: the schema version, the dimension and the stable embedding space
 identity. Fields, metric, index, BM25 function and analyzer are static physical
 structure, so a change to any of them is expressed by bumping
-``SCHEMA_VERSION`` rather than by persisting a second description of them.
+``SCHEMA_VERSION`` - and the writer checks that structure against the real
+collection instead of trusting the version it declares. The checks read that
+structure back from the collection; the schema this code writes is the shape
+they compare it with, which is why it is built here and not described twice.
 """
 
 from __future__ import annotations
@@ -37,6 +40,8 @@ from pymilvus import (
     FunctionType,
     MilvusClient,
 )
+from pymilvus.exceptions import AmbiguousIndexName
+from pymilvus.milvus_client.index import IndexParams
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 
@@ -83,6 +88,16 @@ DISPLAY_TEXT_FIELD = "display_text"
 METADATA_FIELD = "metadata"
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
+
+# The one index each vector field carries in this schema version. It is one
+# table because two readers must agree on it: the writer declares these indexes
+# when it creates a collection, and the structure check reads them back.
+EXPECTED_INDEXES: Dict[str, tuple[str, str]] = {
+    DENSE_VECTOR_FIELD: (INDEX_TYPE, METRIC_TYPE),
+    SPARSE_VECTOR_FIELD: (SPARSE_INDEX_TYPE, SPARSE_METRIC_TYPE),
+}
+# The state an index reports once it can answer a search.
+INDEX_STATE_FINISHED = "Finished"
 
 # The metadata keys every stored chunk carries. Row identity is deliberately
 # absent: the write path owns it, so a query condition can never pin or fake it.
@@ -269,14 +284,20 @@ def index_contract_from_description(description: Any) -> MilvusIndexBinding | No
 
 @dataclass(frozen=True)
 class CollectionDescription:
-    """One ``describe_collection`` answer, read as contract and dimension.
+    """One ``describe_collection`` answer, read as everything it declares.
 
-    Both facts come from the same server call, so the dimension check costs no
-    extra round trip.
+    The contract, the dense dimension and the physical row layout all come from
+    the same server call, so a reader that only needs the contract pays no
+    extra round trip for the rest and a writer can check what it reads.
     """
 
     dimension: int | None
     binding: MilvusIndexBinding | None
+    # Keyed by field name: the layout is a set of named columns, and a check
+    # about one column must not depend on where the server listed it.
+    fields: Dict[str, Dict[str, Any]]
+    functions: List[Dict[str, Any]]
+    enable_dynamic_field: bool | None
 
 
 def read_collection_description(
@@ -285,11 +306,17 @@ def read_collection_description(
     *,
     timeout: float,
 ) -> CollectionDescription:
-    """Read the contract and the dense dimension one collection declares."""
+    """Read the contract and the physical structure one collection declares."""
     description = client.describe_collection(collection_name, timeout=timeout)
     return CollectionDescription(
         dimension=_dense_dimension(description),
         binding=index_contract_from_description(description.get("description")),
+        fields={
+            str(field.get("name")): dict(field)
+            for field in description.get("fields", [])
+        },
+        functions=[dict(function) for function in description.get("functions", [])],
+        enable_dynamic_field=description.get("enable_dynamic_field"),
     )
 
 
@@ -299,6 +326,258 @@ def _dense_dimension(description: Dict[str, Any]) -> int | None:
             dim = field.get("params", {}).get("dim")
             return int(dim) if dim is not None else None
     return None
+
+
+@dataclass(frozen=True)
+class CollectionIndexes:
+    """What the server says about the indexes one collection carries.
+
+    ``described`` maps each covered field to the server's answer about its
+    index. ``unreadable`` names the index names the server would not describe
+    because the collection holds more than one of them, so the state of the
+    fields those indexes cover cannot be confirmed at all.
+    """
+
+    described: Dict[str, Dict[str, Any]]
+    unreadable: List[str]
+
+
+def read_collection_indexes(
+    client: MilvusClient,
+    collection_name: str,
+    *,
+    timeout: float,
+) -> CollectionIndexes:
+    """Read what the server says about the indexes of one collection.
+
+    The answer is keyed by the field each index covers, because that is what
+    the row layout names: Milvus allows one index per field, so the covered
+    field is the index's identity for a structure check. An index name the
+    server holds twice is not described - it refuses - and is reported as
+    unreadable instead, which is what makes a collection two identical creates
+    raced on visibly unconfirmable rather than silently assumed.
+    """
+    names = list(client.list_indexes(collection_name, timeout=timeout))
+    described: Dict[str, Dict[str, Any]] = {}
+    unreadable: List[str] = []
+    for index_name in dict.fromkeys(names):
+        if names.count(index_name) > 1:
+            # The server answers about several indexes at once and refuses to
+            # pick one, so this field's index state cannot be read at all.
+            unreadable.append(index_name)
+            continue
+        try:
+            answer = client.describe_index(collection_name, index_name, timeout=timeout)
+        except AmbiguousIndexName:
+            # The same state, reached without the duplicate being visible in
+            # the name list: the server still will not pick one index.
+            unreadable.append(index_name)
+            continue
+        if not answer:
+            continue
+        described[str(answer.get("field_name") or index_name)] = dict(answer)
+    return CollectionIndexes(described=described, unreadable=unreadable)
+
+
+def declare_collection_indexes(index_params: IndexParams) -> None:
+    """Declare the physical index of every vector field this schema writes."""
+    for field_name, (index_type, metric_type) in EXPECTED_INDEXES.items():
+        index_params.add_index(
+            field_name=field_name,
+            index_type=index_type,
+            metric_type=metric_type,
+        )
+
+
+def assert_collection_structure(
+    described: CollectionDescription,
+    indexes: CollectionIndexes,
+    *,
+    binding: MilvusIndexBinding,
+    collection_name: str,
+) -> None:
+    """Refuse a collection whose real structure is not this schema version.
+
+    The contract says which schema version a collection claims to be. A claim
+    is not the structure itself: a create that died after the collection was
+    registered, a collection another tool finished, or a partially built index
+    all leave a collection that declares the current version while missing a
+    field, the BM25 function or an index. The writer therefore compares the
+    server's own answer with the schema this code writes - the same schema the
+    create sent - and fails rather than writing rows into a collection it
+    cannot read back.
+    """
+    mismatches = collection_structure_mismatches(
+        described,
+        indexes,
+        binding=binding,
+    )
+    if mismatches:
+        raise IndexContractIncompatibleError(
+            collection_name,
+            "the collection structure is not the one this schema version writes",
+            details={"mismatches": mismatches},
+        )
+
+
+def collection_structure_mismatches(
+    described: CollectionDescription,
+    indexes: CollectionIndexes,
+    *,
+    binding: MilvusIndexBinding,
+) -> List[str]:
+    """Every way a collection's real structure differs from this schema version.
+
+    An empty list means the collection is the one this code writes. Each entry
+    names one difference, so a failure reports the whole picture instead of the
+    first thing that did not match.
+    """
+    schema = build_collection_schema(binding)
+    mismatches = _field_mismatches(described, schema)
+    mismatches += _analyzer_mismatches(described)
+    mismatches += _function_mismatches(described, schema)
+    mismatches += _index_mismatches(indexes)
+    return mismatches
+
+
+def _field_mismatches(
+    described: CollectionDescription, schema: CollectionSchema
+) -> List[str]:
+    """Compare the described columns with the schema this code writes."""
+    expected = {field.name: field for field in schema.fields}
+    actual = described.fields
+    mismatches = _name_mismatches(expected, actual, kind="fields")
+    for name in sorted(set(expected) & set(actual)):
+        expected_type = int(expected[name].dtype)
+        actual_type = int(actual[name].get("type", -1))
+        if expected_type != actual_type:
+            mismatches.append(
+                f"field {name} has type {actual_type}, expected {expected_type}"
+            )
+    if bool(described.enable_dynamic_field) != bool(schema.enable_dynamic_field):
+        mismatches.append("the collection accepts dynamic fields, this schema does not")
+    return mismatches
+
+
+def _analyzer_mismatches(described: CollectionDescription) -> List[str]:
+    """Compare the analyzer BM25 reads the retrieval text through.
+
+    The keyword capability is the analyzer, not the field name: a collection
+    whose retrieval text is analyzed differently indexes different terms, so
+    the analyzer this schema declares is part of the structure to confirm.
+    """
+    field = described.fields.get(RETRIEVAL_TEXT_FIELD)
+    if field is None:
+        # The missing column is already one of the reported mismatches.
+        return []
+    params = field.get("params") or {}
+    if str(params.get("enable_analyzer", "")).lower() != "true":
+        return [f"{RETRIEVAL_TEXT_FIELD} does not enable an analyzer"]
+    declared = _json_or_text(params.get("analyzer_params"))
+    if declared != ANALYZER_PARAMS:
+        return [
+            f"{RETRIEVAL_TEXT_FIELD} is analyzed by {declared}, "
+            f"expected {ANALYZER_PARAMS}"
+        ]
+    return []
+
+
+def _function_mismatches(
+    described: CollectionDescription, schema: CollectionSchema
+) -> List[str]:
+    """Compare the BM25 function that maintains the sparse vector."""
+    expected = {function.name: function for function in schema.functions}
+    actual = {str(function.get("name")): function for function in described.functions}
+    mismatches = _name_mismatches(expected, actual, kind="functions")
+    for name in sorted(set(expected) & set(actual)):
+        expected_function = expected[name]
+        actual_function = actual[name]
+        if int(actual_function.get("type", -1)) != int(expected_function.type):
+            mismatches.append(
+                f"function {name} has type {actual_function.get('type')}, "
+                f"expected {int(expected_function.type)}"
+            )
+        for role in ("input_field_names", "output_field_names"):
+            expected_names = [str(item) for item in getattr(expected_function, role)]
+            actual_names = _function_field_names(actual_function.get(role))
+            if expected_names != actual_names:
+                mismatches.append(
+                    f"function {name} {role} is {actual_names}, "
+                    f"expected {expected_names}"
+                )
+    return mismatches
+
+
+def _name_mismatches(
+    expected: Dict[str, Any],
+    actual: Dict[str, Any],
+    *,
+    kind: str,
+) -> List[str]:
+    """Report the names only one side of a comparison declares."""
+    mismatches: List[str] = []
+    missing = sorted(set(expected) - set(actual))
+    if missing:
+        mismatches.append(f"{kind} are missing: {', '.join(missing)}")
+    unexpected = sorted(set(actual) - set(expected))
+    if unexpected:
+        mismatches.append(
+            f"{kind} are not part of this schema: {', '.join(unexpected)}"
+        )
+    return mismatches
+
+
+def _index_mismatches(indexes: CollectionIndexes) -> List[str]:
+    """Compare the indexes the vector fields carry with the declared ones."""
+    mismatches = [
+        f"the collection holds more than one {index_name} index, so the state "
+        "of its fields cannot be confirmed"
+        for index_name in indexes.unreadable
+    ]
+    for field_name, (index_type, metric_type) in EXPECTED_INDEXES.items():
+        described = indexes.described.get(field_name)
+        if described is None:
+            mismatches.append(f"field {field_name} has no index")
+            continue
+        state = str(described.get("state") or "")
+        if state != INDEX_STATE_FINISHED:
+            mismatches.append(
+                f"the index on {field_name} is "
+                f"{state or 'in an unknown state'}, expected {INDEX_STATE_FINISHED}"
+            )
+        if str(described.get("index_type") or "") != index_type:
+            mismatches.append(
+                f"the index on {field_name} is {described.get('index_type')}, "
+                f"expected {index_type}"
+            )
+        if str(described.get("metric_type") or "") != metric_type:
+            mismatches.append(
+                f"the index on {field_name} measures "
+                f"{described.get('metric_type')}, expected {metric_type}"
+            )
+    return mismatches
+
+
+def _json_or_text(value: Any) -> Any:
+    """Read a parameter the server answers as JSON text when it is one."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
+
+def _function_field_names(value: Any) -> List[str]:
+    """Read a function's field list from either spelling an answer uses.
+
+    The schema declares a list, while ``describe_collection`` answers with the
+    protobuf repeated field of the server's message - a container that is
+    iterable but is not a ``list`` - so both shapes are read into one.
+    """
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        return [str(item) for item in value]
+    return [str(value)]
 
 
 def build_collection_schema(binding: MilvusIndexBinding) -> CollectionSchema:

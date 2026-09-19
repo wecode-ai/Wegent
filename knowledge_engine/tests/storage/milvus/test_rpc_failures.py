@@ -25,7 +25,13 @@ from knowledge_engine.storage.milvus.errors import (
     rpc_failure,
     rpc_status_code,
 )
+from knowledge_engine.storage.milvus.native import SCHEMA_VERSION, MilvusIndexBinding
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
+from tests.storage.milvus.recorded_collection import (
+    RECORDED_DIMENSION,
+    recorded_description,
+    recorded_indexes,
+)
 
 TIMEOUT_SECONDS = 3.0
 
@@ -45,6 +51,11 @@ class _RecordingClient:
 
     def __init__(self, *, exists: bool = True) -> None:
         self.exists = exists
+        self.contract = MilvusIndexBinding(
+            schema_version=SCHEMA_VERSION,
+            dimension=RECORDED_DIMENSION,
+            embedding_space_id="sha256:abc",
+        )
         self.calls: list[tuple[str, dict]] = []
         self.closed = False
 
@@ -57,7 +68,15 @@ class _RecordingClient:
 
     def describe_collection(self, collection_name: str, **kwargs) -> dict:
         self._record("describe_collection", kwargs)
-        return {"fields": [{"name": "dense_vector", "params": {"dim": 4}}]}
+        return recorded_description(self.contract)
+
+    def list_indexes(self, collection_name: str, **kwargs) -> list[str]:
+        self._record("list_indexes", kwargs)
+        return list(recorded_indexes())
+
+    def describe_index(self, collection_name: str, index_name: str, **kwargs) -> dict:
+        self._record("describe_index", kwargs)
+        return recorded_indexes()[index_name]
 
     def query(self, **kwargs) -> list:
         self._record("query", kwargs)
@@ -175,12 +194,27 @@ def test_the_contract_read_bounds_both_of_its_rpcs():
     """The contract read describes the collection under the same deadline."""
     client = _RecordingClient()
 
-    with pytest.raises(StorageBackendError):
-        # The recording client declares no contract, so the read refuses it.
-        _store(client).read_contract(client, "wegent_kb_1")
+    binding = _store(client).read_contract(client, "wegent_kb_1")
 
+    assert binding == client.contract
     assert client.timeout_of("has_collection") == TIMEOUT_SECONDS
     assert client.timeout_of("describe_collection") == TIMEOUT_SECONDS
+
+
+def test_the_structure_check_bounds_the_index_rpcs():
+    """A writer reads the index metadata under the same deadline."""
+    client = _RecordingClient()
+    store = _store(client)
+
+    store.ensure_index(
+        client,
+        "wegent_kb_1",
+        dimension=RECORDED_DIMENSION,
+        embedding_space_id="sha256:abc",
+    )
+
+    assert client.timeout_of("list_indexes") == TIMEOUT_SECONDS
+    assert client.timeout_of("describe_index") == TIMEOUT_SECONDS
 
 
 def test_an_unresponsive_rpc_reports_the_sdk_failure():
@@ -204,7 +238,7 @@ def test_an_unresponsive_rpc_reports_the_sdk_failure():
     assert failure.value.retryable is True
     deadline_code = _code_number(StatusCode.DEADLINE_EXCEEDED)
     assert f"code={deadline_code}" in str(failure.value)
-    assert client.closed is True
+    assert client.closed is False
 
 
 def test_a_disconnected_service_reports_a_retryable_failure():
@@ -224,7 +258,7 @@ def test_a_disconnected_service_reports_a_retryable_failure():
 
     assert failure.value.retryable is True
     assert f"code={_code_number(StatusCode.UNAVAILABLE)}" in str(failure.value)
-    assert client.closed is True
+    assert client.closed is False
 
 
 def test_a_deterministic_sdk_rejection_keeps_its_own_code():
@@ -330,7 +364,7 @@ def test_an_exhausted_retry_becomes_a_retryable_storage_error_on_the_wire():
         _code_number(StatusCode.DEADLINE_EXCEEDED)
     )
     assert "cancelled" in str(failure.value)
-    assert client.closed is True
+    assert client.closed is False
 
 
 def test_a_missing_status_code_never_becomes_retryable():
@@ -362,31 +396,3 @@ def test_a_connection_failure_is_classified_as_retryable():
             store.query_rows(used, "wegent_kb_1", "", limit=10)
 
     assert failure.value.retryable is True
-
-
-def test_each_operation_closes_only_its_own_client():
-    """Concurrent operations hold independent clients and aliases."""
-    aliases: list[str] = []
-    clients: list[_RecordingClient] = []
-
-    def factory(**kwargs):
-        aliases.append(kwargs["alias"])
-        client = _RecordingClient()
-        clients.append(client)
-        return client
-
-    store = MilvusDocumentStore(
-        uri="http://milvus.test:19530",
-        timeout=TIMEOUT_SECONDS,
-        client_factory=factory,
-    )
-
-    with store.client() as first:
-        with store.client() as second:
-            assert first is not second
-            assert clients[0].closed is False
-        assert clients[0].closed is False
-        assert clients[1].closed is True
-
-    assert clients[0].closed is True
-    assert aliases == list(dict.fromkeys(aliases))
