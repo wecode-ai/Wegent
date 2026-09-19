@@ -129,8 +129,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `task-board-association`、`core-task-flow`、`task-attachments`、
 `cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
 `cloud-worktree-queued-cancel`、`cloud-worktree-tools`、
-`cloud-worktree-archive-restore`、`cloud-worktree-device-restart`、
-`context-compaction`、`runtime-task-queue`、`runtime-terminal-convergence`、
+`cloud-worktree-archive-restore`、`context-compaction`、`runtime-task-queue`、
 `executor-stream-recovery`、`running-conversation-history`、
 `codex-notification-isolation`、`split-workbench`、`native-window-startup`、
 `native-window-chrome`、`renderer-storage`、`tray-lifecycle`、
