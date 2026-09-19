@@ -16,6 +16,9 @@ use crate::{
 const CLAUDE_STDOUT_MAX_BUFFER_BYTES: usize = 1024 * 1024;
 const CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 const OMITTED_IMAGE_DATA: &str = "[binary image data omitted]";
+const OMITTED_TOOL_RESULT_CONTENT: &str =
+    "[tool result content omitted because it exceeded the executor stdout message limit]";
+const TOOL_RESULT_PREVIEW_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeStreamSummary {
@@ -151,7 +154,7 @@ impl ClaudeStdoutJsonBuffer {
         match serde_json::from_str::<Value>(&self.buffer) {
             Ok(mut value) => {
                 omit_inline_image_data(&mut value);
-                let normalized_size = if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                let mut normalized_size = if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
                     omit_redundant_task_transcripts(&mut value);
                     serde_json::to_vec(&value)
                         .map(|serialized| serialized.len())
@@ -159,6 +162,12 @@ impl ClaudeStdoutJsonBuffer {
                 } else {
                     self.buffer.len()
                 };
+                if normalized_size > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                    omit_oversized_tool_result_content(&mut value);
+                    normalized_size = serde_json::to_vec(&value)
+                        .map(|serialized| serialized.len())
+                        .unwrap_or(self.buffer.len());
+                }
                 if normalized_size > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
                     let error = ClaudeStdoutJsonError {
                         line_number,
@@ -197,6 +206,72 @@ pub fn compact_claude_stdout_line<'a>(
             message: format!("failed to serialize normalized Claude stdout JSON: {error}"),
             preview: preview_stdout_line(line),
         })
+}
+
+fn omit_oversized_tool_result_content(value: &mut Value) {
+    if value["type"] != "user" {
+        return;
+    }
+    let Some(blocks) = value["message"]["content"].as_array_mut() else {
+        return;
+    };
+
+    for block in blocks {
+        if block["type"] != "tool_result"
+            || !block["tool_use_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        {
+            continue;
+        }
+        let Some(content) = block.get_mut("content") else {
+            continue;
+        };
+        *content = Value::String(compact_tool_result_content(content));
+    }
+}
+
+fn compact_tool_result_content(content: &Value) -> String {
+    let mut compacted = OMITTED_TOOL_RESULT_CONTENT.to_owned();
+    let preview = tool_result_text_preview(content);
+    if !preview.is_empty() {
+        compacted.push_str("\n\nPreview:\n");
+        compacted.push_str(&preview);
+    }
+    compacted
+}
+
+fn tool_result_text_preview(content: &Value) -> String {
+    let mut preview = String::new();
+    match content {
+        Value::String(text) => append_text_preview(&mut preview, text),
+        Value::Array(items) => {
+            for item in items {
+                let Some(text) = item
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.as_str())
+                else {
+                    continue;
+                };
+                append_text_preview(&mut preview, text);
+                if preview.len() >= TOOL_RESULT_PREVIEW_MAX_BYTES {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+    preview
+}
+
+fn append_text_preview(preview: &mut String, text: &str) {
+    let remaining = TOOL_RESULT_PREVIEW_MAX_BYTES.saturating_sub(preview.len());
+    if remaining == 0 {
+        return;
+    }
+    let end = text.floor_char_boundary(remaining.min(text.len()));
+    preview.push_str(&text[..end]);
 }
 
 fn omit_redundant_task_transcripts(value: &mut Value) {
