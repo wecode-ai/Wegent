@@ -40,6 +40,7 @@ from app.services.readers.kinds import IKindReader, KindType
 logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "wegent:kind_cache:"
+_key_prefix_override: Optional[str] = None
 _PENDING_SNAPSHOTS_KEY = "kind_cache_pending_snapshots"
 _PENDING_BULK_KEY = "kind_cache_pending_bulk"
 _MISS_SENTINEL = "__kind_cache_miss__"
@@ -58,6 +59,17 @@ _KIND_COLUMNS = (
     "created_at",
     "updated_at",
 )
+
+
+def _prefix() -> str:
+    """Active cache key prefix; tests override it per test for isolation."""
+    return _key_prefix_override or _KEY_PREFIX
+
+
+def set_cache_key_prefix(prefix: Optional[str]) -> None:
+    """Override the cache key prefix (used by tests to isolate each case)."""
+    global _key_prefix_override
+    _key_prefix_override = prefix
 
 
 def _kind_to_payload(kind: Optional[Kind]) -> str:
@@ -161,6 +173,20 @@ class KindCacheStore:
         except Exception as exc:
             self._on_error("delete", exc)
 
+    def flush_prefix(self, prefix: str) -> int:
+        """Delete every cache entry under ``prefix``; returns how many."""
+        if not self._available():
+            return 0
+        try:
+            client = self._get_client()
+            keys = list(client.scan_iter(f"{prefix}*"))
+            if keys:
+                return client.delete(*keys)
+            return 0
+        except Exception as exc:
+            self._on_error("flush prefix", exc)
+            return 0
+
 
 def _kind_value(kind: KindType | str) -> str:
     return kind.value if isinstance(kind, KindType) else str(kind)
@@ -191,21 +217,21 @@ class CachedKindReader(IKindReader):
 
     @staticmethod
     def _id_key(kind: KindType | str, resource_id: int) -> str:
-        return f"{_KEY_PREFIX}id:{_kind_value(kind)}:{resource_id}"
+        return f"{_prefix()}id:{_kind_value(kind)}:{resource_id}"
 
     @staticmethod
     def _personal_key(
         kind: KindType | str, user_id: int, namespace: str, name: str
     ) -> str:
-        return f"{_KEY_PREFIX}personal:{_kind_value(kind)}:{user_id}:{namespace}:{name}"
+        return f"{_prefix()}personal:{_kind_value(kind)}:{user_id}:{namespace}:{name}"
 
     @staticmethod
     def _public_key(kind: KindType | str, namespace: str, name: str) -> str:
-        return f"{_KEY_PREFIX}public:{_kind_value(kind)}:{namespace}:{name}"
+        return f"{_prefix()}public:{_kind_value(kind)}:{namespace}:{name}"
 
     @staticmethod
     def _group_key(kind: KindType | str, namespace: str, name: str) -> str:
-        return f"{_KEY_PREFIX}group:{_kind_value(kind)}:{namespace}:{name}"
+        return f"{_prefix()}group:{_kind_value(kind)}:{namespace}:{name}"
 
     # ------------------------------------------------------------------
     # Cached lookups
@@ -405,11 +431,11 @@ def _keys_for_identity(identity: Dict[str, Any]) -> List[str]:
     name = identity["name"]
     user_id = identity["user_id"]
     keys = [
-        f"{_KEY_PREFIX}public:{kind}:{namespace}:{name}",
-        f"{_KEY_PREFIX}group:{kind}:{namespace}:{name}",
+        f"{_prefix()}public:{kind}:{namespace}:{name}",
+        f"{_prefix()}group:{kind}:{namespace}:{name}",
     ]
     if user_id:
-        keys.append(f"{_KEY_PREFIX}personal:{kind}:{user_id}:{namespace}:{name}")
+        keys.append(f"{_prefix()}personal:{kind}:{user_id}:{namespace}:{name}")
     return keys
 
 
@@ -426,12 +452,12 @@ def _flush_snapshots_to_cache(snapshots: Dict[int, _Snapshot]) -> None:
         if snapshot.deleted:
             if snapshot.old is not None and snapshot.kind_id is not None:
                 keys_to_delete.append(
-                    f"{_KEY_PREFIX}id:{snapshot.old['kind']}:{snapshot.kind_id}"
+                    f"{_prefix()}id:{snapshot.old['kind']}:{snapshot.kind_id}"
                 )
         elif snapshot.row is not None and snapshot.kind_id is not None:
             row = snapshot.row
             store.set(
-                f"{_KEY_PREFIX}id:{row.kind}:{snapshot.kind_id}",
+                f"{_prefix()}id:{row.kind}:{snapshot.kind_id}",
                 row,
                 _ttl_for(row),
             )
