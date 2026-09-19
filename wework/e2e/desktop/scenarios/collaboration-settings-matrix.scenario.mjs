@@ -83,31 +83,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function archiveFixtures() {
     if (fixtureArchived) return
-    try {
-      for (const project of cloudProjects) {
-        const latest = await request(`/api/v1/cloud-projects/${project.id}`)
-        if (latest.status !== 'archived') {
-          await request(`/api/v1/cloud-projects/${project.id}?version=${latest.version}`, {
-            method: 'DELETE',
-          })
-        }
-      }
-      for (const workspace of [personalWorkspace, groupWorkspace].filter(Boolean)) {
-        const latest = await request(`/api/v1/workspaces/${workspace.id}`)
-        if (latest.status !== 'archived') {
-          await request(`/api/v1/workspaces/${workspace.id}?version=${latest.version}`, {
-            method: 'DELETE',
-          })
-        }
-      }
-      if (ownerGroup) {
-        await request(`/api/groups/${encodeURIComponent(ownerGroup.name)}`, {
+    for (const project of cloudProjects) {
+      const latest = await request(`/api/v1/cloud-projects/${project.id}`)
+      if (latest.status !== 'archived') {
+        await request(`/api/v1/cloud-projects/${project.id}?version=${latest.version}`, {
           method: 'DELETE',
         })
       }
-    } finally {
-      fixtureArchived = true
     }
+    for (const workspace of [personalWorkspace, groupWorkspace].filter(Boolean)) {
+      const latest = await request(`/api/v1/workspaces/${workspace.id}`)
+      if (latest.status !== 'archived') {
+        await request(`/api/v1/workspaces/${workspace.id}?version=${latest.version}`, {
+          method: 'DELETE',
+        })
+      }
+    }
+    if (ownerGroup) {
+      await request(`/api/groups/${encodeURIComponent(ownerGroup.name)}`, {
+        method: 'DELETE',
+      })
+    }
+    fixtureArchived = true
   }
 
   async function createCloudWorkspace(control, { name, namespace }) {
