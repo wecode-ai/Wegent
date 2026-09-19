@@ -23,6 +23,10 @@ from app.services.rag.remote_gateway import (
     should_fallback_to_local,
 )
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from knowledge_engine.storage.errors import (
+    READ_BUDGET_EXCEEDED_CODE,
+    StorageBackendError,
+)
 
 router = APIRouter()
 runtime_resolver = RagRuntimeResolver()
@@ -189,6 +193,13 @@ async def list_index_chunks(
         raise
     except RemoteRagGatewayError as e:
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
+    except StorageBackendError as e:
+        # A read that exceeds its budget is the caller's scope, not a service
+        # failure: the same request succeeds once it narrows or pages the read.
+        # The local gateway raises it directly; the remote gateway already
+        # carries the runtime's own status for this code.
+        status_code = 400 if e.code == READ_BUDGET_EXCEEDED_CODE else 500
+        raise HTTPException(status_code=status_code, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

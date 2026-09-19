@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+# A read that would return more rows than the caller allowed is a scope problem
+# the caller can settle by narrowing the request, not a service failure. The
+# code is stable so an API layer can answer it with 4xx instead of 5xx.
+READ_BUDGET_EXCEEDED_CODE = "read_budget_exceeded"
+
 
 class StorageBackendError(RuntimeError):
     """Base class for storage failures that carry a stable error code.
@@ -24,9 +29,12 @@ class StorageBackendError(RuntimeError):
         self,
         message: str,
         *,
+        code: str | None = None,
         details: dict[str, Any] | None = None,
         retryable: bool | None = None,
     ) -> None:
+        if code is not None:
+            self.code = code
         self.details = details or {}
         if retryable is not None:
             self.retryable = retryable

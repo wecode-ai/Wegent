@@ -19,7 +19,10 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from knowledge_engine.storage.base import MAX_READ_LIMIT
-from knowledge_engine.storage.errors import StorageBackendError
+from knowledge_engine.storage.errors import (
+    READ_BUDGET_EXCEEDED_CODE,
+    StorageBackendError,
+)
 from knowledge_engine.storage.milvus.filters import compile_metadata_conditions
 from knowledge_engine.storage.milvus.native import (
     CHUNK_INDEX_KEY,
@@ -232,7 +235,7 @@ class MilvusRowReader:
         rows = self._read_bounded_rows(
             collection_name,
             filter_expr,
-            budget=min(max_chunks, MAX_READ_LIMIT),
+            budget=max_chunks,
             what="the chunk listing",
         )
 
@@ -289,8 +292,10 @@ class MilvusRowReader:
                     rows.extend(batch)
                     if len(rows) > budget:
                         raise StorageBackendError(
-                            f"Milvus read exceeded its budget while reading {what}; "
-                            "the complete result cannot be returned.",
+                            f"Milvus read exceeded its budget while reading {what}: "
+                            f"at most {budget} rows can be read in one request. "
+                            "Narrow the scope or read it in pages.",
+                            code=READ_BUDGET_EXCEEDED_CODE,
                             details={
                                 "collection_name": collection_name,
                                 "budget": budget,

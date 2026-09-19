@@ -9,6 +9,7 @@ from fastapi import Request
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from knowledge_engine.storage.errors import (
+    READ_BUDGET_EXCEEDED_CODE,
     StorageBackendError,
     StorageUnavailableError,
     UnsupportedStorageCapabilityError,
@@ -62,6 +63,26 @@ async def test_embedding_dimension_mismatch_returns_stable_nonretryable_error() 
             "actual_dimensions": 4096,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_a_read_budget_failure_answers_4xx_with_its_own_code() -> None:
+    """A read the caller can narrow is a client error, never a 500."""
+    error = StorageBackendError(
+        "Milvus read exceeded its budget while reading the chunk listing: "
+        "at most 10000 rows can be read in one request. "
+        "Narrow the scope or read it in pages.",
+        code=READ_BUDGET_EXCEEDED_CODE,
+        details={"budget": 10000},
+    )
+
+    response = await storage_error_handler(_request("/internal/rag/list-chunks"), error)
+    body = json.loads(response.body)
+
+    assert response.status_code == 400
+    assert body["code"] == READ_BUDGET_EXCEEDED_CODE
+    assert "at most 10000 rows" in body["message"]
+    assert body["retryable"] is False
 
 
 @pytest.mark.asyncio

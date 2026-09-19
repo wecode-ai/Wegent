@@ -13,7 +13,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
-from knowledge_engine.storage.errors import StorageBackendError
+from knowledge_engine.storage.errors import (
+    READ_BUDGET_EXCEEDED_CODE,
+    StorageBackendError,
+)
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
@@ -24,9 +27,19 @@ logger = logging.getLogger(__name__)
 
 # The server could not answer; the caller may retry.
 RETRYABLE_STORAGE_STATUS_CODE = 503
+# The request itself asks for more than the read path may answer; the caller
+# can settle it by narrowing the scope.
+CLIENT_STORAGE_STATUS_CODE = 400
 # The request conflicts with the stored index state, so no retry can settle it
 # and an operator must decide.
 UNRESOLVABLE_STORAGE_STATUS_CODE = 409
+UNRESOLVABLE_STORAGE_CODES = frozenset(
+    {
+        "index_contract_incompatible",
+        "index_missing",
+        "storage_capability_unsupported",
+    }
+)
 
 
 @asynccontextmanager
@@ -102,20 +115,16 @@ async def storage_error_handler(
     ``details`` and the server log, so no connection target or raw provider
     response reaches the caller.
     """
-    status_code = (
-        RETRYABLE_STORAGE_STATUS_CODE
-        if exc.retryable
-        else (
-            UNRESOLVABLE_STORAGE_STATUS_CODE
-            if exc.code
-            in {
-                "index_contract_incompatible",
-                "index_missing",
-                "storage_capability_unsupported",
-            }
-            else 500
-        )
-    )
+    if exc.retryable:
+        status_code = RETRYABLE_STORAGE_STATUS_CODE
+    elif exc.code == READ_BUDGET_EXCEEDED_CODE:
+        # The caller asked for more rows than one read may return, so the same
+        # request can succeed when it narrows the scope or pages the read.
+        status_code = CLIENT_STORAGE_STATUS_CODE
+    elif exc.code in UNRESOLVABLE_STORAGE_CODES:
+        status_code = UNRESOLVABLE_STORAGE_STATUS_CODE
+    else:
+        status_code = 500
     logger.warning(
         "Storage error for %s: code=%s retryable=%s",
         request.url.path,

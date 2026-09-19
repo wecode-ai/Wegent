@@ -16,6 +16,7 @@ from knowledge_engine.embedding.vectors import EmptyIndexableContentError
 from knowledge_engine.storage.base import MAX_READ_LIMIT
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import (
+    READ_BUDGET_EXCEEDED_CODE,
     StorageBackendError,
     UnsupportedStorageCapabilityError,
 )
@@ -2725,9 +2726,13 @@ def test_get_all_chunks_fails_instead_of_truncating_an_over_budget_match_set():
     store = FakeStore(rows=_chunk_rows("42", range(5)))
     backend._store = store
 
-    with pytest.raises(StorageBackendError, match="exceeded its budget"):
+    with pytest.raises(StorageBackendError) as failure:
         backend.get_all_chunks("1", max_chunks=3)
 
+    # The stable code is what an API layer maps to a 4xx, and the message names
+    # the ceiling so the caller knows what to narrow.
+    assert failure.value.code == READ_BUDGET_EXCEEDED_CODE
+    assert "at most 3 rows" in str(failure.value)
     [iterator] = store.iterators
     # One row past the ceiling is what proves the match set is too large, and
     # the iterator is released whether the read answered or failed.

@@ -10,6 +10,10 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
+from knowledge_engine.storage.errors import (
+    READ_BUDGET_EXCEEDED_CODE,
+    StorageBackendError,
+)
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -196,6 +200,42 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
     )
     mock_get_gateway.assert_called_once()
     gateway.list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_public_rag_chunks_maps_a_read_budget_failure_to_400(
+    test_client,
+    test_token: str,
+):
+    """A read the caller can narrow answers 4xx with a readable reason."""
+    runtime_spec = MagicMock()
+    gateway = AsyncMock()
+    gateway.list_chunks.side_effect = StorageBackendError(
+        "Milvus read exceeded its budget while reading the chunk listing: "
+        "at most 10000 rows can be read in one request. "
+        "Narrow the scope or read it in pages.",
+        code=READ_BUDGET_EXCEEDED_CODE,
+        details={"budget": 10000},
+    )
+
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_list_chunks_runtime_spec",
+            return_value=runtime_spec,
+        ),
+        patch(
+            "app.api.endpoints.rag.get_query_gateway",
+            return_value=gateway,
+        ),
+    ):
+        response = test_client.get(
+            "/api/rag/chunks?knowledge_id=7",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "at most 10000 rows" in detail
+    assert "Narrow the scope or read it in pages." in detail
 
 
 def test_public_rag_index_contents_delete_routes_runtime_spec(
