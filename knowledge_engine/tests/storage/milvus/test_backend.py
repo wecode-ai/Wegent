@@ -1946,51 +1946,6 @@ def test_retrieve_keeps_the_double_equals_input_compatibility():
     assert 'metadata["filename"] == "a.txt"' in store.searches[0]["filter"]
 
 
-def test_retrieve_compiles_each_whitelisted_key():
-    """Every key the whitelist promises compiles into its metadata path."""
-    backend = _backend()
-    store = FakeStore(rows=[])
-    backend._store = store
-    keys = [
-        "source",
-        "filename",
-        "file_path",
-        "file_name",
-        "file_type",
-        "file_size",
-        "creation_date",
-        "last_modified_date",
-        "page_label",
-        "page_number",
-        "sheet_name",
-        "source_file",
-        "created_at",
-        "chunk_index",
-        "heading_path",
-        "chunk_strategy",
-        "format_enhancement",
-        "parser_subtype",
-        "node_role",
-    ]
-
-    backend.retrieve(
-        knowledge_id="1",
-        query="q",
-        embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={"score_threshold": 0.0},
-        metadata_condition={
-            "operator": "and",
-            "conditions": [
-                {"key": key, "operator": "eq", "value": "v"} for key in keys
-            ],
-        },
-    )
-
-    expression = store.searches[0]["filter"]
-    for key in keys:
-        assert f'metadata["{key}"] == "v"' in expression
-
-
 def test_retrieve_encodes_a_number_and_a_boolean_by_their_type():
     backend = _backend()
     store = FakeStore(rows=[])
@@ -2084,25 +2039,52 @@ def test_retrieve_rejects_the_or_combination():
     assert store.searches == []
 
 
-def test_retrieve_rejects_a_key_outside_the_whitelist():
-    """A key ingestion never writes can only match nothing, so it fails."""
+def test_retrieve_compiles_a_key_no_row_carries():
+    """A key outside the ingestion vocabulary narrows the same query.
+
+    Milvus answers an unknown JSON path with an empty result rather than an
+    error, so the adapter needs no per-backend key list: the condition compiles
+    into the same metadata path and matches nothing.
+    """
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
 
-    with pytest.raises(ValueError, match="not filterable"):
-        backend.retrieve(
-            knowledge_id="1",
-            query="q",
-            embed_model=FakeEmbedModel([[1.0, 0.0]]),
-            retrieval_setting={"score_threshold": 0.0},
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "published", "operator": "eq", "value": True}],
-            },
-        )
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "published", "operator": "eq", "value": True}],
+        },
+    )
 
-    assert store.searches == []
+    assert 'metadata["published"] == true' in store.searches[0]["filter"]
+
+
+def test_retrieve_ands_a_condition_that_names_the_knowledge_base():
+    """A condition on the scope key can only narrow the scope it is anded to."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    backend.retrieve(
+        knowledge_id="1",
+        query="q",
+        embed_model=FakeEmbedModel([[1.0, 0.0]]),
+        retrieval_setting={"score_threshold": 0.0},
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "knowledge_id", "operator": "eq", "value": "2"}],
+        },
+    )
+
+    expression = store.searches[0]["filter"]
+    assert 'metadata["knowledge_id"] == "1"' in expression
+    assert 'metadata["knowledge_id"] == "2"' in expression
+    assert " and " in expression
 
 
 def test_retrieve_rejects_nested_metadata_conditions():
@@ -2130,7 +2112,11 @@ def test_retrieve_rejects_nested_metadata_conditions():
 
 
 def test_retrieve_rejects_a_condition_object_without_a_conditions_list():
-    """A bare metadata mapping carries no supported condition, so it fails."""
+    """A bare metadata mapping must not be read as "no condition".
+
+    Reading it that way would answer a request that meant to narrow with the
+    whole knowledge base.
+    """
     backend = _backend()
     store = FakeStore(rows=[])
     backend._store = store
@@ -2167,28 +2153,6 @@ def test_retrieve_rejects_a_list_value_outside_in():
         )
 
 
-@pytest.mark.parametrize("key", ["id", "knowledge_id"])
-def test_retrieve_rejects_an_internal_field_as_a_metadata_condition(key):
-    """The row identity and the knowledge scope belong to the adapter."""
-    backend = _backend()
-    store = FakeStore(rows=[])
-    backend._store = store
-
-    with pytest.raises(ValueError):
-        backend.retrieve(
-            knowledge_id="1",
-            query="q",
-            embed_model=FakeEmbedModel([[1.0, 0.0]]),
-            retrieval_setting={"score_threshold": 0.0},
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": key, "operator": "eq", "value": "x"}],
-            },
-        )
-
-    assert store.searches == []
-
-
 def test_retrieve_skips_a_condition_without_a_constraint():
     """A condition with no value carries no constraint in the shared contract."""
     backend = _backend()
@@ -2220,9 +2184,6 @@ def test_retrieve_skips_a_condition_without_a_constraint():
     "condition",
     [
         {"key": "doc_ref", "operator": "eq", "value": None},
-        {"key": "id", "operator": "eq", "value": None},
-        {"key": "knowledge_id", "operator": "eq", "value": None},
-        {"key": "category", "operator": "eq", "value": None},
         {"key": "filename", "operator": "gte", "value": None},
         {"key": "filename", "operator": "contains", "value": None},
         {"key": "", "operator": "eq", "value": None},
@@ -2261,8 +2222,24 @@ def test_get_all_chunks_validates_a_condition_before_its_empty_value():
             max_chunks=10,
             metadata_condition={
                 "operator": "and",
-                "conditions": [{"key": "category", "operator": "eq"}],
+                "conditions": [{"key": "category", "operator": "contains"}],
             },
+        )
+
+    assert store.queries == []
+
+
+def test_get_all_chunks_rejects_a_condition_object_without_a_conditions_list():
+    """The reading path refuses a bare mapping instead of listing everything."""
+    backend = _backend()
+    store = FakeStore(rows=[])
+    backend._store = store
+
+    with pytest.raises(ValueError, match="conditions"):
+        backend.get_all_chunks(
+            "1",
+            max_chunks=10,
+            metadata_condition={"doc_ref": "doc_123"},
         )
 
     assert store.queries == []
@@ -2658,7 +2635,7 @@ def test_get_all_chunks_keeps_a_match_behind_the_read_limit():
 
 
 def test_get_all_chunks_compiles_the_supported_condition_contract():
-    """The read path narrows with the same whitelist the retrieval path uses."""
+    """The read path narrows with the same condition contract as retrieval."""
     backend = _backend()
     store = FakeStore(
         rows=_chunk_rows("42", range(6), metadata={"chunk_strategy": "parent_child"})

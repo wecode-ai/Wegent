@@ -93,18 +93,13 @@ class RetrieveRequest(BaseModel):
     metadata_condition: Optional[Dict] = Field(
         None,
         description=(
-            "Optional metadata filtering conditions. Only keys that exist in "
-            "the physical index can be filtered; the filterable set is the "
-            "union of (a) the ingestion metadata whitelist: filename, "
-            "file_path, file_name, file_type, file_size, creation_date, "
-            "last_modified_date, page_label, page_number, sheet_name; "
-            "(b) the chunk columns every backend stores: knowledge_id, "
-            "doc_ref, source_file, created_at, chunk_index; and (c) the keys "
-            "written by parsing and splitting, such as heading_path, "
-            "chunk_strategy, format_enhancement, parser_subtype, node_role. "
-            "An arbitrary business key is dropped when the document is "
-            "ingested, so a condition on it always matches nothing. "
-            "Unsupported operators and keys are not silently widened."
+            "Optional metadata filtering conditions, shaped as "
+            '{"operator": ..., "conditions": [{"key": ..., "operator": ..., '
+            '"value": ...}]}. Which operators and combinations are honoured '
+            "depends on the retriever's storage backend. A malformed shape - a "
+            "top-level field other than operator/conditions, or conditions that "
+            "are not a list of objects - is rejected, and a condition on a key "
+            "no indexed chunk carries matches nothing."
         ),
     )
 

@@ -7,9 +7,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.admin_executor import AdminExecutor
 from knowledge_runtime.services.config_resolver import AdminResolvedConfig
-
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -229,7 +229,12 @@ class TestAdminExecutor:
         request = RemoteListChunksRequest(
             knowledge_base_id=1,
             user_id=42,
-            metadata_condition={"doc_ref": "doc_123"},
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "doc_ref", "operator": "eq", "value": "doc_123"}
+                ],
+            },
         )
 
         mock_storage_backend = MagicMock()
@@ -250,4 +255,7 @@ class TestAdminExecutor:
 
         mock_storage_backend.get_all_chunks.assert_called_once()
         call_kwargs = mock_storage_backend.get_all_chunks.call_args.kwargs
-        assert call_kwargs["metadata_condition"] == {"doc_ref": "doc_123"}
+        assert call_kwargs["metadata_condition"] == {
+            "operator": "and",
+            "conditions": [{"key": "doc_ref", "operator": "eq", "value": "doc_123"}],
+        }

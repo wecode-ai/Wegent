@@ -15,6 +15,7 @@ from knowledge_engine.retrieval.filters import (
     iter_valid_conditions,
     normalize_metadata_operator,
     parse_metadata_filters,
+    validate_metadata_condition,
 )
 
 
@@ -48,6 +49,47 @@ def test_iter_valid_conditions_skips_conditions_without_a_constraint() -> None:
     )
 
     assert conditions == [{"key": "category", "operator": "eq", "value": "tech"}]
+
+
+@pytest.mark.parametrize(
+    "metadata_condition",
+    [
+        # A condition this contract cannot honour must not read as no condition.
+        {"doc_ref": "x"},
+        {"category": "tech"},
+        # A stated field must never be dropped, with or without conditions.
+        {"conditions": [], "doc_ref": "x"},
+        {"operator": "and", "conditions": [{"key": "a"}], "category": "tech"},
+        # Only an absent value and an empty mapping express no constraint.
+        [],
+        "",
+        # The conditions themselves are one list of objects.
+        {"conditions": None},
+        {"operator": "and", "conditions": "category"},
+        {"operator": "and", "conditions": {"key": "category"}},
+        {"operator": "and", "conditions": ({"key": "category"},)},
+        {"operator": "and", "conditions": [None]},
+        {"operator": "and", "conditions": [["key", "category"]]},
+        {"operator": "and", "conditions": [{"key": "a"}, "category"]},
+        # Anything that is not a condition object at all.
+        ["category"],
+        "category",
+        ({"key": "category"},),
+    ],
+)
+def test_validate_metadata_condition_rejects_a_malformed_shape(
+    metadata_condition,
+) -> None:
+    """Every entry point rejects a shape it cannot honour, before filtering."""
+    with pytest.raises(ValueError):
+        validate_metadata_condition(metadata_condition)
+
+
+def test_validate_metadata_condition_accepts_an_absent_condition() -> None:
+    """An absent value, an empty mapping and a lone operator constrain nothing."""
+    validate_metadata_condition(None)
+    validate_metadata_condition({})
+    validate_metadata_condition({"operator": "and"})
 
 
 def test_build_elasticsearch_filters_normalizes_mixed_case_operators() -> None:

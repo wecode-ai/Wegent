@@ -288,17 +288,47 @@ def validate_metadata_condition(
     *,
     reject_document_scope: bool = False,
 ) -> None:
-    """Validate the supported flat metadata condition contract."""
+    """Validate the supported flat metadata condition contract.
 
-    if not metadata_condition:
+    The shape is exactly the pair below: an optional combination operator and a
+    list of condition objects. A top-level field outside that pair, or a
+    ``conditions`` value that is not a list of condition objects, states
+    something this contract does not honour, so it is rejected rather than
+    dropped - a caller can never express a constraint and get an unfiltered read
+    back.
+
+    Only ``None``, an empty mapping and a mapping carrying just the combination
+    operator express no constraint.
+    """
+
+    if metadata_condition is None:
         return
+
+    if not isinstance(metadata_condition, dict):
+        raise ValueError("metadata_condition must be a condition object.")
+
+    unsupported = sorted(
+        key for key in metadata_condition if key not in {"operator", "conditions"}
+    )
+    if unsupported:
+        raise ValueError(
+            "metadata_condition only carries 'operator' and 'conditions'; "
+            f"unsupported keys: {', '.join(unsupported)}."
+        )
 
     if _normalize_condition_operator(metadata_condition.get("operator")) == "not":
         raise ValueError("metadata_condition operator 'not' is not supported.")
 
-    for condition in metadata_condition.get("conditions") or []:
+    if "conditions" not in metadata_condition:
+        return
+
+    conditions = metadata_condition["conditions"]
+    if not isinstance(conditions, list):
+        raise ValueError("metadata_condition 'conditions' must be a list.")
+
+    for condition in conditions:
         if not isinstance(condition, dict):
-            continue
+            raise ValueError("metadata_condition conditions must be objects.")
         if "conditions" in condition:
             raise ValueError("Nested metadata conditions are not supported.")
         if reject_document_scope and condition.get("key") == "doc_ref":
@@ -319,12 +349,13 @@ def iter_valid_conditions(
 
     A condition without a key or with a null value expresses no constraint in
     the shared flat-condition contract, so every backend skips it identically
-    instead of inventing a per-backend meaning for it.
+    instead of inventing a per-backend meaning for it. Callers pass a condition
+    the contract has already validated, so this reads the list that validation
+    promised instead of re-checking the shape.
     """
-    conditions = metadata_condition.get("conditions") or []
     return [
         condition
-        for condition in conditions
+        for condition in metadata_condition["conditions"]
         if condition.get("key") and condition.get("value") is not None
     ]
 

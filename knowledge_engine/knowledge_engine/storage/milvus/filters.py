@@ -2,73 +2,42 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Compile the supported metadata condition into Milvus filter expressions.
+"""Compile the shared metadata condition into Milvus filter expressions.
 
-The vocabulary is the smallest one the business needs: a flat ``and`` over the
-metadata keys ingestion actually writes, with ``eq`` and ``in``. Every clause
-compiles against the row's JSON metadata column, so the server applies the
+The vocabulary is the one every storage backend shares (``retrieval.filters``):
+the same validation, and the same rule that a condition without a value carries
+no constraint. This module owns only the last mile - checking that every
+condition carries a key and an operator it can compile, then turning them into
+expressions against the row's JSON metadata column, so the server applies the
 condition before the ``top_k`` cut instead of the adapter dropping candidates
 afterwards.
 
-The row's own identity is not filterable: ``knowledge_id`` is forced by the
-adapter, and ``doc_ref`` is only accepted where the read path has no
+The knowledge base is forced by the adapter: every expression is ANDed with that
+scope, so a condition naming ``knowledge_id`` can only narrow the query and
+never widen it. ``doc_ref`` is accepted only where the read path has no
 ``RetrievalScope`` to express the document scope with. A nested condition,
-another combination, another operator or a key outside the whitelist fails
-loudly, so an unsupported request can never be dropped or widened into a full
-knowledge base read.
+another combination or another operator fails loudly, so an unsupported request
+can never be dropped or widened into a full knowledge base read.
 
-One condition carries no constraint in the shared flat-condition contract when
-its key and operator are supported and it has no value; that shape is skipped
-rather than rejected, because callers already send it for "no filter on this
-field". Everything else is validated first: a missing key, an unsupported key
-or an unsupported operator fails even when the value is empty.
+A key no row carries needs no list to reject it: Milvus answers an unknown JSON
+path with an empty result rather than an error (verified against the pinned
+2.5.4 contract fixture), so this adapter keeps no per-backend key list that
+ingestion would have to stay in sync with.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from knowledge_engine.retrieval.filters import normalize_metadata_operator
+from knowledge_engine.retrieval.filters import (
+    normalize_metadata_operator,
+    validate_metadata_condition,
+)
 from knowledge_engine.storage.milvus.native import (
-    DOC_REF_KEY,
-    ID_FIELD,
-    KNOWLEDGE_ID_KEY,
     metadata_path,
     sanitize_filter_value,
 )
-
-# The metadata keys ingestion writes onto a chunk and the business may filter
-# on: the file metadata whitelist, the chunk fields every backend stores, and
-# the keys written by parsing and splitting. Nothing else reaches a stored row,
-# so a condition on anything else can only match nothing.
-METADATA_KEY_WHITELIST = frozenset(
-    {
-        "source",
-        "filename",
-        "file_path",
-        "file_name",
-        "file_type",
-        "file_size",
-        "creation_date",
-        "last_modified_date",
-        "page_label",
-        "page_number",
-        "sheet_name",
-        "source_file",
-        "created_at",
-        "chunk_index",
-        "heading_path",
-        "chunk_strategy",
-        "format_enhancement",
-        "parser_subtype",
-        "node_role",
-    }
-)
-
-# Identity and scope are owned by the adapter. A caller cannot pin the
-# knowledge base or fake the row's primary key through a metadata condition.
-INTERNAL_FILTER_KEYS = frozenset({ID_FIELD, KNOWLEDGE_ID_KEY})
 
 SUPPORTED_OPERATORS = ("eq", "in")
 
@@ -78,7 +47,7 @@ def compile_metadata_conditions(
     *,
     allow_document_scope: bool = False,
 ) -> List[str]:
-    """Compile the supported flat metadata condition into Milvus filters.
+    """Compile the shared flat metadata condition into Milvus filters.
 
     The result is composed with the mandatory scope filter by the caller, so a
     metadata condition can only narrow the knowledge base and document scope -
@@ -89,25 +58,25 @@ def compile_metadata_conditions(
     instead of being rejected. Retrieval keeps rejecting it, because there the
     document scope is an explicit input that a condition must not impersonate.
     """
-    if not metadata_condition:
+    if metadata_condition is None:
         return []
+    validate_metadata_condition(
+        metadata_condition, reject_document_scope=not allow_document_scope
+    )
+    _require_flat_and(metadata_condition)
 
-    conditions = _require_flat_conditions(metadata_condition)
-    operator = _resolve_combination(metadata_condition, conditions)
-    if operator != "and":
-        raise ValueError(
-            f"metadata_condition operator '{operator}' is not supported; "
-            "only a flat 'and' is."
-        )
+    terms: List[str] = []
+    for condition in metadata_condition.get("conditions") or []:
+        # The key and the operator are settled before the value is looked at, so
+        # a condition this adapter cannot compile never disappears behind an
+        # absent value and silently widens the read.
+        key = _condition_key(condition)
+        operator = _condition_operator(condition)
+        value = condition.get("value")
+        if value is None:
+            continue
+        terms.append(_compile_condition(key, operator, value))
 
-    terms = [
-        term
-        for term in (
-            _compile_condition(condition, allow_document_scope=allow_document_scope)
-            for condition in conditions
-        )
-        if term is not None
-    ]
     if not terms:
         return []
     if len(terms) == 1:
@@ -115,87 +84,49 @@ def compile_metadata_conditions(
     return [f"({' and '.join(terms)})"]
 
 
-def _resolve_combination(
-    metadata_condition: Dict[str, Any], conditions: List[Dict[str, Any]]
-) -> str:
-    """Read the combination operator, refusing a condition without a list."""
-    if not conditions and any(
-        key not in {"operator", "conditions"} for key in metadata_condition
-    ):
-        raise ValueError(
-            "metadata_condition must be a flat condition object carrying a "
-            "'conditions' list."
-        )
-    operator = metadata_condition.get("operator")
-    return "and" if operator is None else str(operator).strip().lower()
+def _require_flat_and(metadata_condition: Dict[str, Any]) -> None:
+    """Refuse a combination this adapter does not compile.
 
-
-def _require_flat_conditions(
-    metadata_condition: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """Return the condition list, refusing anything that nests one inside it."""
-    conditions = metadata_condition.get("conditions")
-    if conditions is None:
-        return []
-    if not isinstance(conditions, (list, tuple)):
-        raise ValueError("metadata_condition 'conditions' must be a list.")
-    for condition in conditions:
-        if not isinstance(condition, dict):
-            raise ValueError("metadata_condition conditions must be objects.")
-        if "conditions" in condition:
-            raise ValueError("Nested metadata conditions are not supported.")
-    return list(conditions)
-
-
-def _compile_condition(
-    condition: Dict[str, Any], *, allow_document_scope: bool
-) -> Optional[str]:
-    """Compile one supported condition, or ``None`` when it carries no value.
-
-    The key, the internal scope and the operator are validated before the value
-    is looked at, so a key or operator this adapter cannot honour is never
-    hidden behind an empty value. Only a supported key with a supported
-    operator and no value expresses no constraint, and that shape is skipped.
+    ``retrieval.filters`` owns the set of combination operators the shared
+    contract accepts; this adapter compiles only the flat ``and`` it has been
+    verified to serve.
     """
+    operator = metadata_condition.get("operator")
+    normalized = "and" if operator is None else str(operator).strip().lower()
+    if normalized != "and":
+        raise ValueError(
+            f"metadata_condition operator '{normalized}' is not supported; "
+            "only a flat 'and' is."
+        )
+
+
+def _condition_key(condition: Dict[str, Any]) -> str:
+    """The key one condition filters on."""
     key = condition.get("key")
     if not isinstance(key, str) or not key:
         raise ValueError(
             "metadata_condition conditions require a non-empty string key."
         )
-    field = _condition_field(key, allow_document_scope=allow_document_scope)
+    return key
+
+
+def _condition_operator(condition: Dict[str, Any]) -> str:
+    """The operator one condition asks for, refusing the ones not compiled."""
     operator = normalize_metadata_operator(condition.get("operator"))
     if operator not in SUPPORTED_OPERATORS:
         raise ValueError(
             f"metadata_condition operator '{operator}' is not supported; "
             f"supported operators: {', '.join(SUPPORTED_OPERATORS)}."
         )
-    value = condition.get("value")
-    if value is None:
-        return None
+    return operator
+
+
+def _compile_condition(key: str, operator: str, value: Any) -> str:
+    """Compile one validated condition into a Milvus expression."""
+    field = metadata_path(key)
     if operator == "eq":
         return f"{field} == {_literal(key, value)}"
     return f"{field} in [{', '.join(_members(key, value))}]"
-
-
-def _condition_field(key: str, *, allow_document_scope: bool) -> str:
-    """Resolve one condition key to the metadata path it is compiled against."""
-    if key == DOC_REF_KEY:
-        if allow_document_scope:
-            return metadata_path(DOC_REF_KEY)
-        raise ValueError(
-            "Document scope must use document_ids or "
-            "RetrievalScope.document_ids, not metadata_condition doc_ref."
-        )
-    if key in INTERNAL_FILTER_KEYS:
-        raise ValueError(
-            f"metadata_condition must not filter the internal field '{key}'."
-        )
-    if key not in METADATA_KEY_WHITELIST:
-        raise ValueError(
-            f"metadata_condition key '{key}' is not filterable; supported keys: "
-            f"{', '.join(sorted(METADATA_KEY_WHITELIST))}."
-        )
-    return metadata_path(key)
 
 
 def _literal(key: str, value: Any) -> str:

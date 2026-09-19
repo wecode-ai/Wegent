@@ -24,6 +24,7 @@ regression.
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, List, Optional, Sequence
 
@@ -53,7 +54,6 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus.cleanup import MilvusCleanup
 from knowledge_engine.storage.milvus.filters import compile_metadata_conditions
-from knowledge_engine.storage.milvus.hybrid import resolve_hybrid_weights
 from knowledge_engine.storage.milvus.native import (
     CHUNK_INDEX_KEY,
     CREATED_AT_KEY,
@@ -86,6 +86,60 @@ DEFAULT_TOP_K = 20
 # default instead of sharing one, so this is not a cross-layer source.
 DEFAULT_SCORE_THRESHOLD = 0.7
 DEFAULT_TIMEOUT_SECONDS = 10.0
+# The shares one hybrid fusion falls back to when the caller configured none.
+DEFAULT_VECTOR_WEIGHT = 0.7
+DEFAULT_KEYWORD_WEIGHT = 0.3
+
+
+def _resolve_hybrid_weights(
+    retrieval_setting: Dict[str, Any],
+) -> tuple[float, float]:
+    """Resolve the configured vector/keyword weights into a normalized pair.
+
+    The weights are shares of one fusion, so both configured weights are
+    normalized to sum to one, a lone weight keeps its own share and the other
+    branch takes the remainder, and an absent pair falls back to the product
+    default. Values that cannot describe a share fail explicitly instead of
+    silently switching the mode.
+    """
+    vector_weight = _hybrid_weight("vector_weight", retrieval_setting)
+    keyword_weight = _hybrid_weight("keyword_weight", retrieval_setting)
+
+    if vector_weight is not None and keyword_weight is not None:
+        total = vector_weight + keyword_weight
+        if total <= 0.0:
+            raise ValueError(
+                "hybrid retrieval requires a positive vector_weight or "
+                "keyword_weight; both are zero."
+            )
+        return vector_weight / total, keyword_weight / total
+
+    if vector_weight is not None:
+        if vector_weight > 1.0:
+            raise ValueError("hybrid retrieval requires vector_weight <= 1.")
+        return vector_weight, 1.0 - vector_weight
+
+    if keyword_weight is not None:
+        if keyword_weight > 1.0:
+            raise ValueError("hybrid retrieval requires keyword_weight <= 1.")
+        return 1.0 - keyword_weight, keyword_weight
+
+    return DEFAULT_VECTOR_WEIGHT, DEFAULT_KEYWORD_WEIGHT
+
+
+def _hybrid_weight(name: str, retrieval_setting: Dict[str, Any]) -> float | None:
+    """Read one configured weight, refusing anything that is not a share."""
+    raw_value = retrieval_setting.get(name)
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        raise ValueError(f"hybrid retrieval requires a numeric {name}.")
+    value = float(raw_value)
+    if not math.isfinite(value):
+        raise ValueError(f"hybrid retrieval requires a finite {name}.")
+    if value < 0.0:
+        raise ValueError(f"hybrid retrieval requires a non-negative {name}.")
+    return value
 
 
 @dataclass(frozen=True)
@@ -480,7 +534,7 @@ class MilvusBackend(BaseStorageBackend):
         # Resolve the weights before any storage call so an invalid request
         # fails without touching the index or the embedding provider.
         vector_weight, keyword_weight = (
-            resolve_hybrid_weights(retrieval_setting)
+            _resolve_hybrid_weights(retrieval_setting)
             if retrieval_mode == "hybrid"
             else (None, None)
         )

@@ -518,7 +518,7 @@ def test_metadata_filter_is_applied_before_the_top_k_cut(
 def test_metadata_conditions_keep_the_supported_contract(
     milvus_env: MilvusContractEnv,
 ) -> None:
-    """The whitelist, flat AND, eq/in and the ``==`` alias on real Milvus."""
+    """Flat AND, eq/in and the ``==`` alias on real Milvus."""
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     rows = {
@@ -602,6 +602,15 @@ def test_metadata_conditions_keep_the_supported_contract(
         )
         == set()
     ), "a missing key never equals a value"
+    assert (
+        matching(
+            {
+                "operator": "and",
+                "conditions": [{"key": "published", "operator": "eq", "value": True}],
+            }
+        )
+        == set()
+    ), "a key no row carries is an empty match on real Milvus, not an error"
 
     rejected = [
         # Only a flat and is supported.
@@ -632,12 +641,8 @@ def test_metadata_conditions_keep_the_supported_contract(
                 {"key": "heading_path", "operator": "contains", "value": "a"}
             ],
         },
-        # A key ingestion never writes cannot be filtered on.
-        {
-            "operator": "and",
-            "conditions": [{"key": "category", "operator": "eq", "value": "tech"}],
-        },
-        # The condition shape itself has to be the supported one.
+        # A bare mapping states a condition the contract cannot honour, so it
+        # fails instead of being read as "no condition".
         {"doc_ref": "7501"},
     ]
     for condition in rejected:
