@@ -327,8 +327,13 @@ class ErpClient:
 
     def batch_check_membership(
         self, ssn: str, department_ids: list[str]
-    ) -> dict[str, bool]:
-        """Return membership results for department IDs in chunks of 50."""
+    ) -> Optional[dict[str, bool]]:
+        """Return membership results for department IDs in chunks of 50.
+
+        Returns None when any chunk fails, so callers can tell an
+        incomplete check apart from a complete "no member" answer and
+        avoid caching it.
+        """
         if not self.base_url or not department_ids or not ssn:
             return {}
 
@@ -370,6 +375,8 @@ class ErpClient:
             "partial_failure" if failed_chunks else "success",
         )
 
+        if failed_chunks:
+            return None
         return results
 
     def search_departments(self, keyword: str) -> list[DepartmentInfo]:

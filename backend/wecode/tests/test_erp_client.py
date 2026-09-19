@@ -106,17 +106,25 @@ class TestErpClient:
             assert result is not None
             assert result.name == "Target User"
 
-    def test_batch_check_membership_records_failed_chunks(self):
+    def test_batch_check_membership_records_failed_chunks(self, caplog):
         client = ErpClient()
         client.base_url = "https://erp.example.com"
         client._access_token = "token"
         client._token_expires_at = time.time() + 3600
 
-        mock_response = httpx.Response(200, json={"data": {"results": []}})
+        responses = [
+            httpx.RequestError("chunk 1 failed"),
+            httpx.Response(200, json={"data": {"results": []}}),
+        ]
 
-        with patch("httpx.Client.request", return_value=mock_response):
+        with (
+            caplog.at_level("INFO", logger="wecode.service.erp_client"),
+            patch("httpx.Client.request", side_effect=responses),
+        ):
             result = client.batch_check_membership("ssn", ["d1"] * 60)
-            assert isinstance(result, dict)
+
+        assert result is None
+        assert "outcome=partial_failure" in caplog.text
 
     def test_batch_check_membership_empty_when_no_input(self):
         client = ErpClient()
@@ -235,7 +243,7 @@ class TestErpClient:
 
         assert result.outcome is EmployeeSearchOutcome.INVALID_RESPONSE
 
-    def test_membership_invalid_chunk_preserves_successful_chunk(self):
+    def test_membership_invalid_chunk_returns_none(self):
         client = ErpClient()
         client.base_url = "https://erp.example.com"
         client._access_token = "token"
@@ -255,7 +263,7 @@ class TestErpClient:
                 "12345678", ["d1", *[f"d{i}" for i in range(2, 52)]]
             )
 
-        assert result == {"d1": True}
+        assert result is None
 
     def test_membership_logs_masked_truncated_params_without_response_body(
         self, caplog

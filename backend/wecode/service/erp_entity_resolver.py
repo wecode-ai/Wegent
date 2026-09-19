@@ -113,29 +113,24 @@ class ErpEntityResolver(IExternalEntityResolver):
 
         cache_key = f"erp:membership:{user_id}:{ssn}"
         cached = self._cache_get(cache_key)
+        known = cached if isinstance(cached, dict) else {}
 
-        if cached and isinstance(cached, dict):
-            missing = [d for d in dept_ids if d not in cached]
-            if not missing:
-                return {d: cached[d] for d in dept_ids}
+        missing = [d for d in dept_ids if d not in known]
+        if not missing:
+            return {d: known[d] for d in dept_ids}
 
-            # Partial hit: query only missing departments and rebuild a fresh
-            # cache scoped to the current request, so stale entries from
-            # previous requests do not survive indefinitely.
-            result = erp_client.batch_check_membership(ssn, missing)
-            fresh: dict[str, bool] = {}
-            for d in dept_ids:
-                if d in result:
-                    fresh[d] = result[d]
-                else:
-                    fresh[d] = cached.get(d, False)
-            self._cache_set(cache_key, fresh)
-            return fresh
+        result = erp_client.batch_check_membership(ssn, missing)
+        if result is None:
+            # Incomplete check: return the best-known answer without
+            # caching, so a transient ERP failure is retried instead of
+            # being locked in as "not a member" for the cache TTL.
+            return {d: known.get(d, False) for d in dept_ids}
 
-        # Cache miss: query all and store
-        result = erp_client.batch_check_membership(ssn, dept_ids)
-        self._cache_set(cache_key, result)
-        return result
+        # Rebuild the cache scoped to the current request, so stale
+        # entries from previous requests do not survive indefinitely.
+        fresh = {d: result.get(d, known.get(d, False)) for d in dept_ids}
+        self._cache_set(cache_key, fresh)
+        return fresh
 
     @property
     def requires_display_name_snapshot(self) -> bool:

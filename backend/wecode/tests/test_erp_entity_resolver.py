@@ -110,6 +110,47 @@ class TestErpEntityResolver:
             assert cached == {"d1": True, "d2": False}
             assert "d_old" not in cached
 
+    def test_cache_miss_incomplete_check_returns_empty_without_caching(
+        self, resolver_with_mem_redis
+    ):
+        """A failed membership check must not be cached as "not a member"."""
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.batch_check_membership",
+            return_value=None,
+        ) as mock_check:
+            result = resolver_with_mem_redis._get_membership_with_cache(
+                1, "ssn", ["d1", "d2"]
+            )
+
+        assert result == {"d1": False, "d2": False}
+        mock_check.assert_called_once_with("ssn", ["d1", "d2"])
+        assert resolver_with_mem_redis._cache_get("erp:membership:1:ssn") is None
+
+    def test_cache_partial_hit_incomplete_check_keeps_known_membership(
+        self, resolver_with_mem_redis
+    ):
+        """On a failed refresh, cached True memberships must not be lost."""
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.batch_check_membership",
+            return_value={"d1": True, "d_old": True},
+        ):
+            resolver_with_mem_redis._get_membership_with_cache(
+                1, "ssn", ["d1", "d_old"]
+            )
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.batch_check_membership",
+            return_value=None,
+        ):
+            result = resolver_with_mem_redis._get_membership_with_cache(
+                1, "ssn", ["d1", "d2"]
+            )
+
+        assert result == {"d1": True, "d2": False}
+        # The cache still holds the last complete answer, untouched.
+        cached = resolver_with_mem_redis._cache_get("erp:membership:1:ssn")
+        assert cached == {"d1": True, "d_old": True}
+
     def test_resolve_matched_departments_wrong_entity_type(self):
         resolver = ErpEntityResolver()
         db = MagicMock()
