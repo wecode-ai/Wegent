@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import redis
 from sqlalchemy import event, inspect
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
 from app.models.kind import Kind
@@ -199,6 +199,17 @@ def _ttl_for(kind: Optional[Kind]) -> int:
     return settings.KIND_READER_CACHE_MISS_TTL_SECONDS
 
 
+def _safe_to_cache(db: Session, kind: Optional[Kind]) -> bool:
+    """Never cache a row that carries uncommitted changes in this session."""
+    if kind is None or not isinstance(kind, Kind):
+        return True
+    if object_session(kind) is not db:
+        return True
+    if kind in db.new or kind in db.deleted:
+        return False
+    return not db.is_modified(kind, include_collections=False)
+
+
 class CachedKindReader(IKindReader):
     """Caching decorator over a direct Kind reader.
 
@@ -240,6 +251,7 @@ class CachedKindReader(IKindReader):
     def _cached(
         self,
         key: str,
+        db: Session,
         loader: Callable[[], Optional[Kind]],
     ) -> Optional[Kind]:
         hit, kind = self._store.get(key)
@@ -247,7 +259,8 @@ class CachedKindReader(IKindReader):
             return kind
 
         kind = loader()
-        self._store.set(key, kind, _ttl_for(kind))
+        if _safe_to_cache(db, kind):
+            self._store.set(key, kind, _ttl_for(kind))
         return kind
 
     def get_by_id(
@@ -255,6 +268,7 @@ class CachedKindReader(IKindReader):
     ) -> Optional[Kind]:
         return self._cached(
             self._id_key(kind, resource_id),
+            db,
             lambda: self._base.get_by_id(db, kind, resource_id),
         )
 
@@ -285,7 +299,7 @@ class CachedKindReader(IKindReader):
             for resource_id in missing_ids:
                 row = loaded.get(resource_id)
                 found[resource_id] = row
-                if available:
+                if available and _safe_to_cache(db, row):
                     self._store.set(keys[resource_id], row, _ttl_for(row))
 
         return [
@@ -299,6 +313,7 @@ class CachedKindReader(IKindReader):
     ) -> Optional[Kind]:
         return self._cached(
             self._personal_key(kind, user_id, namespace, name),
+            db,
             lambda: self._base.get_personal(db, user_id, kind, namespace, name),
         )
 
@@ -307,6 +322,7 @@ class CachedKindReader(IKindReader):
     ) -> Optional[Kind]:
         return self._cached(
             self._public_key(kind, namespace, name),
+            db,
             lambda: self._base.get_public(db, kind, namespace, name),
         )
 
@@ -315,6 +331,7 @@ class CachedKindReader(IKindReader):
     ) -> Optional[Kind]:
         return self._cached(
             self._group_key(kind, namespace, name),
+            db,
             lambda: self._base.get_group(db, kind, namespace, name),
         )
 
@@ -384,6 +401,8 @@ def _capture_snapshot_before_flush(session: Session) -> None:
     for instance in session.new:
         if not isinstance(instance, Kind):
             continue
+        if id(instance) in snapshots:
+            continue
         snapshots[id(instance)] = _Snapshot(
             instance.id, old=None, new=_identity(instance), deleted=False, row=instance
         )
@@ -393,11 +412,17 @@ def _capture_snapshot_before_flush(session: Session) -> None:
             continue
         if session.is_modified(instance, include_collections=False):
             state = inspect(instance)
-            old = _identity(instance)
-            for column in ("name", "namespace", "user_id", "kind"):
-                history = state.attrs[column].history
-                if history.deleted:
-                    old[column] = history.deleted[0]
+            existing = snapshots.get(id(instance))
+            if existing is not None and existing.old is not None:
+                # Keep the earliest identity across multiple flushes so keys
+                # from intermediate states are still evicted at commit.
+                old = existing.old
+            else:
+                old = _identity(instance)
+                for column in ("name", "namespace", "user_id", "kind"):
+                    history = state.attrs[column].history
+                    if history.deleted:
+                        old[column] = history.deleted[0]
             snapshots[id(instance)] = _Snapshot(
                 instance.id,
                 old=old,
@@ -409,8 +434,14 @@ def _capture_snapshot_before_flush(session: Session) -> None:
     for instance in session.deleted:
         if not isinstance(instance, Kind):
             continue
+        existing = snapshots.get(id(instance))
+        old = (
+            existing.old
+            if existing is not None and existing.old is not None
+            else _identity(instance)
+        )
         snapshots[id(instance)] = _Snapshot(
-            instance.id, old=_identity(instance), new=None, deleted=True, row=instance
+            instance.id, old=old, new=None, deleted=True, row=instance
         )
 
 
@@ -425,18 +456,23 @@ def _capture_snapshot_after_flush(session: Session) -> None:
 
 
 def _keys_for_identity(identity: Dict[str, Any]) -> List[str]:
-    """All name-based lookup keys a row with this identity is cached under."""
+    """The name-based lookup key matching this identity's valid scope.
+
+    ``KindReader`` only serves personal rows for ``namespace == "default"``
+    and ``user_id != 0``, public rows for ``namespace == "default"`` and
+    ``user_id == 0``, and group rows for ``namespace != "default"``. Writing
+    a row under keys outside its valid scope would let cross-scope lookups
+    resolve it, so exactly one key is produced per row.
+    """
     kind = identity["kind"]
     namespace = identity["namespace"]
     name = identity["name"]
     user_id = identity["user_id"]
-    keys = [
-        f"{_prefix()}public:{kind}:{namespace}:{name}",
-        f"{_prefix()}group:{kind}:{namespace}:{name}",
-    ]
-    if user_id:
-        keys.append(f"{_prefix()}personal:{kind}:{user_id}:{namespace}:{name}")
-    return keys
+    if namespace == "default":
+        if user_id == 0:
+            return [f"{_prefix()}public:{kind}:{namespace}:{name}"]
+        return [f"{_prefix()}personal:{kind}:{user_id}:{namespace}:{name}"]
+    return [f"{_prefix()}group:{kind}:{namespace}:{name}"]
 
 
 def _flush_snapshots_to_cache(snapshots: Dict[int, _Snapshot]) -> None:

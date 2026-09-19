@@ -219,12 +219,13 @@ def test_orm_insert_writes_through_after_commit():
 def test_orm_update_writes_through_after_commit():
     store = FakeStore()
     session = _make_session()
-    session.add(_persisted_kind())
-    session.commit()
-    store.data.clear()
-    store.set_calls = 0
 
     with patch("app.services.readers.kind_cache._write_through_store", store):
+        session.add(_persisted_kind())
+        session.commit()
+        store.data.clear()
+        store.set_calls = 0
+
         row = session.query(Kind).one()
         row.json = {"kind": "Bot", "updated": True}
         session.commit()
@@ -236,13 +237,14 @@ def test_orm_update_writes_through_after_commit():
 def test_orm_delete_evicts_keys_after_commit():
     store = FakeStore()
     session = _make_session()
-    session.add(_persisted_kind())
-    session.commit()
-    store.data.clear()
-    store.set_calls = 0
-    store.delete_calls = 0
 
     with patch("app.services.readers.kind_cache._write_through_store", store):
+        session.add(_persisted_kind())
+        session.commit()
+        store.data.clear()
+        store.set_calls = 0
+        store.delete_calls = 0
+
         row = session.query(Kind).one()
         session.delete(row)
         session.commit()
@@ -255,13 +257,14 @@ def test_orm_delete_evicts_keys_after_commit():
 def test_rename_deletes_old_key_and_sets_new_key():
     store = FakeStore()
     session = _make_session()
-    session.add(_persisted_kind(name="old-name"))
-    session.commit()
-    store.data.clear()
-    store.set_calls = 0
-    store.delete_calls = 0
 
     with patch("app.services.readers.kind_cache._write_through_store", store):
+        session.add(_persisted_kind(name="old-name"))
+        session.commit()
+        store.data.clear()
+        store.set_calls = 0
+        store.delete_calls = 0
+
         row = session.query(Kind).one()
         row.name = "new-name"
         session.commit()
@@ -274,13 +277,14 @@ def test_rename_deletes_old_key_and_sets_new_key():
 def test_bulk_update_is_flagged_for_ttl_fallback():
     store = FakeStore()
     session = _make_session()
-    session.add(_persisted_kind())
-    session.commit()
-    store.data.clear()
-    store.set_calls = 0
-    store.delete_calls = 0
 
     with patch("app.services.readers.kind_cache._write_through_store", store):
+        session.add(_persisted_kind())
+        session.commit()
+        store.data.clear()
+        store.set_calls = 0
+        store.delete_calls = 0
+
         session.query(Kind).filter(Kind.name == "mybot").update({"user_id": 20})
         session.commit()
 
@@ -301,6 +305,64 @@ def test_rollback_does_not_write_to_cache():
 
     assert store.set_calls == 0
     assert store.delete_calls == 0
+    session.close()
+
+
+def test_keys_for_identity_follows_valid_scope():
+    from app.services.readers.kind_cache import _keys_for_identity, _prefix
+
+    personal = _keys_for_identity(
+        {"kind": "Bot", "user_id": 10, "namespace": "default", "name": "b"}
+    )
+    public = _keys_for_identity(
+        {"kind": "Bot", "user_id": 0, "namespace": "default", "name": "b"}
+    )
+    group = _keys_for_identity(
+        {"kind": "Bot", "user_id": 10, "namespace": "team-ns", "name": "b"}
+    )
+
+    assert personal == [f"{_prefix()}personal:Bot:10:default:b"]
+    assert public == [f"{_prefix()}public:Bot:default:b"]
+    assert group == [f"{_prefix()}group:Bot:team-ns:b"]
+
+
+def test_multi_flush_snapshot_keeps_earliest_identity():
+    store = FakeStore()
+    session = _make_session()
+
+    with patch("app.services.readers.kind_cache._write_through_store", store):
+        session.add(_persisted_kind(name="first"))
+        session.commit()
+        store.data.clear()
+        store.set_calls = 0
+        store.delete_calls = 0
+
+        row = session.query(Kind).one()
+        row.name = "intermediate"
+        session.flush()
+        row.name = "final"
+        session.commit()
+
+    # The key for the original name must be evicted, not just the
+    # intermediate one.
+    assert store.delete_calls >= 1
+    assert store.set_calls >= 1
+    session.close()
+
+
+def test_dirty_row_is_not_written_to_cache():
+    store = FakeStore()
+    session = _make_session()
+    session.add(_persisted_kind())
+    session.commit()
+
+    reader, base = _make_reader(store)
+    row = session.query(Kind).one()
+    base.get_by_id.return_value = row
+
+    row.json = {"uncommitted": True}  # pending change in this session
+    assert reader.get_by_id(session, KindType.BOT, row.id) is row
+    assert store.set_calls == 0
     session.close()
 
 
