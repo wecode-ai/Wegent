@@ -528,6 +528,34 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         return v
 
 
+class CodeWikiScheduledUpdateSettings(BaseModel):
+    enabled: bool = True
+    cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
+    interval_days: int = Field(7, ge=1, le=365)
+    weekday: int = Field(0, ge=0, le=6, description="Monday is 0")
+    hour: int = Field(9, ge=0, le=23)
+    minute: int = Field(0, ge=0, le=59)
+    timezone: str = Field("UTC", min_length=1, max_length=100)
+    execution_principal_user_id: Optional[int] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_cadence(self) -> "CodeWikiScheduledUpdateSettings":
+        fixed_intervals = {
+            "daily": 1,
+            "weekly": 7,
+            "biweekly": 14,
+            "four_weeks": 28,
+        }
+        if self.cadence == "custom":
+            if self.interval_days < 2:
+                raise ValueError(
+                    "Custom update interval must be between 2 and 365 days"
+                )
+        else:
+            self.interval_days = fixed_intervals[self.cadence]
+        return self
+
+
 class CodeWikiCreate(KnowledgeBaseCreate):
     """Request to create a code wiki bound to a source repository.
 
@@ -785,6 +813,36 @@ class CodeWikiRunResponse(BaseModel):
     task_id: int = Field(0, description="Task running the agent, when started")
     strategy_id: str = Field("", description="Resolved generation strategy")
     strategy_revision: int = Field(0, description="Resolved strategy revision")
+
+
+class CodeWikiScheduledUpdateRequest(CodeWikiScheduledUpdateSettings):
+    """The future schedule for one Code Wiki."""
+
+    enabled: bool = False
+
+
+class CodeWikiScheduledUpdateExecution(BaseModel):
+    id: int
+    status: str
+    error_message: str = ""
+    result_summary: str = ""
+    task_id: int = 0
+    created_at: datetime
+
+
+class CodeWikiScheduledUpdate(BaseModel):
+    can_configure: bool = False
+    enabled: bool = False
+    configured: bool = False
+    cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
+    interval_days: int = 7
+    weekday: int = 0
+    hour: int = 9
+    minute: int = 0
+    timezone: str = "UTC"
+    execution_principal_user_id: Optional[int] = None
+    next_execution_time: Optional[datetime] = None
+    executions: List[CodeWikiScheduledUpdateExecution] = Field(default_factory=list)
 
 
 class CodeWikiRunRecord(BaseModel):

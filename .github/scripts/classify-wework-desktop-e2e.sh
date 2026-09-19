@@ -35,7 +35,6 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
-  runtime-terminal-convergence
   running-conversation-history
   running-plan-history
   codex-notification-isolation
@@ -52,6 +51,7 @@ core_segments=(
   conversation-state
   send-key-preference
   system-proxy
+  system-pac
   environment-panel-scroll
   temporary-chat
   workspace-attachments
@@ -85,7 +85,6 @@ cloud_worktree_segments=(
   cloud-worktree-queued-cancel
   cloud-worktree-tools
   cloud-worktree-archive-restore
-  cloud-worktree-device-restart
 )
 cloud_segments=(
   cloud-project-creation
@@ -117,7 +116,7 @@ cloud_segments=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   core-task-flow
-  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  embedded-browser,cloud-project-creation
   goal-lifecycle,cloud-worktree-archive-restore
   rendering-extensions
   project-automation
@@ -141,10 +140,10 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,send-key-preference,system-proxy,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
+  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
-  window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
+  window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
@@ -304,8 +303,12 @@ classify_wework_path() {
     wework/electron/src/host/system-proxy* | \
       wework/src/components/settings/ProxySettingsPage* | \
       wework/src/desktop/systemProxy* | \
+      wework/src/api/local/runtimeModelProxy* | \
+      wework/src/api/local/codexProviderProxy* | \
+      wework/e2e/desktop/scenarios/system-pac.scenario.mjs | \
       wework/e2e/desktop/scenarios/system-proxy.scenario.mjs)
       select_target "core:system-proxy"
+      select_target "core:system-pac"
       return
       ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.

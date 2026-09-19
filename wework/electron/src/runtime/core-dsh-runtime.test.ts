@@ -193,6 +193,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
         '@wegent/dsh-transcript-sync': expect.stringContaining('wework-transcript-sync'),
         '@wegent/dsh-plugin-runtime': expect.stringContaining('wework-plugin-runtime'),
+        '@wegent/dsh-internal-telemetry': expect.stringContaining('wework-internal-telemetry'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
         '@wegent/dsh-ui-plugin-center': expect.stringContaining('wework-ui-plugin-center'),
@@ -218,6 +219,7 @@ describe('core DSH runtime', () => {
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
             '@wegent/dsh-transcript-sync',
+            '@wegent/dsh-internal-telemetry',
             '@wegent/dsh-conversation-export',
             '@wegent/dsh-ui-core-apps',
             '@wegent/dsh-ui-core-settings',
@@ -622,6 +624,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wegent/dsh-internal-telemetry',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
@@ -634,6 +637,7 @@ describe('core DSH runtime', () => {
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-transcript-sync',
+      '@wegent/dsh-internal-telemetry',
     ])
     await expect(
       readFile(
@@ -881,6 +885,7 @@ async function writeRuntime(
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
       ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
       ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+      ['@wegent/dsh-internal-telemetry', 'wework-internal-telemetry'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
       ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
       ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],

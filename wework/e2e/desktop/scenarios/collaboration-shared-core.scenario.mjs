@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
+import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
+import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
+import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
 const PROJECT_NAME = '协作共享核心验收'
@@ -55,7 +59,13 @@ function terminalExecution(execution) {
   return ['completed', 'failed', 'cancelled'].includes(execution.status)
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  executorHome,
+}) {
+  const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
   let backendUrl = ''
   let authToken = ''
   let owner = null
@@ -110,6 +120,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   return {
     requiresCloudEnvironment: true,
+    handleHttp: boardReplyModel.handleHttp,
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -281,6 +292,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await verifyCollaborationIssueHome(control, {
+          request,
+          project,
+          issue,
+          owner,
+          agent,
+          scoped,
+        })
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
@@ -298,6 +317,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('press', activityComposerSelector, { key: 'Enter' })
         await control.command('waitFor', activityListSelector, {
           text: COMMENT_BODY,
+          timeoutMs: uiTimeoutMs,
+        })
+        const replyComposerSelector = scoped('[data-testid^="cloud-task-activity-card-composer-"]')
+        await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
+        await control.command('fill', replyComposerSelector, {
+          value: '在动态卡片内回复',
+        })
+        await control.command('press', replyComposerSelector, { key: 'Enter' })
+        await control.command('waitFor', scoped('[data-testid^="cloud-task-activity-replies-"]'), {
+          text: '在动态卡片内回复',
           timeoutMs: uiTimeoutMs,
         })
 
@@ -341,6 +370,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'The real backend did not persist the Agent workflow-step assignment'
         )
         await capture(control, 'collaboration-shared-core-06-issue-activity.png')
+        await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
+        await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
+        await boardReplyModel.verify(control, issue, scoped, {
+          backendUrl,
+          authToken,
+          projectId: project.id,
+        })
+        await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
+        await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')
+        const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
+        const previousTaskIds = new Set(
+          previousBindings.map(binding => binding.taskId ?? binding.task_id)
+        )
 
         await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
@@ -373,7 +420,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('fill', taskComposer, { value: TASK_PROMPT })
         await control.command('press', taskComposer, { key: 'Enter' })
         const taskBindings = await waitForApiValue(
-          () => request(`/api/v1/loop-items/${issue.id}/tasks`),
+          async () =>
+            (await request(`/api/v1/loop-items/${issue.id}/tasks`)).filter(
+              binding => !previousTaskIds.has(binding.taskId ?? binding.task_id)
+            ),
           value => Array.isArray(value) && value.length > 0,
           'Starting work did not bind the new Wework local Task to the Issue',
           uiTimeoutMs
@@ -392,6 +442,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         )
         assert.notEqual(updatedIssue.status, 'inbox')
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
+        await verifyCollaborationLocalProjectImport(control, {
+          executorHome,
+          scoped,
+          workbenchReadyTimeoutMs,
+        })
       } finally {
         await archiveFixture()
       }

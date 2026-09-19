@@ -44,6 +44,22 @@ function resize() {
 }
 
 describe('SidebarWorklistsScroll', () => {
+  it('extends the overlay scrollbar through the sidebar padding without widening content', () => {
+    render(
+      <SidebarWorklistsScroll
+        viewportRef={createRef<HTMLDivElement>()}
+        scrolled={false}
+        locked={false}
+        onScroll={() => {}}
+      >
+        <div>Tasks</div>
+      </SidebarWorklistsScroll>
+    )
+
+    expect(screen.getByTestId('sidebar-worklists-scroll-area')).toHaveClass('-mr-1.5', 'pr-1.5')
+    expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass('w-full')
+  })
+
   it('keeps its overlay scrollbar mounted at the top, middle and bottom', async () => {
     const viewportRef = createRef<HTMLDivElement>()
     render(
@@ -61,6 +77,8 @@ describe('SidebarWorklistsScroll', () => {
     const viewport = screen.getByTestId('sidebar-worklists-scroll')
     expect(viewportRef.current).toBe(viewport)
     expect(viewport.contains(scrollbar)).toBe(false)
+    expect(scrollbar).toHaveClass('w-2', '-translate-x-[3px]')
+    expect(scrollbar).not.toHaveClass('p-px', 'p-0.5')
     for (const scrollTop of [0, 100, 200, 0]) {
       fireEvent.scroll(viewport, { target: { scrollTop } })
       expect(screen.getByTestId('sidebar-worklists-scrollbar')).toBe(scrollbar)

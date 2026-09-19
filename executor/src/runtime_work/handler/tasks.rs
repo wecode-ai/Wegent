@@ -241,23 +241,7 @@ impl RuntimeWorkRpcHandler {
         })?;
         let local_task_id = thread_id.clone();
         let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
-        let messages = transcript_messages(thread, &self.device_id);
-        let transcript = transcript_response(TranscriptResponseInput {
-            local_task_id: local_task_id.clone(),
-            workspace_path: source.workspace_path.clone(),
-            runtime: "codex".to_owned(),
-            messages: messages.clone(),
-            context_usage: transcript_context_usage(thread),
-            running: codex_thread_has_in_progress_turn(thread),
-            pagination: TranscriptPagination::Opaque {
-                before_cursor: None,
-                after_cursor: None,
-            },
-            full_content: false,
-            turn_item_source: TranscriptTurnItemSource::CodexItems,
-            turn_navigation: transcript_turn_navigation(&messages),
-        });
-        let mut link = forked_task_link(
+        let link = forked_task_link(
             &source,
             local_task_id.clone(),
             thread_id.clone(),
@@ -268,8 +252,8 @@ impl RuntimeWorkRpcHandler {
                 "lastTurnId": last_turn_id,
             }),
         );
-        set_transcript_snapshot_messages(&mut link.runtime_handle, &thread_id, messages);
         self.upsert_local_task(link);
+        let transcript = self.transcript(json!({ "taskId": local_task_id })).await?;
         log_executor_event(
             "runtime task fork completed",
             &[
@@ -344,6 +328,9 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if is_claude_runtime(&runtime) {
+            ensure_claude_execution_identity(&local_task_id, &mut request);
+        }
         set_runtime_task_title(&mut request, &title);
         log_executor_event(
             "runtime task create identity",
@@ -931,6 +918,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "runtime"))
             .unwrap_or_else(|| "codex".to_owned());
         if is_claude_runtime(&runtime) {
+            ensure_claude_execution_identity(&local_task_id, &mut request);
+            if let Some(session) = existing_link
+                .as_ref()
+                .and_then(|link| link.runtime_handle.get("executorSession"))
+            {
+                request.inherited_sessions.insert(0, session.clone());
+            }
             if request.extra.get("runtime_executable_path").is_none() {
                 if let Some(executable_path) = existing_link
                     .as_ref()
@@ -1595,13 +1589,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        let link = self
-            .store
-            .update_task(&local_task_id, |link| {
-                link.updated_at = now_ms();
-                link.completed_at = Some(link.updated_at);
-            })
-            .or_else(|| self.local_task_link(&local_task_id));
+        let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link
             .as_ref()

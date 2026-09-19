@@ -33,7 +33,6 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'browser-annotation-design': './scenarios/embedded-browser-annotation.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
-  'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
@@ -64,6 +63,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'send-key-preference': './scenarios/send-key-preference.scenario.mjs',
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
+  'system-pac': './scenarios/system-pac.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
@@ -85,7 +85,6 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',
-  'runtime-terminal-convergence',
   'executor-stream-recovery',
   'transcript-sync',
   'running-conversation-history',
@@ -110,6 +109,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'external-content-import',
   'send-key-preference',
   'system-proxy',
+  'system-pac',
   'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
@@ -122,7 +122,6 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-queued-cancel',
   'cloud-worktree-tools',
   'cloud-worktree-archive-restore',
-  'cloud-worktree-device-restart',
 ])
 const COMPOSITE_CHECKPOINTS = new Map([
   [
@@ -137,7 +136,6 @@ const COMPOSITE_CHECKPOINTS = new Map([
       'cloud-worktree-queued-cancel',
       'cloud-worktree-tools',
       'cloud-worktree-archive-restore',
-      'cloud-worktree-device-restart',
     ],
   ],
 ])

@@ -107,6 +107,12 @@ spec:
         - name: CALLBACK_URL
           value: {{ callback_url }}
         {% endif %}
+        # Keep task workspaces on the container workspace root instead of
+        # letting the executor fall back to a home-relative layout: the web file
+        # panel, the runtime archive and the device file commands all address
+        # projects/<task_id>/<repo> below this directory.
+        - name: WEGENT_EXECUTOR_PROJECTS_DIR
+          value: /workspace/projects
         - name: DEVICE_TYPE
           value: WEGENT_EXECUTOR
         - name: EXECUTOR_NAME

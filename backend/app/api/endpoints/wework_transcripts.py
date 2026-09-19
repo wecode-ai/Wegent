@@ -352,4 +352,7 @@ def _translate(action):
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
     except WeworkTranscriptStorageError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc

@@ -14,6 +14,53 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
+fn spawn_idle_app_server_child() -> Child {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "pause"]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 60"]);
+        command
+    };
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the idle app-server child should start")
+}
+
+#[tokio::test]
+async fn terminating_shared_app_servers_releases_every_registered_process() {
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let state = shared_codex_app_server_state("codex-app-server-termination-test");
+    state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+
+    let terminated = terminate_shared_codex_app_servers().await;
+
+    assert!(
+        terminated >= 1,
+        "the registered app-server process was not terminated"
+    );
+    assert!(
+        state.lock().await.process.is_none(),
+        "the terminated app-server process stayed registered"
+    );
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();
@@ -265,13 +312,78 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     }
 }
 
+#[tokio::test]
+async fn runtime_proxy_update_is_deferred_while_a_turn_is_active() {
+    let client = CodexAppServerClient::new("codex-active-proxy-update-test");
+    client.mark_thread_active("thread-1").await;
+
+    let changed = client
+        .configure_runtime_proxy(Some("http://127.0.0.1:7890"))
+        .await
+        .expect("active turns must not reject a runtime proxy update");
+
+    assert!(changed);
+    let state = client.state.lock().await;
+    assert_eq!(
+        state.runtime_proxy_env.get("ALL_PROXY").map(String::as_str),
+        Some("http://127.0.0.1:7890")
+    );
+    assert_eq!(state.active_threads.get("thread-1"), Some(&1));
+}
+
+#[test]
+fn environment_change_diagnostics_report_keys_without_values() {
+    let current = BTreeMap::from([
+        ("AUTH_TOKEN".to_owned(), "old-secret".to_owned()),
+        ("REMOVED_KEY".to_owned(), "removed-secret".to_owned()),
+    ]);
+    let requested = BTreeMap::from([
+        ("AUTH_TOKEN".to_owned(), "new-secret".to_owned()),
+        ("ADDED_KEY".to_owned(), "added-secret".to_owned()),
+    ]);
+    let active_threads = HashMap::from([("thread-2".to_owned(), 1), ("thread-1".to_owned(), 2)]);
+
+    let fields =
+        codex_environment_change_fields("turn_start", &current, &requested, &active_threads);
+    let fields = fields.into_iter().collect::<HashMap<_, _>>();
+
+    assert_eq!(fields["source"], "turn_start");
+    assert_eq!(fields["added_env_keys"], "ADDED_KEY");
+    assert_eq!(fields["removed_env_keys"], "REMOVED_KEY");
+    assert_eq!(fields["changed_env_keys"], "AUTH_TOKEN");
+    assert_eq!(fields["active_thread_ids"], "thread-1,thread-2");
+    assert_eq!(fields["active_thread_count"], "2");
+    assert_eq!(fields["active_turn_count"], "3");
+    assert!(!fields.values().any(|value| value.contains("secret")));
+    assert!(!codex_process_environment_requires_restart(
+        "turn_start",
+        &current,
+        &requested,
+        &active_threads,
+    ));
+    assert!(codex_process_environment_requires_restart(
+        "turn_start",
+        &current,
+        &requested,
+        &HashMap::new(),
+    ));
+}
+
 #[test]
 fn shared_notification_lag_is_recoverable() {
     let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
             .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
+}
+
+#[test]
+fn closed_notification_stream_reports_executor_shutdown() {
+    assert!(matches!(
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
 }
 
 #[tokio::test]
@@ -1134,6 +1246,22 @@ fn parses_vision_sidecar_from_model_config() {
     assert_eq!(sidecar.max_descriptions_per_turn, 4);
     assert_eq!(sidecar.timeout, Duration::from_secs(12));
     assert_eq!(sidecar.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+}
+
+#[test]
+fn vision_sidecar_explicit_direct_does_not_inherit_primary_proxy() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "proxy": { "url": "http://external-proxy:3128" },
+        "vision_sidecar": {
+            "request_url": "https://internal.example/v1/responses",
+            "model_id": "vision-model",
+            "proxy": { "url": null }
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(sidecar.proxy_url, None);
 }
 
 #[test]
@@ -4031,6 +4159,58 @@ fn completed_goal_does_not_require_authoritative_reconciliation() {
     state.set_goal_status("complete");
 
     assert!(!state.goal_is_active());
+}
+
+#[test]
+fn codex_run_state_finishes_failed_turn_timing_without_turn_completed() {
+    let mut state = CodexRunState::default();
+    assert!(state
+        .handle_message(&json!({
+            "method": "turn/started",
+            "params": {
+                "turn": {
+                    "startedAt": 1
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "error",
+            "params": {
+                "message": "upstream failed",
+                "willRetry": false
+            }
+        }))
+        .expect("terminal error should fail the turn");
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "upstream failed".to_owned()
+        }
+    );
+
+    state.finish_turn_timing(3_500);
+
+    assert_eq!(state.turn_timing(), (Some(1_000), Some(3_500), Some(2_500)));
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "failed",
+                    "startedAt": 1,
+                    "completedAt": 4,
+                    "durationMs": 3_000
+                }
+            }
+        }))
+        .is_some());
+    state.finish_turn_timing(9_000);
+
+    assert_eq!(state.turn_timing(), (Some(1_000), Some(4_000), Some(3_000)));
 }
 
 #[test]

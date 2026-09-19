@@ -35,10 +35,11 @@ if [ -z "$RS_ENV_FILE" ]; then
         RS_ENV_FILE="$BACKEND_DIR/.env.example"
     fi
 fi
-# start.sh already exports LOG_DIR for the Backend. Reuse it for Rust so both
-# processes are discoverable in the same service log directory. These may be
-# overridden directly without adding any new .env contract.
-BREEZE_LOG_DIR=${BREEZE_LOG_DIR:-${LOG_DIR:-$REPOSITORY_ROOT/logs/backend}}
+# start.sh already exports LOG_DIR for the Backend. Nest the Rust logs under a
+# `rust` subdirectory of it, so both processes stay under the same service log
+# directory without mixing their log files. These may be overridden directly
+# without adding any new .env contract.
+BREEZE_LOG_DIR=${BREEZE_LOG_DIR:-${LOG_DIR:-$REPOSITORY_ROOT/logs/backend}/rust}
 BREEZE_PROFILE_LOG_PATH=${BREEZE_PROFILE_LOG_PATH:-$BREEZE_LOG_DIR/profile.log}
 
 show_help() {

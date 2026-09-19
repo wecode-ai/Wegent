@@ -95,8 +95,24 @@ pub struct TaskUpdate {
     pub parent_id: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
     pub assignee_agent_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_user_id")]
+    pub assignee_user_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "deserialize_optional_group_id")]
+    pub assignee_group_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
     pub workflow: Option<Option<Value>>,
+}
+
+fn deserialize_optional_user_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<i64>>, D::Error> {
+    Option::<i64>::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_optional_group_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -480,6 +496,8 @@ pub struct LoopItem {
     pub completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee_agent_id: Option<String>,
+    #[serde(default)]
+    pub assignee_user_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

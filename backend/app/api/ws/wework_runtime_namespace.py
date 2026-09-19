@@ -24,6 +24,7 @@ from app.schemas.project_chat import (
     ProjectChatSubscribe,
     ProjectChatWegentContinuation,
 )
+from app.schemas.runtime_execution_snapshot import RuntimeExecutionSnapshot
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.device.command_registry import (
@@ -47,6 +48,7 @@ from app.services.device.runtime_rpc_service import (
     encode_runtime_rpc_response,
     runtime_rpc_service,
 )
+from app.services.project_chat.execution_snapshot import reconcile_execution_snapshot
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.context import set_request_context, set_user_context
 
@@ -63,6 +65,7 @@ PROJECT_CHAT_SEND_EVENT = "wework:project_chat:message:send"
 PROJECT_CHAT_CREATED_EVENT = "wework:project_chat:message:created"
 PROJECT_CHAT_AGENT_CHUNK_EVENT = "wework:project_chat:agent:chunk"
 PROJECT_CHAT_AGENT_START_EVENT = "wework:project_chat:agent:start"
+PROJECT_CHAT_EXECUTION_SNAPSHOT_EVENT = "wework:project_chat:execution:snapshot"
 PROJECT_CHAT_MANAGER_CONTINUE_EVENT = "wework:project_chat:manager:continue"
 PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
 PROJECT_CHAT_WEGENT_CONTINUE_EVENT = "wework:project_chat:wegent:continue"
@@ -140,6 +143,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             PROJECT_CHAT_UNSUBSCRIBE_EVENT: "on_project_chat_unsubscribe",
             PROJECT_CHAT_SEND_EVENT: "on_project_chat_message_send",
             PROJECT_CHAT_AGENT_START_EVENT: "on_project_chat_agent_start",
+            PROJECT_CHAT_EXECUTION_SNAPSHOT_EVENT: "on_project_chat_execution_snapshot",
             PROJECT_CHAT_MANAGER_CONTINUE_EVENT: "on_project_chat_manager_continue",
             PROJECT_CHAT_AGENT_FAILED_EVENT: "on_project_chat_agent_failed",
             PROJECT_CHAT_WEGENT_CONTINUE_EVENT: "on_project_chat_wegent_continue",
@@ -288,6 +292,24 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 details=exc.details,
             )
         return {"id": request_id, "ok": True, "result": result}
+
+    async def on_project_chat_execution_snapshot(self, sid: str, data: dict) -> dict:
+        """Persist execution facts read by the authenticated device owner."""
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            snapshot = RuntimeExecutionSnapshot.model_validate(
+                project_chat_payload(data)
+            )
+            messages = await run_sync_in_executor(
+                _reconcile_execution_snapshot_sync, int(identity["user_id"]), snapshot
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+        for message in messages:
+            await emit_project_chat_message(self, message)
+        return {"ok": True, "result": messages}
 
     async def on_project_chat_subscribe(self, sid: str, data: dict) -> dict:
         """Authorize a project chat subscription and return missed messages."""
@@ -643,6 +665,13 @@ def project_chat_exception_ack(exc: ValidationError | HTTPException) -> dict[str
         409: "MESSAGE_CONFLICT",
     }.get(exc.status_code, "INVALID_MESSAGE")
     return project_chat_error(code, str(exc.detail))
+
+
+def _reconcile_execution_snapshot_sync(
+    user_id: int, snapshot: RuntimeExecutionSnapshot
+) -> list[dict[str, Any]]:
+    with get_db_session() as db:
+        return reconcile_execution_snapshot(db, user_id=user_id, snapshot=snapshot)
 
 
 def _subscribe_project_chat_sync(

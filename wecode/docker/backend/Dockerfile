@@ -123,8 +123,9 @@ COPY --from=rust-builder \
     /build/backend-rs-intra/target/release/wegent-backend-rs \
     /usr/local/bin/wegent-backend-rs
 COPY backend-rs-intra/config /app/backend-rs-intra/config
-# The intra routes include the public cutover routes from this sibling path.
-COPY backend-rs/config/routes.toml /app/backend-rs/config/routes.toml
+RUN rm /app/backend-rs-intra/config/routes-public.toml
+# Keep the public cutovers beside the intra entry file; its include is local.
+COPY backend-rs/config/routes.toml /app/backend-rs-intra/config/routes-public.toml
 COPY start-hybrid-backend.sh /usr/local/bin/start-hybrid-backend
 
 RUN mkdir -p "$LOG_DIR" "$BREEZE_LOG_DIR" && \

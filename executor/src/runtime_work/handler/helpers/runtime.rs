@@ -163,3 +163,12 @@ fn fork_error_response(code: &str, error: String) -> Value {
         "code": code,
     })
 }
+
+fn ensure_claude_execution_identity(local_task_id: &str, request: &mut ExecutionRequest) {
+    if request.task_id.trim().is_empty() {
+        request.task_id = local_task_id.to_owned();
+    }
+    if request.subtask_id.trim().is_empty() {
+        request.subtask_id = uuid::Uuid::new_v4().to_string();
+    }
+}

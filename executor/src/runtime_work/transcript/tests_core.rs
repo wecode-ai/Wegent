@@ -672,6 +672,7 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
     assert_eq!(messages[2]["content"], "inspect runtime");
     assert_eq!(messages[3]["role"], "assistant");
     assert_eq!(messages[3]["content"], "Done.");
+    assert_eq!(messages[3]["createdAt"], 1_780_000_005_000_i64);
     assert_eq!(messages[3]["blocks"][0]["type"], "text");
     assert_eq!(
         messages[3]["blocks"][0]["content"],

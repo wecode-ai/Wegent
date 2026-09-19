@@ -40,6 +40,7 @@ import {
 import {
   verifyAnthropicEmptyResponseRecovery,
   verifyFollowUpSendRejectionNotice,
+  verifyModelServiceConnectionError,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -682,7 +683,6 @@ async function verifyCloudCheckpoint({
     case 'cloud-worktree-queued-cancel':
     case 'cloud-worktree-tools':
     case 'cloud-worktree-archive-restore':
-    case 'cloud-worktree-device-restart':
       await verifyCloudWorktreeCheckpoint({
         checkpoint,
         cloudEnvironment,
@@ -767,6 +767,8 @@ async function verifyCloudCheckpoint({
       await verifyRetryFailureRestoration(control, composerSelector)
       setPhase('cloud-rate-limit')
       await verifyRateLimitRecovery({ composerSelector, control })
+      setPhase('cloud-model-service-connection-error')
+      await verifyModelServiceConnectionError({ composerSelector, control })
       setPhase('cloud-reconnect')
       await verifyReconnectRecovery({ composerSelector, control })
       setPhase('cloud-anthropic-empty')

@@ -1,42 +1,27 @@
 import { render, waitFor } from '@testing-library/react'
-import { expect, test, vi } from 'vitest'
-import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
+import { afterAll, beforeAll, expect, test, vi } from 'vitest'
+import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
+import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 
-const mermaidMocks = vi.hoisted(() => ({
-  initialize: vi.fn(),
-  render: vi.fn(async () => ({
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="400" height="200" onload="alert('unsafe')">
-      <style>@import "https://example.com/tracker.css"; .unsafe { background: url(https://example.com/tracker.png); }</style>
-      <a href="javascript:alert('unsafe')">
-        <text>unsafe link</text>
-      </a>
-      <use href="#safe-symbol" />
-      <use id="unsafe-xlink" xlink:href="javascript:alert('unsafe')" />
-      <image href="https://example.com/tracker.png" />
-      <foreignObject width="400" height="200">
-        <div xmlns="http://www.w3.org/1999/xhtml" onclick="alert('unsafe')" style="background:url(javascript:alert('unsafe'))">
-          <p>开发者代码<br>app.js / pages</p>
-          <img src="https://example.com/tracker.png" />
-          <script>alert('unsafe')</script>
-        </div>
-      </foreignObject>
-    </svg>`,
-  })),
-}))
+const originalGetBBox = SVGElement.prototype.getBBox
 
-vi.mock('mermaid', () => ({
-  default: mermaidMocks,
-}))
+beforeAll(() => {
+  Object.defineProperty(SVGElement.prototype, 'getBBox', {
+    configurable: true,
+    value: () => new DOMRect(0, 0, 100, 20),
+  })
+})
 
-vi.mock('@panzoom/panzoom', () => ({
-  default: () => ({
-    destroy: vi.fn(),
-    getScale: vi.fn(() => 1),
-    reset: vi.fn(),
-    zoom: vi.fn(),
-    zoomWithWheel: vi.fn(),
-  }),
-}))
+afterAll(() => {
+  if (originalGetBBox) {
+    Object.defineProperty(SVGElement.prototype, 'getBBox', {
+      configurable: true,
+      value: originalGetBBox,
+    })
+  } else {
+    delete (SVGElement.prototype as Partial<SVGElement>).getBBox
+  }
+})
 
 const MULTILINE_MERMAID = `flowchart TD
     APP["开发者代码<br/>app.js / pages"]
@@ -58,23 +43,55 @@ test('renders Mermaid HTML labels containing line breaks', async () => {
       expect(svg).toBeInTheDocument()
       expect(svg).toHaveTextContent('开发者代码')
       expect(svg).toHaveTextContent('app.js / pages')
-      expect(svg?.querySelector('script')).not.toBeInTheDocument()
-      expect(svg).not.toHaveAttribute('onload')
-      expect(svg?.querySelector('[onclick]')).not.toBeInTheDocument()
-      expect(svg?.querySelector('style')).not.toBeInTheDocument()
-      expect(svg?.querySelector('a')).not.toHaveAttribute('href')
-      expect(svg?.querySelector('use')).toHaveAttribute('href', '#safe-symbol')
-      expect(svg?.querySelector('#unsafe-xlink')).not.toHaveAttribute('xlink:href')
-      expect(svg?.querySelector('image')).not.toHaveAttribute('href')
-      expect(svg?.querySelector('[style]')).not.toBeInTheDocument()
-      expect(svg?.querySelector('img')).not.toHaveAttribute('src')
       expect(container.querySelector('.drawing-state.error')).not.toBeInTheDocument()
     },
     { timeout: 10_000 }
   )
+}, 15_000)
 
-  expect(mermaidMocks.render).toHaveBeenCalledWith(expect.any(String), MULTILINE_MERMAID)
-  expect(mermaidMocks.initialize).toHaveBeenCalledWith(
-    expect.objectContaining({ securityLevel: 'strict' })
+test('sanitizes unsafe SVG returned by the PlantUML server', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="400" height="200" onload="alert('unsafe')">
+        <style>@import "https://example.com/tracker.css";</style>
+        <a href="javascript:alert('unsafe')"><text>unsafe link</text></a>
+        <use href="#safe-symbol" />
+        <use id="unsafe-xlink" xlink:href="javascript:alert('unsafe')" />
+        <image href="https://example.com/tracker.png" />
+        <script>alert('unsafe')</script>
+      </svg>`,
+      { status: 200, headers: { 'Content-Type': 'image/svg+xml' } }
+    )
   )
+
+  try {
+    const { container } = render(
+      <MarkdownServicesProvider
+        value={{
+          ...browserMarkdownServices,
+          plantumlServerUrl: 'https://plantuml.example.com/svg',
+        }}
+      >
+        <MarkdownDiagramPreview
+          code={'@startuml\nAlice -> Bob: hello\n@enduml'}
+          language="plantuml"
+        />
+      </MarkdownServicesProvider>
+    )
+
+    await waitFor(() => expect(container.querySelector('.drawing-diagram-svg')).toBeInTheDocument())
+
+    const svg = container.querySelector('.drawing-diagram-svg')
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(svg?.querySelector('script')).not.toBeInTheDocument()
+    expect(svg).not.toHaveAttribute('onload')
+    expect(svg?.querySelector('style')).not.toBeInTheDocument()
+    expect(svg?.querySelector('a')).not.toHaveAttribute('href')
+    expect(svg?.querySelector('use')).toHaveAttribute('href', '#safe-symbol')
+    expect(svg?.querySelector('#unsafe-xlink')).not.toHaveAttribute('xlink:href')
+    expect(svg?.querySelector('image')).not.toHaveAttribute('href')
+    expect(container.querySelector('.drawing-state.error')).not.toBeInTheDocument()
+  } finally {
+    fetchMock.mockRestore()
+  }
 }, 15_000)

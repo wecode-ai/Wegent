@@ -27,6 +27,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-internal-telemetry', 'wework-internal-telemetry'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -41,7 +42,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(9).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
@@ -54,6 +55,7 @@ const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
   '@wegent/dsh-transcript-sync',
+  '@wegent/dsh-internal-telemetry',
 ] as const
 const CORE_UI_BUNDLES = [
   '@wegent/dsh-conversation-export',

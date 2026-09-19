@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod cli;
+mod shutdown;
 
 use crate::config::device::{load_device_config, DeviceConfig};
 use crate::local::{
@@ -155,6 +156,26 @@ pub async fn run_with_shell_environment(
         reserve_executor_stdout_for_protocol();
     }
 
+    let mut shutdown = shutdown::ShutdownRequest::install();
+    let outcome = tokio::select! {
+        outcome = serve_runtime_plan(config, plan) => outcome,
+        request = shutdown.wait() => {
+            log_executor_event("executor stop requested", &[("request", request.to_owned())]);
+            Ok(())
+        }
+    };
+    // The runtime stopped because the desktop app went away or asked us to stop:
+    // take the agent processes it drove down with us instead of letting them
+    // outlive this executor, and release the blocking reads parked on their
+    // stdio.
+    crate::agents::terminate_agent_processes().await;
+    outcome
+}
+
+async fn serve_runtime_plan(
+    config: crate::config::device::DeviceConfig,
+    plan: StartupPlan,
+) -> Result<(), AppError> {
     match (plan.http_server, plan.local_sidecar) {
         (Some(http_server), None) => server::serve(http_server.server_config())
             .await

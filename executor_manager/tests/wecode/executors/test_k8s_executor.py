@@ -108,6 +108,9 @@ def test_warm_pool_template_uses_dynamic_runtime_binding_metadata():
     assert env["HEARTBEAT_ENABLED"] == "true"
     assert "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL" in env
     assert "HEARTBEAT_TYPE" not in env
+    # Container executors keep their workspaces on the container workspace root
+    # so the web file panel and the device file commands address the same path.
+    assert env["WEGENT_EXECUTOR_PROJECTS_DIR"] == "/workspace/projects"
 
     annotations = pod["metadata"]["annotations"]
     assert annotations[ANNOTATION_AUTH_TOKEN] == ""

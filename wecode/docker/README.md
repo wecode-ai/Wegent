@@ -18,6 +18,10 @@ sidebar_position: 1
 例如，frontend 和 wework 依赖 `@wegent/collaboration`，因此所有相关内部
 Dockerfile 与准备脚本都必须包含 `packages/collaboration`。
 
+同理，frontend 与 wework 的源码会从 `shared/assets` 读取模型目录等资源，
+这些镜像的 `prepare_build.sh` 必须复制 `shared/assets`，Dockerfile 必须包含
+`COPY shared/assets ./shared/assets`，否则构建会以 `Module not found` 失败。
+
 远程设备镜像由 `device/build-and-publish.sh` 从仓库根目录构建，使用 BuildKit
 自带的 Dockerfile 解析器，不声明需要从 Docker Hub 下载的 `# syntax` 镜像，
 避免内网 CI 在解析阶段因无法访问 Docker Hub 而失败。
@@ -32,6 +36,11 @@ When `frontend/package.json` or `wework/package.json` adds a `workspace:*`
 dependency, the matching image must copy the workspace package manifest before
 dependency installation, copy its source before the application build, and
 remove copied `node_modules` in `prepare_build.sh`.
+
+The frontend and wework sources also read model catalog resources from
+`shared/assets`, so their `prepare_build.sh` must stage `shared/assets` and their
+Dockerfile must contain `COPY shared/assets ./shared/assets`. Without it the
+build fails with `Module not found`.
 
 The remote device image is built from the repository root by
 `device/build-and-publish.sh`. It uses BuildKit's bundled Dockerfile frontend

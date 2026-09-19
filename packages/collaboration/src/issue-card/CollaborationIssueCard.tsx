@@ -4,6 +4,7 @@
 
 import { Bot, CalendarDays, Flag } from "lucide-react";
 import {
+  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type HTMLAttributes,
@@ -64,6 +65,7 @@ interface CollaborationIssueCardContentProps {
   reference: string;
   renderAssigneeTooltip?: (label: string, child: ReactNode) => ReactNode;
   titleTrailing?: ReactNode;
+  unread?: boolean;
 }
 
 export function CollaborationIssueCardContent({
@@ -74,6 +76,7 @@ export function CollaborationIssueCardContent({
   reference,
   renderAssigneeTooltip = (_label, child) => child,
   titleTrailing,
+  unread,
 }: CollaborationIssueCardContentProps) {
   const model = createCollaborationIssueCardModel({
     agentNames,
@@ -92,7 +95,7 @@ export function CollaborationIssueCardContent({
         </span>
       ) : null}
       <span className="flex min-w-0 items-center gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
-        {model.unread ? (
+        {(unread ?? model.unread) ? (
           <span
             data-testid={`cloud-todo-card-unread-${item.id}`}
             className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
@@ -185,7 +188,7 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
   childrenAction?: ReactNode;
   detailButtonProps?: Omit<
     ButtonHTMLAttributes<HTMLButtonElement>,
-    "children" | "className" | "type"
+    "children" | "className" | "type" | "onClick"
   >;
   detailButtonClassName?: string;
   detailButtonTestId?: string;
@@ -193,6 +196,8 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
   dragging?: boolean;
   dropTarget?: boolean;
   menu?: ReactNode;
+  onOpen?: () => void;
+  unread?: boolean;
 }
 
 export function CollaborationIssueCard({
@@ -210,33 +215,57 @@ export function CollaborationIssueCard({
   dragging,
   dropTarget,
   menu,
+  onOpen,
+  unread,
   ...contentProps
 }: CollaborationIssueCardProps) {
+  const detailButtonRef = useRef<HTMLButtonElement>(null);
+  const canOpenDetails = Boolean(onOpen) && !detailButtonProps?.disabled;
+
   return (
     <article
       {...articleProps}
+      onClick={(event) => {
+        const target = event.target;
+        // Portal events bubble through React even when their DOM is outside the card.
+        if (
+          !(target instanceof Element) ||
+          !event.currentTarget.contains(target)
+        )
+          return;
+        articleProps?.onClick?.(event);
+        if (event.defaultPrevented || !canOpenDetails || dragging) return;
+        const control = target.closest(
+          'button, a[href], input, select, textarea, summary, [role="button"], [role="link"], [role="menuitem"], [contenteditable]:not([contenteditable="false"])',
+        );
+        if (control && event.currentTarget.contains(control)) return;
+        detailButtonRef.current?.focus({ preventScroll: true });
+        onOpen?.();
+      }}
       ref={cardRef}
       data-testid={articleTestId}
       style={cardStyle}
       className={collaborationIssueCardClassName({
-        className: cardClassName,
+        className: classNames("cursor-default", cardClassName),
         dragging,
         dropTarget,
-        unread: Boolean(contentProps.item.is_unread),
+        unread: unread ?? Boolean(contentProps.item.is_unread),
       })}
     >
       {menu}
       <button
         {...detailButtonProps}
+        onClick={onOpen}
+        ref={detailButtonRef}
         type="button"
         data-testid={detailButtonTestId}
         className={classNames(
-          "w-full px-3.5 pt-3.5 text-left disabled:cursor-default",
+          "w-full cursor-default px-3.5 pt-3.5 text-left",
           detailFlushBottom ? "pb-0" : "pb-3.5",
           detailButtonClassName,
         )}
       >
-        <CollaborationIssueCardContent {...contentProps} />
+        <CollaborationIssueCardContent {...contentProps} unread={unread} />
         {afterContent}
       </button>
       {childrenAction}

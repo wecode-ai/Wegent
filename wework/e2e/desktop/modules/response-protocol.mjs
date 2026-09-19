@@ -70,13 +70,13 @@ function responseCompleted(id, output) {
   }
 }
 
-function responseFailed(id, message) {
+function responseFailed(id, message, code = 'context_length_exceeded') {
   return {
     type: 'response.failed',
     response: {
       id,
       status: 'failed',
-      error: { code: 'context_length_exceeded', message },
+      error: { code, message },
     },
   }
 }

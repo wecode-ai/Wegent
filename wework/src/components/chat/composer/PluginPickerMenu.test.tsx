@@ -1,17 +1,13 @@
+import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
+import { createComposerCatalogStore } from '@wegent/collaboration/composer/createComposerCatalogStore'
+import { ComposerCatalogContext } from './ComposerCatalogContext'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceApp } from '@/types/api'
-import {
-  INSERT_PLUGIN_REFERENCE_EVENT,
-  notifyLocalPluginSkillsChanged,
-  recordPluginUsage,
-  SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
-} from '@/features/plugins/pluginTrial'
+import { notifyLocalPluginSkillsChanged, recordPluginUsage } from '@/features/plugins/pluginTrial'
 import { PluginPickerMenu } from './PluginPickerMenu'
 import {
-  COMPOSER_APPS_REQUEST_SYNC_EVENT,
-  clearComposerAppsSnapshot,
   publishComposerApps,
   replaceComposerApps,
   resetComposerAppsMemory,
@@ -58,6 +54,29 @@ describe('PluginPickerMenu', () => {
     resetComposerAppsMemory()
   })
 
+  test('uses its task catalog instead of the global snapshot and inherited loader', async () => {
+    publishComposerApps([githubApp])
+    const inherited = vi.fn().mockResolvedValue([githubApp])
+    const scoped = vi.fn().mockResolvedValue([superpowersApp])
+    const store = createComposerCatalogStore<LocalDeviceApp>()
+    render(
+      <ComposerCatalogContext.Provider
+        value={{ appsStore: store, catalogEvents: {}, listApps: scoped, prefetchLocalAuth: false }}
+      >
+        <PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={inherited} />
+      </ComposerCatalogContext.Provider>
+    )
+    expect(screen.queryByTestId('composer-plugin-preview-icon-github')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(
+      await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('composer-plugin-picker-item-github')).not.toBeInTheDocument()
+    expect(scoped).toHaveBeenCalledTimes(1)
+    expect(inherited).not.toHaveBeenCalled()
+    expect(store.get()).toEqual([superpowersApp])
+  })
+
   test('lists installed plugins with capability descriptions and inserts a skill-only plugin', async () => {
     const onListLocalApps = vi
       .fn()
@@ -70,18 +89,14 @@ describe('PluginPickerMenu', () => {
       ])
     const inserted: string[] = []
     const shownGuides: string[] = []
-    const onInsert = (event: Event) => {
-      const detail = (event as CustomEvent<{ reference?: string }>).detail
-      if (detail?.reference) inserted.push(detail.reference)
-    }
-    window.addEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
-    const onShowGuide = (event: Event) => {
-      const detail = (event as CustomEvent<{ pluginName?: string }>).detail
-      if (detail?.pluginName) shownGuides.push(detail.pluginName)
-    }
-    window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
-
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(
+      <PluginTrialSelectionContext.Provider value={title => shownGuides.push(title)}>
+        <PluginPickerMenu
+          onInsertReference={reference => inserted.push(reference)}
+          onListLocalApps={onListLocalApps}
+        />
+      </PluginTrialSelectionContext.Provider>
+    )
 
     const trigger = screen.getByTestId('composer-plugin-picker-button')
     expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
@@ -98,8 +113,7 @@ describe('PluginPickerMenu', () => {
       'plugin-icon-slot',
       'h-6',
       'w-6',
-      'rounded-full',
-      'border-border/30'
+      'rounded-full'
     )
     expect(trigger).toHaveTextContent('+2')
     expect(picker).toHaveTextContent('可用插件')
@@ -116,15 +130,14 @@ describe('PluginPickerMenu', () => {
       expect(inserted).toEqual(['[$superpowers](plugin://superpowers@openai-official)'])
     })
     expect(shownGuides).toEqual(['superpowers'])
-
-    window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
-    window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
   })
 
   test('renders a single icon trigger when iconOnly is set', async () => {
     const onListLocalApps = vi.fn().mockResolvedValue([githubApp, superpowersApp, echoIdApp])
 
-    render(<PluginPickerMenu iconOnly onListLocalApps={onListLocalApps} />)
+    render(
+      <PluginPickerMenu onInsertReference={vi.fn()} iconOnly onListLocalApps={onListLocalApps} />
+    )
 
     const trigger = screen.getByTestId('composer-plugin-picker-button')
     expect(trigger).toHaveClass('h-7', 'w-7', 'rounded-lg')
@@ -143,7 +156,7 @@ describe('PluginPickerMenu', () => {
 
     const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp, githubApp, echoIdApp])
 
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
     const picker = await screen.findByTestId('composer-plugin-picker')
 
@@ -167,7 +180,7 @@ describe('PluginPickerMenu', () => {
         })
     )
 
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
 
     expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
     expect(screen.getByTestId('composer-plugin-picker-button')).toHaveTextContent('插件')
@@ -185,7 +198,7 @@ describe('PluginPickerMenu', () => {
     publishComposerApps([superpowersApp])
     const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp])
 
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
     expect(
       await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
@@ -201,8 +214,6 @@ describe('PluginPickerMenu', () => {
     expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
 
     await act(async () => {
-      resetComposerAppsMemory()
-      clearComposerAppsSnapshot()
       resolveRefresh([])
     })
     await waitFor(() =>
@@ -212,7 +223,7 @@ describe('PluginPickerMenu', () => {
     )
   })
 
-  test('keeps snapshot plugins visible when a refresh returns empty', async () => {
+  test('clears snapshot plugins when a completed refresh returns empty', async () => {
     publishComposerApps([superpowersApp])
     let resolveApps!: (apps: LocalDeviceApp[]) => void
     const onListLocalApps = vi.fn(
@@ -222,21 +233,24 @@ describe('PluginPickerMenu', () => {
         })
     )
 
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
     expect(
       await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
     ).toBeInTheDocument()
 
     await act(async () => resolveApps([]))
-    expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).not.toBeInTheDocument()
+    expect(onListLocalApps).toHaveBeenCalledTimes(1)
   })
 
   test('clears visible plugins when the shared composer app store is explicitly emptied', async () => {
     publishComposerApps([superpowersApp])
     const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp])
 
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
     expect(
       await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
@@ -251,9 +265,9 @@ describe('PluginPickerMenu', () => {
     )
   })
 
-  test('shows plugins published by slash autocomplete even when fetch returns empty', async () => {
+  test('updates slash snapshots with the authoritative empty response', async () => {
     const onListLocalApps = vi.fn().mockResolvedValue([])
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
 
     expect(onListLocalApps).not.toHaveBeenCalled()
     expect(screen.queryByTestId(/composer-plugin-preview-icon-/)).not.toBeInTheDocument()
@@ -267,20 +281,79 @@ describe('PluginPickerMenu', () => {
     )
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
     await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
-    expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
-    expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
+    expect(screen.queryByTestId('composer-plugin-picker-item-github')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).not.toBeInTheDocument()
   })
 
-  test('pulls slash React apps via sync event when the shared store was empty', async () => {
-    const onListLocalApps = vi.fn().mockResolvedValue([])
-    window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, () => {
-      publishComposerApps([githubApp, echoIdApp])
-    })
-
-    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+  test('shows a failed refresh and retries without hiding previously loaded plugins', async () => {
+    publishComposerApps([githubApp])
+    const onListLocalApps = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([echoIdApp])
+    render(<PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />)
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(await screen.findByTestId('composer-plugin-picker-error')).toHaveTextContent(
+      '加载插件失败'
+    )
+    expect(screen.getByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
+    expect(onListLocalApps).toHaveBeenCalledTimes(1)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-retry'))
+    expect(await screen.findByTestId('composer-plugin-picker-item-echoid')).toBeInTheDocument()
+    expect(screen.queryByTestId('composer-plugin-picker-error')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('composer-plugin-picker-item-github')).not.toBeInTheDocument()
+  })
 
-    expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
-    expect(screen.getByTestId('composer-plugin-picker-item-echoid')).toBeInTheDocument()
+  test('keeps portal clicks inside the menu and restores focus on Escape', async () => {
+    const onListLocalApps = vi.fn().mockResolvedValue([githubApp])
+    const { container } = render(
+      <div style={{ overflow: 'hidden' }}>
+        <PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={onListLocalApps} />
+      </div>
+    )
+    const trigger = screen.getByTestId('composer-plugin-picker-button')
+    await userEvent.click(trigger)
+    await screen.findByTestId('composer-plugin-picker-item-github')
+    expect(container).not.toContainElement(screen.getByTestId('composer-plugin-picker'))
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-search'))
+    await userEvent.type(screen.getByTestId('composer-plugin-picker-search'), 'Git')
+    expect(screen.getByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('composer-plugin-picker')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  test('selects a plugin even with malformed stored recent IDs', async () => {
+    window.localStorage.setItem(RECENT_PLUGIN_APPS_KEY, '{broken')
+    render(
+      <PluginPickerMenu onInsertReference={vi.fn()} onListLocalApps={async () => [githubApp]} />
+    )
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    await userEvent.click(await screen.findByTestId('composer-plugin-picker-item-github'))
+    expect(JSON.parse(window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY)!)).toEqual(['github'])
+    expect(screen.queryByTestId('composer-plugin-picker')).not.toBeInTheDocument()
+  })
+  test('renders an explicitly supplied catalog when no refresh callback is available', async () => {
+    publishComposerApps([githubApp])
+    render(<PluginPickerMenu onInsertReference={vi.fn()} />)
+    expect(screen.getByTestId('composer-plugin-preview-icon-github')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(screen.getByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
+  })
+
+  test('does not describe an initial load failure as an empty installed catalog', async () => {
+    render(
+      <PluginPickerMenu
+        onInsertReference={vi.fn()}
+        onListLocalApps={async () => {
+          throw new Error('offline')
+        }}
+      />
+    )
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(await screen.findByTestId('composer-plugin-picker-error')).toBeInTheDocument()
+    expect(screen.queryByText('当前账号没有已安装且启用的匹配插件。')).not.toBeInTheDocument()
   })
 })

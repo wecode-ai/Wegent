@@ -1,0 +1,6 @@
+- insert:
+    - id: wework-internal-telemetry
+      name: '@wegent/dsh-internal-telemetry'
+      inject:
+        - weworkDesktop
+        - weworkPluginRuntime

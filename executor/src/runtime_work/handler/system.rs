@@ -57,24 +57,15 @@ impl RuntimeWorkRpcHandler {
             let mut failed_task_ids = HashSet::new();
             for outcome in reconciled
                 .into_iter()
-                .filter(|outcome| {
-                    outcome.interrupted_preparation || outcome.interrupted_execution
-                })
+                .filter(|outcome| outcome.interrupted_preparation)
             {
-                let task_id = outcome
-                    .interrupted_execution_task_id
-                    .unwrap_or(outcome.record.worktree_id);
+                let task_id = outcome.record.worktree_id;
                 if recoverable_goal_task_ids.contains(&task_id) {
                     continue;
                 }
                 let error = outcome.record.last_error.unwrap_or_else(|| {
-                    if outcome.interrupted_execution {
-                        "Executor restarted while the Worktree task was executing; runtime was not resumed"
-                            .to_owned()
-                    } else {
-                        "Executor restarted during Worktree preparation; runtime was not resumed"
-                            .to_owned()
-                    }
+                    "Executor restarted during Worktree preparation; runtime was not resumed"
+                        .to_owned()
                 });
                 let error = AppIpcError::new("executor_restarted", error);
                 if store

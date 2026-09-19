@@ -179,11 +179,10 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, link_is_cloud_project_task, normalize_device_id,
-        normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
-        raw_string_field, restore_cloud_project_id, restore_origin, runtime_task_id,
-        runtime_task_title, set_runtime_task_title, string_field, timestamp_ms_field,
-        workspace_group_path, workspace_path,
+        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
+        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
+        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -617,7 +616,6 @@ struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
-    managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
     codex_turn: Option<ActiveCodexTurn>,
@@ -1164,6 +1162,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.projects.upsert_local" => self.upsert_local_project(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.composer.catalog.read" => self.read_composer_catalog(payload).await,
             "runtime.workspace.search" => self.search_workspace(payload).await,
             "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
             "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
@@ -1194,6 +1193,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"
             | "runtime.codex.runtime_config.update"
@@ -1207,6 +1207,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod composer_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{
