@@ -4455,7 +4455,7 @@ def _runtime_model_override_values(
     if not model_id:
         return None, None, False
     if runtime == "codex" and model_type == RUNTIME_MODEL_TYPE:
-        from app.services.chat.trigger.unified import (
+        from app.services.chat.trigger.request_preparation import (
             _build_codex_runtime_model_config,
         )
 
@@ -4467,7 +4467,7 @@ def _runtime_model_override_values(
         )
         return config, None, False
     if runtime == "codex" and model_type in CLOUD_MODEL_TYPES:
-        from app.services.chat.trigger.unified import (
+        from app.services.chat.trigger.request_preparation import (
             _build_cloud_gateway_model_config,
         )
 
@@ -4494,7 +4494,7 @@ def _runtime_model_override_values(
         from app.services.chat.config.model_resolver import (
             _find_model_with_namespace,
         )
-        from app.services.chat.trigger.unified import (
+        from app.services.chat.trigger.request_preparation import (
             build_wework_runtime_model_config,
         )
         from app.services.runtime_codex_model import (
@@ -4690,7 +4690,7 @@ def _apply_runtime_model_options(
     user: User,
     payload: SimpleNamespace,
 ) -> None:
-    from app.services.chat.trigger.unified import (
+    from app.services.chat.trigger.request_preparation import (
         _apply_user_runtime_config,
         _reasoning_from_model_options,
         _service_tier_from_model_options,
