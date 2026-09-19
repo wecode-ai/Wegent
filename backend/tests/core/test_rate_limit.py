@@ -4,6 +4,7 @@
 
 """Tests for custom rate limiting helpers."""
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -175,6 +176,46 @@ def test_external_mcp_rate_limit_ignores_global_api_rate_limit_switch():
 
     assert limited is True
     get_client.assert_called_once_with(require_global_enabled=False)
+
+
+def test_rate_limit_redis_cooldown_skips_repeated_initialization(
+    monkeypatch,
+):
+    """A Redis outage must trigger only one connection attempt per cooldown."""
+    fake_client = Mock()
+    fake_client.ping.side_effect = RuntimeError("down")
+    fake_redis = SimpleNamespace(from_url=Mock(return_value=fake_client))
+    monkeypatch.setattr(rate_limit, "_redis_rate_limit_client", None)
+    monkeypatch.setattr(rate_limit, "_redis_rate_limit_unavailable_until", 0.0)
+    monkeypatch.setattr(settings, "RATE_LIMIT_REDIS_UNAVAILABLE_COOLDOWN_SECONDS", 5.0)
+
+    with patch.dict(sys.modules, {"redis": fake_redis}):
+        assert (
+            rate_limit._get_rate_limit_redis_client(require_global_enabled=False)
+            is None
+        )
+        assert (
+            rate_limit._get_rate_limit_redis_client(require_global_enabled=False)
+            is None
+        )
+
+    assert fake_redis.from_url.call_count == 1
+
+
+def test_rate_limit_redis_returns_unavailable_while_initialization_runs(
+    monkeypatch,
+):
+    """Concurrent callers must fail open instead of waiting for Redis setup."""
+    monkeypatch.setattr(rate_limit, "_redis_rate_limit_client", None)
+    monkeypatch.setattr(rate_limit, "_redis_rate_limit_unavailable_until", 0.0)
+
+    rate_limit._redis_rate_limit_initialization_lock.acquire()
+    try:
+        result = rate_limit._get_rate_limit_redis_client(require_global_enabled=False)
+    finally:
+        rate_limit._redis_rate_limit_initialization_lock.release()
+
+    assert result is None
 
 
 def test_check_redis_available_returns_true_when_ping_succeeds():
