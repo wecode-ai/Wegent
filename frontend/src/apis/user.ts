@@ -126,6 +126,7 @@ function removeTokenCookie() {
 }
 
 export function setToken(token: string) {
+  clearQuickAccess()
   if (typeof window !== 'undefined') {
     localStorage.setItem(TOKEN_KEY, token)
     const exp = getJwtExp(token)
@@ -163,6 +164,7 @@ export function getTokenExpire(): number | null {
 }
 
 export function removeToken() {
+  clearQuickAccess()
   if (typeof window !== 'undefined') {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(TOKEN_EXPIRE_KEY)
@@ -185,7 +187,16 @@ function isAuthenticated(): boolean {
 import { apiClient } from './client'
 import { paths } from '@/config/paths'
 
-let quickAccessRequest: Promise<QuickAccessResponse> | null = null
+// Share startup data across components that mount at different times.
+let quickAccessCache: {
+  token: string | null
+  request: Promise<QuickAccessResponse>
+  expiresAt: number
+} | null = null
+
+function clearQuickAccess() {
+  quickAccessCache = null
+}
 
 export const userApis = {
   async login(data: LoginRequest): Promise<User> {
@@ -225,7 +236,12 @@ export const userApis = {
   },
 
   async updateUser(data: UpdateUserRequest): Promise<User> {
-    return apiClient.put('/users/me', data)
+    clearQuickAccess()
+    try {
+      return await apiClient.put('/users/me', data)
+    } finally {
+      clearQuickAccess()
+    }
   },
 
   async previewWeiboAccount(): Promise<WeiboAccountPreviewResponse> {
@@ -250,16 +266,24 @@ export const userApis = {
   },
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
-    if (quickAccessRequest) {
-      return quickAccessRequest
+    const token = getToken()
+    if (quickAccessCache?.token === token && quickAccessCache.expiresAt > Date.now()) {
+      return quickAccessCache.request
     }
 
-    const request = apiClient.get<QuickAccessResponse>('/users/quick-access').finally(() => {
-      if (quickAccessRequest === request) {
-        quickAccessRequest = null
+    const request = apiClient.get<QuickAccessResponse>('/users/quick-access').then(
+      response => {
+        if (quickAccessCache?.request === request) {
+          quickAccessCache.expiresAt = Date.now() + 30_000
+        }
+        return response
+      },
+      error => {
+        if (quickAccessCache?.request === request) clearQuickAccess()
+        throw error
       }
-    })
-    quickAccessRequest = request
+    )
+    quickAccessCache = { token, request, expiresAt: Infinity }
 
     return request
   },

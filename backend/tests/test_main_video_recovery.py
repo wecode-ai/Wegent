@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Verify video recovery startup and shutdown without external services."""
+"""Verify video recovery and SDK preloading without external services."""
 
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
@@ -45,6 +46,8 @@ def isolated_lifespan(monkeypatch: pytest.MonkeyPatch):
         "chat_shell.tools.get_pending_request_registry",
         "chat_shell.tools.shutdown_pending_request_registry",
         "app.services.device_monitor.stop_device_monitor_async",
+        "app.services.execution.agents.video.recovery.recover_video_jobs",
+        "app.services.execution.agents.video.recovery.recover_video_jobs_after_stale_delay",
     ):
         monkeypatch.setattr(target, AsyncMock())
 
@@ -100,3 +103,27 @@ async def test_video_recovery_respects_scheduled_tasks_switch(
 
     if enabled:
         assert task.cancelled()
+
+
+async def test_sdk_preloads_before_channels_start(monkeypatch, isolated_lifespan):
+    import app.main as main
+
+    loop_thread = threading.get_ident()
+    preload_threads = []
+    monkeypatch.setattr(
+        main,
+        "preload_openai_sdk",
+        lambda: preload_threads.append(threading.get_ident()),
+    )
+    monkeypatch.setattr(main.settings, "SCHEDULED_TASKS_ENABLED", False)
+
+    async def start_channels(_db):
+        assert len(preload_threads) == 1
+        assert preload_threads[0] != loop_thread
+        return 0
+
+    from app.services.channels import get_channel_manager
+
+    get_channel_manager().start_all_enabled.side_effect = start_channels
+    async with isolated_lifespan(FastAPI()):
+        assert len(preload_threads) == 1

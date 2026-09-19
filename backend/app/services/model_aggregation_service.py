@@ -27,10 +27,11 @@ from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.capability_reference_service import (
     get_referenced_capability,
-    list_referenced_capabilities,
+    list_referenced_capabilities_by_namespace,
 )
 from app.services.kind import kind_service
 from app.services.model_capabilities import normalize_model_capabilities
+from app.services.model_listing_queries import load_direct_models_by_namespace
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_CATEGORY_TYPE,
     CODEX_RUNTIME_MODEL_DISPLAY_NAME,
@@ -521,34 +522,19 @@ class ModelAggregationService:
         else:
             raise ValueError(f"Invalid scope: {scope}")
 
-        # 1. Get user models from specified namespaces
-        # Note: Only include non-custom models (isCustomConfig != True)
-        # Custom models are user-specific configurations that should not appear in unified list
+        direct_by_namespace = load_direct_models_by_namespace(
+            db, user_id=current_user.id, namespaces=namespaces_to_query
+        )
+        references_by_namespace = list_referenced_capabilities_by_namespace(
+            db, kind="Model", user_id=current_user.id, namespaces=namespaces_to_query
+        )
+
+        # Keep namespace order and direct-first selection before display filters.
         for namespace in namespaces_to_query:
-            if namespace == "default":
-                # Query personal models
-                user_model_resources = kind_service.list_resources(
-                    user_id=current_user.id, kind="Model", namespace="default"
-                )
-                resource_type = ModelType.USER  # Personal models
-            else:
-                # Query group models (namespace = group_name, user_id can be any member)
-                group_model_resources = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Model",
-                        Kind.namespace == namespace,
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                user_model_resources = group_model_resources
-                resource_type = ModelType.GROUP  # Group models
-            referenced_models = list_referenced_capabilities(
-                db,
-                kind="Model",
-                user_id=current_user.id,
-                namespace=namespace,
+            user_model_resources = direct_by_namespace[namespace]
+            referenced_models = references_by_namespace[namespace]
+            resource_type = (
+                ModelType.USER if namespace == "default" else ModelType.GROUP
             )
             direct_model_by_name: dict[str, Kind] = {}
             for direct_model in sorted(
@@ -714,8 +700,10 @@ class ModelAggregationService:
 
         # Convert to dict - each dict will have 'type' field
         if include_config:
-            return [m.to_full_dict() for m in result]
-        return [m.to_dict() for m in result]
+            response = [m.to_full_dict() for m in result]
+        else:
+            response = [m.to_dict() for m in result]
+        return response
 
     def get_model_by_name_and_type(
         self, db: Session, current_user: User, name: str, model_type: ModelType

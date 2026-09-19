@@ -785,23 +785,23 @@ export function ChatInputControls({
           <div
             className={`flex items-center gap-1.5 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           >
-            {selectedTeam && (
-              <ModelSelector
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
-                selectedTeam={selectedTeam}
-                disabled={
-                  isStreaming || (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
-                }
-                compact={shouldCollapseSelectors}
-                teamId={teamId}
-                taskId={taskId}
-                taskModelId={taskModelId}
-                requireVideoInput={requireVideoInputModel}
-              />
-            )}
+            <ModelSelector
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              forceOverride={forceOverride}
+              setForceOverride={setForceOverride}
+              selectedTeam={selectedTeam}
+              disabled={
+                !selectedTeam ||
+                isStreaming ||
+                (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+              }
+              compact={shouldCollapseSelectors}
+              teamId={teamId}
+              taskId={taskId}
+              taskModelId={taskModelId}
+              requireVideoInput={requireVideoInputModel}
+            />
           </div>
         )}
 

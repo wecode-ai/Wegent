@@ -662,3 +662,75 @@ describe('useModelSelection', () => {
     })
   })
 })
+
+describe('model category loading', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: [mockModel] })
+  })
+
+  it('defers inactive categories until enabled and keeps manual refresh inactive', async () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useModelSelection({
+          teamId: 1,
+          taskId: null,
+          selectedTeam: mockTeam,
+          modelCategoryType: 'video',
+          enabled,
+        }),
+      { initialProps: { enabled: false } }
+    )
+
+    await act(async () => {
+      await result.current.refreshModels()
+    })
+    expect(modelApis.getUnifiedModels).not.toHaveBeenCalled()
+    expect(result.current.isLoading).toBe(false)
+
+    rerender({ enabled: true })
+    await waitFor(() => expect(result.current.models).toHaveLength(1))
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledWith(
+      undefined,
+      true,
+      'all',
+      undefined,
+      'video'
+    )
+
+    rerender({ enabled: false })
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('still loads models for a read-only selector', async () => {
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 123,
+        selectedTeam: mockTeam,
+        disabled: true,
+      })
+    )
+    await waitFor(() => expect(result.current.models).toHaveLength(1))
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('fetches before the agent arrives, then restores the task model without fetching again', async () => {
+    const { result, rerender } = renderHook(
+      ({ team }: { team: typeof mockTeam | null }) =>
+        useModelSelection({
+          teamId: team?.id ?? null,
+          selectedTeam: team,
+          taskId: 123,
+          taskModelId: mockModel.name,
+        }),
+      { initialProps: { team: null } as { team: typeof mockTeam | null } }
+    )
+    await waitFor(() => expect(result.current.models).toHaveLength(1))
+    expect(result.current.selectedModel).toBeNull()
+    rerender({ team: mockTeam })
+    await waitFor(() => expect(result.current.selectedModel?.name).toBe(mockModel.name))
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
+  })
+})

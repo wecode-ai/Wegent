@@ -38,7 +38,6 @@ interface QuickAccessCardsProps {
   onPhraseSelect?: (phrase: string) => void
   onPresetSelect?: (selection: QuickPresetSelection) => void
   currentMode: TeamModeFilter
-  isLoading?: boolean
   isTeamsLoading?: boolean
   loadError?: Error | null
   /** Whether the raw team cache (before mode filtering) is empty. */
@@ -58,7 +57,6 @@ export function QuickAccessCards({
   onPhraseSelect,
   onPresetSelect,
   currentMode,
-  isLoading,
   isTeamsLoading = false,
   loadError = null,
   rawTeamsEmpty = teams.length === 0,
@@ -394,101 +392,100 @@ export function QuickAccessCards({
     }
   }, [onRefreshTeams])
 
-  // Loading, failure and "no agents" are different states; an in-flight or
-  // failed request must never be rendered as "no agents available".
-  if (isTeamsLoading && rawTeamsEmpty) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center mt-8 mb-4"
-        data-testid="quick-access-teams-loading"
-      >
-        <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
-              <SparklesIcon className="w-6 h-6 text-primary/40" />
+  const renderCatalogState = () => {
+    // Loading, failure and "no agents" are different states; an in-flight or
+    // failed request must never be rendered as "no agents available".
+    if ((isTeamsLoading || isQuickAccessLoading) && rawTeamsEmpty) {
+      return (
+        <div
+          className="flex flex-col items-center justify-center mt-8 mb-4"
+          data-testid="quick-access-teams-loading"
+        >
+          <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
+                <SparklesIcon className="w-6 h-6 text-primary/40" />
+              </div>
+            </div>
+            <p className="text-sm text-text-muted" aria-live="polite">
+              {t('teams.loading')}
+            </p>
+            <div className="mt-4 flex flex-col items-center gap-2 animate-pulse">
+              <div className="h-3 w-40 rounded-full bg-border" />
+              <div className="h-3 w-24 rounded-full bg-border" />
             </div>
           </div>
-          <p className="text-sm text-text-muted" aria-live="polite">
-            {t('teams.loading')}
-          </p>
-          <div className="mt-4 flex flex-col items-center gap-2 animate-pulse">
-            <div className="h-3 w-40 rounded-full bg-border" />
-            <div className="h-3 w-24 rounded-full bg-border" />
-          </div>
         </div>
-      </div>
-    )
-  }
+      )
+    }
 
-  if (loadError && rawTeamsEmpty) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center mt-8 mb-4"
-        data-testid="quick-access-teams-error"
-      >
-        <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center">
-              <ExclamationTriangleIcon className="w-6 h-6 text-error" />
+    if (loadError && rawTeamsEmpty) {
+      return (
+        <div
+          className="flex flex-col items-center justify-center mt-8 mb-4"
+          data-testid="quick-access-teams-error"
+        >
+          <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center">
+                <ExclamationTriangleIcon className="w-6 h-6 text-error" />
+              </div>
+            </div>
+            <h3 className="text-lg font-semibold text-text-primary mb-2">
+              {t('teams.load_failed_title')}
+            </h3>
+            <p className="text-sm text-text-muted">
+              {t('teams.load_failed_description')}
+              {loadError.message ? ` (${loadError.message})` : ''}
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              {onRefreshTeams && (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  data-testid="quick-access-teams-retry"
+                  disabled={isRetryingTeams}
+                  onClick={handleRetryTeams}
+                >
+                  {t('teams.retry')}
+                </Button>
+              )}
+              {retryFailureCount > 0 && (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  data-testid="quick-access-teams-reload"
+                  onClick={() => window.location.reload()}
+                >
+                  {t('teams.refresh_page')}
+                </Button>
+              )}
             </div>
           </div>
-          <h3 className="text-lg font-semibold text-text-primary mb-2">
-            {t('teams.load_failed_title')}
-          </h3>
-          <p className="text-sm text-text-muted">
-            {t('teams.load_failed_description')}
-            {loadError.message ? ` (${loadError.message})` : ''}
-          </p>
-          <div className="mt-4 flex items-center justify-center gap-2">
-            {onRefreshTeams && (
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                data-testid="quick-access-teams-retry"
-                disabled={isRetryingTeams}
-                onClick={handleRetryTeams}
-              >
-                {t('teams.retry')}
-              </Button>
-            )}
-            {retryFailureCount > 0 && (
-              <Button
-                type="button"
-                variant="default"
-                size="sm"
-                data-testid="quick-access-teams-reload"
-                onClick={() => window.location.reload()}
-              >
-                {t('teams.refresh_page')}
-              </Button>
-            )}
-          </div>
         </div>
-      </div>
-    )
-  }
+      )
+    }
 
-  if (rawTeamsEmpty) {
-    return (
-      <div className="flex flex-col items-center justify-center mt-8 mb-4">
-        <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <SparklesIcon className="w-6 h-6 text-primary" />
+    if (rawTeamsEmpty) {
+      return (
+        <div className="flex flex-col items-center justify-center mt-8 mb-4">
+          <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <SparklesIcon className="w-6 h-6 text-primary" />
+              </div>
             </div>
+            <h3 className="text-lg font-semibold text-text-primary mb-2">
+              {t('teams.no_teams_title')}
+            </h3>
+            <p className="text-sm text-text-muted">{t('teams.no_teams_description')}</p>
           </div>
-          <h3 className="text-lg font-semibold text-text-primary mb-2">
-            {t('teams.no_teams_title')}
-          </h3>
-          <p className="text-sm text-text-muted">{t('teams.no_teams_description')}</p>
         </div>
-      </div>
-    )
-  }
+      )
+    }
 
-  // Don't show quick access cards if no teams are available after filtering
-  if (displayTeams.length === 0 && allSelectableTeams.length === 0) {
     return null
   }
 
@@ -565,32 +562,34 @@ export function QuickAccessCards({
 
           {/* Teams list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
-            <TeamSelectorList
-              teams={filteredTeamsBySearch}
-              selectedTeam={selectedTeam}
-              onTeamSelect={handleSelectTeamFromMore}
-              emptyText={
-                searchQuery
-                  ? t('common:teams.no_match')
-                  : showAllTeamsInMore
-                    ? t('common:teams.no_teams')
-                    : t('common:teams.quick_access_empty')
-              }
-              favoriteTeamIdSet={favoriteTeamIdSet}
-              systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
-              quickAccessMetaLoaded={quickAccessMetaLoaded}
-              favoriteUpdatingTeamId={favoriteUpdatingTeamId}
-              onToggleFavorite={handleToggleFavorite}
-              optionTestIdPrefix="quick-access-more-team"
-              showReorderHandle={!isShowingAllTeams}
-              canReorder={displayTeams.length > 1}
-              dragOverTeamId={dragOverTeamId}
-              onTeamDragStart={handleQuickAccessDragStart}
-              onTeamDragOver={handleQuickAccessDragOver}
-              onTeamDragLeave={() => setDragOverTeamId(null)}
-              onTeamDrop={handleQuickAccessDrop}
-              onTeamDragEnd={handleQuickAccessDragEnd}
-            />
+            {renderCatalogState() ?? (
+              <TeamSelectorList
+                teams={filteredTeamsBySearch}
+                selectedTeam={selectedTeam}
+                onTeamSelect={handleSelectTeamFromMore}
+                emptyText={
+                  searchQuery
+                    ? t('common:teams.no_match')
+                    : showAllTeamsInMore
+                      ? t('common:teams.no_teams')
+                      : t('common:teams.quick_access_empty')
+                }
+                favoriteTeamIdSet={favoriteTeamIdSet}
+                systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
+                quickAccessMetaLoaded={quickAccessMetaLoaded}
+                favoriteUpdatingTeamId={favoriteUpdatingTeamId}
+                onToggleFavorite={handleToggleFavorite}
+                optionTestIdPrefix="quick-access-more-team"
+                showReorderHandle={!isShowingAllTeams}
+                canReorder={displayTeams.length > 1}
+                dragOverTeamId={dragOverTeamId}
+                onTeamDragStart={handleQuickAccessDragStart}
+                onTeamDragOver={handleQuickAccessDragOver}
+                onTeamDragLeave={() => setDragOverTeamId(null)}
+                onTeamDrop={handleQuickAccessDrop}
+                onTeamDragEnd={handleQuickAccessDragEnd}
+              />
+            )}
           </div>
 
           {hasTeamsOutsideQuickAccess && (
@@ -637,7 +636,6 @@ export function QuickAccessCards({
           })
         }
         currentMode={currentMode}
-        isLoading={isLoading || isQuickAccessLoading}
         defaultTeam={defaultTeam}
         launchIntent={launchIntent}
         onLaunchIntentConsumed={onLaunchIntentConsumed}
