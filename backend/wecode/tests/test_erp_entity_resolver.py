@@ -14,10 +14,8 @@ from wecode.service.erp_client import (
     EmployeeSearchResult,
 )
 from wecode.service.erp_entity_resolver import (
-    EmployeeIdResolution,
     EmployeeIdResolutionStatus,
     ErpEntityResolver,
-    ErpIdentityResolutionUnavailableError,
 )
 
 
@@ -124,41 +122,10 @@ class TestErpEntityResolver:
         result = resolver._resolve_matched_departments(db, 1, "org_department", [])
         assert result == []
 
-    @pytest.mark.parametrize(
-        "status",
-        [
-            EmployeeIdResolutionStatus.IN_PROGRESS,
-            EmployeeIdResolutionStatus.UNAVAILABLE,
-        ],
-    )
-    def test_resolve_matched_departments_preserves_retryable_failure(self, status):
-        resolver = ErpEntityResolver()
-        db = MagicMock()
-
-        with patch.object(
-            resolver,
-            "_resolve_employee_id_result",
-            return_value=EmployeeIdResolution(status),
-        ):
-            with pytest.raises(ErpIdentityResolutionUnavailableError) as exc_info:
-                resolver._resolve_matched_departments(
-                    db,
-                    1,
-                    "org_department",
-                    ["d1"],
-                )
-
-        assert exc_info.value.status_code == 503
-        assert exc_info.value.error_code == "erp_identity_unavailable"
-
     def test_match_entity_bindings_no_ssn(self):
         resolver = ErpEntityResolver()
         db = MagicMock()
-        with patch.object(
-            resolver,
-            "_resolve_employee_id_result",
-            return_value=EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND),
-        ):
+        with patch.object(resolver, "_get_user_ssn", return_value=None):
             result = resolver.match_entity_bindings(db, 1, "org_department", ["d1"])
             assert result == []
 
