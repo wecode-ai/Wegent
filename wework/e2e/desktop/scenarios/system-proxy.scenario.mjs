@@ -171,13 +171,21 @@ export async function createDesktopScenario({
       })
       assert.match(
         await control.command('getText', '[data-testid="local-proxy-config-status"]'),
-        /System proxy|系统代理/,
-        'Proxy settings did not identify the effective proxy as the system proxy'
+        /Use system proxy|跟随系统/,
+        'Proxy settings did not show that the local proxy mode follows the system'
       )
-      assert.equal(
-        await control.command('getText', '[data-testid="local-proxy-effective-url"]'),
-        proxyUrl,
+      const effectiveProxyText = await control.command(
+        'getText',
+        '[data-testid="local-proxy-effective-url"]'
+      )
+      assert.ok(
+        effectiveProxyText.includes(proxyUrl),
         'Proxy settings did not show the proxy resolved by Electron'
+      )
+      assert.match(
+        effectiveProxyText,
+        /system proxy|系统代理/i,
+        'Proxy settings did not identify the current connection as the system proxy'
       )
       await captureScreenshot(
         control,
