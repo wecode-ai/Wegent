@@ -47,12 +47,17 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
 }
 
 async function createGroup(control, { name, leader }) {
+  const separatorIndex = leader.indexOf(':')
+  const leaderKind = leader.slice(0, separatorIndex)
+  const leaderId = leader.slice(separatorIndex + 1)
   await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
     value: name,
   })
-  await control.command('select', scoped('[data-testid="collaboration-group-leader"]'), {
-    value: leader,
-  })
+  await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
+  await control.command(
+    'click',
+    scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
+  )
   await control.command(
     'clickWhenEnabled',
     scoped('[data-testid="collaboration-group-create-next"]'),

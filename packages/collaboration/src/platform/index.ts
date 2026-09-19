@@ -8,3 +8,7 @@ export * from "./ProjectIssueTable";
 export * from "./types";
 export * from "./useCollaborationPlatformController";
 export * from "./useIssueAssignmentsByIssueId";
+export {
+  IssueHomeComposer,
+  type IssueHomeTaskComposerProps,
+} from "./IssueHomeComposer";

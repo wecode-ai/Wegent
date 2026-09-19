@@ -74,6 +74,8 @@ export interface CollaborationIssue {
   created_by_user_id: number
   created_by_user_name?: string | null
   assignee_user_id: number | null
+  assignee_group_id?: string | null
+  assignee_group_name?: string | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
   assignee_agent_name?: string | null

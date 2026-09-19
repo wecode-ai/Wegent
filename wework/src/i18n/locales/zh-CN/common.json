@@ -1,4 +1,20 @@
 {
+  "issue_creation": {
+    "local_space": "本地空间",
+    "cloud_space": "云端空间",
+    "headline": "连接想法，推进协作",
+    "subtitle": "描述目标，@ 分配负责人，# 关联 Issue。",
+    "human_title": "提出需求",
+    "human_prompt": "希望改进：\n使用场景：\n期望达到：",
+    "context_title": "跟进 Issue",
+    "context_prompt": "基于 #",
+    "outcome_title": "反馈问题",
+    "outcome_prompt": "遇到的问题：\n复现步骤：\n期望表现：",
+    "mention_member": "@ 提及成员",
+    "reference_issue": "# 引用项目 Issue",
+    "title": "新建 Issue",
+    "submit": "创建 Issue"
+  },
   "navigation": {
     "home": "首页"
   },
@@ -113,6 +129,7 @@
     "project_chat_agent_visibility_public": "全部成员",
     "project_chat_agent_runtime_group": "运行环境",
     "project_chat_agent_runtime_provider": "运行方式",
+    "project_chat_agent_codex_only": "由 Codex 执行任务",
     "project_chat_agent_runtime_provider_relation": "选择由 Wework 运行或调用 Wegent 智能体",
     "project_chat_agent_provider_wework": "Wework",
     "project_chat_agent_runtime_configuration": "配置方式",

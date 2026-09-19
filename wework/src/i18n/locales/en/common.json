@@ -1,4 +1,20 @@
 {
+  "issue_creation": {
+    "local_space": "Local space",
+    "cloud_space": "Cloud space",
+    "headline": "Connected ideas. Shared progress.",
+    "subtitle": "Describe the goal. @ assign an owner, # link related Issues.",
+    "human_title": "Propose an idea",
+    "human_prompt": "What to improve:\nUse case:\nExpected outcome:",
+    "context_title": "Follow up on an Issue",
+    "context_prompt": "Following up on #",
+    "outcome_title": "Report a problem",
+    "outcome_prompt": "Problem:\nSteps to reproduce:\nExpected behavior:",
+    "mention_member": "@ Mention a member",
+    "reference_issue": "# Reference a project Issue",
+    "title": "New Issue",
+    "submit": "Create Issue"
+  },
   "navigation": {
     "home": "Home"
   },
@@ -112,6 +128,7 @@
     "project_chat_agent_visibility_public": "All members",
     "project_chat_agent_runtime_group": "Runtime environment",
     "project_chat_agent_runtime_provider": "Run with",
+    "project_chat_agent_codex_only": "Tasks are executed by Codex",
     "project_chat_agent_runtime_provider_relation": "Run in Wework or invoke a Wegent Agent",
     "project_chat_agent_provider_wework": "Wework",
     "project_chat_agent_runtime_configuration": "Configuration",
