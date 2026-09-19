@@ -1,6 +1,6 @@
 import { useIssueMentionGroups } from './useIssueMentionGroups'
 import { useEffect, useMemo, useState } from 'react'
-import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
+import type { ProjectChatClient, ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import {
   RUNTIME_PERMISSION_MODE_OPTION,
@@ -64,6 +64,7 @@ export function BrowserIssueCommentComposer({
   onTaskUpdated?(issue: CollaborationIssue): void
 }) {
   const mentionGroups = useIssueMentionGroups(members, agents, t)
+  const [mentions, setMentions] = useState<ProjectChatMention[]>([])
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const [isMobile, setIsMobile] = useState(false)
@@ -99,7 +100,10 @@ export function BrowserIssueCommentComposer({
     [runtime]
   )
   const setOption = (id: string, value: string) =>
-    draft.setSelection({ model: selectedModel, options: { ...options, [id]: value } })
+    draft.setSelection({
+      model: selectedModel,
+      options: { ...options, [id]: value },
+    })
   async function submit() {
     const text = draft.draft.trim()
     if (
@@ -142,7 +146,10 @@ export function BrowserIssueCommentComposer({
         text: issueCommentBody(text, imported),
         replyToMessageId: null,
         model: model?.name ?? null,
-        mentions: agent ? [{ type: 'agent', id: agent.id, label: agent.name }] : [],
+        mentions: [
+          ...(agent ? [{ type: 'agent' as const, id: agent.id, label: agent.name }] : []),
+          ...mentions.filter(mention => mention.type === 'user'),
+        ],
       })
       onMessages([message])
       onCommentPersisted?.(message)
@@ -195,6 +202,7 @@ export function BrowserIssueCommentComposer({
       )}
       <IssueMainCommentComposer
         mentionGroups={mentionGroups}
+        onMentionsChange={setMentions}
         value={draft.draft}
         onChange={draft.setDraft}
         onSubmit={() => void submit()}

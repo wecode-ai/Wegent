@@ -10,6 +10,14 @@ Human assignments offer Notify or Do not notify before saving, including assignm
 
 Delivery also attempts the recipient's connected private IM sessions. IM failures do not remove the inbox entry or change the active IM task.
 
+## Mentioning members in comments
+
+Typing `@` in an Issue comment opens the project member picker and inserts `@Member`. Only project members can be mentioned; mentioning a non-member is rejected. Mentioned members receive an inbox notification and a DingTalk push when connected, and both links open the Issue. Mentioning an agent is unchanged and still triggers execution.
+
+## Task execution notifications
+
+An Issue's own robot run notifies on start, when it needs human handling, and when it ends. Human handling covers waiting for approval, waiting for a device to be selected, and waiting for the AI to receive your input. The task assignee is the recipient; an unassigned task notifies its creator. Clicking the notification opens the Issue.
+
 Notifications belong to Wework users and do not require a project or board. With Backend connected, an ordinary conversation can request “Send me a notification saying hello.” The built-in `wework-notifications` skill calls `wework_space.send_notification` with a title and body. Omitting the recipient notifies the authenticated user. Project and Issue context are optional sources: when provided, they are authorized and produce a navigation link. Sending to another user requires a shared Backend project to establish recipient authorization. For example: “If acceptance fails, notify me in Wework.” AI assignments notify by default and must not send a duplicate alert; explicit opt-out uses `notify_assignee: false`.
 
 An optional `url` specifies the click destination independently of project source. For “send me a hello notification that opens the board homepage when clicked”, use `{ "title": "Hello", "body": "Hello", "url": "wework://boards" }`. Receiving it keeps the current page; clicking opens the board homepage. An explicit URL takes precedence over the source link.

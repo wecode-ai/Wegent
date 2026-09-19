@@ -419,6 +419,33 @@ async def test_runtime_event_skips_non_terminal_or_empty_success_notifications(
 
 
 @pytest.mark.asyncio
+async def test_runtime_event_notifies_user_input_intervention(
+    monkeypatch,
+    runtime_notification_sender,
+):
+    namespace = DeviceNamespace()
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.completed",
+            "taskId": "runtime-375023196",
+            "data": {
+                "value": "",
+                "response": {"silent_exit_reason": "waiting_for_user_input"},
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    runtime_notification_sender.assert_awaited_once()
+    assert (
+        runtime_notification_sender.await_args.kwargs["status"] == "waiting_user_input"
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_notification_failure_does_not_break_wework_relay(
     monkeypatch,
     runtime_notification_sender,

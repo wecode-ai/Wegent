@@ -1,22 +1,31 @@
 import type { CollaborationTranslate } from '../i18n'
+import { useState } from 'react'
+import type { ProjectChatMention } from '@wegent/chat-core'
 import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { useBrowserIssueReplies } from './browserIssueRepliesContext'
+import type { IssueMentionOption } from './issueCommentMentions'
+import type { IssueMentionGroup } from './IssueMainCommentComposer'
 
 export function BrowserIssueReplyComposer({
   rootId,
   disabled,
   canAttach,
   translate: t,
+  mentionGroups,
+  onMentionsChange,
 }: {
   rootId: string
   disabled: boolean
   canAttach: boolean
   translate: CollaborationTranslate
+  mentionGroups?: IssueMentionGroup[]
+  onMentionsChange?(mentions: IssueMentionOption[]): void
 }) {
   const reply = useBrowserIssueReplies()
   const draft = useBrowserTaskDraft(`issue-reply:${rootId}`)
+  const [userMentions, setUserMentions] = useState<ProjectChatMention[]>([])
   if (!reply) throw new Error('BrowserIssueReplies is required')
   return (
     <>
@@ -46,7 +55,20 @@ export function BrowserIssueReplyComposer({
         disabled={disabled}
         attachments={canAttach ? draft.attachments : undefined}
         aiError={reply.queue.error(rootId)}
-        onSend={async text => reply.queue.enqueue(rootId, text, draft.attachments.attachments)}
+        mentionGroups={mentionGroups}
+        onMentionsChange={mentions => {
+          setUserMentions(
+            mentions.map(mention => ({
+              type: 'user' as const,
+              id: mention.id,
+              label: mention.label,
+            }))
+          )
+          onMentionsChange?.(mentions)
+        }}
+        onSend={async text =>
+          reply.queue.enqueue(rootId, text, draft.attachments.attachments, userMentions)
+        }
         labels={{
           placeholder: t('workbench.task_activity_inline_placeholder'),
           send: t('workbench.send_message'),

@@ -1,11 +1,14 @@
 import { useMemo } from 'react'
 import type { CollaborationMember, CollaborationAgent } from '../types'
 import type { CollaborationTranslate } from '../i18n'
+import type { IssueMentionGroup } from './IssueMainCommentComposer'
+
+/** Build the @-mention popup content from the project members and agents. */
 export function useIssueMentionGroups(
   members: CollaborationMember[],
   agents: CollaborationAgent[],
   translate: CollaborationTranslate
-) {
+): IssueMentionGroup[] {
   return useMemo(
     () => [
       {
@@ -14,6 +17,11 @@ export function useIssueMentionGroups(
           id: `member-${member.user_id}`,
           name: member.user_name,
           testId: `collaboration-issue-mention-member-${member.user_id}`,
+          mention: {
+            type: 'user' as const,
+            id: String(member.user_id),
+            label: member.user_name,
+          },
         })),
       },
       {
@@ -23,6 +31,11 @@ export function useIssueMentionGroups(
           name: agent.name,
           avatar: 'AI',
           testId: `collaboration-issue-mention-agent-${agent.id}`,
+          mention: {
+            type: 'agent' as const,
+            id: String(agent.id),
+            label: agent.name,
+          },
         })),
       },
     ],

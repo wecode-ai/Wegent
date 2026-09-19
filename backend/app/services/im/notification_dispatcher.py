@@ -34,6 +34,7 @@ SENSITIVE_CONFIG_KEYS = {
     "bot_token",
 }
 DINGTALK_RUNTIME_REPLY_HINT = "引用本通知回复，即可继续该任务。"
+NOTIFICATION_LINK_LABEL = "查看详情"
 
 
 class IMNotificationDispatcher:
@@ -164,6 +165,59 @@ class IMNotificationDispatcher:
                 "error": str(exc),
             }
 
+    async def send_notification(
+        self,
+        db: Session,
+        session: IMPrivateSession,
+        text: str,
+        *,
+        url: str = "",
+        link_label: str = NOTIFICATION_LINK_LABEL,
+    ) -> dict[str, Any]:
+        """Send one inbox notification, linking it when the channel supports it.
+
+        DingTalk renders markdown links, so the destination stays clickable
+        there. Other channels receive the address as plain text.
+        """
+
+        if not url:
+            return await self.send_text(db, session, text)
+        try:
+            channel = self._get_channel(db, session.channel_id)
+            if channel is None:
+                return {
+                    "success": False,
+                    "channel_id": session.channel_id,
+                    "channel_type": session.channel_type,
+                    "error": "Channel not found",
+                }
+
+            config = _get_channel_config(channel)
+            if session.channel_type == "dingtalk":
+                return await self._send_dingtalk(
+                    db,
+                    session,
+                    config,
+                    text,
+                    markdown=True,
+                    url=url,
+                    link_label=link_label,
+                )
+            return await self.send_text(db, session, f"{text}\n\n{url}")
+        except Exception as exc:
+            logger.exception(
+                "[IMNotificationDispatcher] Failed to send notification link: "
+                "session_key=%s channel_type=%s",
+                session.session_key,
+                session.channel_type,
+            )
+            return {
+                "success": False,
+                "channel_id": session.channel_id,
+                "channel_type": session.channel_type,
+                "error": str(exc),
+            }
+
     async def _runtime_notification_sessions(
         self,
         *,
@@ -254,6 +308,10 @@ class IMNotificationDispatcher:
         session: IMPrivateSession,
         config: dict[str, Any],
         text: str,
+        *,
+        markdown: bool = False,
+        url: str = "",
+        link_label: str = NOTIFICATION_LINK_LABEL,
     ) -> dict[str, Any]:
         from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
@@ -277,10 +335,18 @@ class IMNotificationDispatcher:
             }
 
         sender = DingTalkRobotSender(client_id, client_secret)
-        result = await sender.send_text_message(
-            user_ids=[recipient_id],
-            content=text,
-        )
+        if markdown:
+            title = _notification_preview_title(text)
+            result = await sender.send_markdown_message(
+                user_ids=[recipient_id],
+                title=title,
+                text=text if not url else f"{text}\n\n[{link_label}]({url})",
+            )
+        else:
+            result = await sender.send_text_message(
+                user_ids=[recipient_id],
+                content=text,
+            )
         return {
             "channel_id": session.channel_id,
             "channel_type": session.channel_type,
@@ -442,6 +508,15 @@ def _normalize_reply_reference(value: Any) -> int | str | None:
     return value
 
 
+def _notification_preview_title(text: str, limit: int = 20) -> str:
+    """Return the single-line contact-list preview for a markdown message."""
+
+    preview = " ".join(text.split()).strip()
+    if len(preview) <= limit:
+        return preview or NOTIFICATION_LINK_LABEL
+    return f"{preview[:limit]}…"
+
+
 @contextmanager
 def _notification_db_session() -> Generator[Session, None, None]:
     db = SessionLocal()
@@ -459,6 +534,9 @@ def _runtime_task_update_message(
     content: str,
 ) -> str:
     task_title = title or local_task_id or "本地任务"
+    if status == "waiting_user_input":
+        body = content or "任务需要你的输入或确认后才能继续。"
+        return f"任务「{task_title}」需要你确认：\n\n{body}"
     if status in {"failed", "FAILED"}:
         body = content or "任务执行失败。"
         return f"任务「{task_title}」执行失败：\n\n{body}"

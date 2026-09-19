@@ -672,6 +672,23 @@ def _is_runtime_task_reply_status(status: Any) -> bool:
     )
 
 
+def _waits_for_user_input(*payloads: Any) -> bool:
+    """Return whether a terminal Runtime event only pauses for user input."""
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("silent_exit_reason") == "waiting_for_user_input":
+            return True
+        response = payload.get("response")
+        if (
+            isinstance(response, dict)
+            and response.get("silent_exit_reason") == "waiting_for_user_input"
+        ):
+            return True
+    return False
+
+
 def _runtime_task_notification_address(
     *,
     device_id: str,
@@ -3401,7 +3418,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
         status = local_task_terminal_status(event)
         result = event.result if isinstance(event.result, dict) else {}
         content = str(result.get("value") or event.error or "")
-        if status == "COMPLETED" and not content.strip():
+        waiting_for_user_input = _waits_for_user_input(event_data, payload, result)
+        if status == "COMPLETED" and not content.strip() and not waiting_for_user_input:
             logger.info(
                 "[RuntimeTaskNotification] Skipped empty Runtime reply: "
                 "user_id=%s device_id=%s local_task_id=%s event_type=%s",
@@ -3428,7 +3446,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         payload=payload,
                     ),
                     title=title or local_task_id,
-                    status=status,
+                    status=("waiting_user_input" if waiting_for_user_input else status),
                     content=content,
                     source=str(source_name) if source_name else None,
                 )

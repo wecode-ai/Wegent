@@ -262,13 +262,13 @@ async def test_im_receives_message_even_when_live_push_fails(
             AsyncMock(return_value=[session]),
         ),
         patch(
-            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_text",
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
             AsyncMock(return_value={"success": True}),
         ) as send,
     ):
         await deliver_notification(row.id)
-    expected = f"Review failed\n\n{row.url}" if row.url else "Review failed"
-    assert send.call_args.args[2] == expected
+    assert send.call_args.args[2] == "Review failed"
+    assert send.call_args.kwargs["url"] == row.url
 
 
 def test_scheme_encodes_external_issue_identifiers():

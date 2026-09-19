@@ -2,15 +2,31 @@ import { Paperclip, SlidersHorizontal } from "lucide-react";
 import {
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import {
+  filterIssueMentionOptions,
+  findIssueMentionQuery,
+  insertIssueMentionText,
+  pruneIssueMentionSelections,
+  type IssueMentionOption,
+  type IssueMentionQuery,
+  type IssueMentionSelection,
+} from "./issueCommentMentions";
 import { IssueCommentComposer } from "./IssueActivityPresentation";
 
 export interface IssueMentionGroup {
   label: string;
-  items: { id: string; name: string; avatar?: string; testId?: string }[];
+  items: {
+    id: string;
+    name: string;
+    avatar?: string;
+    testId?: string;
+    mention?: IssueMentionOption;
+  }[];
 }
 
 export interface IssueMainCommentTestIds {
@@ -48,6 +64,7 @@ export function IssueMainCommentComposer({
   onSelectFiles,
   settings,
   mentionGroups = [],
+  onMentionsChange,
   testIds = desktopTestIds,
 }: {
   value: string;
@@ -68,6 +85,8 @@ export function IssueMainCommentComposer({
   onSelectFiles?(files: File[]): void | Promise<void>;
   settings?: ReactNode;
   mentionGroups?: IssueMentionGroup[];
+  /** Reports the structured mentions currently present in the draft. */
+  onMentionsChange?(mentions: IssueMentionOption[]): void;
   testIds?: IssueMainCommentTestIds;
 }) {
   const settingsId = useId();
@@ -75,8 +94,38 @@ export function IssueMainCommentComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const caret = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mentionsOpen, setMentionsOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<IssueMentionQuery | null>(null);
+  const mentionSelections = useRef<IssueMentionSelection[]>([]);
   const canSend = !disabled && !sending && !uploading && Boolean(value.trim());
+  const mentionOptions = useMemo(
+    () =>
+      mentionGroups.flatMap((group) =>
+        group.items.flatMap((item) => (item.mention ? [item.mention] : [])),
+      ),
+    [mentionGroups],
+  );
+  const mentionCandidates = useMemo(
+    () =>
+      mentionQuery === null
+        ? []
+        : filterIssueMentionOptions(
+            mentionOptions,
+            mentionQuery.query,
+            mentionSelections.current.map((selection) => selection.mention),
+          ),
+    [mentionOptions, mentionQuery],
+  );
+  const mentionsOpen = mentionQuery !== null && mentionCandidates.length > 0;
+
+  function syncMentionSelections(nextValue: string) {
+    const pruned = pruneIssueMentionSelections(
+      nextValue,
+      mentionSelections.current,
+    );
+    if (pruned.length === mentionSelections.current.length) return;
+    mentionSelections.current = pruned;
+    onMentionsChange?.(pruned.map((selection) => selection.mention));
+  }
 
   useLayoutEffect(() => {
     if (caret.current === null) return;
@@ -85,18 +134,43 @@ export function IssueMainCommentComposer({
     caret.current = null;
   }, [value]);
 
-  function insertMention(name: string) {
+  function changeValue(nextValue: string, selectionStart: number) {
+    onChange(nextValue);
+    setMentionQuery(findIssueMentionQuery(nextValue, selectionStart));
+    syncMentionSelections(nextValue);
+  }
+
+  function insertMention(option: IssueMentionOption) {
     const start = input.current?.selectionStart ?? value.length;
     const end = input.current?.selectionEnd ?? start;
-    const rawPrefix = value.slice(0, start);
-    const prefix = rawPrefix.endsWith("@") ? rawPrefix.slice(0, -1) : rawPrefix;
-    const suffix = value.slice(end);
-    const leading = prefix && !/\s$/.test(prefix) ? " " : "";
-    const trailing = suffix && /^\s/.test(suffix) ? "" : " ";
-    const insertion = `${prefix}${leading}@${name}${trailing}`;
-    caret.current = insertion.length;
-    onChange(`${insertion}${suffix}`);
-    setMentionsOpen(false);
+    const query = mentionQuery ?? { start, query: "" };
+    const inserted = insertIssueMentionText(value, query, option, end);
+    const nextSelections = [
+      ...mentionSelections.current.filter(
+        (selection) =>
+          !(
+            selection.mention.type === option.type &&
+            selection.mention.id === option.id
+          ),
+      ),
+      inserted.selection,
+    ];
+    mentionSelections.current = nextSelections;
+    caret.current = inserted.cursor;
+    setMentionQuery(null);
+    onChange(inserted.value);
+    onMentionsChange?.(nextSelections.map((selection) => selection.mention));
+  }
+
+  function submitComment() {
+    setMentionQuery(null);
+    const mentions = pruneIssueMentionSelections(
+      value,
+      mentionSelections.current,
+    ).map((selection) => selection.mention);
+    mentionSelections.current = [];
+    onMentionsChange?.(mentions);
+    onSubmit();
   }
 
   return (
@@ -104,13 +178,10 @@ export function IssueMainCommentComposer({
       data-testid={testIds.form}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-          setMentionsOpen(false);
+          setMentionQuery(null);
       }}
       canSend={canSend}
-      onSubmit={() => {
-        setMentionsOpen(false);
-        onSubmit();
-      }}
+      onSubmit={submitComment}
       sendLabel={labels.send}
       sendTestId={testIds.send}
       before={attachments}
@@ -125,18 +196,13 @@ export function IssueMainCommentComposer({
             rows={2}
             disabled={disabled || sending}
             onChange={(event) => {
-              onChange(event.target.value);
-              setMentionsOpen(
-                event.target.value
-                  .slice(0, event.target.selectionStart)
-                  .endsWith("@"),
-              );
+              changeValue(event.target.value, event.target.selectionStart);
             }}
             onKeyDown={(event) => {
               if (event.key === "Escape" && mentionsOpen) {
                 event.preventDefault();
                 event.stopPropagation();
-                setMentionsOpen(false);
+                setMentionQuery(null);
                 return;
               }
               if (
@@ -147,8 +213,7 @@ export function IssueMainCommentComposer({
               ) {
                 event.preventDefault();
                 if (canSend) {
-                  setMentionsOpen(false);
-                  onSubmit();
+                  submitComment();
                 }
               }
             }}
@@ -160,13 +225,23 @@ export function IssueMainCommentComposer({
               }
             }}
           />
-          {mentionsOpen && mentionGroups.some((group) => group.items.length) ? (
+          {mentionsOpen ? (
             <div className="issue-comment-mention">
               <div
                 className="issue-comment-mention-popup"
                 data-testid={testIds.mentions}
               >
                 {mentionGroups
+                  .map((group) => ({
+                    ...group,
+                    items: group.items.filter((item) =>
+                      mentionCandidates.some(
+                        (candidate) =>
+                          candidate.type === item.mention?.type &&
+                          candidate.id === item.mention?.id,
+                      ),
+                    ),
+                  }))
                   .filter((group) => group.items.length)
                   .map((group) => (
                     <section key={group.label}>
@@ -178,7 +253,9 @@ export function IssueMainCommentComposer({
                           data-testid={
                             item.testId ?? `issue-comment-mention-${item.id}`
                           }
-                          onClick={() => insertMention(item.name)}
+                          onClick={() => {
+                            if (item.mention) insertMention(item.mention);
+                          }}
                         >
                           <span>{item.avatar ?? item.name.slice(0, 1)}</span>
                           {item.name}

@@ -101,7 +101,16 @@ export async function dispatchTaskCardReply<Project, Task extends CommentExecuti
       taskId: task.id,
       clientMessageId: reply.id,
       text,
-      mentions: agent && !customManager ? [{ type: 'agent', id: agent.id, label: agent.name }] : [],
+      ...(agent || reply.mentions?.length
+        ? {
+            mentions: [
+              ...(agent && !customManager
+                ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
+                : []),
+              ...(reply.mentions ?? []).filter(mention => mention.type === 'user'),
+            ],
+          }
+        : {}),
       replyToMessageId: rootId,
       model: null,
     })
@@ -175,12 +184,20 @@ export async function dispatchTaskCardReply<Project, Task extends CommentExecuti
           trigger: message,
           attachments,
           replyTo: address
-            ? { runtimeDeviceId: address.deviceId, runtimeTaskId: address.taskId }
+            ? {
+                runtimeDeviceId: address.deviceId,
+                runtimeTaskId: address.taskId,
+              }
             : null,
           threadRootId: rootId,
           onError,
         })
-        if (!started) return { ok: false, persisted, error: executionError ?? startFailedText }
+        if (!started)
+          return {
+            ok: false,
+            persisted,
+            error: executionError ?? startFailedText,
+          }
       }
     }
     return { ok: true, persisted }

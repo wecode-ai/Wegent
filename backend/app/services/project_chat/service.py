@@ -46,6 +46,9 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
+from app.services.project_chat.mention_notification import (
+    notify_project_chat_mentions,
+)
 from app.services.project_chat.workspace_binding import (
     WORKSPACE_BINDING_METADATA_KEY,
     adapt_legacy_workspace_binding,
@@ -783,6 +786,18 @@ class ProjectChatService:
         db.add(row)
         if request.task_id:
             item = db.get(LoopItem, request.task_id)
+        else:
+            item = None
+        notify_project_chat_mentions(
+            db,
+            project=project,
+            item=item,
+            actor_user_id=user_id,
+            actor_name=user_name,
+            content=request.content,
+            mentions=request.mentions,
+        )
+        if request.task_id:
             if item is not None:
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id

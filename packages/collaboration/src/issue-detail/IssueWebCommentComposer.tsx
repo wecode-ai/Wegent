@@ -1,6 +1,7 @@
 import { useIssueMentionGroups } from './useIssueMentionGroups'
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import type { CollaborationTranslate } from '../i18n'
+import type { ProjectChatMention } from '@wegent/chat-core'
 import type { SharedWorkspaceAttachmentsApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationAgent, CollaborationComment, CollaborationMember } from '../types'
 import type { AttachmentImageServices } from './AttachmentImageView'
@@ -52,12 +53,13 @@ export function IssueWebCommentComposer({
   members: CollaborationMember[]
   agents: CollaborationAgent[]
   translate: CollaborationTranslate
-  send(body: string): Promise<CollaborationComment | void>
+  send(body: string, mentions?: ProjectChatMention[]): Promise<CollaborationComment | void>
   onSent(comment: CollaborationComment): void
   onError(): void
   settings?: ComponentProps<typeof IssueMainCommentComposer>['settings']
 }) {
   const [draft, setDraft] = useState('')
+  const [mentions, setMentions] = useState<ProjectChatMention[]>([])
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const active = useRef(true)
@@ -87,7 +89,10 @@ export function IssueWebCommentComposer({
     setSending(true)
     setError(null)
     try {
-      const comment = await send(issueCommentBody(draft.trim(), selection.attachments))
+      const comment = await send(
+        issueCommentBody(draft.trim(), selection.attachments),
+        ...(mentions.length ? [mentions] : [])
+      )
       if (!active.current) return
       if (comment) onSent(comment)
       setDraft('')
@@ -133,6 +138,7 @@ export function IssueWebCommentComposer({
       }
       settings={settings}
       mentionGroups={mentionGroups}
+      onMentionsChange={setMentions}
       testIds={{
         form: 'collaboration-issue-comment-form',
         input: 'collaboration-issue-comment',

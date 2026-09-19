@@ -118,10 +118,12 @@ async def deliver_notification(notification_id: str) -> None:
             for session in sessions:
                 if session.user_id != notification.user_id:
                     continue
-                text = notification.body
-                if notification.url:
-                    text += f"\n\n{notification.url}"
-                result = await im_notification_dispatcher.send_text(db, session, text)
+                result = await im_notification_dispatcher.send_notification(
+                    db,
+                    session,
+                    notification.body,
+                    url=notification.url,
+                )
                 if not result.get("success"):
                     logger.warning(
                         "Wework IM delivery failed: id=%s channel=%s",

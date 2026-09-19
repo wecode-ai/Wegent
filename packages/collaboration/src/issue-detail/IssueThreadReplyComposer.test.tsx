@@ -45,6 +45,10 @@ describe("shared desktop reply composer", () => {
     act(() => {
       Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
+        "setSelectionRange",
+      )!.value!.call(input, value.length, value.length);
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
         "value",
       )!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -228,5 +232,108 @@ describe("shared desktop reply composer", () => {
     await act(async () => removeButton().click());
     expect(removeButton()).toBeNull();
     expect(container.querySelector("[role=alert]")).toBeNull();
+  });
+
+  it("inserts a project member mention and sends its structured target", async () => {
+    const send = vi.fn().mockResolvedValue({ ok: true });
+    act(() =>
+      root.render(
+        <IssueThreadReplyComposer
+          rootId="root"
+          disabled={false}
+          labels={labels}
+          onSend={send}
+          mentionGroups={[
+            {
+              label: "Members",
+              items: [
+                {
+                  id: "member-8",
+                  name: "bob",
+                  mention: { type: "user", id: "8", label: "bob" },
+                },
+                {
+                  id: "member-7",
+                  name: "alice",
+                  mention: { type: "user", id: "7", label: "alice" },
+                },
+              ],
+            },
+          ]}
+        />,
+      ),
+    );
+
+    const input = write("@bo");
+    Object.defineProperty(input, "selectionStart", {
+      value: 3,
+      configurable: true,
+    });
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { bubbles: true, key: "o" }),
+      );
+    });
+    const option = container.querySelector<HTMLButtonElement>(
+      '[data-testid="issue-comment-mention-member-8"]',
+    )!;
+    expect(option).not.toBeNull();
+    await act(async () => option.click());
+    expect(input.value).toBe("@bob ");
+
+    write("@bob please review");
+    await act(async () => sendButton().click());
+
+    expect(send).toHaveBeenCalledWith("@bob please review", [
+      { type: "user", id: "8", label: "bob" },
+    ]);
+  });
+
+  it("does not send a mention whose text was deleted", async () => {
+    const send = vi.fn().mockResolvedValue({ ok: true });
+    act(() =>
+      root.render(
+        <IssueThreadReplyComposer
+          rootId="root"
+          disabled={false}
+          labels={labels}
+          onSend={send}
+          mentionGroups={[
+            {
+              label: "Members",
+              items: [
+                {
+                  id: "member-8",
+                  name: "bob",
+                  mention: { type: "user", id: "8", label: "bob" },
+                },
+              ],
+            },
+          ]}
+        />,
+      ),
+    );
+
+    const input = write("@");
+    Object.defineProperty(input, "selectionStart", {
+      value: 1,
+      configurable: true,
+    });
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { bubbles: true, key: "@" }),
+      );
+    });
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="issue-comment-mention-member-8"]',
+        )!
+        .click(),
+    );
+    write("hello there");
+    await act(async () => sendButton().click());
+
+    expect(send).toHaveBeenCalledWith("hello there", []);
   });
 });

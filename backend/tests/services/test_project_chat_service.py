@@ -8,12 +8,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import app.core.async_utils as async_utils
 from app.api.ws.device_namespace import (
     _execution_runtime_event_sync,
     _project_chat_runtime_event_sync,
@@ -31,7 +33,11 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
+from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
@@ -51,6 +57,7 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import bot_config, project_chat_service
 from app.services.runtime_work_service import upsert_device_workspace
+from tests.services.test_loop_item_assignment import _make_member
 
 
 def create_project(test_db: Session, user: User) -> CloudProject:
@@ -732,6 +739,101 @@ def test_send_is_idempotent_and_assigns_durable_sequence(
     assert repeated.message.message_id == first.message.message_id
     assert first.message.sequence_number > 0
     assert first.message.metadata["mentions"][0]["id"] == "12"
+
+
+def test_send_notifies_mentioned_project_member(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule = MagicMock()
+    monkeypatch.setattr(async_utils, "schedule_async_task", schedule)
+    project = create_project(test_db, test_user)
+    item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Review the comment notifications",
+        description="",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(item)
+    test_db.commit()
+    member = _make_member(test_db, project, "reviewer", BaseRole.Developer)
+
+    message = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=item.id,
+            content="@reviewer please take a look",
+            mentions=[
+                {
+                    "type": "user",
+                    "id": str(member.id),
+                    "label": member.user_name,
+                }
+            ],
+        ),
+    ).message
+
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == member.id)
+        .one()
+    )
+    assert notification.kind == "mention"
+    assert notification.actor_user_id == test_user.id
+    assert notification.url == f"wework://boards/{project.id}/issues/{item.id}"
+    assert notification.payload["projectId"] == str(project.id)
+    assert notification.payload["itemTitle"] == item.title
+    assert "@reviewer please take a look" in notification.body
+    assert message.metadata["mentions"][0]["id"] == str(member.id)
+    schedule.assert_called_once()
+
+
+def test_send_rejects_mentioning_a_non_member(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    outsider = User(
+        user_name="outsider",
+        password_hash="unused",
+        email="outsider@example.com",
+        is_active=True,
+    )
+    test_db.add(outsider)
+    test_db.commit()
+    test_db.refresh(outsider)
+
+    with pytest.raises(HTTPException) as exc_info:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                clientMessageId=str(uuid.uuid4()),
+                projectId=project.id,
+                content="@outsider hello",
+                mentions=[
+                    {
+                        "type": "user",
+                        "id": str(outsider.id),
+                        "label": outsider.user_name,
+                    }
+                ],
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == outsider.id)
+        .count()
+        == 0
+    )
 
 
 def test_send_and_agent_response_record_requested_model_metadata(

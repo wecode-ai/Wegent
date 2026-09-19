@@ -1,6 +1,9 @@
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { IssueInlineCommentComposer } from "./IssueInlineCommentComposer";
+import type { IssueMentionOption } from "./issueCommentMentions";
+import type { IssueMentionGroup } from "./IssueMainCommentComposer";
+import { useIssueCommentMentions } from "./useIssueCommentMentions";
 
 export interface IssueReplyAttachment {
   id: string | number;
@@ -56,6 +59,8 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   attachments,
   aiError,
   onSend,
+  mentionGroups,
+  onMentionsChange,
   testIds = issueReplyTestIds(rootId),
 }: {
   rootId: string;
@@ -63,15 +68,54 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   labels: IssueReplyLabels;
   attachments?: IssueReplyAttachments<T>;
   aiError?: string | null;
-  onSend(text: string): Promise<{ ok: boolean; error?: string }>;
+  onSend(
+    text: string,
+    mentions: IssueMentionOption[],
+  ): Promise<{ ok: boolean; error?: string }>;
+  mentionGroups?: IssueMentionGroup[];
+  /** Reports the structured mentions currently present in the draft. */
+  onMentionsChange?(mentions: IssueMentionOption[]): void;
   testIds?: IssueReplyTestIds;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const caretRef = useRef<number | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [highlightedMentionId, setHighlightedMentionId] = useState<string | null>(
+    null,
+  );
   const attachmentReady = attachments?.isAttachmentReadyToSend ?? true;
+  const mention = useIssueCommentMentions({
+    mentionGroups,
+    onMentionsChange,
+  });
+  const mentionRows = mention.groups.flatMap((group) =>
+    group.items.map((item) => ({ item })),
+  );
+  const highlightedIndex = Math.max(
+    0,
+    mentionRows.findIndex((row) => row.item.id === highlightedMentionId),
+  );
+
+  // Restore the caret after inserting a mention so typing continues after it.
+  useLayoutEffect(() => {
+    const caret = caretRef.current;
+    if (caret === null) return;
+    caretRef.current = null;
+    input.current?.focus();
+    input.current?.setSelectionRange(caret, caret);
+  }, [draft]);
+
+  function insertMention(itemId: string) {
+    const start = input.current?.selectionStart ?? draft.length;
+    const end = input.current?.selectionEnd ?? start;
+    const inserted = mention.insert(itemId, draft, start, end);
+    if (!inserted) return;
+    caretRef.current = inserted.cursor;
+    setDraft(inserted.value);
+  }
 
   async function submit() {
     const text = draft.trim();
@@ -83,8 +127,9 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
+    const mentions = mention.submit(text);
     try {
-      const result = await onSend(text);
+      const result = await onSend(text, mentions);
       if (result.ok) {
         setDraft("");
         attachments?.resetAttachments();
@@ -182,7 +227,21 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           data-testid={testIds.input}
           value={draft}
           disabled={disabled || submitting}
-          onChange={(event) => setDraft(event.target.value)}
+          aria-expanded={mention.open}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            mention.handleChange(
+              event.target.value,
+              event.target.selectionStart,
+            );
+          }}
+          onKeyUp={(event) =>
+            mention.handleCaret(
+              event.currentTarget.value,
+              event.currentTarget.selectionStart,
+            )
+          }
+          onBlur={() => mention.close()}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData.files);
             if (attachments && files.length) {
@@ -191,6 +250,28 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
             }
           }}
           onKeyDown={(event) => {
+            if (mention.open) {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const delta = event.key === "ArrowDown" ? 1 : -1;
+                const next =
+                  (highlightedIndex + delta + mentionRows.length) %
+                  mentionRows.length;
+                setHighlightedMentionId(mentionRows[next]?.item.id ?? null);
+                return;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                const row = mentionRows[highlightedIndex] ?? mentionRows[0];
+                if (row) insertMention(row.item.id);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                mention.close();
+                return;
+              }
+            }
             if (
               event.key === "Enter" &&
               !event.shiftKey &&
@@ -203,6 +284,38 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           placeholder={labels.placeholder}
           aria-label={labels.placeholder}
         />
+        {mention.open ? (
+          <div className="issue-comment-mention">
+            <div
+              className="issue-comment-mention-popup"
+              data-testid={`collaboration-chat-reply-mentions-${rootId}`}
+            >
+              {mention.groups.map((group) => (
+                <section key={group.label}>
+                  <h4>{group.label}</h4>
+                  {group.items.map((item) => (
+                    <button
+                      type="button"
+                      key={item.id}
+                      data-testid={
+                        item.testId ?? `issue-comment-mention-${item.id}`
+                      }
+                      aria-selected={
+                        item.id ===
+                        (mentionRows[highlightedIndex]?.item.id ?? null)
+                      }
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => item.mention && insertMention(item.id)}
+                    >
+                      <span>{item.avatar ?? item.name.slice(0, 1)}</span>
+                      {item.name}
+                    </button>
+                  ))}
+                </section>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </IssueInlineCommentComposer>
       {attachments && attachments.errors.size > 0 ? (
         <p role="alert" className="task-detail-comment-inline-error">
