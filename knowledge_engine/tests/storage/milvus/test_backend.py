@@ -21,13 +21,16 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus.backend import MilvusBackend
 from knowledge_engine.storage.milvus.native import (
-    ANALYZER_TYPE,
+    DENSE_VECTOR_FIELD,
     DISPLAY_TEXT_FIELD,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
+    MilvusIndexBinding,
+    index_contract_description,
 )
 from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE, MAX_READ_LIMIT
+from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 from shared.models import RetrievalScope
 
 _CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")
@@ -100,6 +103,9 @@ class FakeEmbedModel:
         self.vectors = vectors
         self._configured_dimension = dimension
         self.model_name = model_name
+        # The embedding factory attaches this to every model it builds, so the
+        # double carries the same stable identity a real model would.
+        self.embedding_space_id = f"sha256:{model_name}"
         self.text_calls: list[list[str]] = []
         self.query_calls: list[str] = []
 
@@ -116,14 +122,12 @@ class FakeBinding:
     """Stored index contract handed back by the fake store."""
 
     schema_version = SCHEMA_VERSION
-    analyzer = ANALYZER_TYPE
 
 
-def _legacy_binding(*, analyzer=ANALYZER_TYPE, schema_version=SCHEMA_VERSION):
+def _legacy_binding(*, schema_version=SCHEMA_VERSION):
     class LegacyBinding:
         pass
 
-    LegacyBinding.analyzer = analyzer
     LegacyBinding.schema_version = schema_version
     return LegacyBinding()
 
@@ -243,17 +247,21 @@ class FakeStore:
         self.has_collection_calls.append(collection_name)
         return self.collection_exists
 
-    def ensure_index(self, client, collection_name, *, dimension, embedding_space):
-        self.calls.append(("ensure_index", collection_name, dimension, embedding_space))
+    def ensure_index(self, client, collection_name, *, dimension, embedding_space_id):
+        self.calls.append(
+            ("ensure_index", collection_name, dimension, embedding_space_id)
+        )
         self.collection_exists = True
         # The real store answers with the contract the collection declares, so
         # a read that follows this write sees a readable one.
         self.binding = FakeBinding()
         return self.binding
 
-    def confirm_contract(self, collection_name, binding, *, dimension, embedding_space):
+    def confirm_contract(
+        self, collection_name, binding, *, dimension, embedding_space_id
+    ):
         self.calls.append(
-            ("confirm_contract", collection_name, dimension, embedding_space)
+            ("confirm_contract", collection_name, dimension, embedding_space_id)
         )
 
     def read_contract(self, client, collection_name):
@@ -266,14 +274,6 @@ class FakeStore:
                 collection_name, "the collection declares no readable index contract"
             )
         return self.binding
-
-    def verify_keyword_binding(self, collection_name, binding):
-        self.calls.append(("verify_keyword_binding", collection_name, binding.analyzer))
-        if not binding.analyzer:
-            raise IndexContractIncompatibleError(
-                collection_name,
-                "the bound index was created without a keyword analyzer",
-            )
 
     def upsert_rows(self, client, collection_name, rows):
         self.calls.append(("upsert_rows", collection_name, list(rows)))
@@ -911,9 +911,9 @@ def test_rewrite_confirms_the_contract_before_it_deletes_the_old_rows():
     store = FakeStore(rows=[_stored_chunk_row("42", 0)])
     backend._store = store
 
-    def refuse(client, collection_name, *, dimension, embedding_space):
+    def refuse(client, collection_name, *, dimension, embedding_space_id):
         store.calls.append(
-            ("ensure_index", collection_name, dimension, embedding_space)
+            ("ensure_index", collection_name, dimension, embedding_space_id)
         )
         raise IndexContractIncompatibleError(
             collection_name,
@@ -933,6 +933,70 @@ def test_rewrite_confirms_the_contract_before_it_deletes_the_old_rows():
     assert store.deleted_filters == []
     assert all(call[0] != "upsert_rows" for call in store.calls)
     assert [row["id"] for row in store.rows] == ["42-0"]
+
+
+class _ForeignSpaceClient:
+    """A collection this code did not create, bound to another vector space."""
+
+    def __init__(self, *, dimension: int, embedding_space_id: str) -> None:
+        self.binding = MilvusIndexBinding(
+            schema_version=SCHEMA_VERSION,
+            dimension=dimension,
+            embedding_space_id=embedding_space_id,
+        )
+        self.calls: List[str] = []
+
+    def close(self) -> None:
+        pass
+
+    def has_collection(self, collection_name: str, **kwargs) -> bool:
+        self.calls.append("has_collection")
+        return True
+
+    def describe_collection(self, collection_name: str, **kwargs) -> Dict[str, Any]:
+        self.calls.append("describe_collection")
+        return {
+            "description": index_contract_description(self.binding),
+            "fields": [
+                {
+                    "name": DENSE_VECTOR_FIELD,
+                    "params": {"dim": self.binding.dimension},
+                }
+            ],
+        }
+
+    def delete(self, **kwargs) -> Dict[str, Any]:
+        self.calls.append("delete")
+        return {"delete_count": 0}
+
+    def upsert(self, **kwargs) -> Dict[str, Any]:
+        self.calls.append("upsert")
+        return {}
+
+
+def test_a_shared_collection_in_another_embedding_space_fails_before_writing():
+    """A same-dimension space swap is refused with the stored rows untouched.
+
+    The write path confirms the contract the collection declares about itself
+    on the same client it later writes with, so the refusal happens before the
+    old rows are deleted and before any new row is staged.
+    """
+    client = _ForeignSpaceClient(dimension=2, embedding_space_id="sha256:other")
+    backend = _backend()
+    backend._store = MilvusDocumentStore(
+        uri="http://localhost:19530",
+        client_factory=lambda **kwargs: client,
+    )
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.index_with_metadata(
+            nodes=_nodes(),
+            chunk_metadata=_chunk_metadata(),
+            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+    assert "delete" not in client.calls
+    assert "upsert" not in client.calls
 
 
 @pytest.mark.parametrize(
@@ -1533,9 +1597,12 @@ def test_keyword_retrieve_rejects_an_index_without_the_keyword_capability():
         )
 
 
-def test_keyword_retrieve_rejects_a_contract_without_an_analyzer():
+def test_keyword_retrieve_rejects_a_contract_from_an_older_schema():
+    """An index an older schema wrote never answers keyword queries empty."""
     backend = _backend()
-    backend._store = FakeStore(binding=_legacy_binding(analyzer=""))
+    backend._store = FakeStore(
+        binding=_legacy_binding(schema_version=SCHEMA_VERSION - 1)
+    )
 
     with pytest.raises(IndexContractIncompatibleError):
         backend.retrieve(

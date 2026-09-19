@@ -21,6 +21,7 @@ import pytest
 from llama_index.core.schema import TextNode
 from pymilvus import MilvusClient
 
+from knowledge_engine.embedding.space import derive_embedding_space_id
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus.backend import MilvusBackend
 
@@ -46,6 +47,12 @@ class DeterministicEmbedding:
         self.dimension = dimension
         self.model_name = model_name
         self._configured_dimension = dimension
+        # The embedding factory derives this for every model it builds, so the
+        # double carries the identity the storage contract binds against.
+        self.embedding_space_id = derive_embedding_space_id(
+            protocol="contract",
+            model_id=model_name,
+        )
 
     def _vector(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension

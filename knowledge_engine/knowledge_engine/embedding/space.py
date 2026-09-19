@@ -4,11 +4,13 @@
 
 """Embedding space identity used by storage index contracts.
 
-Two indexes may share a dimension and still be incompatible because a
-different model produced their vectors. The digest below is derived only from
-values that affect model output. The provider endpoint is included because two
-providers can serve the same model name with different semantics; credentials
-are stripped so that key rotation does not invalidate an index.
+Two indexes may share a dimension and still be incompatible because a different
+model produced their vectors. The identity is derived once, by the embedding
+factory, from the normalized provider protocol and the model ID actually sent
+to that provider, and read back from the model instance it was attached to.
+Endpoint, credentials, class path, database, collection name, encoding format
+and configured dimension describe deployment or output formatting rather than
+the vector space, so none of them participates in the identity.
 """
 
 from __future__ import annotations
@@ -16,59 +18,37 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
-from urllib.parse import urlsplit
 
-from knowledge_engine.embedding.vectors import read_model_name
+from knowledge_engine.embedding.errors import EmbeddingSpaceConfigurationError
 
 SPACE_DIGEST_PREFIX = "sha256"
+EMBEDDING_SPACE_ID_ATTRIBUTE = "embedding_space_id"
 
 
-def compute_embedding_space(embed_model: Any) -> str:
-    """Return a stable, credential-free digest of the embedding space."""
-    identity: dict[str, Any] = {
-        "provider": f"{type(embed_model).__module__}.{type(embed_model).__qualname__}",
-        "model": read_model_name(embed_model),
-        "endpoint": _endpoint_identity(embed_model),
-        "configured_dimensions": _positive_int(
-            getattr(embed_model, "_configured_dimension", None)
-        ),
-        "encoding_format": _optional_str(
-            getattr(embed_model, "_encoding_format", None)
-        ),
-        "explicit_space": _optional_str(
-            getattr(embed_model, "embedding_space_id", None)
-        ),
-    }
-    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+def derive_embedding_space_id(*, protocol: str, model_id: str) -> str:
+    """Return the stable digest of one normalized provider/model pair."""
+    payload = json.dumps(
+        {"protocol": protocol, "model_id": model_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     return f"{SPACE_DIGEST_PREFIX}:{digest}"
 
 
-def _positive_int(value: Any) -> int | None:
-    return (
-        value
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0
-        else None
-    )
+def read_embedding_space_id(embed_model: Any) -> str:
+    """Read the space identity the embedding factory attached to one model.
 
-
-def _endpoint_identity(embed_model: Any) -> str | None:
-    """Host-level provider identity without credentials or query parameters."""
-    for attribute in ("api_url", "api_base", "base_url"):
-        raw = getattr(embed_model, attribute, None)
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        candidate = raw.strip()
-        parsed = urlsplit(candidate)
-        if not parsed.hostname:
-            return candidate.rstrip("/")
-        authority = f"{parsed.scheme.lower()}://{parsed.hostname.lower()}"
-        if parsed.port:
-            authority = f"{authority}:{parsed.port}"
-        path = parsed.path.rstrip("/")
-        return f"{authority}{path}" if path else authority
-    return None
-
-
-def _optional_str(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
+    A model the factory did not build carries no identity, so a storage index
+    cannot tell which vectors it would receive. That is a configuration error,
+    never a value to guess.
+    """
+    space_id = getattr(embed_model, EMBEDDING_SPACE_ID_ATTRIBUTE, None)
+    if not isinstance(space_id, str) or not space_id:
+        raise EmbeddingSpaceConfigurationError(
+            f"Embedding model '{type(embed_model).__name__}' does not declare a "
+            "stable embedding space; it must be created by "
+            "'create_embedding_model_from_runtime_config', which attaches "
+            f"'{EMBEDDING_SPACE_ID_ATTRIBUTE}'."
+        )
+    return space_id

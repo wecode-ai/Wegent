@@ -30,7 +30,6 @@ from knowledge_engine.storage.errors import (
 )
 from knowledge_engine.storage.milvus.errors import rpc_failure
 from knowledge_engine.storage.milvus.native import (
-    ANALYZER_TYPE,
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
     HEAVY_RPC_TIMEOUT_SECONDS,
@@ -46,7 +45,6 @@ from knowledge_engine.storage.milvus.native import (
     MilvusIndexBinding,
     build_collection_schema,
     read_collection_description,
-    strip_connection_credentials,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,26 +104,16 @@ class MilvusDocumentStore:
         """
         return self.timeout or DEFAULT_RPC_TIMEOUT_SECONDS
 
-    def connection_identity(self) -> str:
-        return strip_connection_credentials(self.uri)
-
     def build_binding(
         self,
-        collection_name: str,
         *,
         dimension: int,
-        embedding_space: str,
+        embedding_space_id: str,
     ) -> MilvusIndexBinding:
         return MilvusIndexBinding(
-            collection_name=collection_name,
-            connection=self.connection_identity(),
-            database=self.db_name,
             schema_version=SCHEMA_VERSION,
-            embedding_space=embedding_space,
+            embedding_space_id=embedding_space_id,
             dimension=dimension,
-            metric_type=METRIC_TYPE,
-            index_type=INDEX_TYPE,
-            analyzer=ANALYZER_TYPE,
         )
 
     def read_contract(
@@ -171,7 +159,7 @@ class MilvusDocumentStore:
         binding: MilvusIndexBinding,
         *,
         dimension: int,
-        embedding_space: str,
+        embedding_space_id: str,
     ) -> None:
         """Confirm a contract the caller already read serves this request.
 
@@ -180,10 +168,10 @@ class MilvusDocumentStore:
         """
         binding.assert_compatible(
             self.build_binding(
-                collection_name,
                 dimension=dimension,
-                embedding_space=embedding_space,
-            )
+                embedding_space_id=embedding_space_id,
+            ),
+            collection_name=collection_name,
         )
 
     def ensure_index(
@@ -192,7 +180,7 @@ class MilvusDocumentStore:
         collection_name: str,
         *,
         dimension: int,
-        embedding_space: str,
+        embedding_space_id: str,
     ) -> MilvusIndexBinding:
         """Create the index once, or confirm the contract it already declares.
 
@@ -212,44 +200,28 @@ class MilvusDocumentStore:
         writer's contract or fails explicitly.
         """
         requested = self.build_binding(
-            collection_name,
             dimension=dimension,
-            embedding_space=embedding_space,
+            embedding_space_id=embedding_space_id,
         )
         declared = self.read_contract(client, collection_name)
         if declared is None:
-            self._create_collection(client, requested)
-            declared = self._read_created_collection(client, requested)
-        declared.assert_compatible(requested)
+            self._create_collection(client, collection_name, requested)
+            declared = self._read_created_collection(client, collection_name)
+        declared.assert_compatible(requested, collection_name=collection_name)
         return declared
 
-    def verify_keyword_binding(
-        self, collection_name: str, binding: MilvusIndexBinding
-    ) -> None:
-        """Verify the keyword capability of a contract the caller already read.
-
-        Keyword retrieval never consults the embedding model, so the stored
-        contract alone decides the capability and no client is needed here. A
-        bound index whose contract predates the BM25 analyzer fails explicitly:
-        an index without the keyword capability must not answer keyword queries
-        with an empty result set.
-        """
-        if binding.analyzer != ANALYZER_TYPE:
-            raise IndexContractIncompatibleError(
-                collection_name,
-                "the bound index was not created with this keyword analyzer",
-                details={"analyzer": binding.analyzer},
-            )
-
     def _create_collection(
-        self, client: MilvusClient, binding: MilvusIndexBinding
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        binding: MilvusIndexBinding,
     ) -> None:
         """Create the owned collection, contract included, in one request."""
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name=DENSE_VECTOR_FIELD,
-            index_type=binding.index_type,
-            metric_type=binding.metric_type,
+            index_type=INDEX_TYPE,
+            metric_type=METRIC_TYPE,
         )
         index_params.add_index(
             field_name=SPARSE_VECTOR_FIELD,
@@ -258,7 +230,7 @@ class MilvusDocumentStore:
         )
         try:
             client.create_collection(
-                collection_name=binding.collection_name,
+                collection_name=collection_name,
                 schema=build_collection_schema(binding),
                 index_params=index_params,
                 consistency_level=WRITE_CONSISTENCY_LEVEL,
@@ -272,16 +244,18 @@ class MilvusDocumentStore:
             # for the other one: it reads the collection back and either
             # confirms the contract it found or fails, and a create that leaves
             # nothing to read back is raised as it is.
-            if not self.has_collection(client, binding.collection_name):
+            if not self.has_collection(client, collection_name):
                 raise
             logger.info(
                 "[Milvus] Collection %s lost the create race; confirming the "
                 "contract it declares",
-                binding.collection_name,
+                collection_name,
             )
 
     def _read_created_collection(
-        self, client: MilvusClient, requested: MilvusIndexBinding
+        self,
+        client: MilvusClient,
+        collection_name: str,
     ) -> MilvusIndexBinding:
         """Read the contract the created collection declares about itself.
 
@@ -290,10 +264,10 @@ class MilvusDocumentStore:
         this writer asked for. A collection that cannot be read back is a fault,
         not an empty knowledge base.
         """
-        declared = self.read_contract(client, requested.collection_name)
+        declared = self.read_contract(client, collection_name)
         if declared is None:
             raise IndexMissingError(
-                requested.collection_name,
+                collection_name,
                 "the collection is gone immediately after its creation",
             )
         return declared

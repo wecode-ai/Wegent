@@ -21,7 +21,6 @@ from knowledge_engine.storage.errors import (
     IndexMissingError,
 )
 from knowledge_engine.storage.milvus.native import (
-    ANALYZER_TYPE,
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
     METRIC_TYPE,
@@ -37,35 +36,33 @@ from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 # Literal on purpose: this test pins the level a complete read sends, so reading
 # the constant from the module would let a wrong production value pass.
 READ_CONSISTENCY = "Bounded"
+COLLECTION_NAME = "wegent_kb_1"
 
 
 def _binding(**overrides):
     payload = {
-        "collection_name": "wegent_kb_1",
-        "connection": "http://milvus.test:19530",
-        "database": "default",
         "schema_version": SCHEMA_VERSION,
-        "embedding_space": "sha256:abc",
+        "embedding_space_id": "sha256:abc",
         "dimension": 1536,
-        "metric_type": METRIC_TYPE,
-        "index_type": "AUTOINDEX",
-        "analyzer": ANALYZER_TYPE,
     }
     payload.update(overrides)
     return MilvusIndexBinding(**payload)
 
 
-def test_binding_pins_the_keyword_analyzer_and_schema_version():
+def test_build_binding_pins_the_minimal_contract():
+    """A requested contract carries the three facts compatibility needs."""
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     binding = store.build_binding(
-        "wegent_kb_1",
         dimension=1536,
-        embedding_space="sha256:abc",
+        embedding_space_id="sha256:abc",
     )
 
-    assert binding.analyzer == ANALYZER_TYPE
-    assert binding.schema_version == SCHEMA_VERSION
+    assert binding == MilvusIndexBinding(
+        schema_version=SCHEMA_VERSION,
+        dimension=1536,
+        embedding_space_id="sha256:abc",
+    )
 
 
 class _FakeClient:
@@ -289,19 +286,6 @@ def test_keyword_search_uses_the_sparse_bm25_field_not_a_query_vector() -> None:
     assert client.lookups == []
 
 
-def test_keyword_capability_check_follows_the_stored_analyzer():
-    """A contract without the keyword analyzer never answers keyword queries."""
-    store = MilvusDocumentStore(uri="http://milvus.test:19530")
-
-    assert store.verify_keyword_binding("wegent_kb_1", _binding()) is None
-
-    with pytest.raises(IndexContractIncompatibleError):
-        store.verify_keyword_binding("wegent_kb_1", _binding(analyzer=""))
-
-    with pytest.raises(IndexContractIncompatibleError):
-        store.verify_keyword_binding("wegent_kb_1", _binding(analyzer="standard"))
-
-
 class _HybridSearchClient:
     """Records the hybrid request the store sends to the server."""
 
@@ -453,7 +437,7 @@ def test_confirming_a_read_contract_compares_in_memory_without_an_rpc():
         "wegent_kb_1",
         _binding(),
         dimension=1536,
-        embedding_space="sha256:abc",
+        embedding_space_id="sha256:abc",
     )
 
     assert client.descriptions == 0
@@ -469,7 +453,7 @@ def test_confirming_a_read_contract_rejects_another_embedding_space():
             "wegent_kb_1",
             _binding(),
             dimension=1536,
-            embedding_space="sha256:other",
+            embedding_space_id="sha256:other",
         )
 
 
@@ -481,9 +465,9 @@ def test_ensure_index_creates_a_collection_that_declares_the_contract():
 
     declared = store.ensure_index(
         client,
-        binding.collection_name,
+        COLLECTION_NAME,
         dimension=binding.dimension,
-        embedding_space=binding.embedding_space,
+        embedding_space_id=binding.embedding_space_id,
     )
 
     assert declared == binding
@@ -500,9 +484,9 @@ def test_ensure_index_adopts_a_collection_that_declares_this_contract():
 
     declared = store.ensure_index(
         client,
-        binding.collection_name,
+        COLLECTION_NAME,
         dimension=binding.dimension,
-        embedding_space=binding.embedding_space,
+        embedding_space_id=binding.embedding_space_id,
     )
 
     assert declared == binding
@@ -519,9 +503,9 @@ def test_ensure_index_still_rejects_an_unknown_collection():
     with pytest.raises(IndexContractIncompatibleError):
         store.ensure_index(
             client,
-            binding.collection_name,
+            COLLECTION_NAME,
             dimension=binding.dimension,
-            embedding_space=binding.embedding_space,
+            embedding_space_id=binding.embedding_space_id,
         )
 
     assert client.schemas == [], "a foreign collection is never re-created"
@@ -540,9 +524,9 @@ def test_ensure_index_confirms_the_contract_of_a_collection_it_did_not_create():
 
     declared = store.ensure_index(
         client,
-        binding.collection_name,
+        COLLECTION_NAME,
         dimension=binding.dimension,
-        embedding_space=binding.embedding_space,
+        embedding_space_id=binding.embedding_space_id,
     )
 
     assert declared == binding
@@ -558,16 +542,16 @@ def test_ensure_index_rejects_a_collection_created_by_another_contract():
     writer of A: the contract the collection declares is what decides.
     """
     binding = _binding()
-    other = _binding(embedding_space="sha256:late-writer")
+    other = _binding(embedding_space_id="sha256:late-writer")
     client = _CollectionClient(create_raises=True, winner_contract=binding)
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     with pytest.raises(IndexContractIncompatibleError):
         store.ensure_index(
             client,
-            binding.collection_name,
+            COLLECTION_NAME,
             dimension=other.dimension,
-            embedding_space=other.embedding_space,
+            embedding_space_id=other.embedding_space_id,
         )
 
     assert len(client.schemas) == 1
@@ -581,9 +565,9 @@ def test_a_lost_create_race_is_logged_apart_from_a_contract_mismatch(caplog):
     with caplog.at_level(logging.INFO, logger="knowledge_engine.storage.milvus.store"):
         store.ensure_index(
             _CollectionClient(create_raises=True, winner_contract=binding),
-            binding.collection_name,
+            COLLECTION_NAME,
             dimension=binding.dimension,
-            embedding_space=binding.embedding_space,
+            embedding_space_id=binding.embedding_space_id,
         )
         races = [record.getMessage() for record in caplog.records]
 
@@ -595,11 +579,11 @@ def test_a_lost_create_race_is_logged_apart_from_a_contract_mismatch(caplog):
             store.ensure_index(
                 _CollectionClient(
                     exists=True,
-                    contract=_binding(embedding_space="sha256:the-winner"),
+                    contract=_binding(embedding_space_id="sha256:the-winner"),
                 ),
-                binding.collection_name,
+                COLLECTION_NAME,
                 dimension=binding.dimension,
-                embedding_space=binding.embedding_space,
+                embedding_space_id=binding.embedding_space_id,
             )
         mismatches = [record.getMessage() for record in caplog.records]
 
@@ -622,7 +606,7 @@ def test_ensure_index_reports_a_collection_that_cannot_be_read_back():
     with pytest.raises(IndexMissingError):
         store.ensure_index(
             _VanishingClient(),
-            binding.collection_name,
+            COLLECTION_NAME,
             dimension=binding.dimension,
-            embedding_space=binding.embedding_space,
+            embedding_space_id=binding.embedding_space_id,
         )

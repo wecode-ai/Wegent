@@ -16,10 +16,7 @@ import pytest
 
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
-    ANALYZER_TYPE,
     DENSE_VECTOR_FIELD,
-    INDEX_TYPE,
-    METRIC_TYPE,
     SCHEMA_VERSION,
     MilvusIndexBinding,
     index_contract_description,
@@ -36,18 +33,12 @@ WRITE_CONSISTENCY = "Strong"
 
 def _contract(
     *,
-    embedding_space: str = "sha256:abc",
+    embedding_space_id: str = "sha256:abc",
 ) -> MilvusIndexBinding:
     return MilvusIndexBinding(
-        collection_name=COLLECTION_NAME,
-        connection="http://milvus.test:19530",
-        database="default",
         schema_version=SCHEMA_VERSION,
-        embedding_space=embedding_space,
+        embedding_space_id=embedding_space_id,
         dimension=CONTRACT_DIMENSION,
-        metric_type=METRIC_TYPE,
-        index_type=INDEX_TYPE,
-        analyzer=ANALYZER_TYPE,
     )
 
 
@@ -205,7 +196,7 @@ def test_collection_creation_stays_strong():
         client,
         COLLECTION_NAME,
         dimension=CONTRACT_DIMENSION,
-        embedding_space="sha256:abc",
+        embedding_space_id="sha256:abc",
     )
 
     created = {
@@ -226,7 +217,7 @@ def test_the_creation_race_is_settled_by_the_collection_own_contract():
     """
     client = _RecordingClient(
         collection_exists=False,
-        contract=_contract(embedding_space="sha256:the-winner"),
+        contract=_contract(embedding_space_id="sha256:the-winner"),
     )
 
     with pytest.raises(IndexContractIncompatibleError):
@@ -234,7 +225,7 @@ def test_the_creation_race_is_settled_by_the_collection_own_contract():
             client,
             COLLECTION_NAME,
             dimension=CONTRACT_DIMENSION,
-            embedding_space="sha256:abc",
+            embedding_space_id="sha256:abc",
         )
 
     assert client.consistency_levels("query") == []

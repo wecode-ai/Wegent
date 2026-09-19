@@ -704,18 +704,18 @@ def test_a_creation_declares_its_contract_in_the_same_request(
     what it created by the time the create returns, and a name that was never
     created declares nothing at all.
     """
-    from knowledge_engine.embedding.space import compute_embedding_space
+    from knowledge_engine.embedding.space import read_embedding_space_id
 
     knowledge_id = milvus_env.new_knowledge_id()
     backend = milvus_env.backend()
     model = DeterministicEmbedding(1536)
-    owner_space = compute_embedding_space(model)
+    owner_space = read_embedding_space_id(model)
     collection_name = backend.get_index_name(knowledge_id)
     store = backend._store
 
     with store.client() as client:
         owner_contract = store.build_binding(
-            collection_name, dimension=1536, embedding_space=owner_space
+            dimension=1536, embedding_space_id=owner_space
         )
         store._create_collection(client, owner_contract)
         # The creator's contract is readable the moment the collection is.
@@ -729,7 +729,7 @@ def test_a_creation_declares_its_contract_in_the_same_request(
                 client,
                 collection_name,
                 dimension=1536,
-                embedding_space=owner_space,
+                embedding_space_id=owner_space,
             )
             == owner_contract
         )
@@ -739,7 +739,7 @@ def test_a_creation_declares_its_contract_in_the_same_request(
                 client,
                 collection_name,
                 dimension=1536,
-                embedding_space="sha256:late-writer",
+                embedding_space_id="sha256:late-writer",
             )
         assert store.read_contract(client, collection_name) == owner_contract
 
@@ -787,7 +787,7 @@ def test_confirmed_binding_is_not_overwritten_by_an_incompatible_writer(
                 client,
                 collection_name,
                 dimension=1536,
-                embedding_space="sha256:late-writer",
+                embedding_space_id="sha256:late-writer",
             )
 
         assert store.read_contract(client, collection_name) == confirmed

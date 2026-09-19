@@ -5,10 +5,10 @@
 """Milvus storage backend built directly on the official synchronous PyMilvus.
 
 Scope: dense vector write, retrieval and delete for ordinary documents, plus
-the index contract each collection declares about itself - the embedding space,
-schema and keyword analyzer it was created for. Collections are created only by
-the explicit index write path; queries, reads and deletes never create
-resources.
+the index contract each collection declares about itself - the schema version,
+the dimension and the stable embedding space it was created for. Collections
+are created only by the explicit index write path; queries, reads and deletes
+never create resources.
 
 Three retrieval modes are served from one physical collection: ``vector`` uses
 the stored dense vectors with their raw COSINE score, ``keyword`` uses the
@@ -31,7 +31,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Sequence
 from llama_index.core.schema import BaseNode
 from pymilvus import MilvusClient
 
-from knowledge_engine.embedding.space import compute_embedding_space
+from knowledge_engine.embedding.space import read_embedding_space_id
 from knowledge_engine.embedding.vectors import (
     EmptyIndexableContentError,
     prepare_query_vector,
@@ -291,7 +291,7 @@ class MilvusBackend(BaseStorageBackend):
 
         vectors = self._resolve_node_vectors(materialized, embed_model)
         dimension = len(vectors[0])
-        embedding_space = compute_embedding_space(embed_model)
+        embedding_space_id = read_embedding_space_id(embed_model)
 
         rows = [
             self._build_row(
@@ -309,7 +309,7 @@ class MilvusBackend(BaseStorageBackend):
             knowledge_id=knowledge_id,
             doc_ref=doc_ref,
             dimension=dimension,
-            embedding_space=embedding_space,
+            embedding_space_id=embedding_space_id,
         )
 
         logger.info(
@@ -325,7 +325,7 @@ class MilvusBackend(BaseStorageBackend):
             "index_name": collection_name,
             "status": "success",
             "dimension": dimension,
-            "embedding_space": embedding_space,
+            "embedding_space_id": embedding_space_id,
         }
 
     def _write_rows(
@@ -336,7 +336,7 @@ class MilvusBackend(BaseStorageBackend):
         knowledge_id: str,
         doc_ref: str,
         dimension: int,
-        embedding_space: str,
+        embedding_space_id: str,
     ) -> None:
         """Create the index if needed, then replace one document's rows.
 
@@ -365,7 +365,7 @@ class MilvusBackend(BaseStorageBackend):
                 client,
                 collection_name,
                 dimension=dimension,
-                embedding_space=embedding_space,
+                embedding_space_id=embedding_space_id,
             )
             self._remove_document_rows(client, collection_name, knowledge_id, doc_ref)
             self._store.upsert_rows(client, collection_name, rows)
@@ -591,7 +591,6 @@ class MilvusBackend(BaseStorageBackend):
         if retrieval_mode == "keyword":
             return self._keyword_retrieve(
                 client,
-                binding=binding,
                 collection_name=request.collection_name,
                 sparse_query=request.resolved_queries.sparse_query,
                 filter_expr=request.filter_expr,
@@ -644,7 +643,7 @@ class MilvusBackend(BaseStorageBackend):
             collection_name,
             binding=binding,
             dimension=len(query_vector),
-            embedding_space=compute_embedding_space(embed_model),
+            embedding_space_id=read_embedding_space_id(embed_model),
         )
         return self._store.search(
             client,
@@ -660,14 +659,14 @@ class MilvusBackend(BaseStorageBackend):
         binding: MilvusIndexBinding,
         *,
         dimension: int,
-        embedding_space: str,
+        embedding_space_id: str,
     ) -> None:
         """Verify the request's contract still serves the requested space."""
         self._store.confirm_contract(
             collection_name,
             binding,
             dimension=dimension,
-            embedding_space=embedding_space,
+            embedding_space_id=embedding_space_id,
         )
 
     def _hybrid_retrieve(
@@ -698,7 +697,7 @@ class MilvusBackend(BaseStorageBackend):
             collection_name,
             binding=binding,
             dimension=len(query_vector),
-            embedding_space=compute_embedding_space(embed_model),
+            embedding_space_id=read_embedding_space_id(embed_model),
         )
         hits = self._store.hybrid_search(
             client,
@@ -716,7 +715,6 @@ class MilvusBackend(BaseStorageBackend):
         self,
         client: MilvusClient,
         *,
-        binding: MilvusIndexBinding,
         collection_name: str,
         sparse_query: str,
         filter_expr: str,
@@ -726,10 +724,11 @@ class MilvusBackend(BaseStorageBackend):
         """Answer a keyword query from the BM25 index alone.
 
         The embedding provider is not consulted: the retrieval text was
-        analyzed and indexed by the server when the document was written. The
-        reported score is the raw BM25 score the server returned.
+        analyzed and indexed by the server when the document was written, so
+        the keyword capability is part of the schema version the caller's
+        contract read already confirmed. The reported score is the raw BM25
+        score the server returned.
         """
-        self._store.verify_keyword_binding(collection_name, binding)
         hits = self._store.sparse_search(
             client,
             collection_name,

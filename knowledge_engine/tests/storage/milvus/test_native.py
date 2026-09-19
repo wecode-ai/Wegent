@@ -20,10 +20,13 @@ from knowledge_engine.storage.milvus.native import (
     BM25_FUNCTION_NAME,
     CONTRACT_DESCRIPTION_PREFIX,
     DENSE_VECTOR_FIELD,
+    INDEX_TYPE,
     METADATA_FIELD,
     METRIC_TYPE,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
+    SPARSE_INDEX_TYPE,
+    SPARSE_METRIC_TYPE,
     SPARSE_VECTOR_FIELD,
     MilvusIndexBinding,
     build_collection_schema,
@@ -32,21 +35,19 @@ from knowledge_engine.storage.milvus.native import (
     index_contract_from_description,
     node_row_id,
     read_collection_description,
-    strip_connection_credentials,
 )
+
+# The persisted contract is a stable three-field fact, so this literal pins the
+# field set a description may carry. Reading the constant from the module would
+# let a new deployment-bound field pass unnoticed.
+CONTRACT_FIELDS = {"schema_version", "dimension", "embedding_space_id"}
 
 
 def _binding(**overrides):
     payload = {
-        "collection_name": "wegent_kb_1",
-        "connection": "http://milvus.test:19530",
-        "database": "default",
         "schema_version": SCHEMA_VERSION,
-        "embedding_space": "sha256:abc",
+        "embedding_space_id": "sha256:abc",
         "dimension": 1536,
-        "metric_type": METRIC_TYPE,
-        "index_type": "AUTOINDEX",
-        "analyzer": ANALYZER_TYPE,
     }
     payload.update(overrides)
     return MilvusIndexBinding(**payload)
@@ -62,6 +63,36 @@ def test_binding_survives_the_collection_description_round_trip():
     assert index_contract_from_description(description) == binding
 
 
+def test_stored_contract_carries_only_the_stable_compatibility_fields():
+    """Deployment and physical layout are not part of the persisted contract."""
+    description = index_contract_description(_binding())
+    payload = json.loads(description[len(CONTRACT_DESCRIPTION_PREFIX) :])
+
+    assert set(payload) == CONTRACT_FIELDS
+    assert payload["schema_version"] == SCHEMA_VERSION
+    assert payload["dimension"] == 1536
+    assert payload["embedding_space_id"] == "sha256:abc"
+
+
+def test_a_contract_without_the_required_fields_is_reported_as_absent():
+    """A readable payload missing a compatibility field is never guessed."""
+    for payload in (
+        {"schema_version": SCHEMA_VERSION},
+        {"schema_version": SCHEMA_VERSION, "dimension": 1536},
+        {
+            "schema_version": SCHEMA_VERSION,
+            "dimension": 1536,
+            "embedding_space_id": "",
+        },
+    ):
+        description = CONTRACT_DESCRIPTION_PREFIX + json.dumps(payload)
+
+        with pytest.raises(ValueError):
+            MilvusIndexBinding.from_payload(payload)
+
+        assert index_contract_from_description(description) is None
+
+
 @pytest.mark.parametrize(
     "description",
     [
@@ -69,7 +100,12 @@ def test_binding_survives_the_collection_description_round_trip():
         "wegent knowledge index schema v4",
         CONTRACT_DESCRIPTION_PREFIX + "not json",
         CONTRACT_DESCRIPTION_PREFIX + '["not a contract"]',
-        CONTRACT_DESCRIPTION_PREFIX + '{"collection_name": "wegent_kb_1"}',
+        # A description carrying a static-structure field was written by another
+        # version of this code, so it is refused instead of being read as a
+        # contract of its own: the index it describes must be rebuilt
+        # explicitly.
+        CONTRACT_DESCRIPTION_PREFIX + '{"schema_version": 5, "dimension": 1536, '
+        '"embedding_space_id": "x", "analyzer": "chinese"}',
     ],
 )
 def test_a_description_without_a_readable_contract_is_reported_as_absent(
@@ -104,15 +140,9 @@ def test_describe_collection_reads_the_contract_and_the_dimension_once():
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"collection_name": "wegent_kb_other"},
         {"dimension": 4096},
-        {"embedding_space": "sha256:other"},
-        {"metric_type": "L2"},
+        {"embedding_space_id": "sha256:other"},
         {"schema_version": SCHEMA_VERSION - 1},
-        {"analyzer": ""},
-        {"analyzer": "standard"},
-        {"database": "other_db"},
-        {"connection": "http://other:19530"},
     ],
 )
 def test_binding_rejects_incompatible_contracts(overrides):
@@ -121,11 +151,27 @@ def test_binding_rejects_incompatible_contracts(overrides):
     requested = _binding(**overrides)
 
     with pytest.raises(IndexContractIncompatibleError):
-        bound.assert_compatible(requested)
+        bound.assert_compatible(requested, collection_name="wegent_kb_1")
 
 
 def test_binding_accepts_identical_contract():
-    _binding().assert_compatible(_binding())
+    _binding().assert_compatible(_binding(), collection_name="wegent_kb_1")
+
+
+def test_binding_compares_only_the_compatibility_fields():
+    """A contract that differs only outside the field set is still compatible.
+
+    The three fields are the whole persisted contract, so the comparison can
+    never depend on where the collection lives or how it was produced.
+    """
+    bound = _binding()
+    requested = MilvusIndexBinding(
+        schema_version=bound.schema_version,
+        dimension=bound.dimension,
+        embedding_space_id=bound.embedding_space_id,
+    )
+
+    bound.assert_compatible(requested, collection_name="wegent_kb_1")
 
 
 def test_node_row_id_is_stable_per_document_and_chunk():
@@ -158,7 +204,7 @@ def test_scope_filter_rejects_empty_document_scope():
 
 
 def test_collection_schema_declares_required_fields_and_dimension():
-    binding = _binding(dimension=4096, embedding_space="sha256:space")
+    binding = _binding(dimension=4096, embedding_space_id="sha256:space")
     schema = build_collection_schema(binding)
     fields = {field.name: field for field in schema.fields}
 
@@ -208,21 +254,54 @@ def test_two_same_dimension_embedding_spaces_declare_different_contracts():
     owns that comparison).
     """
     first = build_collection_schema(
-        _binding(dimension=1536, embedding_space="sha256:a")
+        _binding(dimension=1536, embedding_space_id="sha256:a")
     )
     second = build_collection_schema(
-        _binding(dimension=1536, embedding_space="sha256:b")
+        _binding(dimension=1536, embedding_space_id="sha256:b")
     )
 
     assert first.description != second.description
-    assert index_contract_from_description(first.description).embedding_space == (
-        "sha256:a"
-    )
-
-
-def test_strip_connection_credentials_removes_userinfo():
     assert (
-        strip_connection_credentials("https://user:pass@milvus.test:19530/db")
-        == "https://milvus.test:19530/db"
+        index_contract_from_description(first.description).embedding_space_id
+        == "sha256:a"
     )
-    assert strip_connection_credentials("/tmp/milvus.db") == "/tmp/milvus.db"
+
+
+def test_the_schema_version_publishes_the_current_physical_structure():
+    """Static structure is versioned, never persisted as its own fields.
+
+    The analyzer, metric, index and row layout are what a stored collection is
+    physically built from. They are not part of the persisted contract, so this
+    literal is the record of what the current ``SCHEMA_VERSION`` means: change
+    any value here and the version must move with it, or an older collection
+    would be served under a physical structure it does not have.
+    """
+    schema = build_collection_schema(_binding())
+
+    assert SCHEMA_VERSION == 5
+    assert (
+        ANALYZER_TYPE,
+        METRIC_TYPE,
+        INDEX_TYPE,
+        SPARSE_METRIC_TYPE,
+        SPARSE_INDEX_TYPE,
+        BM25_FUNCTION_NAME,
+    ) == (
+        "chinese",
+        "COSINE",
+        "AUTOINDEX",
+        "BM25",
+        "SPARSE_INVERTED_INDEX",
+        "retrieval_text_bm25",
+    )
+    assert set(field.name for field in schema.fields) == {
+        "id",
+        "retrieval_text",
+        "display_text",
+        "metadata",
+        DENSE_VECTOR_FIELD,
+        SPARSE_VECTOR_FIELD,
+    }
+    assert index_contract_from_description(schema.description).schema_version == (
+        SCHEMA_VERSION
+    )

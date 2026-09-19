@@ -95,15 +95,9 @@ def _create_collection_written_by_the_previous_schema(
     and the contract the collection declares is what refuses it.
     """
     binding = MilvusIndexBinding(
-        collection_name=collection_name,
-        connection=uri,
-        database="default",
         schema_version=SCHEMA_VERSION - 1,
-        embedding_space="sha256:older-schema",
+        embedding_space_id="sha256:older-schema",
         dimension=CONTRACT_DIMENSION,
-        metric_type=METRIC_TYPE,
-        index_type=INDEX_TYPE,
-        analyzer=ANALYZER_TYPE,
     )
     client = MilvusClient(uri=uri)
     try:

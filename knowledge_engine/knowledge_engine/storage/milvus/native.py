@@ -14,6 +14,12 @@ collection contains. The bounded client lifecycle and the write and search RPCs
 live in ``store``; nothing here resolves retrieval text or calls an
 embedding provider, so an adapter can be tested against real Milvus without a
 model.
+
+The persisted contract is only what makes a stored index incompatible with a
+request: the schema version, the dimension and the stable embedding space
+identity. Fields, metric, index, BM25 function and analyzer are static physical
+structure, so a change to any of them is expressed by bumping
+``SCHEMA_VERSION`` rather than by persisting a second description of them.
 """
 
 from __future__ import annotations
@@ -41,7 +47,8 @@ INDEX_TYPE = "AUTOINDEX"
 SPARSE_METRIC_TYPE = "BM25"
 SPARSE_INDEX_TYPE = "SPARSE_INVERTED_INDEX"
 # The keyword capability is a property of the collection: the analyzer decides
-# which tokens BM25 indexes, so it is part of the stored index contract.
+# which tokens BM25 indexes, so a change here is a static structure change that
+# ``SCHEMA_VERSION`` publishes rather than a field the contract persists.
 ANALYZER_TYPE = "chinese"
 ANALYZER_PARAMS: Dict[str, Any] = {"type": ANALYZER_TYPE}
 BM25_FUNCTION_NAME = "retrieval_text_bm25"
@@ -97,54 +104,66 @@ ROW_OUTPUT_FIELDS: List[str] = [
 
 @dataclass(frozen=True)
 class MilvusIndexBinding:
-    """Physical index contract one collection declares about itself."""
+    """Minimal index contract one collection declares about itself.
 
-    collection_name: str
-    connection: str
-    database: str
+    Everything here describes the vectors and the row layout, never where the
+    collection lives or how it was produced, so moving a knowledge base between
+    deployments or renaming its Python classes cannot make a readable index
+    look incompatible.
+    """
+
     schema_version: int
-    embedding_space: str
     dimension: int
-    metric_type: str
-    index_type: str
-    # Analyzer that tokenizes the BM25 keyword index. An empty value marks a
-    # contract written before the keyword slice, which cannot serve keyword
-    # retrieval and is rejected instead of answering with empty results.
-    analyzer: str = ""
+    embedding_space_id: str
+
+    # The whole persisted contract, as one literal: what is not in this tuple is
+    # not stored, so it cannot decide compatibility either.
+    PERSISTED_FIELDS = ("schema_version", "dimension", "embedding_space_id")
+
+    def __post_init__(self) -> None:
+        if self.schema_version <= 0:
+            raise ValueError("schema_version must be a positive integer")
+        if self.dimension <= 0:
+            raise ValueError("dimension must be a positive integer")
+        if (
+            not isinstance(self.embedding_space_id, str)
+            or not self.embedding_space_id.strip()
+        ):
+            raise ValueError("embedding_space_id must be a non-empty string")
 
     def to_payload(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_payload(cls, payload: Dict[str, Any]) -> "MilvusIndexBinding":
-        return cls(
-            collection_name=str(payload["collection_name"]),
-            connection=str(payload["connection"]),
-            database=str(payload["database"]),
-            schema_version=int(payload["schema_version"]),
-            embedding_space=str(payload["embedding_space"]),
-            dimension=int(payload["dimension"]),
-            metric_type=str(payload["metric_type"]),
-            index_type=str(payload["index_type"]),
-            analyzer=str(payload.get("analyzer") or ""),
-        )
+        """Read a persisted contract, refusing anything this code did not write.
 
-    def assert_compatible(self, other: "MilvusIndexBinding") -> None:
+        A description carrying other fields than the persisted contract was
+        written by another version of this code, not by a newer one this reader
+        should guess about, so it is refused instead.
+        """
+        if set(payload) != set(cls.PERSISTED_FIELDS):
+            raise ValueError(
+                "the persisted index contract does not carry exactly "
+                f"{', '.join(cls.PERSISTED_FIELDS)}"
+            )
+        try:
+            return cls(
+                schema_version=int(payload["schema_version"]),
+                dimension=int(payload["dimension"]),
+                embedding_space_id=payload["embedding_space_id"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("the persisted index contract is unreadable") from exc
+
+    def assert_compatible(
+        self, other: "MilvusIndexBinding", *, collection_name: str
+    ) -> None:
         """Raise when the requested contract differs from the bound one."""
-        for field in (
-            "collection_name",
-            "connection",
-            "database",
-            "schema_version",
-            "embedding_space",
-            "dimension",
-            "metric_type",
-            "index_type",
-            "analyzer",
-        ):
+        for field in self.PERSISTED_FIELDS:
             if getattr(self, field) != getattr(other, field):
                 raise IndexContractIncompatibleError(
-                    self.collection_name,
+                    collection_name,
                     f"{field} mismatch",
                     details={
                         "bound": getattr(self, field),
@@ -355,14 +374,3 @@ def _scalar_row_fields() -> List[FieldSchema]:
         ),
         FieldSchema(name=METADATA_FIELD, dtype=DataType.JSON, nullable=True),
     ]
-
-
-def strip_connection_credentials(uri: str) -> str:
-    """Remove userinfo from a connection URI before it is persisted."""
-    if "://" not in uri:
-        return uri
-    scheme, _, remainder = uri.partition("://")
-    authority, _, path = remainder.partition("/")
-    if "@" in authority:
-        authority = authority.rsplit("@", 1)[1]
-    return f"{scheme}://{authority}/{path}" if path else f"{scheme}://{authority}"

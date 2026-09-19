@@ -6,8 +6,11 @@
 
 import pytest
 
-from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
-from knowledge_engine.embedding.space import compute_embedding_space
+from knowledge_engine.embedding.errors import (
+    EmbeddingDimensionMismatchError,
+    EmbeddingSpaceConfigurationError,
+)
+from knowledge_engine.embedding.space import read_embedding_space_id
 from knowledge_engine.embedding.vectors import (
     EmptyEmbeddingBatchError,
     InvalidEmbeddingVectorError,
@@ -101,55 +104,21 @@ def test_prepare_query_vector_uses_the_query_embedding_entry_point():
     assert model.queries == ["how does it work"]
 
 
-def test_compute_embedding_space_is_stable_and_ignores_credentials():
-    """The space digest is stable and never contains API keys or tokens."""
+def test_read_embedding_space_id_returns_the_identity_the_model_carries():
+    """The space identity is the one the embedding factory attached."""
     model = _FakeEmbedModel([], configured_dimension=1536)
-    model.model_name = "text-embedding-3-small"
-    model.api_key = "sk-secret"
-    model.api_url = "https://user:pass@example.test/v1/embeddings"
+    model.embedding_space_id = "sha256:stable"
 
-    first = compute_embedding_space(model)
-    second = compute_embedding_space(model)
-
-    assert first == second
-    assert "sk-secret" not in first
-    assert "pass" not in first
+    assert read_embedding_space_id(model) == "sha256:stable"
 
 
-def test_compute_embedding_space_differs_across_models():
-    """Different model identities produce different space digests."""
-    first = _FakeEmbedModel([], configured_dimension=1536)
-    first.model_name = "text-embedding-3-small"
-    second = _FakeEmbedModel([], configured_dimension=1536)
-    second.model_name = "text-embedding-3-large"
+@pytest.mark.parametrize("missing", [None, "", 0])
+def test_read_embedding_space_id_without_a_stable_identity_is_a_config_error(
+    missing,
+):
+    """A model no factory produced cannot be bound to a vector space."""
+    model = _FakeEmbedModel([], configured_dimension=1536)
+    model.embedding_space_id = missing
 
-    assert compute_embedding_space(first) != compute_embedding_space(second)
-
-
-def test_compute_embedding_space_differs_across_providers():
-    """Same model name and dimension from different providers is a new space."""
-    first = _FakeEmbedModel([], configured_dimension=1536)
-    first.model_name = "shared-model-name"
-    first.api_url = "https://provider-a.test/v1/embeddings"
-    second = _FakeEmbedModel([], configured_dimension=1536)
-    second.model_name = "shared-model-name"
-    second.api_url = "https://provider-b.test/v1/embeddings"
-
-    assert compute_embedding_space(first) != compute_embedding_space(second)
-
-
-def test_compute_embedding_space_ignores_endpoint_credentials():
-    """Rotating keys or userinfo must not change the space digest."""
-    with_credentials = _FakeEmbedModel([], configured_dimension=1536)
-    with_credentials.model_name = "shared-model-name"
-    with_credentials.api_url = (
-        "https://user:secret@provider-a.test/v1/embeddings?api-version=1"
-    )
-    without_credentials = _FakeEmbedModel([], configured_dimension=1536)
-    without_credentials.model_name = "shared-model-name"
-    without_credentials.api_url = "https://provider-a.test/v1/embeddings"
-
-    assert compute_embedding_space(with_credentials) == compute_embedding_space(
-        without_credentials
-    )
-    assert "secret" not in compute_embedding_space(with_credentials)
+    with pytest.raises(EmbeddingSpaceConfigurationError):
+        read_embedding_space_id(model)

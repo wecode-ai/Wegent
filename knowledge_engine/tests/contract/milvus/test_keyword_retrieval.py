@@ -33,8 +33,6 @@ from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.backend import MilvusBackend
 from knowledge_engine.storage.milvus.native import (
-    INDEX_TYPE,
-    METRIC_TYPE,
     SCHEMA_VERSION,
     MilvusIndexBinding,
     index_contract_description,
@@ -663,15 +661,9 @@ def test_keyword_on_a_legacy_dense_only_index_fails_loudly(
     backend = milvus_env.backend()
     collection_name = backend.get_index_name(knowledge_id)
     legacy_contract = MilvusIndexBinding(
-        collection_name=collection_name,
-        connection=backend._store.connection_identity(),
-        database=backend._store.db_name,
         schema_version=SCHEMA_VERSION - 1,
-        embedding_space="sha256:legacy",
+        embedding_space_id="sha256:legacy",
         dimension=DIMENSION,
-        metric_type=METRIC_TYPE,
-        index_type=INDEX_TYPE,
-        analyzer="",
     )
     client = MilvusClient(uri=milvus_env.uri)
     try:
@@ -724,39 +716,6 @@ def test_keyword_on_a_legacy_dense_only_index_fails_loudly(
         assert [row["id"] for row in rows] == ["legacy-row"]
     finally:
         client.close()
-
-
-def test_keyword_on_an_index_without_the_analyzer_fails_loudly(
-    milvus_env: MilvusContractEnv,
-) -> None:
-    """The analyzer in the contract decides keyword capability, nothing else.
-
-    The collection carries the current physical schema, so nothing in the row
-    layout stops a keyword query; its contract declares no analyzer, which is
-    exactly the older index whose Chinese BM25 answers would be silently empty.
-    """
-    from dataclasses import replace
-
-    from knowledge_engine.embedding.space import compute_embedding_space
-
-    knowledge_id = milvus_env.new_knowledge_id()
-    backend = milvus_env.backend()
-    collection_name = backend.get_index_name(knowledge_id)
-    store = backend._store
-    requested = store.build_binding(
-        collection_name,
-        dimension=DIMENSION,
-        embedding_space=compute_embedding_space(DeterministicEmbedding(DIMENSION)),
-    )
-
-    with store.client() as client:
-        store._create_collection(client, replace(requested, analyzer=""))
-
-    with pytest.raises(IndexContractIncompatibleError) as failure:
-        _keyword_query(backend, knowledge_id=knowledge_id, query="中文关键词")
-
-    assert failure.value.code == "index_contract_incompatible"
-    assert failure.value.details["analyzer"] == ""
 
 
 def test_keyword_on_a_never_indexed_knowledge_base_creates_nothing(

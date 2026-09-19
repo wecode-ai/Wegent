@@ -32,3 +32,16 @@ class EmbeddingDimensionMismatchError(RuntimeError):
             f"Embedding model '{model}' returned {actual} dimensions; "
             f"expected {expected}."
         )
+
+
+class EmbeddingSpaceConfigurationError(ValueError):
+    """Raised when a model cannot declare which vector space it produces.
+
+    The space identity is derived once, by the embedding factory, from the
+    normalized protocol and the model ID actually sent to the provider. A model
+    without that identity cannot be bound to a storage index, and inventing one
+    would silently mix vectors from two spaces in a single collection.
+    """
+
+    code = "embedding_space_configuration_invalid"
+    retryable = False
