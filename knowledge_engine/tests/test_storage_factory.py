@@ -66,6 +66,32 @@ def test_get_storage_retrieval_methods_uses_registered_backends(monkeypatch) -> 
     assert get_all_storage_retrieval_methods()["fake"] == ["vector", "hybrid"]
 
 
+def test_registered_backends_advertise_their_keyword_and_hybrid_capability() -> None:
+    """The public capability map is what the backend API serves to clients."""
+    from knowledge_engine.storage.factory import get_all_storage_retrieval_methods
+
+    methods = get_all_storage_retrieval_methods()
+
+    assert methods["milvus"] == ["vector", "keyword", "hybrid"]
+
+
+def test_only_the_self_replacing_storage_types_are_declared() -> None:
+    """Only an engine that deletes inside its write owns the replacement.
+
+    The indexing layer asks this before it deletes a document's previous rows,
+    so a backend that answers True is the only one deleting them. An unknown
+    storage type keeps the existing delete-then-index order.
+    """
+    from knowledge_engine.storage.factory import (
+        storage_backend_owns_document_replacement,
+    )
+
+    assert storage_backend_owns_document_replacement("milvus") is True
+    assert storage_backend_owns_document_replacement("ELASTICSEARCH") is False
+    assert storage_backend_owns_document_replacement("qdrant") is False
+    assert storage_backend_owns_document_replacement("unknown") is False
+
+
 def test_create_storage_backend_from_runtime_config_requires_url() -> None:
     from knowledge_engine.storage.factory import (
         create_storage_backend_from_runtime_config,

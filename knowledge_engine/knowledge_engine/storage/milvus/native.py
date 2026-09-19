@@ -1,0 +1,368 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Milvus row layout, index contract vocabulary and scope filters.
+
+This module owns what a stored row is: the physical schema, the index contract
+that binds a collection to one embedding space and schema version, row
+identifiers, the filter expressions the read and write paths share, and the one
+describe that reads a contract back. The contract has exactly one home - the
+description of the collection it describes, written when that collection is
+created and read back from it - so nothing outside the collection records what a
+collection contains. The bounded client lifecycle and the write and search RPCs
+live in ``store``; nothing here resolves retrieval text or calls an
+embedding provider, so an adapter can be tested against real Milvus without a
+model.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Iterable, List, Sequence
+
+from pymilvus import (
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    Function,
+    FunctionType,
+    MilvusClient,
+)
+
+from knowledge_engine.storage.errors import IndexContractIncompatibleError
+
+# Bump when the physical row layout changes in a way that requires rebuilding.
+SCHEMA_VERSION = 5
+METRIC_TYPE = "COSINE"
+INDEX_TYPE = "AUTOINDEX"
+SPARSE_METRIC_TYPE = "BM25"
+SPARSE_INDEX_TYPE = "SPARSE_INVERTED_INDEX"
+# The keyword capability is a property of the collection: the analyzer decides
+# which tokens BM25 indexes, so it is part of the stored index contract.
+ANALYZER_TYPE = "chinese"
+ANALYZER_PARAMS: Dict[str, Any] = {"type": ANALYZER_TYPE}
+BM25_FUNCTION_NAME = "retrieval_text_bm25"
+
+# Marker that separates the stored contract from any other description text.
+# Milvus 2.5.4 round-trips a collection description unchanged (verified on the
+# pinned contract fixture), so the contract needs no column of its own.
+CONTRACT_DESCRIPTION_PREFIX = "wegent-index-contract:"
+
+MAX_ID_LENGTH = 128
+MAX_TEXT_LENGTH = 65535
+
+# Retrieval reads at the level that skips the linearizable wait (~400ms Strong
+# versus ~1ms Bounded on the contract fixture), which also means the first reads
+# after a write can be answered from a snapshot that predates it. The write path
+# accepts that window and does not wait for it (ticket 11); creation still
+# verifies, so that read stays Strong.
+READ_CONSISTENCY_LEVEL = "Bounded"
+WRITE_CONSISTENCY_LEVEL = "Strong"
+
+# Fallback deadline for one RPC when a store was constructed without one.
+DEFAULT_RPC_TIMEOUT_SECONDS = 10.0
+# Creating a collection and writing its contract are heavy server operations,
+# so they get a wider - but still bounded - budget than a query or mutation.
+HEAVY_RPC_TIMEOUT_SECONDS = 30.0
+
+# The physical columns of a stored row. Everything else a row carries lives in
+# the metadata column, the one place a condition can name.
+ID_FIELD = "id"
+RETRIEVAL_TEXT_FIELD = "retrieval_text"
+DISPLAY_TEXT_FIELD = "display_text"
+METADATA_FIELD = "metadata"
+DENSE_VECTOR_FIELD = "dense_vector"
+SPARSE_VECTOR_FIELD = "sparse_vector"
+
+# The metadata keys every stored chunk carries. Row identity is deliberately
+# absent: the write path owns it, so a query condition can never pin or fake it.
+KNOWLEDGE_ID_KEY = "knowledge_id"
+DOC_REF_KEY = "doc_ref"
+SOURCE_FILE_KEY = "source_file"
+CHUNK_INDEX_KEY = "chunk_index"
+CREATED_AT_KEY = "created_at"
+
+# Columns one read asks for by default: the row's identity, the two texts the
+# retrieval paths answer with, and the metadata column that holds the rest.
+ROW_OUTPUT_FIELDS: List[str] = [
+    ID_FIELD,
+    RETRIEVAL_TEXT_FIELD,
+    DISPLAY_TEXT_FIELD,
+    METADATA_FIELD,
+]
+
+
+@dataclass(frozen=True)
+class MilvusIndexBinding:
+    """Physical index contract one collection declares about itself."""
+
+    collection_name: str
+    connection: str
+    database: str
+    schema_version: int
+    embedding_space: str
+    dimension: int
+    metric_type: str
+    index_type: str
+    # Analyzer that tokenizes the BM25 keyword index. An empty value marks a
+    # contract written before the keyword slice, which cannot serve keyword
+    # retrieval and is rejected instead of answering with empty results.
+    analyzer: str = ""
+
+    def to_payload(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_payload(cls, payload: Dict[str, Any]) -> "MilvusIndexBinding":
+        return cls(
+            collection_name=str(payload["collection_name"]),
+            connection=str(payload["connection"]),
+            database=str(payload["database"]),
+            schema_version=int(payload["schema_version"]),
+            embedding_space=str(payload["embedding_space"]),
+            dimension=int(payload["dimension"]),
+            metric_type=str(payload["metric_type"]),
+            index_type=str(payload["index_type"]),
+            analyzer=str(payload.get("analyzer") or ""),
+        )
+
+    def assert_compatible(self, other: "MilvusIndexBinding") -> None:
+        """Raise when the requested contract differs from the bound one."""
+        for field in (
+            "collection_name",
+            "connection",
+            "database",
+            "schema_version",
+            "embedding_space",
+            "dimension",
+            "metric_type",
+            "index_type",
+            "analyzer",
+        ):
+            if getattr(self, field) != getattr(other, field):
+                raise IndexContractIncompatibleError(
+                    self.collection_name,
+                    f"{field} mismatch",
+                    details={
+                        "bound": getattr(self, field),
+                        "requested": getattr(other, field),
+                    },
+                )
+
+
+def sanitize_filter_value(value: Any) -> str:
+    """Escape a value for a Milvus boolean filter expression."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def metadata_path(key: str) -> str:
+    """The JSON path every scope and metadata condition is compiled against.
+
+    One column carries all the metadata a row was written with, so a condition
+    on it is a condition on that JSON path. The server applies it before the
+    ``top_k`` cut, and the physical schema keeps no column whose only job is to
+    be filterable.
+    """
+    return f'{METADATA_FIELD}["{sanitize_filter_value(key)}"]'
+
+
+def node_row_id(
+    *,
+    knowledge_id: str,
+    doc_ref: str,
+    chunk_index: int,
+) -> str:
+    """Derive a stable primary key for one indexed chunk.
+
+    The key is the document and the chunk position inside it, so re-indexing
+    the same document overwrites its rows instead of layering versions.
+    """
+    identity = "|".join(
+        [
+            str(knowledge_id),
+            str(doc_ref),
+            str(chunk_index),
+        ]
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def build_scope_filter(
+    *,
+    knowledge_id: str,
+    doc_refs: Sequence[Any] | None = None,
+    extra_conditions: Iterable[str] | None = None,
+) -> str:
+    """Compile the mandatory knowledge base and document scope.
+
+    The scope names the same metadata keys the write path stores, so it is
+    compiled like every other condition: it narrows the read inside the
+    database, before the ``top_k`` cut, and a row whose metadata does not
+    declare the scope cannot be returned.
+    """
+    knowledge_scope = metadata_path(KNOWLEDGE_ID_KEY)
+    conditions = [f'{knowledge_scope} == "{sanitize_filter_value(knowledge_id)}"']
+    if doc_refs is not None:
+        if not doc_refs:
+            raise ValueError("doc_refs must not be an empty scope")
+        escaped = [f'"{sanitize_filter_value(doc_ref)}"' for doc_ref in doc_refs]
+        conditions.append(f"{metadata_path(DOC_REF_KEY)} in [{', '.join(escaped)}]")
+    for condition in extra_conditions or ():
+        normalized = condition.strip()
+        if normalized:
+            conditions.append(normalized)
+    return " and ".join(conditions)
+
+
+def index_contract_description(binding: MilvusIndexBinding) -> str:
+    """Serialize a contract into the description of the collection it describes.
+
+    The description travels with the collection in every create and read, so the
+    contract has no second home to drift away from it.
+    """
+    return CONTRACT_DESCRIPTION_PREFIX + json.dumps(
+        binding.to_payload(), sort_keys=True
+    )
+
+
+def index_contract_from_description(description: Any) -> MilvusIndexBinding | None:
+    """Read a contract back out of a collection description.
+
+    ``None`` means the description carries no readable contract: a collection
+    this code did not create, or one created by an older schema. Callers refuse
+    such a collection instead of guessing what it contains.
+    """
+    if not isinstance(description, str) or not description.startswith(
+        CONTRACT_DESCRIPTION_PREFIX
+    ):
+        return None
+    try:
+        payload = json.loads(description[len(CONTRACT_DESCRIPTION_PREFIX) :])
+        if not isinstance(payload, dict):
+            return None
+        return MilvusIndexBinding.from_payload(payload)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
+class CollectionDescription:
+    """One ``describe_collection`` answer, read as contract and dimension.
+
+    Both facts come from the same server call, so the dimension check costs no
+    extra round trip.
+    """
+
+    dimension: int | None
+    binding: MilvusIndexBinding | None
+
+
+def read_collection_description(
+    client: MilvusClient,
+    collection_name: str,
+    *,
+    timeout: float,
+) -> CollectionDescription:
+    """Read the contract and the dense dimension one collection declares."""
+    description = client.describe_collection(collection_name, timeout=timeout)
+    return CollectionDescription(
+        dimension=_dense_dimension(description),
+        binding=index_contract_from_description(description.get("description")),
+    )
+
+
+def _dense_dimension(description: Dict[str, Any]) -> int | None:
+    for field in description.get("fields", []):
+        if field.get("name") == DENSE_VECTOR_FIELD:
+            dim = field.get("params", {}).get("dim")
+            return int(dim) if dim is not None else None
+    return None
+
+
+def build_collection_schema(binding: MilvusIndexBinding) -> CollectionSchema:
+    """Build the physical row layout for one Milvus knowledge index.
+
+    The collection carries both retrieval paths: a dense vector for semantic
+    search and a server-maintained sparse vector whose terms come from the
+    BM25 function over the analyzed retrieval text. Everything a condition can
+    name - the scope, a document's own fields and every user key - lives in one
+    native JSON column, so the server applies the condition before ``top_k``.
+    Its description carries the index contract of the collection it creates.
+    """
+    if binding.dimension <= 0:
+        raise ValueError("dimension must be a positive integer")
+    fields = _scalar_row_fields() + [
+        FieldSchema(
+            name=DENSE_VECTOR_FIELD,
+            dtype=DataType.FLOAT_VECTOR,
+            dim=binding.dimension,
+        ),
+        FieldSchema(
+            name=SPARSE_VECTOR_FIELD,
+            dtype=DataType.SPARSE_FLOAT_VECTOR,
+        ),
+    ]
+    schema = CollectionSchema(
+        fields=fields,
+        auto_id=False,
+        enable_dynamic_field=False,
+        description=index_contract_description(binding),
+    )
+    schema.add_function(
+        Function(
+            name=BM25_FUNCTION_NAME,
+            function_type=FunctionType.BM25,
+            input_field_names=[RETRIEVAL_TEXT_FIELD],
+            output_field_names=[SPARSE_VECTOR_FIELD],
+            params={},
+        )
+    )
+    return schema
+
+
+def _scalar_row_fields() -> List[FieldSchema]:
+    """Scalar columns shared by every knowledge index row.
+
+    The row's identity, the retrieval text the BM25 function reads, the display
+    text a caller is answered with, and the metadata JSON column that holds
+    everything else - the scope, a document's own fields and every user key.
+    Nothing is duplicated across them, so each value has one home per row.
+    """
+    return [
+        FieldSchema(
+            name=ID_FIELD,
+            dtype=DataType.VARCHAR,
+            is_primary=True,
+            max_length=MAX_ID_LENGTH,
+        ),
+        FieldSchema(
+            name=RETRIEVAL_TEXT_FIELD,
+            dtype=DataType.VARCHAR,
+            max_length=MAX_TEXT_LENGTH,
+            # The analyzer must be declared on the field itself: a
+            # collection-level analyzer does not tokenize BM25 queries in
+            # Milvus 2.5.4, which silently returns no Chinese hits.
+            enable_analyzer=True,
+            analyzer_params=dict(ANALYZER_PARAMS),
+        ),
+        FieldSchema(
+            name=DISPLAY_TEXT_FIELD,
+            dtype=DataType.VARCHAR,
+            max_length=MAX_TEXT_LENGTH,
+        ),
+        FieldSchema(name=METADATA_FIELD, dtype=DataType.JSON, nullable=True),
+    ]
+
+
+def strip_connection_credentials(uri: str) -> str:
+    """Remove userinfo from a connection URI before it is persisted."""
+    if "://" not in uri:
+        return uri
+    scheme, _, remainder = uri.partition("://")
+    authority, _, path = remainder.partition("/")
+    if "@" in authority:
+        authority = authority.rsplit("@", 1)[1]
+    return f"{scheme}://{authority}/{path}" if path else f"{scheme}://{authority}"

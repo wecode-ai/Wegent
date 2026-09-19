@@ -91,7 +91,16 @@ class RetrieveRequest(BaseModel):
         description="Weights for hybrid search (only used when retrieval_mode='hybrid')",
     )
     metadata_condition: Optional[Dict] = Field(
-        None, description="Optional metadata filtering conditions"
+        None,
+        description=(
+            "Optional metadata filtering conditions, shaped as "
+            '{"operator": ..., "conditions": [{"key": ..., "operator": ..., '
+            '"value": ...}]}. Which operators and combinations are honoured '
+            "depends on the retriever's storage backend. A malformed shape - a "
+            "top-level field other than operator/conditions, or conditions that "
+            "are not a list of objects - is rejected, and a condition on a key "
+            "no indexed chunk carries matches nothing."
+        ),
     )
 
     @field_validator("hybrid_weights")

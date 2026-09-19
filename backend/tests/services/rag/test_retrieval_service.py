@@ -7,10 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shared.models import RetrievalScope
+from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
+    RetrievalScope,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrieverConfig,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -445,6 +451,62 @@ class TestRetrieveForChatShell:
         assert response.status_code == 200
         mock_resolve.assert_called_once()
         mock_query.assert_awaited_once()
+
+    def test_internal_retrieve_returns_a_safe_prompt_for_a_missing_index(
+        self,
+        test_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The local execution path also fails loudly and without the target.
+
+        The local path has no response protocol of its own, so it adds no new
+        error field: it returns the storage error's own safe text. The
+        identifiable code reaches callers on the Knowledge Runtime HTTP path,
+        which the gateway asserts in ``test_remote_gateway``.
+        """
+        from app.core.config import settings
+        from knowledge_engine.storage.errors import IndexMissingError
+
+        monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+        payload = {
+            "query": "test",
+            "knowledge_base_ids": [123],
+            "max_results": 5,
+            "route_mode": "auto",
+            "runtime_context": {
+                "context_window": 10000,
+                "used_context_tokens": 100,
+                "reserved_output_tokens": 4096,
+                "context_buffer_ratio": 0.1,
+                "max_direct_chunks": 500,
+            },
+        }
+
+        with (
+            patch(
+                "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.api.endpoints.internal.rag.LocalRagGateway.query",
+                new_callable=AsyncMock,
+                side_effect=IndexMissingError(
+                    "wegent_123",
+                    "the bound collection confirmed earlier is gone",
+                ),
+            ),
+        ):
+            response = test_client.post(
+                "/api/internal/rag/retrieve",
+                json=payload,
+                headers={"Authorization": "Bearer test-internal-token"},
+            )
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "Milvus index 'wegent_123' is missing" in detail
+        assert "http://" not in detail
+        assert "token" not in detail.lower()
 
     @pytest.mark.asyncio
     async def test_auto_route_returns_direct_injection_records(self):
@@ -1142,3 +1204,67 @@ class TestRetrieveForChatShell:
         )
 
         assert result["records"][0]["document_id"] == 9
+
+
+def _kb_record(retrieval_config: dict) -> SimpleNamespace:
+    """A KnowledgeBase record whose spec drives the local retrieval path."""
+    return SimpleNamespace(
+        id=123,
+        user_id=7,
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                    "embedding_config": {"model_name": "embed-a"},
+                    "retrieval_mode": "vector",
+                    "top_k": 5,
+                    **retrieval_config,
+                }
+            }
+        },
+    )
+
+
+def _build_local_query_config(kb: SimpleNamespace) -> RemoteKnowledgeBaseQueryConfig:
+    from app.services.rag.retrieval_service import RetrievalService
+
+    service = RetrievalService()
+    with (
+        patch.object(
+            service.runtime_resolver,
+            "_get_knowledge_base_record",
+            return_value=kb,
+        ),
+        patch.object(
+            service.runtime_resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ),
+        patch.object(
+            service.runtime_resolver,
+            "_build_resolved_embedding_model_config",
+            return_value=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+        ),
+    ):
+        return service._build_runtime_query_config(kb=kb, db=MagicMock())
+
+
+def test_local_retrieval_path_defaults_an_absent_threshold() -> None:
+    config = _build_local_query_config(_kb_record({}))
+
+    assert config.retrieval_config.score_threshold == 0.5
+
+
+def test_local_retrieval_path_keeps_an_explicit_zero_threshold() -> None:
+    config = _build_local_query_config(_kb_record({"score_threshold": 0}))
+
+    assert config.retrieval_config.score_threshold == 0

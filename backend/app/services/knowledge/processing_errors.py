@@ -15,6 +15,32 @@ from app.schemas.knowledge import (
 
 logger = logging.getLogger(__name__)
 
+# Storage failures the adapter already classified. The code is authoritative:
+# the raw message may mention a timeout even when the failure is a missing
+# index, and callers localize on the code.
+STORAGE_INDEXING_ERRORS: dict[str, tuple[str, bool]] = {
+    "index_missing": (
+        "The vector index for this knowledge base is missing. "
+        "An operator must rebuild it before retrying.",
+        False,
+    ),
+    "index_contract_incompatible": (
+        "This knowledge base is bound to an incompatible vector index. "
+        "An operator must decide how to rebuild or reclaim it.",
+        False,
+    ),
+    "storage_capability_unsupported": (
+        "The vector store does not support the requested capability. "
+        "Choose a supported retrieval mode.",
+        False,
+    ),
+    "storage_unavailable": (
+        "The vector store did not answer within its bound. The remote result "
+        "is unknown, so please retry the whole operation.",
+        True,
+    ),
+}
+
 
 def build_processing_error(
     *,
@@ -154,7 +180,8 @@ def map_indexing_exception(
     exc: Exception, *, generation: int
 ) -> DocumentProcessingError:
     """Map an indexing exception without exposing its raw message."""
-    if getattr(exc, "code", None) == "embedding_dimension_mismatch":
+    code = getattr(exc, "code", None)
+    if code == "embedding_dimension_mismatch":
         details = getattr(exc, "details", None) or {}
         model = details.get("model")
         return build_processing_error(
@@ -167,6 +194,17 @@ def map_indexing_exception(
             retryable=False,
             generation=generation,
             model=model if isinstance(model, str) else None,
+        )
+
+    storage_error = STORAGE_INDEXING_ERRORS.get(code) if isinstance(code, str) else None
+    if storage_error is not None:
+        message, retryable = storage_error
+        return build_processing_error(
+            stage=DocumentProcessingStage.INDEXING,
+            code=code,
+            message=message,
+            retryable=retryable,
+            generation=generation,
         )
 
     normalized = str(exc).lower()

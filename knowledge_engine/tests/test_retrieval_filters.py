@@ -12,8 +12,84 @@ from llama_index.core.vector_stores import (
 from knowledge_engine.retrieval.filters import (
     build_elasticsearch_filters,
     filter_chunk_records,
+    iter_valid_conditions,
+    normalize_metadata_operator,
     parse_metadata_filters,
+    validate_metadata_condition,
 )
+
+
+@pytest.mark.parametrize(
+    ("raw_operator", "expected"),
+    [
+        (None, "eq"),
+        ("EQ", "eq"),
+        ("==", "eq"),
+        ("!=", "ne"),
+        (" text_match ", "text_match"),
+    ],
+)
+def test_normalize_metadata_operator_is_shared_by_every_backend(
+    raw_operator, expected
+) -> None:
+    assert normalize_metadata_operator(raw_operator) == expected
+
+
+def test_iter_valid_conditions_skips_conditions_without_a_constraint() -> None:
+    """A missing key or a null value carries no constraint on any backend."""
+    conditions = iter_valid_conditions(
+        {
+            "operator": "and",
+            "conditions": [
+                {"key": "category", "operator": "eq", "value": "tech"},
+                {"key": "category", "operator": "eq", "value": None},
+                {"operator": "eq", "value": "orphan"},
+            ],
+        }
+    )
+
+    assert conditions == [{"key": "category", "operator": "eq", "value": "tech"}]
+
+
+@pytest.mark.parametrize(
+    "metadata_condition",
+    [
+        # A condition this contract cannot honour must not read as no condition.
+        {"doc_ref": "x"},
+        {"category": "tech"},
+        # A stated field must never be dropped, with or without conditions.
+        {"conditions": [], "doc_ref": "x"},
+        {"operator": "and", "conditions": [{"key": "a"}], "category": "tech"},
+        # Only an absent value and an empty mapping express no constraint.
+        [],
+        "",
+        # The conditions themselves are one list of objects.
+        {"conditions": None},
+        {"operator": "and", "conditions": "category"},
+        {"operator": "and", "conditions": {"key": "category"}},
+        {"operator": "and", "conditions": ({"key": "category"},)},
+        {"operator": "and", "conditions": [None]},
+        {"operator": "and", "conditions": [["key", "category"]]},
+        {"operator": "and", "conditions": [{"key": "a"}, "category"]},
+        # Anything that is not a condition object at all.
+        ["category"],
+        "category",
+        ({"key": "category"},),
+    ],
+)
+def test_validate_metadata_condition_rejects_a_malformed_shape(
+    metadata_condition,
+) -> None:
+    """Every entry point rejects a shape it cannot honour, before filtering."""
+    with pytest.raises(ValueError):
+        validate_metadata_condition(metadata_condition)
+
+
+def test_validate_metadata_condition_accepts_an_absent_condition() -> None:
+    """An absent value, an empty mapping and a lone operator constrain nothing."""
+    validate_metadata_condition(None)
+    validate_metadata_condition({})
+    validate_metadata_condition({"operator": "and"})
 
 
 def test_build_elasticsearch_filters_normalizes_mixed_case_operators() -> None:

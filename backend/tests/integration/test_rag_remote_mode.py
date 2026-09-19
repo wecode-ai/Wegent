@@ -276,7 +276,9 @@ def test_run_document_indexing_switches_index_mode_independently(
         ),
         patch(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
-            return_value=object(),
+            # No resolved storage config: this test only routes the call, so the
+            # chain keeps the existing delete-then-index order.
+            return_value=SimpleNamespace(retriever_config=None),
         ) as mock_build_runtime_spec,
         patch(
             patch_target,

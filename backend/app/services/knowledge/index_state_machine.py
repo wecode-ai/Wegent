@@ -118,7 +118,14 @@ def _get_active_index_stale_reason_for(
 
 
 def get_document_index_lock_name(document_id: int) -> str:
-    """Return the Redis lock name for a document indexing task."""
+    """Return the Redis lock name for a document indexing task.
+
+    The indexing and rebuild entries hold this lock around one write of the
+    document, which is what serializes them: a storage backend replaces a
+    document's rows without needing a transaction spanning its own delete and
+    write. The user delete entry does not take this lock, and delete-while-
+    indexing is not part of the current consistency promise.
+    """
     return f"knowledge:index_document:{document_id}"
 
 

@@ -10,11 +10,11 @@ import {
   createExternalImportScenario,
   createFolder,
   deleteDocument,
-  getDocumentChunks,
   importThroughDialog,
   importViaApi,
   listDocuments,
   openKnowledgeBase,
+  readDocumentChunksAfterIndexing,
   waitForDocument,
   ExternalImportScenarioContext,
 } from '../../utils/external-import-test-support'
@@ -141,8 +141,15 @@ test.describe('External DingTalk document import', () => {
       expect(document.external_provider).toBe('dingtalk')
       expect(document.external_resource_id).toBe(EXTERNAL_IMPORT_NODES.product)
 
-      const chunks = await getDocumentChunks(request, context.token, document.id)
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
+      // The document is successful, but the index write and the first reads
+      // after it can be up to ~0.5s apart (Milvus answers Bounded reads from
+      // an older snapshot); poll instead of asserting inside that window.
+      const chunks = await readDocumentChunksAfterIndexing(
+        request,
+        context.token,
+        document.id,
+        EXTERNAL_IMPORT_MARKERS.productV1
+      )
       const indexedContent = (JSON.parse(chunks) as Array<{ content?: string }>)
         .map(chunk => chunk.content ?? '')
         .join('\n')
@@ -233,8 +240,12 @@ test.describe('External DingTalk document import', () => {
         { status: 'success' }
       )
       expect(updatedDocument.id).toBe(documentId)
-      const updatedChunks = await getDocumentChunks(request, context.token, documentId)
-      expect(updatedChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV2)
+      const updatedChunks = await readDocumentChunksAfterIndexing(
+        request,
+        context.token,
+        documentId,
+        EXTERNAL_IMPORT_MARKERS.productV2
+      )
       expect(updatedChunks).not.toContain(EXTERNAL_IMPORT_MARKERS.productV1)
       const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
       expect(documents).toHaveLength(1)
@@ -317,8 +328,12 @@ test.describe('External DingTalk document import', () => {
 
       const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
       expect(documents).toHaveLength(2)
-      const chunks = await getDocumentChunks(request, context.token, recovered.id)
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.apiV2)
+      const chunks = await readDocumentChunksAfterIndexing(
+        request,
+        context.token,
+        recovered.id,
+        EXTERNAL_IMPORT_MARKERS.apiV2
+      )
       expect(chunks).not.toContain(EXTERNAL_IMPORT_MARKERS.api)
     })
   })

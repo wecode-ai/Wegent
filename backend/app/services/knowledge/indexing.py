@@ -46,6 +46,8 @@ from app.services.knowledge.splitter_config import (
 )
 from app.services.rag.gateway_factory import get_index_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import IndexRuntimeSpec
+from knowledge_engine.storage.factory import storage_backend_owns_document_replacement
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -131,6 +133,84 @@ def _serialize_splitter_config(
 
     normalized = normalize_runtime_splitter_config(raw_config)
     return serialize_splitter_config(normalized)
+
+
+def _storage_owns_document_replacement(runtime_spec: IndexRuntimeSpec) -> bool:
+    """Whether this write replaces the document inside the storage backend.
+
+    The engine is read from the storage config the runtime resolved for this
+    request; the retriever's name says nothing about which engine it stores
+    into.
+    """
+    retriever_config = runtime_spec.retriever_config
+    if retriever_config is None:
+        return False
+    return storage_backend_owns_document_replacement(
+        str(retriever_config.storage_config.get("type") or "")
+    )
+
+
+def _build_old_index_delete_spec(
+    *,
+    db: Session,
+    runtime_spec: IndexRuntimeSpec,
+    knowledge_base_id: str,
+    document_id: Optional[int],
+    index_owner_user_id: int,
+) -> Any | None:
+    """Build the pre-delete this indexing request needs before its write.
+
+    A backend that replaces the document inside its own write answers with
+    ``None``: that write owns the removal, so deleting the document's previous
+    rows here as well would delete the same rows twice. Every other engine
+    keeps the existing delete-then-index order.
+    """
+    if document_id is None:
+        return None
+    if _storage_owns_document_replacement(runtime_spec):
+        add_span_event(
+            "rag.indexing.old_index_delete_skipped",
+            {
+                "kb_id": str(knowledge_base_id),
+                "document_id": str(document_id),
+                "reason": "storage_replaces_document_on_write",
+            },
+        )
+        return None
+    try:
+        return runtime_resolver.build_delete_runtime_spec(
+            db=db,
+            knowledge_base_id=int(knowledge_base_id),
+            document_ref=str(document_id),
+            index_owner_user_id=index_owner_user_id,
+        )
+    except ValueError as e:
+        logger.warning(
+            f"[Indexing] Cannot delete old index for document {document_id}: {e}"
+        )
+        add_span_event(
+            "rag.indexing.old_index_delete_skipped",
+            {
+                "kb_id": str(knowledge_base_id),
+                "document_id": str(document_id),
+                "reason": str(e),
+            },
+        )
+    except Exception as e:
+        logger.error(
+            f"[Indexing] Error preparing old index delete for document {document_id}: "
+            f"{type(e).__name__}: {e}"
+        )
+        add_span_event(
+            "rag.indexing.old_index_delete_failed",
+            {
+                "kb_id": str(knowledge_base_id),
+                "document_id": str(document_id),
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+        )
+    return None
 
 
 def extract_rag_config_from_knowledge_base(
@@ -317,41 +397,13 @@ def _prepare_indexing_runtime(
         kb_index_info=kb_info,
     )
 
-    delete_spec = None
-    if document_id is not None:
-        try:
-            delete_spec = runtime_resolver.build_delete_runtime_spec(
-                db=db,
-                knowledge_base_id=int(knowledge_base_id),
-                document_ref=str(document_id),
-                index_owner_user_id=kb_info.index_owner_user_id,
-            )
-        except ValueError as e:
-            logger.warning(
-                f"[Indexing] Cannot delete old index for document {document_id}: {e}"
-            )
-            add_span_event(
-                "rag.indexing.old_index_delete_skipped",
-                {
-                    "kb_id": str(knowledge_base_id),
-                    "document_id": str(document_id),
-                    "reason": str(e),
-                },
-            )
-        except Exception as e:
-            logger.error(
-                f"[Indexing] Error preparing old index delete for document {document_id}: "
-                f"{type(e).__name__}: {e}"
-            )
-            add_span_event(
-                "rag.indexing.old_index_delete_failed",
-                {
-                    "kb_id": str(knowledge_base_id),
-                    "document_id": str(document_id),
-                    "error_type": type(e).__name__,
-                    "error": str(e),
-                },
-            )
+    delete_spec = _build_old_index_delete_spec(
+        db=db,
+        runtime_spec=runtime_spec,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+        index_owner_user_id=kb_info.index_owner_user_id,
+    )
 
     return _IndexingPreparation(
         runtime_spec=runtime_spec,

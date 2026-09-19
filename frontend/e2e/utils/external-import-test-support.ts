@@ -291,19 +291,61 @@ export async function deleteDocument(
   await expectOk(response)
 }
 
-/** Read the indexed chunks of a document (retrieval data plane evidence). */
-export async function getDocumentChunks(
+/**
+ * Read the chunks of a document that was just indexed, retrying while the
+ * vector store catches up.
+ *
+ * Document status turns successful when the index write returns, and Milvus
+ * answers the first reads after that write from a snapshot that can predate it
+ * (measured 0.3-0.5s on the pinned 2.5.4 fixture; the write does not wait for
+ * it by design). A bounded retry keeps this flow honest on every storage
+ * backend instead of asserting inside that window; a document that never
+ * becomes readable still fails, with the time it waited.
+ */
+export async function readDocumentChunksAfterIndexing(
+  request: APIRequestContext,
+  token: string,
+  documentId: number,
+  marker: string
+): Promise<string> {
+  let latest = ''
+  await expect
+    .poll(
+      async () => {
+        latest = await readDocumentChunks(request, token, documentId)
+        return latest.includes(marker)
+      },
+      {
+        timeout: 10_000,
+        message: `chunks of document ${documentId} should become readable`,
+      }
+    )
+    .toBe(true)
+  return latest
+}
+
+async function readDocumentChunks(
   request: APIRequestContext,
   token: string,
   documentId: number
 ): Promise<string> {
-  const response = await request.get(
-    `${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${documentId}/chunks?page=1&page_size=50`,
-    { headers: authHeaders(token) }
-  )
-  await expectOk(response)
-  const body = (await response.json()) as { items: Array<{ content?: string }> }
-  return JSON.stringify(body.items ?? [])
+  const pageSize = 50
+  const items: Array<{ content?: string }> = []
+  for (let page = 1; ; page += 1) {
+    const response = await request.get(
+      `${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${documentId}/chunks?page=${page}&page_size=${pageSize}`,
+      { headers: authHeaders(token) }
+    )
+    await expectOk(response)
+    const body = (await response.json()) as {
+      items?: Array<{ content?: string }>
+    }
+    const pageItems = body.items ?? []
+    items.push(...pageItems)
+    // The last page is the short one, so every chunk of the document is read.
+    if (pageItems.length < pageSize) break
+  }
+  return JSON.stringify(items)
 }
 
 export async function createFolder(

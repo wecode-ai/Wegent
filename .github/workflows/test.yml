@@ -18,6 +18,9 @@ on:
     types:
       - checks_requested
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -33,6 +36,7 @@ jobs:
       executor_manager: ${{ steps.classify.outputs.executor_manager }}
       shared: ${{ steps.classify.outputs.shared }}
       knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
+      knowledge_runtime: ${{ steps.classify.outputs.knowledge_runtime }}
       frontend: ${{ steps.classify.outputs.frontend }}
       wework: ${{ steps.classify.outputs.wework }}
       wegent_cli: ${{ steps.classify.outputs.wegent_cli }}
@@ -333,6 +337,92 @@ jobs:
           flags: knowledge-engine
           name: knowledge-engine-coverage
 
+  test-knowledge-engine-milvus:
+    name: Test Knowledge Engine (real Milvus)
+    needs: changes
+    if: needs.changes.outputs.knowledge_engine == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12 and uv
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: ./knowledge_engine
+        run: uv sync --dev
+
+      - name: Start pinned Milvus standalone
+        working-directory: ./knowledge_engine
+        run: docker compose -f tests/contract/docker-compose.milvus.yml up -d --wait
+
+      - name: Record service and SDK versions
+        working-directory: ./knowledge_engine
+        env:
+          MILVUS_CONTRACT_URI: http://localhost:19530
+        run: |
+          uv run python -c "import pymilvus; print('pymilvus', pymilvus.__version__)"
+          uv run python -c "
+          from pymilvus import MilvusClient
+          client = MilvusClient(uri='http://localhost:19530')
+          print('milvus server', client.get_server_version())
+          client.close()
+          "
+
+      - name: Run real Milvus contract tests
+        working-directory: ./knowledge_engine
+        env:
+          MILVUS_CONTRACT_URI: http://localhost:19530
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
+        run: uv run pytest tests/contract -m milvus -v
+
+      - name: Dump Milvus logs on failure
+        if: failure()
+        working-directory: ./knowledge_engine
+        run: docker compose -f tests/contract/docker-compose.milvus.yml logs --tail=300
+
+      - name: Stop Milvus
+        if: always()
+        working-directory: ./knowledge_engine
+        run: docker compose -f tests/contract/docker-compose.milvus.yml down -v
+
+  test-knowledge-runtime:
+    name: Test Knowledge Runtime
+    needs: changes
+    if: |
+      needs.changes.outputs.knowledge_runtime == 'true' ||
+      needs.changes.outputs.knowledge_engine == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12 and uv
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: ./knowledge_runtime
+        run: uv sync --dev
+
+      - name: Run knowledge runtime tests
+        working-directory: ./knowledge_runtime
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
+        run: uv run pytest tests/ -v
+
   test-frontend:
     name: Test Frontend
     needs: changes
@@ -546,6 +636,8 @@ jobs:
         test-executor-manager,
         test-shared,
         test-knowledge-engine,
+        test-knowledge-engine-milvus,
+        test-knowledge-runtime,
         test-frontend,
         test-wework,
         test-wegent-cli,
@@ -575,6 +667,15 @@ jobs:
           assert_result "${{ needs.changes.outputs.executor_manager }}" "${{ needs.test-executor-manager.result }}" "Executor Manager tests"
           assert_result "${{ needs.changes.outputs.shared }}" "${{ needs.test-shared.result }}" "Shared tests"
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
+          assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine-milvus.result }}" "Knowledge Engine real Milvus contract tests"
+          # The Runtime job runs for knowledge_engine changes too, because the
+          # runtime packs the engine as an editable dependency.
+          runtime_required=false
+          if [[ "${{ needs.changes.outputs.knowledge_engine }}" == "true" ]] || \
+             [[ "${{ needs.changes.outputs.knowledge_runtime }}" == "true" ]]; then
+            runtime_required=true
+          fi
+          assert_result "$runtime_required" "${{ needs.test-knowledge-runtime.result }}" "Knowledge Runtime tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
