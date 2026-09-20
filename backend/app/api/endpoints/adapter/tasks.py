@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, with_task_telemetry
 from app.api.endpoints.adapter.attachments import _build_content_disposition
+from app.api.endpoints.adapter.task_runtime import router as task_runtime_router
 from app.core import security
 from app.core.config import settings
 from app.core.constants import (
@@ -57,8 +58,6 @@ from app.schemas.task import (
     TaskLiteCursorResponse,
     TaskLiteGroupedListResponse,
     TaskLiteListResponse,
-    TaskRuntimeActiveStream,
-    TaskRuntimeCheck,
     TaskSkillsResponse,
     TaskUpdate,
 )
@@ -66,7 +65,6 @@ from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 from app.services.task_fork import task_fork_service
@@ -74,6 +72,7 @@ from app.stores.tasks import task_store
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
+router.include_router(task_runtime_router)
 logger = logging.getLogger(__name__)
 
 ClientOriginQuery = Annotated[
@@ -390,46 +389,6 @@ def delete_all_personal_tasks(
     return TaskArchiveBatchResponse(
         message="All personal tasks deleted successfully",
         count=count,
-    )
-
-
-@router.get("/{task_id}/runtime-check", response_model=TaskRuntimeCheck)
-async def get_task_runtime_check(
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Return lightweight task/runtime consistency checkpoint.
-
-    This endpoint must not return message content. Messages are recovered via
-    WebSocket join/resume only.
-    """
-    task = task_kinds_service.get_task_by_id(
-        db=db, task_id=task_id, user_id=current_user.id
-    )
-
-    active_stream = None
-    streaming_status = await session_manager.get_task_streaming_status(task_id)
-    if streaming_status:
-        raw_subtask_id = streaming_status.get("subtask_id")
-        subtask_id = int(raw_subtask_id) if raw_subtask_id is not None else None
-        if subtask_id is not None:
-            cached_content = await session_manager.get_streaming_content(subtask_id)
-            active_stream = TaskRuntimeActiveStream(
-                subtask_id=subtask_id,
-                cursor=len(cached_content or ""),
-                last_activity_at=(
-                    datetime.fromisoformat(streaming_status["last_activity_at"])
-                    if streaming_status.get("last_activity_at")
-                    else None
-                ),
-            )
-
-    return TaskRuntimeCheck(
-        task_id=task_id,
-        task_status=task["status"],
-        status_updated_at=task.get("updated_at"),
-        active_stream=active_stream,
     )
 
 
