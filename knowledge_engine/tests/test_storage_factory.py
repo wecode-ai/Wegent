@@ -12,10 +12,14 @@ MILVUS_URL = "http://milvus:19530/v2"
 def _milvus_storage_config(
     *,
     prefix: str | None = None,
-    mode: str = "per_dataset",
+    mode: str | None = "per_dataset",
 ) -> dict:
-    """One resolved Milvus storage config, in the shape the resolver reads."""
-    strategy: dict = {"mode": mode}
+    """One resolved Milvus storage config, in the shape the resolver reads.
+
+    A ``mode`` of None declares no mode at all, which is the shape a resolved
+    storage config carries when it names a prefix but no mode.
+    """
+    strategy: dict = {} if mode is None else {"mode": mode}
     if prefix is not None:
         strategy["prefix"] = prefix
     return {"type": "milvus", "url": MILVUS_URL, "indexStrategy": strategy}
@@ -115,7 +119,7 @@ def test_the_reserved_prefix_is_the_value_the_deployment_is_told_to_configure() 
 
 
 def test_the_reserved_prefix_builds_the_second_generation() -> None:
-    """``per_dataset`` plus the reserved prefix is the one V2 selection."""
+    """A per-dataset strategy plus the reserved prefix is the one V2 selection."""
     from knowledge_engine.storage.factory import (
         create_storage_backend_from_runtime_config,
     )
@@ -134,6 +138,34 @@ def test_the_reserved_prefix_builds_the_second_generation() -> None:
     assert type(backend) is MilvusV2Backend
     assert not issubclass(MilvusV2Backend, LegacyMilvusBackend)
     assert not issubclass(LegacyMilvusBackend, MilvusV2Backend)
+
+
+def test_a_reserved_prefix_with_no_mode_builds_the_second_generation() -> None:
+    """A prefix on its own still has a mode, and that mode is per_dataset.
+
+    The index strategy layer has always read a missing ``mode`` as
+    ``per_dataset`` - it is what names the collection - so a Retriever that
+    declares only the reserved prefix is a per-dataset Retriever and reaches
+    the second generation. Reading the same default here keeps the routing rule
+    and the physical name on one meaning; it is the existing default of the
+    system, not a second chance for a strategy that was refused.
+    """
+    from knowledge_engine.storage.factory import (
+        create_storage_backend_from_runtime_config,
+    )
+    from knowledge_engine.storage.milvus.backend import MilvusBackend as MilvusV2Backend
+
+    backend = create_storage_backend_from_runtime_config(
+        RuntimeRetrieverConfig(
+            name="v2-retriever",
+            storage_config=_milvus_storage_config(prefix="wegent_v2", mode=None),
+        )
+    )
+
+    assert type(backend) is MilvusV2Backend
+    # The same default names the collection, so the adapter is routed to the
+    # collection its own naming rule writes.
+    assert backend.get_index_name("7") == "wegent_v2_kb_7"
 
 
 @pytest.mark.parametrize(
@@ -351,6 +383,10 @@ def test_only_the_reserved_prefix_config_owns_the_document_replacement() -> None
 
     assert storage_backend_owns_document_replacement(_milvus_storage_config()) is False
     assert (
+        storage_backend_owns_document_replacement(_milvus_storage_config(mode=None))
+        is False
+    )
+    assert (
         storage_backend_owns_document_replacement(
             _milvus_storage_config(prefix="wegent")
         )
@@ -359,6 +395,12 @@ def test_only_the_reserved_prefix_config_owns_the_document_replacement() -> None
     assert (
         storage_backend_owns_document_replacement(
             _milvus_storage_config(prefix="wegent_v2")
+        )
+        is True
+    )
+    assert (
+        storage_backend_owns_document_replacement(
+            _milvus_storage_config(prefix="wegent_v2", mode=None)
         )
         is True
     )
@@ -414,6 +456,10 @@ def test_ownership_does_not_swallow_a_routing_rule_a_known_type_breaks() -> None
         pytest.param(_milvus_storage_config(), id="legacy-default-prefix"),
         pytest.param(_milvus_storage_config(prefix="wegent"), id="legacy-prefix"),
         pytest.param(_milvus_storage_config(prefix="wegent_v2"), id="reserved-prefix"),
+        pytest.param(
+            _milvus_storage_config(prefix="wegent_v2", mode=None),
+            id="reserved-prefix-without-a-declared-mode",
+        ),
     ],
 )
 def test_ownership_answers_from_the_adapter_the_builder_builds(
