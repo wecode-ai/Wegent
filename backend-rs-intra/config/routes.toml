@@ -2,10 +2,10 @@
 # `backend-rs-intra`.
 include = ["./routes-public.toml"]
 
-[[routes]]
-methods = ["GET"]
-path = "/api/quota/claude/quota"
-match_kind = "exact"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/quota/claude/quota"
+#match_kind = "exact"
 
 #[[routes]]
 #methods = ["GET"]
