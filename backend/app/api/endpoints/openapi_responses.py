@@ -528,18 +528,13 @@ async def create_response(
             db, current_user.id, model_namespace, model_name
         )
 
-        # If not found and namespace is not default, fall back to the
-        # caller's personal default namespace. This preserves the legacy
-        # "group#team#model_id" behavior where the model lives under the
-        # caller's own default namespace.
+        # If not found and namespace is not default, fall back to the caller's
+        # default namespace. This preserves the legacy "group#team#model_id"
+        # behavior where the model lives under the caller's own default
+        # namespace, and also resolves models referenced into the caller's
+        # default namespace by another user.
         if not model and model_namespace != "default":
-            model = kindReader.get_by_name_and_namespace(
-                db,
-                current_user.id,
-                KindType.MODEL,
-                "default",
-                model_name,
-            )
+            model = _resolve_requested_model(db, current_user.id, "default", model_name)
 
         if not model:
             raise HTTPException(

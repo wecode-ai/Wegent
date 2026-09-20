@@ -786,6 +786,62 @@ class TestOpenAPIResponsesCreate:
             is None
         )
 
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_falls_back_to_default_referenced_model(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_model: Kind,
+    ):
+        """The group fallback also resolves a model referenced into the
+        caller's default namespace by another user."""
+        from app.schemas.openapi_response import ResponseObject
+
+        caller, namespace = self._create_group_with_referenced_model(
+            test_db, test_user, test_model
+        )
+        # Replace the group-level reference with a default-namespace
+        # (user-level) reference for the caller.
+        ref = (
+            test_db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Model",
+                ResourceMember.resource_id == test_model.id,
+            )
+            .one()
+        )
+        ref.entity_type = "user"
+        ref.entity_id = str(caller.id)
+        test_db.commit()
+
+        team = (
+            test_db.query(Kind)
+            .filter(Kind.kind == "Team", Kind.namespace == namespace.name)
+            .one()
+        )
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_126",
+            created_at=int(datetime.now().timestamp()),
+            status="completed",
+            model=f"{namespace.name}#referenced-model-team",
+            output=[],
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": "wg-referenced-model-key"},
+            json={
+                "model": f"{namespace.name}#referenced-model-team#{test_model.name}",
+                "input": "Hello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["user"].id == caller.id
+        assert mock_create_sync.call_args.kwargs["team"].id == team.id
+
     def test_resolve_requested_model_rejects_non_member_of_group(
         self,
         test_db: Session,
