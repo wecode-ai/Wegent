@@ -472,6 +472,11 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let _lock = env_lock().await;
+    let _debug = EnvGuard::set("WEGENT_DEBUG_CLAUDE_STDOUT", "1");
+    let stdout_path = std::env::temp_dir().join(format!(
+        "wegent-codex-stdout-{}.jsonl",
+        std::process::id()
+    ));
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-shared-proxy-rpc-{}.jsonl",
         std::process::id()
@@ -503,6 +508,13 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
         )
         .await
         .expect("task should reuse the proxy-configured app-server");
+
+    let stdout = read_json_lines(&stdout_path);
+    assert!(stdout.iter().any(|line| line["id"] == 1));
+    assert!(stdout.iter().any(|line| line["method"] == "turn/completed"));
+    assert!(stdout.iter().all(|line| line["received_at"].is_string()));
+    client.restart().await;
+    fs::remove_file(stdout_path).unwrap();
 
     assert_eq!(
         turn.outcome,
