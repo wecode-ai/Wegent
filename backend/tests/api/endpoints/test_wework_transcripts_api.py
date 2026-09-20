@@ -666,3 +666,44 @@ def test_download_streams_the_object_through_backend(
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.headers["content-length"] == "10"
     assert response.content == b"encrypted!!"
+
+
+def test_download_reports_a_missing_storage_object_as_not_found(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.api.endpoints import wework_transcripts
+    from app.services.wework_transcript_storage import (
+        WeworkTranscriptStorageNotFoundError,
+    )
+
+    _lease(test_client, test_token)
+    transcript = test_db.query(WeworkTranscript).one()
+    archive = WeworkTranscriptArchive(
+        transcript_db_id=transcript.id,
+        from_sequence=0,
+        to_sequence=1,
+        storage_key="users/1/transcripts/key/missing.tgz.aes256gcm",
+        sha256="c" * 64,
+        size_bytes=10,
+        format="codex-snapshot.v1.tgz.aes256gcm",
+    )
+    test_db.add(archive)
+    test_db.commit()
+    monkeypatch.setattr(
+        wework_transcripts.wework_transcript_storage,
+        "stream",
+        lambda _key: (_ for _ in ()).throw(
+            WeworkTranscriptStorageNotFoundError("Wework transcript segment not found")
+        ),
+    )
+
+    response = test_client.get(
+        f"/api/wework-transcripts/transcript-1/archives/{archive.id}/download",
+        headers=_headers(test_token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "code": "archive_not_found",
+        "message": "Wework transcript segment not found",
+    }

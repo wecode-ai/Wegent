@@ -15,10 +15,10 @@ from pydantic import ValidationError
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.schemas.im_channel import IMChannelCreate, IMChannelUpdate
 from app.services.channels.dingtalk import (
-    card_adapter,
     card_binding,
     card_follow_up,
     card_quotes,
+    card_transport,
 )
 from app.services.channels.dingtalk.callback import (
     DingTalkCallbackInfo,
@@ -215,12 +215,12 @@ async def test_http_stream_full_prefixes_same_card_and_binding_ready(
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        card_adapter.httpx,
+        card_transport.httpx,
         "AsyncClient",
         lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs),
     )
     client = SimpleNamespace(
-        get_access_token=lambda: "test-token",
+        _access_token={"accessToken": "test-token", "expireTime": float("inf")},
         credential=SimpleNamespace(client_id="robot-a"),
     )
     message = ChatbotMessage.from_dict(
@@ -273,13 +273,13 @@ async def test_api_rejection_stops_before_delivery(
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        card_adapter.httpx,
+        card_transport.httpx,
         "AsyncClient",
         lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs),
     )
     adapter = TemplateChatCardAdapter(
         SimpleNamespace(
-            get_access_token=lambda: "test-token",
+            _access_token={"accessToken": "test-token", "expireTime": float("inf")},
             credential=SimpleNamespace(client_id="r"),
         ),
         ChatbotMessage.from_dict(binding.incoming_data),
@@ -491,13 +491,13 @@ def task_round(monkeypatch, binding):
 @pytest.mark.asyncio
 async def test_continue_uses_original_task_team_and_parameters(task_round, binding):
     r = task_round
-    await r.receiver._continue_task(r.db, r.user, binding, r.context)
+    execution = await r.receiver._continue_task(r.db, r.user, binding, r.context)
     assert r.create.call_args.kwargs["task_id"] == 101
     assert r.create.call_args.kwargs["team"] is r.team
-    assert (
-        r.handler._trigger_private_im_task_response.call_args.kwargs["params"].device_id
-        == "original-device"
-    )
+    assert execution.params.device_id == "original-device"
+    assert r.create.call_args.kwargs["commit"] is False
+    r.db.commit.assert_called_once()
+    r.handler._trigger_private_im_task_response.assert_not_awaited()
     assert r.context.extra_data["chat_card"]["content_key"] == "answer"
 
 
@@ -518,13 +518,14 @@ async def test_collaborator_turn_uses_actual_user_and_existing_group_ui(
     notify = AsyncMock()
     monkeypatch.setattr(card_collaboration, "notify_card_task_joined", notify)
 
-    await r.receiver._continue_task(r.db, actor, binding, r.context)
+    execution = await r.receiver._continue_task(r.db, actor, binding, r.context)
 
     assert r.create.call_args.kwargs["user"] is actor
     assert r.create.call_args.kwargs["task_id"] == binding.task_id
     assert r.create.call_args.kwargs["params"].is_group_chat is True
     notify.assert_awaited_once_with(r.db, r.result.task, 10, 9)
-    assert r.handler._trigger_private_im_task_response.call_args.kwargs["user"] is actor
+    assert execution.user_id == actor.id
+    r.handler._trigger_private_im_task_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -542,25 +543,22 @@ async def test_images_saved_for_current_user_message_before_trigger(
     upload = Mock(return_value=(SimpleNamespace(id=301), None))
     monkeypatch.setattr(ContextService, "upload_attachment", upload)
 
-    async def trigger(**kwargs):
-        upload.assert_called_once_with(
-            db=r.db,
-            user_id=9,
-            filename="im_image_1.png",
-            binary_data=b"image",
-            subtask_id=204,
-            commit=False,
-        )
-        r.db.commit.assert_called_once()
-        assert kwargs["user_subtask_id"] == 204
-        assert kwargs["message_context"].images == [IMAGE]
-
-    r.handler._trigger_private_im_task_response.side_effect = trigger
     with caplog.at_level("INFO"):
-        await r.receiver._continue_task(r.db, r.user, binding, r.context)
+        execution = await r.receiver._continue_task(r.db, r.user, binding, r.context)
+    upload.assert_called_once_with(
+        db=r.db,
+        user_id=9,
+        filename="im_image_1.png",
+        binary_data=b"image",
+        subtask_id=204,
+        commit=False,
+    )
+    r.db.commit.assert_called_once()
+    assert execution.user_subtask_id == 204
+    assert execution.context.images == [IMAGE]
     download.assert_awaited_once_with([IMAGE_URL])
     assert r.create.call_args.kwargs["message"] == (text or "请查看图片")
-    r.handler._trigger_private_im_task_response.assert_awaited_once()
+    r.handler._trigger_private_im_task_response.assert_not_awaited()
     assert '"attachment_ids": [301]' in caplog.text
 
 
@@ -584,7 +582,7 @@ async def test_download_failure_does_not_append_or_trigger(
 
 
 @pytest.mark.asyncio
-async def test_partial_save_failure_rolls_back_and_marks_round_failed(
+async def test_partial_save_failure_rolls_back_entire_submission(
     monkeypatch, task_round, binding
 ):
     from app.services.context.context_service import ContextService
@@ -605,12 +603,7 @@ async def test_partial_save_failure_rolls_back_and_marks_round_failed(
     assert all(call.kwargs["commit"] is False for call in upload.call_args_list)
     r.db.rollback.assert_called()
     r.db.commit.assert_not_called()
-    mark_failed.assert_called_once_with(
-        r.db,
-        task=r.result.task,
-        assistant_subtask=r.result.assistant_subtask,
-        error_message="追问图片保存失败",
-    )
+    mark_failed.assert_not_called()
     r.handler._trigger_private_im_task_response.assert_not_awaited()
 
 
@@ -765,6 +758,7 @@ async def test_interrupted_dispatch_is_reported_without_reexecution(binding):
     )
     receiver._run = AsyncMock()
     receiver._report_error = AsyncMock()
+    receiver._recover_submission = Mock(return_value=None)
     await receiver._run_record("event-1")
     receiver._run.assert_not_called()
     receiver._report_error.assert_awaited_once()
@@ -788,6 +782,7 @@ async def test_failed_status_update_retries_ui_only(binding):
         )
     )
     receiver._run = AsyncMock(return_value=True)
+    receiver._recover_submission = Mock(return_value=None)
     receiver._update_status = AsyncMock(
         side_effect=[None, RuntimeError("HTTP timeout"), None]
     )
@@ -828,7 +823,9 @@ async def test_runtime_card_round_checks_original_message(
 @pytest.mark.asyncio
 async def test_status_update_preserves_answer_and_other_fields(config, httpx_mock):
     config.follow_up_status_key = "sendState"
-    client = Mock(get_access_token=Mock(return_value="test-token"))
+    client = SimpleNamespace(
+        _access_token={"accessToken": "test-token", "expireTime": float("inf")}
+    )
     adapter = TemplateChatCardAdapter(client, None, config, 77, "card-a")
     httpx_mock.add_response(json={"success": True})
     await adapter.set_follow_up_status("sending")
@@ -847,11 +844,12 @@ def test_status_cannot_overwrite_answer_or_inputs(key):
 
 @pytest.mark.asyncio
 async def test_stream_retry_reuses_guid_and_full_body(config, httpx_mock, monkeypatch):
-    monkeypatch.setattr(card_adapter.asyncio, "sleep", AsyncMock())
     httpx_mock.add_response(status_code=503, json={})
     httpx_mock.add_response(json={"success": True})
     adapter = TemplateChatCardAdapter(
-        Mock(get_access_token=Mock(return_value="test-token")),
+        SimpleNamespace(
+            _access_token={"accessToken": "test-token", "expireTime": float("inf")}
+        ),
         None,
         config,
         77,

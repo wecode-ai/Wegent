@@ -1708,7 +1708,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             automation: true,
             dingtalkAitable: true,
             projectLocation: location.workspaceId === LOCAL_WORKSPACE_ID ? 'local' : 'cloud',
-            workspaceLocations: api?.workspaces ? ['local', 'cloud'] : ['local'],
+            workspaceLocations: ['local', 'cloud'],
             sidebarPresentation: 'full',
           },
           navigate: nextLocation => {

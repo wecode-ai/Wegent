@@ -226,6 +226,71 @@ describe("ProjectManageView project scope", () => {
     hookRuntime.reset();
   });
 
+  it("reloads the authoritative member list after adding a member", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    const api = createApi();
+    const host = createHost();
+    const owner = {
+      id: 1,
+      user_id: 1,
+      user_name: "owner",
+      email: null,
+      role: "Owner" as const,
+      capability_description: "",
+    };
+    const addedMember = {
+      id: 2,
+      user_id: 2,
+      user_name: "member",
+      email: null,
+      role: "Reporter" as const,
+      capability_description: "",
+    };
+    const user = {
+      id: 2,
+      user_name: "member",
+      email: null,
+    };
+    vi.mocked(api.listMembers)
+      .mockResolvedValueOnce([owner])
+      .mockResolvedValueOnce([owner, addedMember]);
+    vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] });
+    vi.mocked(api.addMember).mockResolvedValue(addedMember);
+    const currentProject = project("project-a", "private");
+
+    try {
+      let tree = renderView(api, host, currentProject, vi.fn());
+      await flushPromises();
+      tree = renderView(api, host, currentProject, vi.fn());
+
+      findByTestId(tree, "cloud-project-members-toggle").props.onClick();
+      tree = renderView(api, host, currentProject, vi.fn());
+      findByTestId(tree, "cloud-member-search").props.onChange({
+        target: { value: "member" },
+      });
+      renderView(api, host, currentProject, vi.fn());
+      await vi.advanceTimersByTimeAsync(250);
+      await flushPromises();
+      tree = renderView(api, host, currentProject, vi.fn());
+
+      findByTestId(tree, "cloud-member-role").props.onChange({
+        target: { value: "Reporter" },
+      });
+      tree = renderView(api, host, currentProject, vi.fn());
+      findByTestId(tree, "cloud-member-result-2").props.onClick();
+      await flushPromises();
+      tree = renderView(api, host, currentProject, vi.fn());
+
+      expect(api.addMember).toHaveBeenCalledWith("project-a", 2, "Reporter");
+      expect(api.listMembers).toHaveBeenCalledTimes(2);
+      expect(findByTestId(tree, "cloud-project-member-2")).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not write an old project mutation response into the new project", async () => {
     const api = createApi();
     const host = createHost();

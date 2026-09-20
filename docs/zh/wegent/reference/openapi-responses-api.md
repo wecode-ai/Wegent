@@ -51,6 +51,21 @@ POST /api/v1/responses
 | `previous_response_id` | string | 否 | 用于后续对话的前一个响应 ID |
 | `reasoning` | object | 否 | 模型推理配置，包含 `effort` 和可选的 `summary` |
 | `tools` | array | 否 | Wegent 自定义工具配置 |
+| `omit_mcp_binary_output` | boolean | 否 | 将 MCP 工具输出中的图片、音频、视频等媒体负载（base64）替换为摘要占位符（默认：`false`，即返回原始内容） |
+
+#### MCP 二进制输出
+
+MCP 工具（例如抓取图片的工具）会以 base64 返回媒体内容，直接返回会让响应体变得很大，并可能导致调用方解析失败。把 `omit_mcp_binary_output` 设为 `true` 后，`mcp_call` 条目中的媒体负载会被替换为摘要占位符，例如 `<image/jpeg payload omitted: 2048 bytes>`：
+
+```json
+{
+  "model": "default#my-assistant",
+  "input": "下载这张图片并给出结论",
+  "omit_mcp_binary_output": true
+}
+```
+
+文本输出始终原样返回；模型调用时仍会拿到完整的原始内容，因此不影响模型判断。
 
 #### Model 格式
 
@@ -491,3 +506,4 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 - CRD 中配置的 Bot/Ghost MCP 工具始终可用
 - 使用 `wegent_chat_bot` 工具启用完整的服务端能力
 - 流式输出仅支持 Chat Shell 类型的 Team
+- 默认返回 `mcp_call` 的原始输出；将 `omit_mcp_binary_output` 设为 `true` 后，其中的图片、音频、视频等媒体负载（base64）会被替换为摘要占位符，例如 `<image/jpeg payload omitted: 2048 bytes>`，非媒体输出原样返回，模型调用时仍使用完整原始内容

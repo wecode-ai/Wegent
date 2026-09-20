@@ -1,5 +1,16 @@
-import { ChevronRight, FileText, Loader2, X } from "lucide-react";
+import {
+  ChevronRight,
+  File,
+  FileText,
+  Loader2,
+  ScanText,
+  X,
+} from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import {
+  canRestorePastedText,
+  isPastedTextFile,
+} from "../composer/pastedTextAttachment";
 import {
   AttachmentImageView,
   type AttachmentImageServices,
@@ -7,9 +18,7 @@ import {
 } from "./AttachmentImageView";
 import {
   getAttachmentTextPreview,
-  getAttachmentTypeLabel,
   isImageAttachment,
-  isTextAttachment,
   type ComposerAttachmentMetadata,
 } from "./attachmentPresentation";
 
@@ -19,6 +28,7 @@ export interface ComposerAttachment
   text_content?: string | null;
   ui_group_role?: string;
   ui_kind?: string;
+  text_length?: number | null;
 }
 export interface ComposerAttachmentBadgesProps<T extends ComposerAttachment> {
   attachments: T[];
@@ -28,10 +38,28 @@ export interface ComposerAttachmentBadgesProps<T extends ComposerAttachment> {
   >;
   errors: ReadonlyMap<string, string>;
   onRemoveAttachment(id: T["id"]): void;
+  onOpenAttachment?(attachment: T): void;
   onShowTextAttachment?(attachment: T): void;
   imageServices: AttachmentImageServices<T>;
-  labels: { showText: string; appshot: string };
+  labels: {
+    showText: string;
+    appshot: string;
+    pastedText: string;
+    addingText: string;
+  };
   leading?: ReactNode;
+}
+
+const attachmentTileClassName =
+  "group/attachment relative h-[122px] w-40 shrink-0";
+
+function AttachmentTileBorder() {
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-border"
+    />
+  );
 }
 
 function PendingImageAttachment({
@@ -54,7 +82,7 @@ function PendingImageAttachment({
   return (
     <div
       data-testid="pending-image-attachment"
-      className="h-20 w-20 shrink-0 overflow-hidden rounded-xl"
+      className={`${attachmentTileClassName} flex items-center justify-center overflow-hidden rounded-2xl bg-muted`}
     >
       {src ? (
         <img
@@ -66,6 +94,7 @@ function PendingImageAttachment({
       ) : (
         <Loader2 className="h-5 w-5 animate-spin" />
       )}
+      <AttachmentTileBorder />
     </div>
   );
 }
@@ -73,114 +102,178 @@ function PendingImageAttachment({
 function RemoveAttachmentButton<Id extends string | number>({
   attachmentId,
   onRemoveAttachment,
+  tile = false,
 }: {
   attachmentId: Id;
   onRemoveAttachment: (attachmentId: Id) => void;
+  tile?: boolean;
 }) {
   return (
     <button
       type="button"
       data-testid="remove-attachment-button"
       onClick={() => onRemoveAttachment(attachmentId)}
-      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-text-primary text-background shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      className={`absolute flex h-6 w-6 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${tile ? "-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100" : "right-1 top-1"}`}
       aria-label="Remove attachment"
     >
-      <X className="h-3 w-3" />
+      <X
+        className={`h-4 w-4 rounded-full bg-text-primary p-0.5 text-background ${tile ? "ring-2 ring-background" : ""}`}
+      />
     </button>
   );
 }
 
-function DocumentAttachmentCard<T extends ComposerAttachment>({
-  attachment,
-  onRemoveAttachment,
+function DocumentAttachmentCard({
+  filename,
+  uploading = false,
+  progress,
+  children,
+  onOpen,
 }: {
-  attachment: T;
-  onRemoveAttachment: (attachmentId: T["id"]) => void;
+  filename: string;
+  uploading?: boolean;
+  progress?: number;
+  children?: ReactNode;
+  onOpen?: () => void;
 }) {
-  const typeLabel = getAttachmentTypeLabel(attachment);
-
   return (
     <div
-      data-testid="attachment-badge"
-      className="relative inline-flex h-14 w-[220px] items-center gap-3 rounded-xl border border-border bg-background px-3 pr-8 text-xs text-text-secondary shadow-sm"
+      data-testid={
+        uploading ? "uploading-attachment-badge" : "attachment-badge"
+      }
+      aria-busy={uploading || undefined}
+      className={attachmentTileClassName}
     >
-      <span
-        data-testid="attachment-document-icon"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-xs font-semibold leading-none text-red-600"
-      >
-        {typeLabel}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate font-medium text-text-primary">
-          {attachment.filename}
+      <div className="flex h-full w-full flex-col overflow-hidden rounded-2xl bg-muted text-text-primary">
+        <span
+          data-testid="attachment-document-icon"
+          className="flex h-[90px] shrink-0 items-center justify-center gap-2 text-text-secondary"
+        >
+          {uploading ? (
+            <>
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+              {progress !== undefined && (
+                <span className="text-xs">{progress}%</span>
+              )}
+            </>
+          ) : (
+            <File className="h-6 w-6" aria-hidden="true" strokeWidth={1.5} />
+          )}
         </span>
-        <span className="truncate text-text-secondary">{typeLabel}</span>
-      </span>
-      <RemoveAttachmentButton
-        attachmentId={attachment.id}
-        onRemoveAttachment={onRemoveAttachment}
-      />
+        <span className="flex h-8 min-w-0 shrink-0 items-center gap-1 bg-background px-2 text-xs leading-4">
+          <FileText
+            className="h-4 w-4 shrink-0 text-focus"
+            aria-hidden="true"
+          />
+          <span className="truncate" title={filename}>
+            {filename}
+          </span>
+        </span>
+      </div>
+      <AttachmentTileBorder />
+      {onOpen && (
+        <button
+          type="button"
+          data-testid="attachment-document-preview-button"
+          aria-label={filename}
+          onClick={onOpen}
+          className="absolute inset-0 cursor-pointer rounded-2xl hover:bg-text-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        />
+      )}
+      {children}
     </div>
   );
 }
 
-function TextAttachmentCard<T extends ComposerAttachment>({
-  attachment,
-  onRemoveAttachment,
-  onShowTextAttachment,
-  showTextLabel,
+function TextAttachmentCard({
+  preview,
+  pending = false,
+  onOpen,
+  onShowText,
+  labels,
+  children,
 }: {
-  attachment: T;
-  onRemoveAttachment: (attachmentId: T["id"]) => void;
-  onShowTextAttachment?: (attachment: T) => void;
-  showTextLabel: string;
+  preview: string;
+  pending?: boolean;
+  onOpen?: () => void;
+  onShowText?: () => void;
+  labels: ComposerAttachmentBadgesProps<ComposerAttachment>["labels"];
+  children?: ReactNode;
 }) {
-  const preview = getAttachmentTextPreview(attachment) ?? attachment.filename;
-  const canShowInTextbox = Boolean(
-    attachment.text_content && onShowTextAttachment,
-  );
-
   return (
     <div
-      data-testid="attachment-badge"
-      className="relative inline-flex h-[72px] max-w-[min(420px,100%)] items-center gap-3 rounded-[20px] border border-border bg-muted px-3 pr-8 text-left shadow-sm"
+      data-testid={pending ? "uploading-attachment-badge" : "attachment-badge"}
+      aria-busy={pending || undefined}
+      className="relative inline-flex w-fit max-w-64 shrink-0 items-center gap-2.5 rounded-lg border border-border bg-background p-3 pr-8 text-left"
     >
       <span
         data-testid="attachment-text-icon"
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-text-primary text-background"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary"
       >
-        <FileText className="h-5 w-5" strokeWidth={1.8} />
+        <ScanText className="h-6 w-6" strokeWidth={1.8} aria-hidden="true" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span
           data-testid="attachment-text-preview"
-          className="truncate text-sm font-semibold leading-5 text-text-primary"
+          className="truncate text-sm font-medium leading-5 text-text-primary"
           title={preview}
         >
-          {preview}
+          {preview || labels.pastedText}
         </span>
-        {canShowInTextbox ? (
-          <button
-            type="button"
-            data-testid="show-text-attachment-button"
-            className="inline-flex w-fit max-w-full items-center gap-1 truncate text-sm leading-5 text-text-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-            onClick={() => onShowTextAttachment?.(attachment)}
-          >
-            <span className="truncate">{showTextLabel}</span>
-            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-          </button>
-        ) : (
-          <span className="truncate text-sm leading-5 text-text-secondary">
-            {getAttachmentTypeLabel(attachment)}
-          </span>
-        )}
+        <span className="truncate text-sm leading-5 text-text-secondary">
+          {pending ? (
+            labels.addingText
+          ) : onShowText ? (
+            <button
+              type="button"
+              data-testid="show-text-attachment-button"
+              className="relative z-10 inline-flex max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              onClick={onShowText}
+            >
+              <span className="truncate">{labels.showText}</span>
+              <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+            </button>
+          ) : (
+            labels.pastedText
+          )}
+        </span>
       </span>
-      <RemoveAttachmentButton
-        attachmentId={attachment.id}
-        onRemoveAttachment={onRemoveAttachment}
-      />
+      {onOpen && (
+        <button
+          type="button"
+          data-testid="attachment-text-open-button"
+          aria-label={preview || labels.pastedText}
+          onClick={onOpen}
+          className="absolute inset-0 cursor-pointer rounded-lg hover:bg-text-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        />
+      )}
+      {children}
     </div>
   );
+}
+
+function PendingTextAttachment({
+  file,
+  labels,
+}: {
+  file: File;
+  labels: ComposerAttachmentBadgesProps<ComposerAttachment>["labels"];
+}) {
+  const [preview, setPreview] = useState("");
+  useEffect(() => {
+    let active = true;
+    void file
+      .slice(0, 512)
+      .text()
+      .then((text) => {
+        if (active) setPreview(text.trim().split(/\r?\n/, 1)[0]);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [file]);
+  return <TextAttachmentCard preview={preview} pending labels={labels} />;
 }
 
 export function ComposerAttachmentBadges<T extends ComposerAttachment>({
@@ -192,6 +285,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
   errors,
   onRemoveAttachment,
   onShowTextAttachment,
+  onOpenAttachment,
 }: ComposerAttachmentBadgesProps<T>) {
   const visibleAttachments = attachments.filter(
     (attachment) => attachment.ui_group_role !== "companion",
@@ -207,81 +301,122 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
 
   return (
     <div
-      className="mb-3 flex flex-wrap gap-2"
+      className="mb-3 flex min-w-0 items-end gap-3 overflow-x-auto py-2 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       data-testid="attachment-badge-list"
     >
       {leading}
-      {visibleAttachments.map((attachment) =>
-        isImageAttachment(attachment) ? (
-          <div
-            key={attachment.id}
-            data-testid="attachment-badge"
-            className="relative h-20 w-20 shrink-0"
-          >
-            <AttachmentImageView
-              services={imageServices}
-              attachment={attachment}
-              buttonTestId="attachment-image-preview-button"
-              imageTestId="attachment-image-preview"
-              loadingTestId="attachment-image-preview-loading"
-              errorTestId="attachment-image-preview-error"
-              imageClassName="h-full w-full rounded-xl object-cover"
-              placeholderClassName="flex h-full w-full items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
-              buttonClassName="block h-full w-full cursor-zoom-in p-0 text-left"
+      {visibleAttachments
+        .filter((attachment) => attachment.ui_kind !== "pasted-text")
+        .map((attachment) =>
+          isImageAttachment(attachment) ? (
+            <div
+              key={attachment.id}
+              data-testid="attachment-badge"
+              className={attachmentTileClassName}
+            >
+              <AttachmentImageView
+                services={imageServices}
+                attachment={attachment}
+                buttonTestId="attachment-image-preview-button"
+                imageTestId="attachment-image-preview"
+                loadingTestId="attachment-image-preview-loading"
+                errorTestId="attachment-image-preview-error"
+                imageClassName="h-full w-full rounded-2xl object-cover"
+                placeholderClassName="flex h-full w-full items-center justify-center rounded-2xl bg-muted text-text-muted"
+                buttonClassName="block h-full w-full cursor-zoom-in rounded-2xl p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+              />
+              <AttachmentTileBorder />
+              {attachment.ui_kind === "appshot" && (
+                <span
+                  data-testid="attachment-appshot-label"
+                  className="pointer-events-none absolute bottom-1 left-1 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white"
+                >
+                  {labels.appshot}
+                </span>
+              )}
+              <RemoveAttachmentButton
+                attachmentId={attachment.id}
+                onRemoveAttachment={onRemoveAttachment}
+                tile
+              />
+            </div>
+          ) : (
+            <DocumentAttachmentCard
+              key={attachment.id}
+              filename={attachment.filename}
+              onOpen={
+                onOpenAttachment
+                  ? () => onOpenAttachment(attachment)
+                  : undefined
+              }
+            >
+              <RemoveAttachmentButton
+                attachmentId={attachment.id}
+                onRemoveAttachment={onRemoveAttachment}
+                tile
+              />
+            </DocumentAttachmentCard>
+          ),
+        )}
+      {Array.from(uploadingFiles.entries())
+        .filter(([, upload]) => !isPastedTextFile(upload.file))
+        .map(([fileId, upload]) =>
+          upload.file.type.toLowerCase().startsWith("image/") ||
+          /\.(apng|avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(
+            upload.file.name,
+          ) ? (
+            <PendingImageAttachment
+              key={fileId}
+              file={upload.file}
+              previewUrl={upload.previewUrl}
             />
-            {attachment.ui_kind === "appshot" && (
-              <span
-                data-testid="attachment-appshot-label"
-                className="pointer-events-none absolute bottom-1 left-1 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white"
-              >
-                {labels.appshot}
-              </span>
-            )}
+          ) : (
+            <DocumentAttachmentCard
+              key={fileId}
+              filename={upload.file.name}
+              uploading
+              progress={upload.progress}
+            />
+          ),
+        )}
+      {visibleAttachments
+        .filter((attachment) => attachment.ui_kind === "pasted-text")
+        .map((attachment) => (
+          <TextAttachmentCard
+            key={attachment.id}
+            preview={
+              getAttachmentTextPreview(attachment) ?? attachment.filename
+            }
+            labels={labels}
+            onOpen={
+              onOpenAttachment ? () => onOpenAttachment(attachment) : undefined
+            }
+            onShowText={
+              attachment.text_content &&
+              onShowTextAttachment &&
+              canRestorePastedText(
+                attachment.text_length ?? attachment.text_content.length,
+              )
+                ? () => onShowTextAttachment(attachment)
+                : undefined
+            }
+          >
             <RemoveAttachmentButton
               attachmentId={attachment.id}
               onRemoveAttachment={onRemoveAttachment}
             />
-          </div>
-        ) : isTextAttachment(attachment) ? (
-          <TextAttachmentCard
-            key={attachment.id}
-            attachment={attachment}
-            onRemoveAttachment={onRemoveAttachment}
-            onShowTextAttachment={onShowTextAttachment}
-            showTextLabel={labels.showText}
-          />
-        ) : (
-          <DocumentAttachmentCard
-            key={attachment.id}
-            attachment={attachment}
-            onRemoveAttachment={onRemoveAttachment}
-          />
-        ),
-      )}
-      {Array.from(uploadingFiles.entries()).map(([fileId, upload]) =>
-        upload.file.type.toLowerCase().startsWith("image/") ||
-        /\.(apng|avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(upload.file.name) ? (
-          <PendingImageAttachment
+          </TextAttachmentCard>
+        ))}
+      {Array.from(uploadingFiles.entries())
+        .filter(([, upload]) => isPastedTextFile(upload.file))
+        .map(([fileId, upload]) => (
+          <PendingTextAttachment
             key={fileId}
             file={upload.file}
-            previewUrl={upload.previewUrl}
+            labels={labels}
           />
-        ) : (
-          <span
-            key={fileId}
-            data-testid="uploading-attachment-badge"
-            className="inline-flex max-w-[220px] items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary"
-          >
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            <span className="min-w-0 truncate">{upload.file.name}</span>
-            {upload.progress !== undefined ? (
-              <span className="shrink-0 text-text-muted">
-                {upload.progress}%
-              </span>
-            ) : null}
-          </span>
-        ),
-      )}
+        ))}
+
       {Array.from(errors.entries()).map(([fileId, error]) => (
         <span
           key={fileId}

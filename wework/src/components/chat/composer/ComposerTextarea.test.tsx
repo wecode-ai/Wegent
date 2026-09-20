@@ -1229,6 +1229,7 @@ describe('ComposerTextarea', () => {
           onListLocalSkills={async () => [GMAIL_SKILL]}
           onSetGoal={onSetGoal}
           onSetPlanMode={onSetPlanMode}
+          onPasteFiles={vi.fn()}
         />
       )
     }
@@ -1264,6 +1265,7 @@ describe('ComposerTextarea', () => {
 
   test('adds a selected folder as an atomic composer reference', async () => {
     const textareaRef = createRef<HTMLElement>()
+    const onPasteFiles = vi.fn()
     const workspaceTarget: WorkspaceTarget = {
       deviceId: 'remote-device',
       path: '/workspace/project',
@@ -1296,6 +1298,7 @@ describe('ComposerTextarea', () => {
           className="min-h-12"
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
+          onPasteFiles={onPasteFiles}
         />
       )
     }
@@ -1310,6 +1313,7 @@ describe('ComposerTextarea', () => {
 
     await waitFor(() => {
       expect(nativeWorkspacePickerMocks.open).toHaveBeenCalledWith('/workspace/project')
+      expect(onPasteFiles).not.toHaveBeenCalled()
       expect(editor.value).toContain('[$frontend](folder://')
       expect(screen.getByTestId('composer-path-chip-frontend')).toHaveAttribute(
         'data-composer-path-kind',

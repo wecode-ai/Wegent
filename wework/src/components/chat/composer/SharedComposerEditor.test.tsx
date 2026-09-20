@@ -43,6 +43,34 @@ function renderEditor(value = '', services?: ComposerEditorServices) {
 }
 
 describe('shared rich editor in a browser host', () => {
+  test.each([
+    '[test-label](~/workspace/skills/test-skill/SKILL.md)',
+    '**bold**',
+    '# Heading',
+    '- List item',
+    '> Quote',
+  ])('keeps the caret and subsequent input after a Markdown line break: %s', markdown => {
+    const { ref, editor } = renderEditor(markdown, {
+      preserveNativeEmptyCaret: false,
+      isWindowFocused: () => true,
+      subscribeWindowFocus: () => () => undefined,
+    })
+    act(() => {
+      ref.current!.setValue(markdown, markdown.length)
+      ref.current!.focus()
+      ref.current!.insertLineBreak()
+    })
+    expect(editor).toHaveFocus()
+    expect(editor).toHaveAttribute('data-composer-focus-visible')
+    expect(editor.querySelector('.composer-empty-caret')).not.toBeNull()
+    expect(editor.contains(window.getSelection()!.anchorNode)).toBe(true)
+    fireEvent.paste(editor, {
+      clipboardData: { types: ['text/plain'], getData: () => 'next line' },
+    })
+    expect(ref.current!.getSnapshot().value).toContain('next line')
+    expect(editor).toHaveFocus()
+  })
+
   test('keeps the sole empty browser caret native and round-trips rich Markdown', () => {
     const { ref, editor } = renderEditor()
     expect(editor.querySelector('.composer-empty-caret')).toBeNull()
