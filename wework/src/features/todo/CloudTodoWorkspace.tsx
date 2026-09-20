@@ -3548,8 +3548,7 @@ export function CloudTodoWorkspace({
         })
         track('feature_action_completed', {
           domain: 'board_item',
-          action: 'batch_confirm',
-          count: updatedItems.size,
+          action: 'update',
         })
       }
       setBatchConfirmItems(failedItems.length > 0 ? failedItems : null)

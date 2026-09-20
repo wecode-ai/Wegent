@@ -11,7 +11,7 @@ export interface ProjectSpaceTaskContextApi {
 }
 export interface ProjectSpaceTaskContextSource<TApi extends ProjectSpaceTaskContextApi> {
   api: TApi
-  context: Awaited<ReturnType<TApi['findCloudContextForTask']>>
+  context: Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
 }
 export type LocatedProjectSpace = CloudProject & {
   location: 'local' | 'cloud'
