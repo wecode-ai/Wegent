@@ -118,6 +118,7 @@ export interface RuntimeFeatureSet {
   schemaVersion: number
   interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null
+  [feature: string]: unknown
 }
 
 export type DeviceRuntimeRouteKind = 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'

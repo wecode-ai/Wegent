@@ -117,7 +117,14 @@ test('first-party route packages own their routes and sidebar navigation', async
   const actions = registrations.filter(entry => entry.options.name === 'wework.action')
   assert.deepEqual(
     routes.map(entry => entry.descriptor.path),
-    ['/plugins', '/plugins/create', '/plugins/manage', '/sites', '/automations', '/cloud-work']
+    [
+      '/plugins',
+      '/plugins/create',
+      '/plugins/manage',
+      '/sites',
+      '/automations',
+      '/cloud-work',
+    ]
   )
   assert.deepEqual(
     navigation.map(entry => entry.descriptor.path),

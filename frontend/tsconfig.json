@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@extensions/*": ["./wecode/extensions/*", "./src/extensions/*"]
     },
     "target": "ES2017"
   },
