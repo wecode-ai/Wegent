@@ -89,6 +89,7 @@ test('composes enabled runtime dependencies and queues a projected event without
       $geoip_disable: true,
       domain: 'smart_app',
       event_schema_version: 1,
+      telemetry_source: 'internal_plugin',
       app_version: '2.0.0',
       platform: 'mac',
       release_channel: 'stable',
@@ -135,6 +136,46 @@ test('uses the host cloud email prefix when the event has only a local user', as
   )
   assert.equal(queuedEvents.length, 1)
   assert.equal(queuedEvents[0].properties.distinct_id, 'cloud-user')
+})
+
+test('enriches a directly captured smart app opening from the local installation registry', async () => {
+  const runtime = createHostRuntime()
+  const queuedEvents = []
+  let requestedInstallationId = null
+
+  await applyWithDependencies(runtime.context, {
+    createBatchQueue: () => fakeQueue(queuedEvents),
+    createPostHogClient: () => ({ sendBatch: async () => ({ status: 'accepted' }) }),
+    createSmartAppRegistry() {
+      return {
+        async find(installationId) {
+          requestedInstallationId = installationId
+          return {
+            key: 'research-desk',
+            name: 'Research Desk',
+            version: '1.2.3',
+            source: 'managed',
+          }
+        },
+      }
+    },
+    loadConfig: async () => enabledConfig(),
+    platform: 'darwin',
+  })
+
+  assert.deepEqual(
+    await runtime.registration.methods.accept({
+      envelope: smartAppEnvelope({ context: undefined }),
+      identity: { id: 42 },
+      smartAppInstallationId: 'research-desk',
+    }),
+    { accepted: true }
+  )
+  assert.equal(requestedInstallationId, 'research-desk')
+  assert.equal(queuedEvents[0].properties.smart_app_key, 'research-desk')
+  assert.equal(queuedEvents[0].properties.smart_app_name, 'Research Desk')
+  assert.equal(queuedEvents[0].properties.smart_app_version, '1.2.3')
+  assert.equal(queuedEvents[0].properties.smart_app_source, 'managed')
 })
 
 test('rejects invalid envelopes and only returns privacy-safe aggregate status', async () => {

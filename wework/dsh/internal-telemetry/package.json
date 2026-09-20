@@ -37,7 +37,8 @@
     "index.js",
     "internal-telemetry.env.example",
     "posthog-client.js",
-    "projection.js"
+    "projection.js",
+    "smart-app-registry.js"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

@@ -4,6 +4,7 @@ import { loadTelemetryConfig } from './config.js'
 import { deriveDistinctId } from './identity.js'
 import { createPostHogClient } from './posthog-client.js'
 import { projectEnvelope } from './projection.js'
+import { createSmartAppRegistry } from './smart-app-registry.js'
 
 export const name = 'wework-internal-telemetry'
 export const inject = ['weworkDesktop', 'weworkPluginRuntime']
@@ -25,6 +26,7 @@ export async function applyWithDependencies(
   {
     createBatchQueue: createQueue,
     createPostHogClient: createClient,
+    createSmartAppRegistry: createRegistry = createSmartAppRegistry,
     loadConfig,
     logger = console,
     platform,
@@ -41,6 +43,7 @@ export async function applyWithDependencies(
   let error = config.public.error
   let queue = null
   let runtime = null
+  const smartAppRegistry = createRegistry()
 
   if (enabled) {
     runtime = await resolveRuntime(ctx.weworkDesktop, config.public.releaseChannel, platform)
@@ -99,7 +102,7 @@ export async function applyWithDependencies(
     }
   }
 
-  async function accept({ envelope, identity } = {}) {
+  async function accept({ envelope, identity, smartAppInstallationId } = {}) {
     if (!active || !enabled || !queue || !runtime) {
       return { accepted: false, reason: 'disabled' }
     }
@@ -119,10 +122,15 @@ export async function applyWithDependencies(
 
     let projected
     try {
+      const enrichedEnvelope = await enrichSmartAppEnvelope(
+        envelope,
+        smartAppInstallationId,
+        smartAppRegistry
+      )
       projected = projectEnvelope({
         catalog: eventCatalog,
         distinctId,
-        envelope,
+        envelope: enrichedEnvelope,
         runtime,
       })
     } catch {
@@ -153,6 +161,33 @@ export async function applyWithDependencies(
       rejected: metrics.rejected,
       ...queueStatus,
     }
+  }
+}
+
+async function enrichSmartAppEnvelope(envelope, installationId, registry) {
+  if (
+    !isRecord(envelope) ||
+    isRecord(envelope.context?.smartApp) ||
+    !isBoundedString(installationId) ||
+    !registry
+  ) {
+    return envelope
+  }
+
+  let smartApp
+  try {
+    smartApp = await registry.find(installationId)
+  } catch {
+    return envelope
+  }
+  if (!isSmartAppIdentity(smartApp)) return envelope
+
+  return {
+    ...envelope,
+    context: {
+      ...(isRecord(envelope.context) ? envelope.context : {}),
+      smartApp,
+    },
   }
 }
 
@@ -187,6 +222,24 @@ async function resolveRuntime(desktop, releaseChannel, platform) {
   } catch {
     return null
   }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isBoundedString(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+}
+
+function isSmartAppIdentity(value) {
+  return (
+    isRecord(value) &&
+    isBoundedString(value.key) &&
+    isBoundedString(value.name) &&
+    isBoundedString(value.version) &&
+    ['managed', 'linked', 'market'].includes(value.source)
+  )
 }
 
 function mapPlatform(value) {

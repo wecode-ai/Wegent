@@ -19,26 +19,17 @@ const VALID_FILE = [
   'WEWORK_INTERNAL_TELEMETRY_REQUEST_TIMEOUT_MS=6000',
 ].join('\n')
 
-test('uses safe disabled defaults when the dedicated file is missing', async () => {
+test('uses internal PostHog defaults when the dedicated file is missing', async () => {
   await withTemporaryDshHome(async dshHome => {
     const config = await loadTelemetryConfig({
       environment: { DSH_HOME: dshHome },
     })
 
-    assert.deepEqual(config.public, {
-      enabled: false,
-      error: 'disabled',
-      releaseChannel: 'development',
-      batchSize: 20,
-      flushIntervalMs: 5000,
-      maxQueueSize: 500,
-      requestTimeoutMs: 5000,
-    })
-    assert.deepEqual(config.private, {
-      posthogHost: null,
-      posthogProjectKey: null,
-      identityHmacKey: null,
-    })
+    assert.equal(config.public.enabled, true)
+    assert.equal(config.public.error, null)
+    assert.equal(config.private.posthogHost, 'https://posthog.intra.weibo.com')
+    assert.match(config.private.posthogProjectKey, /^phc_[A-Za-z0-9]+$/)
+    assert.equal(config.private.identityHmacKey, null)
     assert.equal(Object.isFrozen(config), true)
     assert.equal(Object.isFrozen(config.public), true)
     assert.equal(Object.isFrozen(config.private), true)
@@ -92,13 +83,13 @@ test('prefers non-empty process environment values over the dedicated file', asy
   })
 })
 
-test('reports a missing PostHog host without throwing to callers', async () => {
+test('uses the internal PostHog host when a configured override is blank', async () => {
   const config = await loadTelemetryConfig({
     environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: '' }),
   })
 
-  assert.deepEqual(config.public, publicConfig('missing_posthog_host'))
-  assert.deepEqual(config.private, privateConfig())
+  assert.deepEqual(config.public, publicConfig(null))
+  assert.equal(config.private.posthogHost, 'https://posthog.intra.weibo.com')
 })
 
 test('rejects disallowed PostHog URLs', async () => {
@@ -170,15 +161,16 @@ test('allows HTTP only for the explicitly configured private PostHog host', asyn
   assert.deepEqual(publicHost.public, publicConfig('invalid_posthog_host'))
 })
 
-test('rejects absent project keys and configured HMAC keys that are too short', async () => {
-  const missingProjectKey = await loadTelemetryConfig({
+test('uses the internal project key and rejects configured HMAC keys that are too short', async () => {
+  const defaultProjectKey = await loadTelemetryConfig({
     environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: '' }),
   })
   const invalidHmacKey = await loadTelemetryConfig({
     environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: 'too-short' }),
   })
 
-  assert.deepEqual(missingProjectKey.public, publicConfig('missing_posthog_project_key'))
+  assert.deepEqual(defaultProjectKey.public, publicConfig(null))
+  assert.match(defaultProjectKey.private.posthogProjectKey, /^phc_[A-Za-z0-9]+$/)
   assert.deepEqual(invalidHmacKey.public, publicConfig('invalid_identity_hmac_key'))
 })
 

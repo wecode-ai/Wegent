@@ -151,7 +151,7 @@ test('adds the active smart app tab name when the envelope has no app context', 
   await settle()
 
   assert.equal(
-    JSON.stringify(runtime.calls[1]),
+    JSON.stringify(runtime.calls[2]),
     JSON.stringify([
       'accept',
       {
@@ -167,6 +167,62 @@ test('adds the active smart app tab name when the envelope has no app context', 
   )
 })
 
+test('captures an active smart app route when the public dispatcher does not call plugin sinks', async () => {
+  const client = await loadClient({
+    location: { pathname: '/wework/app/app/harness-research-desk' },
+    activeSmartAppName: 'Research Desk',
+    randomUUID: () => '110ec58a-a0f2-4ac4-8393-c866d813b8d1',
+  })
+  const runtime = createRuntime({
+    ready: Promise.resolve({
+      enabled: true,
+      protocol: 'telemetry-sink/v1',
+      catalogVersion: 1,
+    }),
+  })
+
+  client.apply(runtime.context)
+  await settle()
+
+  assert.equal(runtime.calls.length, 2)
+  assert.equal(runtime.calls[1][0], 'accept')
+  assert.equal(runtime.calls[1][1].smartAppInstallationId, 'research-desk')
+  assert.equal(
+    JSON.stringify(runtime.calls[1][1].envelope),
+    JSON.stringify({
+      eventId: '110ec58a-a0f2-4ac4-8393-c866d813b8d1',
+      name: 'smart_app_opened',
+      occurredAt: runtime.calls[1][1].envelope.occurredAt,
+      properties: {
+        domain: 'smart_app',
+        smart_app_name: 'Research Desk',
+      },
+    })
+  )
+  assert.match(runtime.calls[1][1].envelope.occurredAt, /^\d{4}-\d{2}-\d{2}T/)
+})
+
+test('contains synchronous direct-capture backend failures', async () => {
+  const client = await loadClient({
+    location: { pathname: '/wework/app/app/harness-research-desk' },
+  })
+  const runtime = createRuntime({
+    accept() {
+      throw new Error('backend unavailable')
+    },
+    ready: Promise.resolve({
+      enabled: true,
+      protocol: 'telemetry-sink/v1',
+      catalogVersion: 1,
+    }),
+  })
+
+  client.apply(runtime.context)
+  await settle()
+
+  assert.equal(runtime.calls.length, 2)
+})
+
 async function loadClient(localStorageValues = {}) {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let registration
@@ -176,6 +232,15 @@ async function loadClient(localStorageValues = {}) {
     Promise,
     window: {
       location,
+      crypto: {
+        randomUUID: localStorageValues.randomUUID ?? (() => '110ec58a-a0f2-4ac4-8393-c866d813b8d1'),
+      },
+      history: {
+        pushState() {},
+        replaceState() {},
+      },
+      addEventListener() {},
+      removeEventListener() {},
       document: {
         querySelector(selector) {
           if (selector !== 'button[role="tab"][aria-selected="true"][data-tab-kind="auxiliary"]') {

@@ -4,8 +4,10 @@ import { parseEnv } from 'node:util'
 
 const CONFIG_FILE_NAME = 'internal-telemetry.env'
 const CONFIG_DIRECTORY_NAME = 'config'
+const DEFAULT_POSTHOG_HOST = 'https://posthog.intra.weibo.com'
+const DEFAULT_POSTHOG_PROJECT_KEY = 'phc_yVhzq3MARecWUuBmJJS3gdXbUWjLbdXjnqxa6V67DFsR'
 const DEFAULTS = Object.freeze({
-  enabled: false,
+  enabled: true,
   releaseChannel: 'development',
   batchSize: 20,
   flushIntervalMs: 5000,
@@ -121,9 +123,21 @@ function resolveConfigValues(environment, fileEnvironment) {
     'WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL',
     ...NUMERIC_CONFIG.map(config => config.key),
   ]) {
-    values[key] = firstNonEmptyString(environment[key], fileEnvironment[key])
+    values[key] = firstNonEmptyString(
+      environment[key],
+      fileEnvironment[key],
+      defaultConfigValue(key)
+    )
   }
   return values
+}
+
+function defaultConfigValue(key) {
+  if (key === 'WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST') return DEFAULT_POSTHOG_HOST
+  if (key === 'WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY') {
+    return DEFAULT_POSTHOG_PROJECT_KEY
+  }
+  return undefined
 }
 
 function parsePublicValues(values) {
