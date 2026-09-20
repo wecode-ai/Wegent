@@ -160,6 +160,7 @@ class TestRetrieveSearchHints:
         result = backend._process_query_results(
             MagicMock(nodes=[node], similarities=[0.9]),
             score_threshold=0.1,
+            retrieval_mode="vector",
         )
 
         assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
@@ -547,6 +548,74 @@ class TestRetrieveSearchHints:
             {"match_phrase": {"content": {"query": "release checklist", "boost": 3.0}}},
             {"match": {"content": {"query": "release", "boost": 1.0}}},
         ]
+
+
+class TestRelativeScoreProcessing:
+    """Keyword and hybrid scores are rescaled to the result set's maximum."""
+
+    def _backend(self, mock_client_class: MagicMock):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client_class.return_value = MagicMock()
+        return ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_keyword_scores_are_rescaled_before_the_threshold(
+        self, mock_client_class: MagicMock
+    ) -> None:
+        backend = self._backend(mock_client_class)
+
+        result = backend._process_query_results(
+            MagicMock(
+                nodes=[TextNode(text="top hit"), TextNode(text="weak hit")],
+                similarities=[6.0, 4.2],
+            ),
+            score_threshold=0.7,
+            retrieval_mode="keyword",
+        )
+
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [1.0, 0.7]
+        )
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_hybrid_scores_are_rescaled_even_when_the_top_is_below_one(
+        self, mock_client_class: MagicMock
+    ) -> None:
+        """A 0.68 top hit still reports 1.0, not itself."""
+        backend = self._backend(mock_client_class)
+
+        result = backend._process_query_results(
+            MagicMock(nodes=[TextNode(text="top hit")], similarities=[0.68]),
+            score_threshold=0.7,
+            retrieval_mode="hybrid",
+        )
+
+        assert [record["score"] for record in result["records"]] == pytest.approx([1.0])
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_vector_scores_keep_their_raw_cosine_value(
+        self, mock_client_class: MagicMock
+    ) -> None:
+        backend = self._backend(mock_client_class)
+
+        result = backend._process_query_results(
+            MagicMock(
+                nodes=[TextNode(text="top hit"), TextNode(text="weak hit")],
+                similarities=[0.68, 0.11],
+            ),
+            score_threshold=0.0,
+            retrieval_mode="vector",
+        )
+
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [0.68, 0.11]
+        )
 
 
 class TestGetAllChunks:

@@ -1511,11 +1511,11 @@ def test_keyword_retrieve_uses_planned_sparse_query_without_embedding():
     assert store.sparse_searches[0]["query_text"] == "get_user_by_id"
     assert 'metadata["knowledge_id"] == "1"' in store.sparse_searches[0]["filter"]
     assert [record["content"] for record in result["records"]] == ["展示正文"]
-    # The reported score is the raw BM25 score the server returned.
-    assert result["records"][0]["score"] == pytest.approx(3.0)
+    # Keyword scores are relative to the result set: the top hit is 1.0.
+    assert result["records"][0]["score"] == pytest.approx(1.0)
 
 
-def test_keyword_retrieve_applies_the_threshold_to_the_native_bm25_score():
+def test_keyword_retrieve_applies_the_threshold_to_the_relative_bm25_score():
     backend = _backend()
     store = FakeStore(
         sparse_hits=[
@@ -1527,6 +1527,12 @@ def test_keyword_retrieve_applies_the_threshold_to_the_native_bm25_score():
             },
             {
                 "id": "b",
+                DISPLAY_TEXT_FIELD: "boundary",
+                METADATA_FIELD: {},
+                "__score__": 2.1,
+            },
+            {
+                "id": "c",
                 DISPLAY_TEXT_FIELD: "weak",
                 METADATA_FIELD: {},
                 "__score__": 0.5,
@@ -1546,8 +1552,15 @@ def test_keyword_retrieve_applies_the_threshold_to_the_native_bm25_score():
         },
     )
 
-    assert [record["content"] for record in result["records"]] == ["relevant"]
-    assert result["records"][0]["score"] == pytest.approx(3.0)
+    # 3.0 rescales to 1.0, 2.1 to 0.7 (kept on the inclusive boundary) and
+    # 0.5 to 0.167 (below the cut).
+    assert [record["content"] for record in result["records"]] == [
+        "relevant",
+        "boundary",
+    ]
+    assert [record["score"] for record in result["records"]] == pytest.approx(
+        [1.0, 0.7]
+    )
 
 
 def test_keyword_retrieve_keeps_scope_and_metadata_filters():
@@ -1651,8 +1664,8 @@ def test_hybrid_retrieve_runs_one_native_search_with_the_default_weights():
     assert result["records"][0]["metadata"]["doc_ref"] == "42"
 
 
-def test_hybrid_retrieve_reports_the_score_the_ranker_returned():
-    """The fused score is the server's: it is reported, never recomputed."""
+def test_hybrid_retrieve_rescales_the_ranker_score_to_the_result_set():
+    """The fused score is relative: the top hit reports 1.0."""
     backend = _backend()
     store = FakeStore(
         hybrid_hits=[
@@ -1669,12 +1682,17 @@ def test_hybrid_retrieve_reports_the_score_the_ranker_returned():
         retrieval_setting={
             "retrieval_mode": "hybrid",
             "top_k": 5,
-            "score_threshold": 0.2,
+            "score_threshold": 0.0,
         },
     )
 
-    assert [record["content"] for record in result["records"]] == ["两路都命中"]
-    assert result["records"][0]["score"] == pytest.approx(0.83)
+    assert [record["content"] for record in result["records"]] == [
+        "两路都命中",
+        "两路都偏弱",
+    ]
+    assert [record["score"] for record in result["records"]] == pytest.approx(
+        [1.0, 0.12 / 0.83]
+    )
 
 
 @pytest.mark.parametrize(
@@ -1711,8 +1729,8 @@ def test_hybrid_retrieve_passes_the_resolved_weights_to_the_ranker(
     assert (request["vector_weight"], request["keyword_weight"]) == expected
 
 
-def test_hybrid_threshold_cuts_the_native_score():
-    """The threshold compares exactly the score the caller receives."""
+def test_hybrid_threshold_cuts_the_relative_score():
+    """The threshold compares the rescaled score the caller receives."""
     backend = _backend()
     store = FakeStore(
         hybrid_hits=[
@@ -1738,13 +1756,13 @@ def test_hybrid_threshold_cuts_the_native_score():
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.6},
+        retrieval_setting={**settings, "score_threshold": 0.7},
     )
-    below_both = backend.retrieve(
+    top_only = backend.retrieve(
         knowledge_id="1",
         query="q",
         embed_model=FakeEmbedModel([[1.0, 0.0]]),
-        retrieval_setting={**settings, "score_threshold": 0.8},
+        retrieval_setting={**settings, "score_threshold": 1.0},
     )
 
     assert [record["content"] for record in above_both["records"]] == [
@@ -1752,12 +1770,13 @@ def test_hybrid_threshold_cuts_the_native_score():
         "keyword 偏好",
     ]
     assert [record["content"] for record in between["records"]] == ["dense 偏好"]
-    assert between["records"][0]["score"] == pytest.approx(0.75)
-    assert below_both == {"records": []}
+    assert between["records"][0]["score"] == pytest.approx(1.0)
+    # The top hit is always 1.0, so the inclusive upper boundary keeps it.
+    assert [record["content"] for record in top_only["records"]] == ["dense 偏好"]
 
 
 def test_hybrid_threshold_keeps_a_score_equal_to_the_cut():
-    """The boundary is inclusive, exactly like the other retrieval modes."""
+    """The top hit survives the inclusive 1.0 boundary."""
     backend = _backend()
     store = FakeStore(
         hybrid_hits=[_hybrid_hit("dense-row", "42", display="dense 偏好", score=0.75)]
@@ -1773,12 +1792,12 @@ def test_hybrid_threshold_keeps_a_score_equal_to_the_cut():
             "top_k": 5,
             "vector_weight": 0.7,
             "keyword_weight": 0.3,
-            "score_threshold": 0.75,
+            "score_threshold": 1.0,
         },
     )
 
     assert [record["content"] for record in result["records"]] == ["dense 偏好"]
-    assert result["records"][0]["score"] == pytest.approx(0.75)
+    assert result["records"][0]["score"] == pytest.approx(1.0)
 
 
 def test_hybrid_retrieve_with_full_vector_weight_skips_the_keyword_branch():
@@ -1806,8 +1825,9 @@ def test_hybrid_retrieve_with_full_vector_weight_skips_the_keyword_branch():
     assert store.searches, "the dense branch must still run"
     assert store.sparse_searches == []
     assert [record["content"] for record in result["records"]] == ["dense 偏好"]
-    # The vector endpoint reports the raw cosine score of the pure vector mode.
-    assert result["records"][0]["score"] == pytest.approx(0.75)
+    # The request is still hybrid, so the one-branch endpoint reports the
+    # hybrid score and not the raw cosine of pure vector mode.
+    assert result["records"][0]["score"] == pytest.approx(1.0)
 
 
 def test_hybrid_retrieve_with_full_keyword_weight_never_embeds():
@@ -1835,9 +1855,9 @@ def test_hybrid_retrieve_with_full_keyword_weight_never_embeds():
     assert store.hybrid_searches == []
     assert store.searches == []
     assert store.sparse_searches, "the keyword branch must run"
-    # The keyword endpoint reports the keyword mode's raw BM25 score.
+    # The keyword endpoint reports the keyword mode's relative BM25 score.
     assert result["records"][0]["content"] == "keyword 偏好"
-    assert result["records"][0]["score"] == pytest.approx(3.0)
+    assert result["records"][0]["score"] == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize(

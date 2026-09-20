@@ -39,6 +39,10 @@ from knowledge_engine.retrieval.search_hints import (
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.scoring import (
+    RELATIVE_SCORE_RETRIEVAL_MODES,
+    normalize_scores_to_max,
+)
 from shared.models import RetrievalScope
 from shared.telemetry.decorators import add_span_event
 
@@ -325,7 +329,11 @@ class ElasticsearchBackend(BaseStorageBackend):
         )
 
         # Process results
-        return self._process_query_results(result, score_threshold)
+        return self._process_query_results(
+            result,
+            score_threshold,
+            retrieval_mode=retrieval_mode,
+        )
 
     def _resolve_hybrid_alpha(self, retrieval_setting: Dict[str, Any]) -> float:
         """Resolve the hybrid alpha from the configured retrieval weights."""
@@ -473,6 +481,8 @@ class ElasticsearchBackend(BaseStorageBackend):
         self,
         result,
         score_threshold: float,
+        *,
+        retrieval_mode: str,
     ) -> Dict:
         """
         Process VectorStoreQueryResult into Dify-compatible format.
@@ -480,6 +490,10 @@ class ElasticsearchBackend(BaseStorageBackend):
         Args:
             result: VectorStoreQueryResult from LlamaIndex
             score_threshold: Minimum relevance score (0-1)
+            retrieval_mode: The mode that produced the result set. Keyword and
+                hybrid scores are only comparable inside their own result set,
+                so they are rescaled before the threshold runs; vector keeps
+                the raw COSINE value.
 
         Returns:
             Dict with 'records' list in Dify-compatible format
@@ -488,37 +502,26 @@ class ElasticsearchBackend(BaseStorageBackend):
         if not result.nodes:
             return {"records": []}
 
-        # Get max score for normalization (for keyword search scores may not be normalized)
         similarities = result.similarities or []
-        if similarities:
-            max_score = max((s for s in similarities if s is not None), default=1.0)
-            if max_score == 0:
-                max_score = 1.0
-        else:
-            max_score = 1.0
+        scores = [
+            (
+                float(similarities[i])
+                if i < len(similarities) and similarities[i] is not None
+                else 0.0
+            )
+            for i in range(len(result.nodes))
+        ]
+        if retrieval_mode in RELATIVE_SCORE_RETRIEVAL_MODES:
+            scores = normalize_scores_to_max(scores)
 
         # Process results (Dify-compatible format)
         results = []
         for i, node in enumerate(result.nodes):
-            score = (
-                similarities[i]
-                if i < len(similarities) and similarities[i] is not None
-                else 0.0
-            )
-
-            # Normalize score to 0-1 range if needed
-            # For vector search, scores are already normalized (cosine similarity)
-            # For keyword search, scores may need normalization
-            if max_score > 1.0:
-                normalized_score = score / max_score
-            else:
-                normalized_score = score
-
-            if normalized_score >= score_threshold:
+            if scores[i] >= score_threshold:
                 results.append(
                     {
                         "content": self.get_node_display_text(node),
-                        "score": float(normalized_score),
+                        "score": float(scores[i]),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
                     }

@@ -199,16 +199,16 @@ def test_keyword_hits_chinese_english_and_code_identifiers(
     )
     assert unrelated == {"records": []}
 
-    # The reported score is the raw BM25 score Milvus returned, and the
-    # existing threshold field filters on that same value: the boundary keeps
-    # the hit and a score above it cuts it.
+    # Keyword scores are relative to the result set, so the top hit reports
+    # 1.0 and the threshold compares that same rescaled value: the boundary
+    # keeps the hit and a score above it cuts it.
     observed = max(
         record["score"]
         for record in _keyword_query(
             backend, knowledge_id=knowledge_id, query="中文分词"
         )["records"]
     )
-    assert observed > 0.0
+    assert observed == pytest.approx(1.0)
     assert _keyword_query(
         backend,
         knowledge_id=knowledge_id,

@@ -543,9 +543,10 @@ class MilvusDocumentStore:
 
         Both branches carry the same filter, so the scope is applied inside the
         server before either branch is cut. ``WeightedRanker`` fuses the two
-        branches with the shares the caller resolved, and the score it returns
-        is the score this call reports: nothing here normalizes or remaps it.
-        The whole request is one RPC on the client that read the contract.
+        branches with the shares the caller resolved, and this layer reports
+        the ranker's score as it came back; the backend applies the shared
+        result-set scoring rule. The whole request is one RPC on the client
+        that read the contract.
         """
         requests = [
             AnnSearchRequest(

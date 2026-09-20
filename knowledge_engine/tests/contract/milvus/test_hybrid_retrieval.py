@@ -284,11 +284,13 @@ def test_default_hybrid_weights_fuse_both_branches(preference_index) -> None:
     scores = _scores(result)
     assert set(scores) == {DENSE_DOC, KEYWORD_DOC}
     assert scores[KEYWORD_DOC] > 0.0, "the keyword share must reach the endpoint"
+    # The fused score is relative to the result set: the top hit reports 1.0.
+    assert max(scores.values()) == pytest.approx(1.0)
     assert _doc_refs(result)[0] == DENSE_DOC
 
 
-def test_vector_endpoint_matches_pure_vector_retrieval(preference_index) -> None:
-    """1/0 runs the dense branch alone and reports the raw cosine scores."""
+def test_vector_endpoint_ranks_like_pure_vector_retrieval(preference_index) -> None:
+    """1/0 runs the dense branch alone and ranks like pure vector mode."""
     backend, knowledge_id, model = preference_index
 
     vector_only = _hybrid(
@@ -304,7 +306,9 @@ def test_vector_endpoint_matches_pure_vector_retrieval(preference_index) -> None
     )
 
     assert _doc_refs(vector_only) == _doc_refs(pure_vector)
-    assert _scores(vector_only) == pytest.approx(_scores(pure_vector))
+    # The request is still hybrid, so its scores keep the hybrid scale instead
+    # of the raw cosine values pure vector mode reports.
+    assert max(_scores(vector_only).values()) == pytest.approx(1.0)
 
 
 def test_keyword_endpoint_matches_pure_keyword_retrieval(preference_index) -> None:
@@ -351,15 +355,15 @@ def test_single_weight_takes_effect_and_pairs_with_its_complement(
         omit_default_weights=True,
         keyword_weight=0.7,
     )
-    low = _scores(at_0_3)[KEYWORD_DOC]
-    high = _scores(at_0_7)[KEYWORD_DOC]
 
-    # The two requests differ only in the lone keyword weight, and the partner
-    # share is its complement, so the fused score must move once the weight is
-    # actually consumed. The exact arithmetic is pinned by the adapter unit
-    # tests; this asserts the real server consumed the setting.
-    assert abs(high - low) >= 0.02
-    assert high < low, "the larger keyword share must move this row"
+    light = _scores(at_0_3)[KEYWORD_DOC]
+    heavy = _scores(at_0_7)[KEYWORD_DOC]
+
+    # The two requests differ only in the lone keyword weight and its
+    # complement. Scores are relative to their own result set now, so the
+    # direction holds within each set: the larger keyword share must raise the
+    # keyword-preferred row towards the top of its own set.
+    assert heavy > light
 
 
 def test_hybrid_threshold_cuts_the_reported_fusion_score(preference_index) -> None:

@@ -378,6 +378,15 @@ class BaseStorageBackend(ABC):
             scope: Optional domain-level retrieval scope
             **kwargs: Additional parameters
 
+        Score semantics:
+            ``vector`` reports the raw COSINE similarity, which has an absolute
+            scale. ``keyword`` (BM25) and ``hybrid`` (fused) scores are not
+            comparable across result sets; the backends that share
+            ``knowledge_engine.storage.scoring`` rescale them before the
+            threshold runs, so the set's maximum becomes 1.0 and the threshold
+            means "at least this share of the top hit". Vector mode keeps the
+            absolute similarity meaning.
+
         Returns:
             Dict with Dify-compatible format:
                 {
