@@ -732,13 +732,21 @@ The complete collaboration execution E2E suite passes only when all criteria bel
 - A real Executor generates the exact file artifact.
 - Task, Runtime, and Issue status complete.
 
-### Codex
+### Wegent Codex Shell
+
+- The execution target is a Team/Bot/Ghost using the Codex Shell through the standard Executor.
+- The Ghost Skill is loaded, MCP is invoked by a real Codex app-server, and its output enters the next request.
+- A real Executor generates the exact file artifact, and Task, project message, and Issue status complete.
+- Preserve this path's scheduling identity, runtime logs, and artifact evidence; Wework Runtime results cannot substitute for it.
+
+### Wework Codex Project Agent
 
 - The execution target is ProjectChatAgent/Wework Runtime.
 - Skill, MCP, and Plugin are all loaded by a real Codex Runtime.
 - Plugin MCP is actually invoked and its output enters the next request.
 - A real artifact contains all three independent probes.
 - Task and Issue status complete.
+- Preserve independent runtime evidence for this path; Wegent Codex Shell results cannot substitute for it.
 
 ### Human
 

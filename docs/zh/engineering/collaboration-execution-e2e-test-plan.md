@@ -717,13 +717,21 @@ Workspace 归档前必须先归档其中所有 active Project；历史已归档 
 - 真实 Executor 生成准确文件产物。
 - Task、Runtime 和 Issue 状态完成。
 
-### Codex
+### Wegent Codex Shell
+
+- 执行对象是使用 Codex Shell 的 Team/Bot/Ghost，由标准 Executor 执行。
+- Ghost Skill 被加载，MCP 被真实 Codex app-server 调用，输出进入下一轮请求。
+- 真实 Executor 生成准确文件产物，Task、项目消息和 Issue 状态完成。
+- 保存本链路的调度身份、运行日志和产物证据，不能用 Wework Runtime 的结果替代。
+
+### Wework Codex 项目智能体
 
 - 执行对象是 ProjectChatAgent/Wework Runtime。
 - Skill、MCP 和 Plugin 均被真实 Codex Runtime 加载。
 - Plugin MCP 被实际调用，输出进入下一轮请求。
 - 真实产物包含三类独立探针。
 - Task 和 Issue 状态完成。
+- 保存本链路的独立运行证据，不能用 Wegent Codex Shell 的结果替代。
 
 ### 人
 

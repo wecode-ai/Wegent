@@ -45,7 +45,7 @@ pub(super) fn debug_stdout_value(value: &Value) -> Value {
 }
 
 fn sanitize_raw_log_value(value: &Value, key: Option<&str>, preview: bool) -> Value {
-    if key.is_some_and(is_sensitive_key) && (preview || value.is_string()) {
+    if key.is_some_and(is_sensitive_key) {
         return Value::String("[redacted]".to_owned());
     }
     match value {
@@ -83,6 +83,18 @@ fn is_sensitive_key(key: &str) -> bool {
         .filter(|character| character.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect::<String>();
+    // Token usage counters are diagnostic metadata, not authentication tokens.
+    if matches!(
+        normalized.as_str(),
+        "inputtokens"
+            | "outputtokens"
+            | "totaltokens"
+            | "cachedinputtokens"
+            | "reasoningtokens"
+            | "reasoningoutputtokens"
+    ) {
+        return false;
+    }
     [
         "apikey",
         "authorization",
@@ -204,5 +216,27 @@ mod tests {
         }
         assert!(preview.contains("request-123"));
         assert!(preview.contains("[redacted]"));
+    }
+
+    #[test]
+    fn debug_stdout_redacts_sensitive_values_of_every_type() {
+        let message = json!({
+            "authorization": ["Bearer private-value"],
+            "credentials": {"value": "private-value"},
+            "password": 123456,
+            "nested": [{"apiKey": ["private-value"]}],
+            "usage": {"reasoning_tokens": 42},
+            "requestId": "request-123",
+        });
+
+        let sanitized = debug_stdout_value(&message);
+
+        for key in ["authorization", "credentials", "password"] {
+            assert_eq!(sanitized[key], "[redacted]");
+        }
+        assert_eq!(sanitized["nested"][0]["apiKey"], "[redacted]");
+        assert_eq!(sanitized["usage"]["reasoning_tokens"], 42);
+        assert_eq!(sanitized["requestId"], "request-123");
+        assert!(!sanitized.to_string().contains("private-value"));
     }
 }

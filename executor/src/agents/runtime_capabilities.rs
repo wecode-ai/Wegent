@@ -498,6 +498,11 @@ fn inject_managed_wework_mcps(
 }
 
 pub async fn prepare_codex_runtime(request: &ExecutionRequest) -> Result<(), String> {
+    // Native Wework turns resolve installed Skills through Codex, without a Bot
+    // deployment plan. Only Bot-backed requests download Skills from the backend.
+    if primary_bot(request).is_none() {
+        return Ok(());
+    }
     let task_dir = request
         .cwd()
         .map(PathBuf::from)
@@ -3295,6 +3300,29 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(temp);
+    }
+
+    #[tokio::test]
+    async fn prepare_codex_runtime_leaves_native_plugin_skills_to_codex() {
+        let workspace = tempfile::tempdir().unwrap();
+        let request = ExecutionRequest {
+            project_workspace_path: Some(workspace.path().display().to_string()),
+            extra: serde_json::Map::from_iter([
+                (
+                    "preload_skills".to_owned(),
+                    json!(["wework-plugin-creator"]),
+                ),
+                (
+                    "additional_skills".to_owned(),
+                    json!([{"name": "wework-plugin-creator", "namespace": "codex"}]),
+                ),
+            ]),
+            ..ExecutionRequest::default()
+        };
+
+        prepare_codex_runtime(&request).await.unwrap();
+
+        assert!(!workspace.path().join(".codex/skills").exists());
     }
 
     #[tokio::test]

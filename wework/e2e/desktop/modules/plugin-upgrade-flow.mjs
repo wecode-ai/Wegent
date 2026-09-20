@@ -93,7 +93,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   let reconciliationRevision = 0
   const refreshAndVerify = async () => {
-    await control.command('click', '[data-testid="plugins-refresh-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="plugins-refresh-button"]')
     reconciliationRevision += 1
     await control.command(
       'waitFor',
