@@ -814,7 +814,7 @@ impl Fixture {
             ("WEGENT_WORKSPACE_ROOT", "workspaces"),
         ]
         .into_iter()
-        .map(|(key, suffix)| EnvGuard::set(key, &root.path().join(suffix)))
+        .map(|(key, suffix)| EnvGuard::set(key, root.path().join(suffix)))
         .collect();
         let binary = root.path().join("fake-codex");
         fs::write(&binary, fake_codex_script(root.path(), mode, &interaction)).unwrap();

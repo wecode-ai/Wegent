@@ -82,7 +82,7 @@ impl PendingTurn {
 }
 
 struct SuspendedTurn {
-    turn: LiveTurn,
+    turn: Box<LiveTurn>,
     request: ExecutionRequest,
     builder: ResponsesEventBuilder,
     interaction: Interaction,
@@ -168,7 +168,7 @@ impl CodexAppServerEngine {
                     .insert(
                         request.task_id.clone(),
                         PendingTurn::Native(SuspendedTurn {
-                            turn,
+                            turn: Box::new(turn),
                             request,
                             builder,
                             interaction,
@@ -206,7 +206,7 @@ impl CodexAppServerEngine {
                 let Some(PendingTurn::Native(suspended)) = pending.remove(&request.task_id) else {
                     unreachable!("validated native interaction")
                 };
-                return Ok(suspended.turn);
+                return Ok(*suspended.turn);
             }
             // MCP forms finish the native turn; the answer resumes its saved thread.
             // Preserve the prepared workspace, including a selected repository directory.

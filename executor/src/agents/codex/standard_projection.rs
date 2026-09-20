@@ -17,135 +17,6 @@ pub(super) struct StandardEventProjection {
     output_offset: usize,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn consecutive_output_items_share_the_callback_text_offset() {
-        let mut projection = StandardEventProjection::default();
-        let builder = ResponsesEventBuilder::new("task", "first", "model");
-        for (id, text, expected_offset) in [("one", "你好🙂", 0), ("two", "继续", 3)] {
-            let event = projection
-                .project(
-                    "response.output_text.done",
-                    json!({"item_id": id, "text": text}),
-                    &builder,
-                )
-                .unwrap()
-                .unwrap();
-            assert_eq!(event.data["delta"], text);
-            assert_eq!(event.data["offset"], expected_offset);
-        }
-    }
-
-    #[test]
-    fn rewritten_completed_text_is_not_appended_as_a_delta() {
-        let mut projection = StandardEventProjection::default();
-        let builder = ResponsesEventBuilder::new("task", "first", "model");
-        projection
-            .project(
-                "response.output_text.delta",
-                json!({"item_id": "message", "delta": "abc"}),
-                &builder,
-            )
-            .unwrap();
-        let completed = projection
-            .project(
-                "response.output_text.done",
-                json!({"item_id": "message", "text": "xyz123"}),
-                &builder,
-            )
-            .unwrap();
-        assert!(completed.is_none());
-    }
-
-    #[test]
-    fn late_final_phase_finishes_existing_text_without_creating_duplicate_output() {
-        let mut projection = StandardEventProjection::default();
-        let builder = ResponsesEventBuilder::new("task", "first", "model");
-        projection
-            .project(
-                "response.block.created",
-                json!({"block": {
-                    "id": "process-block", "type": "text", "process_item_id": "message",
-                    "content": "正在", "status": "streaming"
-                }}),
-                &builder,
-            )
-            .unwrap();
-
-        let completed = projection
-            .project(
-                "response.output_text.done",
-                json!({"item_id": "message", "text": "正在输出完整正文"}),
-                &builder,
-            )
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(completed.event_type, "response.block.updated");
-        assert_eq!(completed.data["block_id"], "process-block");
-        assert_eq!(completed.data["updates"]["content"], "正在输出完整正文");
-        assert_eq!(completed.data["updates"]["status"], "done");
-    }
-
-    #[test]
-    fn resumed_response_restores_tool_identity_and_restarts_body_offsets() {
-        let mut projection = StandardEventProjection::default();
-        let first = ResponsesEventBuilder::new("task", "first", "model");
-        projection
-            .project(
-                "response.block.created",
-                json!({"block": {
-                    "id": "tool", "type": "tool", "tool_name": "shell",
-                    "tool_input": {"command": "pwd"}, "tool_output": "开始",
-                    "parent_tool_use_id": "parent", "status": "streaming"
-                }}),
-                &first,
-            )
-            .unwrap();
-        projection
-            .project(
-                "response.output_text.delta",
-                json!({"item_id": "message", "delta": "之前"}),
-                &first,
-            )
-            .unwrap();
-
-        projection.begin_response();
-        let second = ResponsesEventBuilder::new("task", "second", "model");
-        let tool = projection
-            .project(
-                "response.block.updated",
-                json!({"block_id": "tool", "updates": {
-                    "tool_output_delta": "完成", "status": "done"
-                }}),
-                &second,
-            )
-            .unwrap()
-            .unwrap();
-        let body = projection
-            .project(
-                "response.output_text.delta",
-                json!({"item_id": "message", "delta": "继续"}),
-                &second,
-            )
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(tool.event_type, "response.block.created");
-        assert_eq!(tool.subtask_id, "second");
-        assert_eq!(tool.data["block"]["tool_name"], "shell");
-        assert_eq!(tool.data["block"]["parent_tool_use_id"], "parent");
-        assert_eq!(tool.data["block"]["tool_input"]["command"], "pwd");
-        assert_eq!(tool.data["block"]["tool_output"], "开始完成");
-        assert_eq!(body.subtask_id, "second");
-        assert_eq!(body.data["offset"], 0);
-        assert_eq!(body.data["delta"], "继续");
-    }
-}
-
 impl StandardEventProjection {
     pub(super) fn begin_response(&mut self) {
         self.published_blocks.clear();
@@ -291,4 +162,133 @@ fn normalize_subagent_status(fields: &mut Map<String, Value>) {
         _ => return,
     };
     fields.insert("status".to_owned(), json!(status));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consecutive_output_items_share_the_callback_text_offset() {
+        let mut projection = StandardEventProjection::default();
+        let builder = ResponsesEventBuilder::new("task", "first", "model");
+        for (id, text, expected_offset) in [("one", "你好🙂", 0), ("two", "继续", 3)] {
+            let event = projection
+                .project(
+                    "response.output_text.done",
+                    json!({"item_id": id, "text": text}),
+                    &builder,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(event.data["delta"], text);
+            assert_eq!(event.data["offset"], expected_offset);
+        }
+    }
+
+    #[test]
+    fn rewritten_completed_text_is_not_appended_as_a_delta() {
+        let mut projection = StandardEventProjection::default();
+        let builder = ResponsesEventBuilder::new("task", "first", "model");
+        projection
+            .project(
+                "response.output_text.delta",
+                json!({"item_id": "message", "delta": "abc"}),
+                &builder,
+            )
+            .unwrap();
+        let completed = projection
+            .project(
+                "response.output_text.done",
+                json!({"item_id": "message", "text": "xyz123"}),
+                &builder,
+            )
+            .unwrap();
+        assert!(completed.is_none());
+    }
+
+    #[test]
+    fn late_final_phase_finishes_existing_text_without_creating_duplicate_output() {
+        let mut projection = StandardEventProjection::default();
+        let builder = ResponsesEventBuilder::new("task", "first", "model");
+        projection
+            .project(
+                "response.block.created",
+                json!({"block": {
+                    "id": "process-block", "type": "text", "process_item_id": "message",
+                    "content": "正在", "status": "streaming"
+                }}),
+                &builder,
+            )
+            .unwrap();
+
+        let completed = projection
+            .project(
+                "response.output_text.done",
+                json!({"item_id": "message", "text": "正在输出完整正文"}),
+                &builder,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(completed.event_type, "response.block.updated");
+        assert_eq!(completed.data["block_id"], "process-block");
+        assert_eq!(completed.data["updates"]["content"], "正在输出完整正文");
+        assert_eq!(completed.data["updates"]["status"], "done");
+    }
+
+    #[test]
+    fn resumed_response_restores_tool_identity_and_restarts_body_offsets() {
+        let mut projection = StandardEventProjection::default();
+        let first = ResponsesEventBuilder::new("task", "first", "model");
+        projection
+            .project(
+                "response.block.created",
+                json!({"block": {
+                    "id": "tool", "type": "tool", "tool_name": "shell",
+                    "tool_input": {"command": "pwd"}, "tool_output": "开始",
+                    "parent_tool_use_id": "parent", "status": "streaming"
+                }}),
+                &first,
+            )
+            .unwrap();
+        projection
+            .project(
+                "response.output_text.delta",
+                json!({"item_id": "message", "delta": "之前"}),
+                &first,
+            )
+            .unwrap();
+
+        projection.begin_response();
+        let second = ResponsesEventBuilder::new("task", "second", "model");
+        let tool = projection
+            .project(
+                "response.block.updated",
+                json!({"block_id": "tool", "updates": {
+                    "tool_output_delta": "完成", "status": "done"
+                }}),
+                &second,
+            )
+            .unwrap()
+            .unwrap();
+        let body = projection
+            .project(
+                "response.output_text.delta",
+                json!({"item_id": "message", "delta": "继续"}),
+                &second,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(tool.event_type, "response.block.created");
+        assert_eq!(tool.subtask_id, "second");
+        assert_eq!(tool.data["block"]["tool_name"], "shell");
+        assert_eq!(tool.data["block"]["parent_tool_use_id"], "parent");
+        assert_eq!(tool.data["block"]["tool_input"]["command"], "pwd");
+        assert_eq!(tool.data["block"]["tool_output"], "开始完成");
+        assert_eq!(body.subtask_id, "second");
+        assert_eq!(body.data["offset"], 0);
+        assert_eq!(body.data["delta"], "继续");
+    }
 }
