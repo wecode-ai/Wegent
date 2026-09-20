@@ -3,6 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { APIRequestContext, expect, Page, test, TestInfo } from '@playwright/test'
+import { execFile } from 'node:child_process'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 import {
   authHeaders,
   clearToolScenario,
@@ -35,6 +40,9 @@ const SKILL_NAME = 'wegent-knowledge'
 const SKILL_MARKER = '# Wegent Knowledge Base Skill'
 const MCP_SERVER_NAME = 'collaboration-evidence'
 const CLAUDE_ARTIFACT_NAME = 'collaboration-claudecode-runtime-evidence.txt'
+const PLUGIN_NAME = `${TEST_PREFIX}-plugin`
+const PLUGIN_MARKER = 'COLLABORATION_AGENT_REAL_PLUGIN'
+const execFileAsync = promisify(execFile)
 
 interface VersionedResource {
   version: number
@@ -74,6 +82,10 @@ interface CollaborationExecution {
   agentId: string | null
   teamId: number | null
   backendTaskId: number | null
+  executionEnvironment: string | null
+  executionDeviceId: string | null
+  runtimeDeviceId: string | null
+  runtimeTaskId: string | null
   status: string
   displayState: string
   observedState: string
@@ -119,15 +131,24 @@ interface CreatedClaudeResources {
 }
 
 interface AgentCase {
-  label: 'Chat' | 'ClaudeCode'
+  label: 'Chat' | 'ClaudeCode' | 'Codex'
+  executionPath: 'device_runtime' | 'backend_task'
   teamId: number
   agent: CollaborationAgent
-  loadsSkillWithTool: boolean
+  skillVerification: 'runtime_file' | 'preloaded_prompt' | 'skill_tool'
   prompt: string
   nodeId: string
   mcpOutputMarker: string
   answerMarker: string
+  expectsPlugin?: boolean
   artifactName?: string
+}
+
+interface CollaborationPlugin {
+  id: string
+  pluginName: string
+  marketplaceId: string
+  displayName: string
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -148,6 +169,7 @@ test.describe('Collaboration agent execution', () => {
   let resources: ProviderNativeResources
   let skillRef: ProviderNativeSkillRef
   let claude: CreatedClaudeResources
+  let plugin: CollaborationPlugin
   let workspace: CollaborationWorkspace | null = null
   let project: CollaborationProject | null = null
   const configuredPrompts = new Set<string>()
@@ -156,6 +178,7 @@ test.describe('Collaboration agent execution', () => {
     resources = await createProviderNativeResources(request, TEST_PREFIX)
     skillRef = await resolveProviderNativeSkillRef(request, resources.token, SKILL_NAME)
     await configureBotCapabilities(request, resources.botId, skillRef)
+    plugin = await uploadPlugin(request)
     claude = await createClaudeResources(request, skillRef)
     workspace = await createWorkspace(request)
     project = await createProject(request, workspace.id)
@@ -191,12 +214,26 @@ test.describe('Collaboration agent execution', () => {
       'ClaudeCode collaboration agent',
       claude.teamId
     )
+    const codexAgent = await createProjectAgentThroughUi(page, request, projectId)
     const cases: AgentCase[] = [
       {
+        label: 'Codex',
+        executionPath: 'device_runtime',
+        teamId: codexAgent.wegentTeamId,
+        agent: codexAgent,
+        skillVerification: 'runtime_file',
+        prompt: `${TEST_PREFIX} CODEX_AGENT_CAPABILITY_EXECUTION`,
+        nodeId: 'doc-d1',
+        mcpOutputMarker: 'Doc-D1_新设计',
+        answerMarker: 'COLLABORATION_CODEX_COMPLETED',
+        expectsPlugin: true,
+      },
+      {
         label: 'Chat',
+        executionPath: 'backend_task',
         teamId: resources.teamId,
         agent: chatAgent,
-        loadsSkillWithTool: false,
+        skillVerification: 'preloaded_prompt',
         prompt: `${TEST_PREFIX} CHAT_GHOST_CAPABILITY_EXECUTION`,
         nodeId: 'doc-d2',
         mcpOutputMarker: 'Doc-D2_旧设计',
@@ -204,9 +241,10 @@ test.describe('Collaboration agent execution', () => {
       },
       {
         label: 'ClaudeCode',
+        executionPath: 'backend_task',
         teamId: claude.teamId,
         agent: claudeAgent,
-        loadsSkillWithTool: true,
+        skillVerification: 'skill_tool',
         prompt: `${TEST_PREFIX} CLAUDE_GHOST_CAPABILITY_EXECUTION`,
         nodeId: 'doc-d3',
         mcpOutputMarker: 'Doc-D3_项目说明',
@@ -246,11 +284,29 @@ test.describe('Collaboration agent execution', () => {
           `cat ${agentCase.artifactName}`,
         ].join('\n')
       : ''
+    const runtimeCapabilityCommand = [
+      `cat .codex/skills/${SKILL_NAME}/SKILL.md`,
+      `plugin_skill="$(find "$WEGENT_EXECUTOR_HOME/capabilities/store/plugins" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
+      'test -n "$plugin_skill"',
+      'cat "$plugin_skill"',
+    ].join('\n')
     const issue = await createIssue(request, projectId, agentCase)
     const scenarioMatch = `task_id: ${issue.id}`
     configuredPrompts.add(scenarioMatch)
     await configureToolScenario(request, scenarioMatch, [
-      ...(agentCase.loadsSkillWithTool
+      ...(agentCase.skillVerification === 'runtime_file'
+        ? [
+            {
+              toolCalls: [
+                {
+                  toolName: 'exec_command',
+                  arguments: { cmd: runtimeCapabilityCommand },
+                },
+              ],
+            },
+          ]
+        : []),
+      ...(agentCase.skillVerification === 'skill_tool'
         ? [
             {
               toolCalls: [
@@ -319,49 +375,71 @@ test.describe('Collaboration agent execution', () => {
 
     const execution = await waitForCompletedExecution(request, projectId, issue.id)
     expect(execution.agentId).toBe(agentCase.agent.id)
-    expect(execution.teamId).toBe(agentCase.teamId)
-    expect(execution.backendTaskId).toBeGreaterThan(0)
     expect(execution.observedState).toBe('succeeded')
     expect(execution.displayState).toBe('succeeded')
     expect(execution.syncState).toBe('in_sync')
 
-    await waitForTaskTerminal(resources.token, execution.backendTaskId!)
-    const task = (await getTask(request, resources.token, execution.backendTaskId!)) as BackendTask
-    expect(task.id).toBe(execution.backendTaskId)
-    expect(String(task.status).toUpperCase()).toMatch(/^COMPLETED/)
-    const taskCalls = collectTaskToolCalls(task).filter(call =>
-      call.name.endsWith('get_document_info')
-    )
-    expect(taskCalls).toHaveLength(1)
-    expect(taskCalls[0].input).toEqual({ nodeId: agentCase.nodeId })
-    expect(JSON.stringify(taskCalls[0].output)).toContain(agentCase.mcpOutputMarker)
-    expect(extractTaskAnswer(task)).toContain(agentCase.answerMarker)
-    expect(extractTaskAnswer(task)).toContain(SKILL_MARKER)
-    expect(extractTaskAnswer(task)).toContain(agentCase.mcpOutputMarker)
+    let task: BackendTask | null = null
+    if (agentCase.executionPath === 'backend_task') {
+      expect(execution.teamId).toBe(agentCase.teamId)
+      expect(execution.backendTaskId).toBeGreaterThan(0)
+      await waitForTaskTerminal(resources.token, execution.backendTaskId!)
+      task = (await getTask(request, resources.token, execution.backendTaskId!)) as BackendTask
+      expect(task.id).toBe(execution.backendTaskId)
+      expect(String(task.status).toUpperCase()).toMatch(/^COMPLETED/)
+      const taskCalls = collectTaskToolCalls(task).filter(call =>
+        call.name.endsWith('get_document_info')
+      )
+      expect(taskCalls).toHaveLength(1)
+      expect(taskCalls[0].input).toEqual({ nodeId: agentCase.nodeId })
+      expect(JSON.stringify(taskCalls[0].output)).toContain(agentCase.mcpOutputMarker)
+      expect(extractTaskAnswer(task)).toContain(agentCase.answerMarker)
+      expect(extractTaskAnswer(task)).toContain(SKILL_MARKER)
+      expect(extractTaskAnswer(task)).toContain(agentCase.mcpOutputMarker)
+    } else {
+      expect(execution.teamId).toBeNull()
+      expect(execution.backendTaskId).toBeNull()
+      expect(execution.executionEnvironment).toBe('cloud')
+      expect(execution.executionDeviceId).toBeTruthy()
+      expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
+      expect(execution.runtimeTaskId).toMatch(/^codex-queue-\d+$/)
+    }
 
     const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
     expect(modelBodies.length).toBeGreaterThan(1)
-    if (agentCase.loadsSkillWithTool) {
-      const skillCalls = collectTaskToolCalls(task).filter(call => call.name === 'Skill')
-      expect(skillCalls).toHaveLength(1)
-      expect(skillCalls[0].input).toEqual({ skill: SKILL_NAME })
+    if (agentCase.skillVerification === 'skill_tool') {
+      if (task) {
+        const skillCalls = collectTaskToolCalls(task).filter(call => call.name === 'Skill')
+        expect(skillCalls).toHaveLength(1)
+        expect(skillCalls[0].input).toEqual({ skill: SKILL_NAME })
+      }
       expect(modelToolNames(modelBodies.slice(0, 1))).toContain('Skill')
       expect(modelRequestText(modelBodies.slice(0, 1))).toContain(SKILL_NAME)
       expect(modelRequestText(modelBodies.slice(1))).toContain(SKILL_MARKER)
+    } else if (agentCase.skillVerification === 'runtime_file') {
+      expect(modelToolNames(modelBodies.slice(0, 1))).toContain('exec_command')
+      expect(modelRequestText(modelBodies.slice(1))).toContain(SKILL_MARKER)
+      expect(modelRequestText(modelBodies.slice(1))).toContain(PLUGIN_MARKER)
     } else {
       expect(modelRequestText(modelBodies.slice(0, 1))).toContain(SKILL_MARKER)
     }
     expect(modelToolNames(modelBodies).some(name => name.endsWith('get_document_info'))).toBe(true)
-    const mcpResultRequestIndex = agentCase.loadsSkillWithTool ? 2 : 1
-    expect(modelRequestText(modelBodies.slice(mcpResultRequestIndex))).toContain(
-      agentCase.mcpOutputMarker
-    )
+    if (agentCase.expectsPlugin) {
+      expect(modelRequestText(modelBodies)).toContain(PLUGIN_NAME)
+      expect(modelRequestText(modelBodies)).toContain(PLUGIN_MARKER)
+    }
+    if (agentCase.executionPath === 'backend_task') {
+      const mcpResultRequestIndex = agentCase.skillVerification === 'preloaded_prompt' ? 1 : 2
+      expect(modelRequestText(modelBodies.slice(mcpResultRequestIndex))).toContain(
+        agentCase.mcpOutputMarker
+      )
+    }
 
     if (agentCase.artifactName) {
       await assertClaudeRuntimeEvidence(
         request,
         execution,
-        task,
+        task!,
         modelBodies,
         agentCase,
         artifactCommand,
@@ -384,11 +462,14 @@ test.describe('Collaboration agent execution', () => {
     const completedIssue = await waitForCompletedIssue(request, issue.id)
     expect(completedIssue.status).toBe('in_review')
     expect(completedIssue.execution_state).toBe('succeeded')
-    expect(completedIssue.ai_state).toMatchObject({
+    const expectedAiState: Record<string, unknown> = {
       status: 'succeeded',
       agent_id: agentCase.agent.id,
-      team_id: agentCase.teamId,
-    })
+    }
+    if (agentCase.executionPath === 'backend_task') {
+      expectedAiState.team_id = agentCase.teamId
+    }
+    expect(completedIssue.ai_state).toMatchObject(expectedAiState)
     expect(completedIssue.ai_state?.project_chat_message_id).toBeTruthy()
 
     await page.reload()
@@ -608,6 +689,160 @@ test.describe('Collaboration agent execution', () => {
       method: 'POST',
       data: { team_id: teamId },
     })
+  }
+
+  async function uploadPlugin(request: APIRequestContext): Promise<CollaborationPlugin> {
+    const root = await mkdtemp(join(tmpdir(), 'wegent-agent-plugin-'))
+    const archivePath = `${root}.zip`
+    try {
+      const manifestRoot = join(root, '.codex-plugin')
+      const pluginSkillRoot = join(root, 'skills', PLUGIN_NAME)
+      await Promise.all([
+        mkdir(manifestRoot, { recursive: true }),
+        mkdir(pluginSkillRoot, { recursive: true }),
+      ])
+      await writeFile(
+        join(manifestRoot, 'plugin.json'),
+        `${JSON.stringify(
+          {
+            name: PLUGIN_NAME,
+            displayName: 'Collaboration Agent E2E Plugin',
+            description: `Real Agent plugin containing ${PLUGIN_MARKER}.`,
+            version: '1.0.0',
+            skills: './skills/',
+            interface: {
+              displayName: 'Collaboration Agent E2E Plugin',
+              shortDescription: `Validates ${PLUGIN_MARKER}.`,
+            },
+          },
+          null,
+          2
+        )}\n`
+      )
+      await writeFile(
+        join(pluginSkillRoot, 'SKILL.md'),
+        [
+          '---',
+          `name: ${PLUGIN_NAME}`,
+          'description: Real collaboration Agent plugin Skill.',
+          '---',
+          '',
+          `Preserve ${PLUGIN_MARKER} in the model context.`,
+          '',
+        ].join('\n')
+      )
+      await execFileAsync('zip', ['-qr', archivePath, '.'], { cwd: root })
+      const response = await request.post(`${PROVIDER_NATIVE_API_URL}/api/plugins/upload`, {
+        headers: {
+          Authorization: `Bearer ${resources.token}`,
+          Connection: 'close',
+        },
+        multipart: {
+          enabled: 'true',
+          file: {
+            name: `${PLUGIN_NAME}.zip`,
+            mimeType: 'application/zip',
+            buffer: await readFile(archivePath),
+          },
+        },
+      })
+      expect(response.status(), await response.text()).toBe(201)
+      const installed = (await response.json()) as {
+        spec?: {
+          displayName?: string
+          source?: {
+            pluginKey?: string
+            marketplace?: string
+            providerKey?: string
+            catalogItemId?: string
+          }
+        }
+      }
+      const pluginName = installed.spec?.source?.pluginKey
+      const marketplaceId =
+        installed.spec?.source?.marketplace ||
+        installed.spec?.source?.providerKey ||
+        installed.spec?.source?.catalogItemId
+      expect(pluginName).toBe(PLUGIN_NAME)
+      expect(marketplaceId).toBeTruthy()
+      return {
+        id: `${pluginName}@${marketplaceId}`,
+        pluginName: pluginName!,
+        marketplaceId: marketplaceId!,
+        displayName: installed.spec?.displayName || PLUGIN_NAME,
+      }
+    } finally {
+      await Promise.all([
+        rm(root, { recursive: true, force: true }),
+        rm(archivePath, { force: true }),
+      ])
+    }
+  }
+
+  async function createProjectAgentThroughUi(
+    page: Page,
+    request: APIRequestContext,
+    projectId: string
+  ): Promise<CollaborationAgent> {
+    const displayName = 'Codex capability agent'
+    await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
+    await page.getByTestId('collaboration-tab-manage').click()
+    await page.getByTestId('collaboration-project-settings-participants').click()
+    await page.getByTestId('collaboration-participants-tab-agents').click()
+    await expect(page.getByTestId('project-agent-config')).toBeVisible()
+    await page.getByTestId('project-agent-add').click()
+    await page.getByTestId('project-agent-mode-create').click()
+    await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
+    await page.getByTestId('web-agent-resource-name').fill(`${TEST_PREFIX}-codex-agent`)
+    await page.getByTestId('web-agent-display-name').fill(displayName)
+    await page.getByTestId('web-agent-model').selectOption({
+      label: resources.modelName,
+    })
+    await page.getByTestId('web-agent-capability-mode-manual').click()
+    await page.getByTestId('web-agent-skills-add').click()
+    await page.getByTestId(`web-agent-skill-${skillRef.skill_id}`).click()
+    await page.getByTestId('web-agent-plugins-add').click()
+    await page.getByTestId(`web-agent-plugin-${plugin.id}`).click()
+    await page
+      .getByTestId('web-agent-system-prompt')
+      .fill(
+        [
+          'Execute the assigned collaboration Issue deterministically.',
+          `[$${PLUGIN_NAME}](plugin://${plugin.id})`,
+          'Use the configured Skill and plugin before completing the Issue.',
+        ].join(' ')
+      )
+    await page.getByTestId('web-agent-resource-creator-advanced-toggle').click()
+    await page
+      .getByTestId('web-agent-mcp')
+      .fill(JSON.stringify({ [MCP_SERVER_NAME]: providerNativeMcpServer() }))
+    await capture(page, test.info(), 'wegent-00-agent-capabilities-selected')
+    await page.getByTestId('web-agent-resource-create').click()
+    await expect(page.getByTestId('web-agent-resource-creator')).toHaveCount(0)
+
+    let agent: CollaborationAgent | undefined
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<CollaborationAgent[]>(
+          request,
+          `/api/v1/cloud-projects/${projectId}/chat-agents`
+        )
+        agent = response.find(item => item.name === displayName)
+        return agent?.id ?? ''
+      })
+      .not.toBe('')
+    const team = await apiRequest<{
+      bots: Array<{ bot: { id: number } }>
+    }>(request, `/api/teams/${agent!.wegentTeamId}`)
+    const bot = await apiRequest<{
+      plugins: Array<{ id: string }>
+      skills: string[]
+    }>(request, `/api/bots/${team.bots[0].bot.id}`)
+    expect(bot.skills).toContain(SKILL_NAME)
+    expect(bot.plugins).toEqual([expect.objectContaining({ id: plugin.id })])
+    await expect(page.getByTestId(`project-agent-row-${agent!.id}`)).toContainText(displayName)
+    await capture(page, test.info(), 'wegent-01-agent-created')
+    return agent!
   }
 
   async function createProjectAgent(

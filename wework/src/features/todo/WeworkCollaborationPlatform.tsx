@@ -1086,17 +1086,25 @@ export function WeworkSharedProject({
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
       projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
-        services.agentResourceApi
+        services.agentResourceApi,
+        project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
+        project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
+        services.deviceApi
       ),
     }),
     [
       focusedItemId,
+      detailServices?.modelApi,
       location.issueId,
       location.projectView,
       onFocusedItemHandled,
       project.id,
       project.project_store,
       services.agentResourceApi,
+      services.deviceApi,
+      services.localProjectChatAgentApi,
+      services.pluginApi,
       setLocation,
       workspace.id,
     ]
@@ -1536,12 +1544,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         props.services.agentResourceApi,
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
-        props.services.projectSpaceDetailServices?.local?.pluginApi
+        props.services.pluginApi,
+        props.services.deviceApi
       ),
     [
       props.services.agentResourceApi,
+      props.services.deviceApi,
       props.services.projectSpaceDetailServices?.local?.modelApi,
-      props.services.projectSpaceDetailServices?.local?.pluginApi,
+      props.services.pluginApi,
       props.services.localProjectChatAgentApi,
     ]
   )

@@ -282,12 +282,24 @@ describe('local delivery API', () => {
     const api = createLocalProjectChatAgentApi(request, 7)
     await api.create('project-1', {
       name: 'Local Bot',
+      displayName: 'Local Display',
+      namespace: 'default',
       runtime: 'codex',
+      model: 'gpt-5',
+      modelType: 'public',
+      modelNamespace: 'default',
       executionDeviceId: 'local-device',
     })
     expect(request).toHaveBeenCalledWith('chat_agents.create', {
       project_id: 'project-1',
-      agent: expect.objectContaining({ created_by_user_id: 7 }),
+      agent: expect.objectContaining({
+        created_by_user_id: 7,
+        display_name: 'Local Display',
+        namespace: 'default',
+        model: 'gpt-5',
+        model_type: 'public',
+        model_namespace: 'default',
+      }),
     })
   })
 

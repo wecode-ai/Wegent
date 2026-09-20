@@ -32,10 +32,12 @@ import { openLocalFile } from '@/lib/local-terminal'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type {
   Attachment,
+  ModelType,
   ModelSelectionConfig,
   RuntimeProjectPluginRef,
   RuntimeTaskAddress,
 } from '@/types/api'
+import type { UnifiedAgentSkillRef } from '@/api/agentDefinition'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
@@ -116,11 +118,16 @@ export interface LocalProjectChatAgent {
   id: string
   projectId: string
   name: string
+  displayName: string
+  namespace: string
   runtime: 'codex' | 'claude_code'
   model: string | null
+  modelType: ModelType | null
+  modelNamespace: string
   capabilityDescription: string
+  capabilityMode: 'follow_device' | 'manual'
   systemPrompt: string
-  additionalSkills: unknown[]
+  additionalSkills: UnifiedAgentSkillRef[]
   mcpServers: Record<string, unknown>
   status: 'active' | 'archived'
   visibility: 'private' | 'creator_admin' | 'public'
@@ -384,11 +391,16 @@ type LocalAgentRecord = Record<string, unknown> & {
   id: string
   project_id?: string
   name?: string
+  display_name?: string
+  namespace?: string
   runtime?: string
   model?: string | null
+  model_type?: ModelType | null
+  model_namespace?: string
   capability_description?: string
+  capability_mode?: 'follow_device' | 'manual'
   system_prompt?: string
-  additional_skills?: unknown[]
+  additional_skills?: UnifiedAgentSkillRef[]
   mcp_servers?: Record<string, unknown>
   status?: string
   visibility?: string
@@ -417,9 +429,23 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     id: record.id,
     projectId: record.project_id ?? '',
     name: record.name ?? 'AI',
+    displayName: record.display_name ?? record.name ?? 'AI',
+    namespace: record.namespace ?? 'default',
     runtime: record.runtime === 'claude_code' ? 'claude_code' : 'codex',
     model: record.model ?? null,
+    modelType: record.model_type ?? null,
+    modelNamespace: record.model_namespace ?? 'default',
     capabilityDescription: record.capability_description ?? '',
+    capabilityMode:
+      record.capability_mode === 'manual'
+        ? 'manual'
+        : record.capability_mode === 'follow_device'
+          ? 'follow_device'
+          : (record.plugins?.length ?? 0) > 0 ||
+              (record.additional_skills?.length ?? 0) > 0 ||
+              Object.keys(record.mcp_servers ?? {}).length > 0
+            ? 'manual'
+            : 'follow_device',
     systemPrompt: record.system_prompt ?? '',
     additionalSkills: Array.isArray(record.additional_skills) ? record.additional_skills : [],
     mcpServers:
@@ -457,12 +483,17 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       projectId: string,
       input: {
         name: string
+        displayName?: string
+        namespace?: string
         runtime: 'codex' | 'claude_code'
         wegentTeamId?: number | null
         model?: string | null
+        modelType?: ModelType | null
+        modelNamespace?: string
         capabilityDescription?: string
+        capabilityMode?: LocalProjectChatAgent['capabilityMode']
         systemPrompt?: string
-        additionalSkills?: unknown[]
+        additionalSkills?: UnifiedAgentSkillRef[]
         mcpServers?: Record<string, unknown>
         visibility?: LocalProjectChatAgent['visibility']
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
@@ -478,9 +509,14 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         project_id: projectId,
         agent: {
           name: input.name,
+          display_name: input.displayName ?? input.name,
+          namespace: input.namespace ?? 'default',
           runtime: input.runtime,
           model: input.model ?? null,
+          model_type: input.modelType ?? null,
+          model_namespace: input.modelNamespace ?? 'default',
           capability_description: input.capabilityDescription ?? '',
+          capability_mode: input.capabilityMode ?? 'follow_device',
           system_prompt: input.systemPrompt ?? '',
           additional_skills: input.additionalSkills ?? [],
           mcp_servers: input.mcpServers ?? {},
@@ -505,10 +541,15 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         runtime?: 'codex' | 'claude_code'
         wegentTeamId?: number | null
         name?: string
+        displayName?: string
+        namespace?: string
         model?: string | null
+        modelType?: ModelType | null
+        modelNamespace?: string
         capabilityDescription?: string
+        capabilityMode?: LocalProjectChatAgent['capabilityMode']
         systemPrompt?: string
-        additionalSkills?: unknown[]
+        additionalSkills?: UnifiedAgentSkillRef[]
         mcpServers?: Record<string, unknown>
         status?: 'active' | 'archived'
         visibility?: LocalProjectChatAgent['visibility']
@@ -527,9 +568,14 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         agent: {
           version: input.version,
           name: input.name,
+          display_name: input.displayName,
+          namespace: input.namespace,
           runtime: input.runtime,
           model: input.model,
+          model_type: input.modelType,
+          model_namespace: input.modelNamespace,
           capability_description: input.capabilityDescription,
+          capability_mode: input.capabilityMode,
           system_prompt: input.systemPrompt,
           additional_skills: input.additionalSkills,
           mcp_servers: input.mcpServers,

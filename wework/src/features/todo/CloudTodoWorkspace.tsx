@@ -675,8 +675,15 @@ export function CloudTodoWorkspace({
   )
   const cloudWorkspaceApi = services.sharedWorkspaceApi
   const projectAgentConfigurationHost = useMemo(
-    () => createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
-    [services.agentResourceApi]
+    () =>
+      createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        undefined,
+        undefined,
+        services.pluginApi,
+        services.deviceApi
+      ),
+    [services.agentResourceApi, services.deviceApi, services.pluginApi]
   )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)

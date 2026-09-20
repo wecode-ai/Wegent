@@ -428,6 +428,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         ghost_spec = {
             "systemPrompt": obj_in.system_prompt or "",
             "mcpServers": obj_in.mcp_servers or {},
+            "plugins": obj_in.plugins or [],
         }
         if obj_in.default_knowledge_base_refs is not None:
             ghost_spec["defaultKnowledgeBaseRefs"] = [
@@ -555,6 +556,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "ghostRef": {"name": ghost_name, "namespace": namespace},
             "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
             "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
+            "capability_mode": obj_in.capability_mode,
         }
         if obj_in.secondary_model_name:
             bot_spec["secondaryModelRef"] = {
@@ -1123,6 +1125,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")
 
+        if "capability_mode" in update_data:
+            bot_crd = Bot.model_validate(bot.json)
+            bot_crd.spec.capability_mode = update_data["capability_mode"]
+            bot.json = bot_crd.model_dump()
+            flag_modified(bot, "json")
+
         if "system_prompt" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.systemPrompt = update_data["system_prompt"] or ""
@@ -1135,6 +1143,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")  # Mark JSON field as modified
             db.add(ghost)  # Add to session
+
+        if "plugins" in update_data and ghost:
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.plugins = update_data["plugins"] or []
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
 
         if "default_knowledge_base_refs" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
@@ -1697,6 +1712,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Extract data from components
         system_prompt = ""
         mcp_servers = {}
+        plugins = []
         shell_type = ""
         shell_name = ""
         agent_config = {}
@@ -1709,6 +1725,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost_crd = Ghost.model_validate(ghost.json)
             system_prompt = ghost_crd.spec.systemPrompt
             mcp_servers = ghost_crd.spec.mcpServers or {}
+            plugins = ghost_crd.spec.plugins or []
 
         if shell and shell.json:
             shell_crd = Shell.model_validate(shell.json)
@@ -1861,6 +1878,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
+            "plugins": plugins,
+            "capability_mode": bot_crd.spec.capability_mode,
             "default_knowledge_base_refs": default_knowledge_base_refs,
             "skills": skills,
             "skill_refs": skill_refs,

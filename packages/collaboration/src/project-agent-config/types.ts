@@ -34,6 +34,7 @@ export interface ProjectAgentConfigurationHost {
   renderLocalAgentCreator?(props: {
     onClose(): void;
     onCreated(): Promise<void>;
+    projectId?: string;
   }): ReactNode;
   /**
    * Edits the Agent resource behind a configured project Agent. Hosts that
@@ -47,6 +48,7 @@ export interface ProjectAgentConfigurationHost {
     workspaceName: string;
   }): ReactNode;
   renderLocalAgentEditor?(props: {
+    projectId?: string;
     resourceId: string;
     onClose(): void;
     onSaved(): Promise<void>;

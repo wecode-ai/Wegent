@@ -29,6 +29,8 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../
 const SKILL_NAME = `collaboration-chain-skill-${process.pid}`
 const SKILL_UI_REFERENCE = `default/${SKILL_NAME}`
 const SKILL_CONTENT_MARKER = 'COLLABORATION_CHAIN_REAL_SKILL'
+const PLUGIN_NAME = `collaboration-chain-plugin-${process.pid}`
+const PLUGIN_CONTENT_MARKER = 'COLLABORATION_CHAIN_REAL_PLUGIN'
 const MCP_NAMESPACE = 'wework_space'
 const WORKSPACE_NAME = '协作链路验收空间'
 const PROJECT_NAME = '双智能体自动处理项目'
@@ -197,6 +199,8 @@ function summarizeModelRequest(body, serialized, issue, agent, ids) {
     toolCount: Array.isArray(body.tools) ? body.tools.length : 0,
     hasConfiguredSkill:
       serialized.includes(SKILL_NAME) || serialized.includes(SKILL_CONTENT_MARKER),
+    hasConfiguredPlugin:
+      serialized.includes(PLUGIN_NAME) || serialized.includes(PLUGIN_CONTENT_MARKER),
     completedCalls: ids
       ? Object.entries(ids)
           .filter(([, callId]) => requestContainsToolOutput(body, callId))
@@ -225,6 +229,7 @@ export async function createDesktopScenario({
   let workspace = null
   let project = null
   let skillResource = null
+  let pluginReference = null
   let codexAgent = null
   let claudeAgent = null
   let collaborationGroup = null
@@ -727,11 +732,29 @@ export async function createDesktopScenario({
     await control.command('select', '[data-testid="wework-agent-model"]', {
       value: String(publicModelIndex),
     })
+    await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
+    await control.command('click', '[data-testid="wework-agent-skills-add"]')
     await control.command('click', `[data-testid="wework-agent-skill-${skill.id}"]`)
-    const systemPrompt = `${systemMarker}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`
+    if (nativeRuntime === 'codex') {
+      assert.ok(pluginReference, 'The real collaboration plugin was not prepared')
+      await control.command('click', '[data-testid="wework-agent-plugins-add"]')
+      await control.command('click', `[data-testid="wework-agent-plugin-${pluginReference.id}"]`)
+    }
+    const pluginMention =
+      nativeRuntime === 'codex'
+        ? ` [$${PLUGIN_NAME}](plugin://${pluginReference.pluginName}@${pluginReference.marketplaceId})`
+        : ''
+    const systemPrompt = `${systemMarker}${pluginMention}。按 Skill 约束工作，并严格依次调用 get_current_context、get_board_item、add_board_item_comment。`
     await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
       value: systemPrompt,
     })
+    const renderedSystemPrompt = await waitForValue(
+      () => control.command('getValue', '[data-testid="wework-agent-system-prompt"]'),
+      value => (value.includes(systemMarker) ? value : false),
+      `Creating ${name} did not render its system prompt`,
+      uiTimeoutMs
+    )
+    await control.command('click', '[data-testid="wework-agent-resource-creator-advanced-toggle"]')
     await control.command('fill', '[data-testid="wework-agent-mcp"]', {
       value: '{}',
     })
@@ -753,8 +776,15 @@ export async function createDesktopScenario({
     assert.equal(bot.shell_type, shellRuntime)
     assert.equal(bot.agent_config?.bind_model, MODEL_NAME)
     assert.equal(bot.agent_config?.bind_model_type, 'public')
+    assert.equal(bot.system_prompt, systemPrompt)
     assert.ok(bot.skills?.includes(SKILL_NAME), `${name} did not persist ${SKILL_UI_REFERENCE}`)
     assert.equal(bot.skill_refs?.[SKILL_NAME]?.namespace, 'default')
+    if (nativeRuntime === 'codex') {
+      assert.equal(bot.plugins?.length, 1, `${name} did not persist exactly one real plugin`)
+      assert.equal(bot.plugins[0].id, pluginReference.id)
+      assert.equal(bot.plugins[0].pluginName, pluginReference.pluginName)
+      assert.equal(bot.plugins[0].marketplaceId, pluginReference.marketplaceId)
+    }
     assert.deepEqual(
       bot.mcp_servers ?? {},
       {},
@@ -769,6 +799,7 @@ export async function createDesktopScenario({
         botId: team.bots[0].bot.id,
         name,
         shellRuntime,
+        renderedSystemPrompt,
         systemPrompt,
         technicalName,
       })
@@ -783,7 +814,7 @@ export async function createDesktopScenario({
   async function verifyProjectAgentResourceEditing(
     control,
     agent,
-    { botId, name, shellRuntime, systemPrompt, technicalName }
+    { botId, name, renderedSystemPrompt, shellRuntime, systemPrompt, technicalName }
   ) {
     await control.command(
       'clickWhenEnabled',
@@ -795,7 +826,7 @@ export async function createDesktopScenario({
     })
     await waitForValue(
       () => control.command('getValue', '[data-testid="wework-agent-system-prompt"]'),
-      value => value === systemPrompt,
+      value => value === renderedSystemPrompt,
       `Editing ${name} did not load its persisted system prompt`,
       uiTimeoutMs
     )
@@ -1282,6 +1313,44 @@ export async function createDesktopScenario({
       await request('/api/admin/setup-complete', { method: 'POST' })
       skillResource = await createRealSkill()
       assert.equal(skillResource.metadata?.name, SKILL_NAME)
+      const published = await cloud.publishPluginRelease({
+        slug: PLUGIN_NAME,
+        version: '1.0.0',
+        skills: {
+          [PLUGIN_NAME]: `Real collaboration Agent plugin. Preserve ${PLUGIN_CONTENT_MARKER}.`,
+        },
+      })
+      await request(
+        `/api/plugins/marketplace/${published.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
+        { method: 'POST' }
+      )
+      pluginReference = await waitForValue(
+        () => request('/api/plugins/installed'),
+        response => {
+          const installed = response.items?.find(
+            item => item.spec?.source?.pluginKey === PLUGIN_NAME
+          )
+          const marketplaceId =
+            installed?.spec?.source?.marketplace ||
+            installed?.spec?.manifest?.marketplaceId ||
+            installed?.spec?.source?.providerKey ||
+            installed?.spec?.source?.catalogItemId
+          return installed && marketplaceId
+            ? {
+                id: `${PLUGIN_NAME}@${marketplaceId}`,
+                pluginName: PLUGIN_NAME,
+                marketplaceId,
+                displayName: installed.spec.displayName || PLUGIN_NAME,
+                description:
+                  installed.spec.description ||
+                  installed.spec.manifest?.description ||
+                  `Desktop E2E ${PLUGIN_NAME}`,
+              }
+            : false
+        },
+        'The collaboration Agent plugin was not installed for the real cloud device',
+        workbenchReadyTimeoutMs
+      )
     },
 
     async handleHttp(requestMessage, response, url) {
@@ -1464,6 +1533,12 @@ export async function createDesktopScenario({
       }
 
       assert.ok(serialized.includes(SKILL_NAME), `${agent} did not receive its configured Skill`)
+      if (agent === 'codex') {
+        assert.ok(
+          serialized.includes(PLUGIN_NAME) || serialized.includes(PLUGIN_CONTENT_MARKER),
+          `${agent} did not receive its configured plugin Skill`
+        )
+      }
       modelStages.push({ agent, issueId: issue.id, issueTitle: issue.title })
       const selection = directOrSearchEvents(
         body,

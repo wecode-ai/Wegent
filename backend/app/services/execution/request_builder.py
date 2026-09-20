@@ -541,6 +541,7 @@ class TaskRequestBuilder:
             workspace_source=project_workspace.get("workspace_source"),
             project_workspace_path=project_workspace.get("project_workspace_path"),
             execution_target_type=project_workspace.get("execution_target_type"),
+            project_plugin_ids=self._project_plugin_ids(bot_config),
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
             git_domain=git_domain,
@@ -582,6 +583,21 @@ class TaskRequestBuilder:
             bool(execution_request.backend_url),
         )
         return execution_request
+
+    @staticmethod
+    def _project_plugin_ids(bot_configs: list[dict]) -> list[str]:
+        plugin_ids: set[str] = set()
+        for bot_config in bot_configs:
+            plugins = bot_config.get("plugins")
+            if not isinstance(plugins, list):
+                continue
+            for plugin in plugins:
+                if not isinstance(plugin, dict):
+                    continue
+                plugin_id = plugin.get("id")
+                if isinstance(plugin_id, str) and plugin_id.strip():
+                    plugin_ids.add(plugin_id.strip())
+        return sorted(plugin_ids)
 
     @staticmethod
     def _is_board_wegent_task(task: TaskResource) -> bool:
@@ -1975,6 +1991,7 @@ Response template:
             ghost_mcp_servers = []
             ghost_skills = []
             ghost_skill_refs = {}
+            ghost_plugins = []
 
             if bot_spec and bot_spec.ghostRef:
                 ghost = kindReader.get_by_name_and_namespace(
@@ -1993,10 +2010,16 @@ Response template:
                         for name, config in mcp_servers_dict.items()
                     ]
                     ghost_skills = ghost_crd.spec.skills or []
+                    ghost_plugins = ghost_crd.spec.plugins or []
                     ghost_skill_refs = {
                         name: ref.model_dump()
                         for name, ref in (ghost_crd.spec.skill_refs or {}).items()
                     }
+                    if bot_spec.capability_mode == "follow_device":
+                        ghost_mcp_servers = []
+                        ghost_skills = []
+                        ghost_plugins = []
+                        ghost_skill_refs = {}
 
             # Resolve agent_config from model binding
             if runtime_model_config:
@@ -2021,8 +2044,10 @@ Response template:
                     member.prompt if member else None,
                 ),
                 "mcp_servers": ghost_mcp_servers,
+                "plugins": ghost_plugins,
                 "skills": ghost_skills,
                 "skill_refs": ghost_skill_refs,
+                "capability_mode": bot_spec.capability_mode,
                 "role": member.role if member and member.role else "worker",
                 "base_image": base_image,
             }
@@ -2038,6 +2063,7 @@ Response template:
                     "agent_config": {},
                     "system_prompt": "",
                     "mcp_servers": [],
+                    "plugins": [],
                     "skills": [],
                     "skill_refs": {},
                     "role": "worker",

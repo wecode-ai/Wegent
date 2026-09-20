@@ -355,6 +355,14 @@ def test_create_with_user_resolves_explicit_skill_refs_before_persisting(mocker)
             agent_config={},
             skills=["h52wbox-cloud"],
             skill_refs={"h52wbox-cloud": skill_ref},
+            plugins=[
+                {
+                    "id": "quality-gate@team-market",
+                    "pluginName": "quality-gate",
+                    "marketplaceId": "team-market",
+                    "displayName": "Quality Gate",
+                }
+            ],
         ),
         user_id=1,
     )
@@ -363,5 +371,6 @@ def test_create_with_user_resolves_explicit_skill_refs_before_persisting(mocker)
         obj for obj in added_objects if isinstance(obj, Kind) and obj.kind == "Ghost"
     )
     assert ghost.json["spec"]["skill_refs"]["h52wbox-cloud"]["skill_id"] == 92
+    assert ghost.json["spec"]["plugins"][0]["id"] == "quality-gate@team-market"
     resolve_refs.assert_called_once()
     legacy_validation.assert_not_called()
