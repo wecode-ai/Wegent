@@ -11,6 +11,7 @@ This guide covers everything you need to configure AI agents in Wegent through t
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Agents in collaboration projects](#-agents-in-collaboration-projects)
 - [Accessing Agent Settings](#-accessing-agent-settings)
 - [Creating an Agent](#-creating-an-agent)
 - [Configuring Bots](#-configuring-bots)
@@ -49,6 +50,27 @@ Bot = Executor + Model + Prompt + Tools
 | **Model** | AI brain | Claude Sonnet 4, GPT-4o |
 | **Prompt** | Personality & expertise | System instructions |
 | **Tools** | External capabilities | GitHub MCP, Skills |
+
+---
+
+## 🧩 Agents in collaboration projects
+
+Wegent Web and Wework use the same agent creation form in collaboration projects. The form keeps three independent dimensions:
+
+| Dimension | Meaning | Examples |
+|-----------|---------|----------|
+| **Agent source** | Where the agent definition is stored | Current project, shared agent |
+| **Executor type** | Which runtime the agent uses | Codex, Claude Code |
+| **Capability source** | How Skills, Plugins, and MCP are obtained | Follow the runtime device, manually selected capabilities |
+
+**A Wegent-managed or shared agent is a source, not an executor type.** A shared agent retains the executor and capability configuration in its own definition, while the project stores a reference to it. An agent created in the current project stores its executor, model, system prompt, and capability requirements directly from the form.
+
+### Capability sources
+
+- **Follow the runtime device**: the task uses the Plugins, Skills, MCP servers, and local capabilities available to the current user on whichever device runs it. The agent is not permanently bound to the device used during creation.
+- **Manually select capabilities**: the selected Plugins, Skills, and MCP configuration are saved with the agent. Before a task starts, the system selects or prepares an eligible execution device and synchronizes those capabilities into its runtime.
+
+The system prompt editor uses the same reference interaction as the task composer. Supported capability references can be inserted with `@` or `/`. A reference expresses a capability requirement; it does not implicitly bind the agent to the current computer.
 
 ---
 
