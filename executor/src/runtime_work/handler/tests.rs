@@ -3963,6 +3963,7 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
             after_cursor: None,
         },
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
     });
@@ -3972,6 +3973,53 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
     assert_eq!(response["turnNavigation"].as_array().unwrap().len(), 2);
     assert_eq!(response["turnNavigation"][0]["promptPreview"], "old prompt");
     assert_eq!(response["turnNavigation"][1]["promptPreview"], "new prompt");
+}
+
+#[test]
+fn conversation_context_transcript_omits_process_payloads() {
+    let messages = vec![
+        json!({
+            "id": "user-1",
+            "turnId": "turn-1",
+            "role": "user",
+            "content": "Investigate",
+            "attachments": [{"localPath": "/tmp/secret"}],
+        }),
+        json!({
+            "id": "assistant-1",
+            "turnId": "turn-1",
+            "role": "assistant",
+            "content": "Fixed",
+            "status": "done",
+            "blocks": [{"type": "tool", "toolOutput": "x".repeat(1_000_000)}],
+            "runtimeItems": [{"type": "command_execution", "output": "large"}],
+        }),
+    ];
+
+    let response = transcript_response(TranscriptResponseInput {
+        local_task_id: "task-1".to_owned(),
+        workspace_path: "/tmp/project".to_owned(),
+        runtime: "codex".to_owned(),
+        messages,
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: true,
+        conversation_context_only: true,
+        turn_item_source: TranscriptTurnItemSource::CodexItems,
+        turn_navigation: Vec::new(),
+    });
+
+    assert_eq!(response["messages"][0]["content"], "Investigate");
+    assert!(response["messages"][0].get("attachments").is_none());
+    assert_eq!(response["messages"][1]["content"], "Fixed");
+    assert!(response["messages"][1].get("blocks").is_none());
+    assert!(response["messages"][1].get("runtimeItems").is_none());
+    assert_eq!(response["turns"][0]["items"][1]["type"], "assistant_text");
+    assert_eq!(response["turns"][0]["items"][1]["content"], "Fixed");
 }
 
 #[test]

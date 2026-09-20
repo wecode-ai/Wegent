@@ -257,6 +257,9 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
+        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
+            .or_else(|| bool_field(&payload, "conversation_context_only"))
+            .unwrap_or(false);
         let navigation_only = bool_field(&payload, "navigationOnly")
             .or_else(|| bool_field(&payload, "navigation_only"))
             .unwrap_or(false);
@@ -369,6 +372,9 @@ impl RuntimeWorkRpcHandler {
                         false,
                         false,
                     );
+                    if conversation_context_only {
+                        project_conversation_context_messages(&mut messages);
+                    }
                     log_runtime_transcript_finished(RuntimeTranscriptLog {
                         started_at,
                         local_task_id: &local_task_id,
@@ -399,7 +405,10 @@ impl RuntimeWorkRpcHandler {
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
         }) {
-            let messages = cached_runtime_transcript_messages(link);
+            let mut messages = cached_runtime_transcript_messages(link);
+            if conversation_context_only {
+                project_conversation_context_messages(&mut messages);
+            }
             log_runtime_transcript_finished(RuntimeTranscriptLog {
                 started_at,
                 local_task_id: &local_task_id,
@@ -450,6 +459,7 @@ impl RuntimeWorkRpcHandler {
                 running: local_execution_running,
                 pagination,
                 full_content: include_full_content,
+                conversation_context_only,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
                 turn_navigation: Vec::new(),
             }));
@@ -625,6 +635,7 @@ impl RuntimeWorkRpcHandler {
                 },
             },
             full_content: include_full_content,
+            conversation_context_only,
             turn_item_source: TranscriptTurnItemSource::CodexItems,
             turn_navigation,
         });

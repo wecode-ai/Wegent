@@ -28,6 +28,7 @@ fn cached_transcript_response(
             after_cursor.map(ToOwned::to_owned),
         ),
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
     });
@@ -138,6 +139,7 @@ struct TranscriptResponseInput {
     running: bool,
     pagination: TranscriptPagination,
     full_content: bool,
+    conversation_context_only: bool,
     turn_item_source: TranscriptTurnItemSource,
     turn_navigation: Vec<Value>,
 }
@@ -188,14 +190,21 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         local_task_id,
         workspace_path,
         runtime,
-        messages,
+        mut messages,
         context_usage,
         running,
         pagination,
         full_content,
+        conversation_context_only,
         turn_item_source,
         turn_navigation,
     } = input;
+    let turn_item_source = if conversation_context_only {
+        project_conversation_context_messages(&mut messages);
+        TranscriptTurnItemSource::CachedMessages
+    } else {
+        turn_item_source
+    };
     let ResolvedTranscriptPagination {
         messages,
         range_start,
@@ -483,9 +492,43 @@ fn transcript_navigation_response(
             after_cursor: None,
         },
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CodexItems,
         turn_navigation,
     })
+}
+
+fn project_conversation_context_messages(messages: &mut Vec<Value>) {
+    const KEYS: &[&str] = &[
+        "id",
+        "clientUserMessageId",
+        "role",
+        "content",
+        "status",
+        "runtimeStatus",
+        "turnId",
+        "subtaskId",
+        "createdAt",
+        "completedAt",
+        "messageIndex",
+    ];
+
+    messages.retain_mut(|message| {
+        let Some(object) = message.as_object_mut() else {
+            return false;
+        };
+        let visible_role = object
+            .get("role")
+            .and_then(Value::as_str)
+            .is_some_and(|role| {
+                role.eq_ignore_ascii_case("user") || role.eq_ignore_ascii_case("assistant")
+            });
+        if !visible_role {
+            return false;
+        }
+        object.retain(|key, _| KEYS.contains(&key.as_str()));
+        true
+    });
 }
 
 fn transcript_navigation_message_id(message: &Value, message_index: usize) -> String {
