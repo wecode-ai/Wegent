@@ -225,6 +225,15 @@ export function TemporaryChatPanel({
               projectChat.setRuntimeTaskSelectedModel(address, model),
             setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
               projectChat.setRuntimeTaskSelectedModelAndOptions(address, model, options),
+            continueInNewConversation: (
+              model: UnifiedModel,
+              options?: ModelOptions,
+              source?: { draft?: string }
+            ) =>
+              projectChat.continueInNewConversation?.(model, options, {
+                ...source,
+                address,
+              }),
             setSelectedModelOption: (optionId: string, value: string) =>
               projectChat.setRuntimeTaskSelectedModelOption(address, optionId, value),
             getSelectedModel: () =>
