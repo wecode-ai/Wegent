@@ -1124,4 +1124,47 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  test('allows a detached Inspector to finish a slow native startup', async () => {
+    vi.useFakeTimers()
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    try {
+      const manager = new EmbeddedBrowserManager(directory)
+      const contents = new FakeWebContents()
+      let inspectorOpened = false
+      contents.loadURL.mockImplementation(async url => {
+        contents.commitUrl(url)
+      })
+      contents.openDevTools.mockImplementation(() => {
+        setTimeout(() => {
+          inspectorOpened = true
+        }, 6_000)
+      })
+      contents.isDevToolsOpened.mockImplementation(() => inspectorOpened)
+      contents.closeDevTools.mockImplementation(() => {
+        inspectorOpened = false
+      })
+      manager.attach('workspace-browser', contents as unknown as WebContents)
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+
+      const verification = manager.verifyDetachedInspector('workspace-browser')
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      await expect(verification).resolves.toMatchObject({
+        visible: true,
+        closedVisible: false,
+      })
+      expect(contents.openDevTools).toHaveBeenCalledOnce()
+      expect(contents.closeDevTools).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 })
