@@ -73,7 +73,6 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
-import type { Team } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
@@ -261,7 +260,6 @@ import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
-import { WorkbenchTeamSelector } from './WorkbenchTeamSelector'
 import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
@@ -1193,9 +1191,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneInput = paneSession.input
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
-  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
-  const [teamsLoading, setTeamsLoading] = useState(false)
   const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
     Partial<Record<LocalHarnessId, string | null>>
   >({})
@@ -1229,32 +1224,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     message: string
   } | null>(null)
   const centralHarnessRequestIdRef = useRef(0)
-  useEffect(() => {
-    if (!experimentalFeaturesEnabled) return
-
-    let cancelled = false
-    void Promise.resolve().then(async () => {
-      if (cancelled) return
-      setTeamsLoading(true)
-      try {
-        const teams = await services.teamApi.listTeams()
-        if (!cancelled) setWegentTeams(teams.filter(team => team.is_active))
-      } catch (error) {
-        console.warn('[Wework] Failed to load Wegent Teams', error)
-        if (!cancelled) setWegentTeams([])
-      } finally {
-        if (!cancelled) setTeamsLoading(false)
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [experimentalFeaturesEnabled, services.teamApi])
-  const selectWegentTeam = useCallback((team: Team | null) => {
-    setCentralHarnessError(null)
-    setSelectedTeam(team)
-  }, [])
   useEffect(() => {
     if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
 
@@ -2262,8 +2231,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
       ? newChatRuntime
       : 'codex'
-  const activeTeam =
-    experimentalFeaturesEnabled && activeNewChatRuntime === 'codex' ? selectedTeam : null
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const resolveHarnessPluginRoots = useCallback(async () => {
     const [skillsResult, installedResult] = await Promise.allSettled([
@@ -2320,7 +2287,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setCentralHarnessStarting(false)
       setCentralHarnessError(null)
       setNewChatRuntime('codex')
-      setSelectedTeam(null)
     }
     window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
     return () => {
@@ -2589,17 +2555,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       runtimeExecutablePath?: string
       runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
       modelSelection?: ModelSelectionConfig | null
-      wegentTeamId?: number
     }
   ) => {
-    if (currentRuntimeTask) {
+    if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
       return submitPaneInput(value, options)
-    }
-    if (activeNewChatRuntime === 'codex') {
-      return submitPaneInput(value, {
-        ...options,
-        ...(activeTeam ? { wegentTeamId: activeTeam.id } : {}),
-      })
     }
     if (activeNewChatRuntime === 'claude_code') {
       return submitPaneInput(value, {
@@ -5464,29 +5423,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           projectWorkBarMiddleContext={projectSpaceContext}
                           projectWorkBarTrailingContext={
                             experimentalFeaturesEnabled ? (
-                              <div className="flex items-center gap-1">
-                                {activeNewChatRuntime === 'codex' && (
-                                  <WorkbenchTeamSelector
-                                    teams={wegentTeams}
-                                    selectedTeamId={activeTeam?.id ?? null}
-                                    loading={teamsLoading}
-                                    onTeamChange={selectWegentTeam}
-                                  />
+                              <WorkbenchHarnessSelector
+                                runtime={activeNewChatRuntime}
+                                harnesses={localHarnesses}
+                                enabledHarnesses={enabledLocalHarnesses.map(
+                                  preference => preference.id
                                 )}
-                                <WorkbenchHarnessSelector
-                                  runtime={activeNewChatRuntime}
-                                  harnesses={localHarnesses}
-                                  enabledHarnesses={enabledLocalHarnesses.map(
-                                    preference => preference.id
-                                  )}
-                                  loading={localHarnessesLoading}
-                                  detectionFailed={localHarnessDetectionFailed}
-                                  onRuntimeChange={runtime => {
-                                    setCentralHarnessError(null)
-                                    setNewChatRuntime(runtime)
-                                  }}
-                                />
-                              </div>
+                                loading={localHarnessesLoading}
+                                detectionFailed={localHarnessDetectionFailed}
+                                onRuntimeChange={runtime => {
+                                  setCentralHarnessError(null)
+                                  setNewChatRuntime(runtime)
+                                }}
+                              />
                             ) : undefined
                           }
                           modelSelectorOverride={
