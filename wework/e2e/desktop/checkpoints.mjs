@@ -7,6 +7,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-shared-core',
   'collaboration-settings-matrix',
   'collaboration-agent-automation-chain',
+  'collaboration-issue-comment-mention',
   'priority-filter',
   'telemetry-consent',
   'external-content-import',

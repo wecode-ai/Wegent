@@ -59,6 +59,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-settings-matrix': './scenarios/collaboration-settings-matrix.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
+  'collaboration-issue-comment-mention':
+    './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
@@ -83,6 +85,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-shared-core',
   'collaboration-settings-matrix',
   'collaboration-agent-automation-chain',
+  'collaboration-issue-comment-mention',
   'plugin-development',
   'task-attachments',
   'project-assignment-notification',

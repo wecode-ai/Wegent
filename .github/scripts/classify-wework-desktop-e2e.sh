@@ -8,6 +8,7 @@ core_segments=(
   collaboration-shared-core
   collaboration-settings-matrix
   collaboration-agent-automation-chain
+  collaboration-issue-comment-mention
   cloud-space-mention
   priority-filter
   external-content-import
@@ -148,7 +149,7 @@ core_shards=(
   project-automation,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,collaboration-issue-comment-mention
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
@@ -520,6 +521,12 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
       select_target "core:board-focus-view"
+      return
+      ;;
+    # Issue comment/reply mention wiring lives in the shared composers and in
+    # the Wework collaboration render path.
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
+      select_target "core:collaboration-issue-comment-mention"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
@@ -926,6 +933,7 @@ classify_path() {
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-agent-automation-chain"
+      select_target "core:collaboration-issue-comment-mention"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
