@@ -1,4 +1,12 @@
 {
+  "multiStyle": {
+    "title": "AI Vlog Editing · Multiple Styles",
+    "variant": "Style {{index}}",
+    "planning": "Planning three video styles…",
+    "processing": "Generating…",
+    "failed": "Generation failed. Other completed videos remain available.",
+    "renderRequest": "Use rerender_style_video with sub_task_id {{subTaskId}} to render this style's latest saved timeline. Do not regenerate the other styles."
+  },
   "entity_regenerate_success": "Image regenerated successfully",
   "entity_regenerate_failed": "Regeneration failed, please try again",
   "image_generate_success": "Image generated successfully",

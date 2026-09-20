@@ -14,6 +14,7 @@ class VideoMediaSettings(BaseSettings):
 
     WEIBO_IMAGE_HOSTING_ENABLED: bool = False
     AIGC_VIDEO_AGENT_URL: str = ""
+    OPENCUT_CALLBACK_URL: str = ""
     WEIBO_FILEPLATFORM_URL: str = ""
     WEIBO_TAUTH2_APPKEY: str = ""
     WEIBO_MEDIA_UPLOAD_DEFAULT_UID: str = ""

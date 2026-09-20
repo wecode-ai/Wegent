@@ -39,6 +39,7 @@ from .opencut_support import truthy as _truthy
 from .opencut_support import (
     validate_converted_media_tracks,
 )
+from .opencut_text_templates import text_template_import, text_template_save
 from .opencut_urls import create_opencut_urls, verify_opencut_token
 
 router = APIRouter()
@@ -122,7 +123,11 @@ def _timeline_tracks(timeline: dict[str, Any]) -> dict[str, list[dict[str, Any]]
 
 
 def _callback_base_url() -> str:
-    value = settings.FRONTEND_URL.strip().rstrip("/")
+    value = (
+        (video_media_settings.OPENCUT_CALLBACK_URL or settings.FRONTEND_URL)
+        .strip()
+        .rstrip("/")
+    )
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(
@@ -491,6 +496,11 @@ def build_storycut_bundle(
         for index, item in enumerate(items, 1):
             source = _source(item)
             if not source:
+                if source_kind == "video":
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Timeline image or video is missing its source URL",
+                    )
                 continue
             media_index += 1
             visual_kind = str(item.get("kind") or source_kind)
@@ -623,10 +633,33 @@ def build_storycut_bundle(
             }
         )
 
+    text_templates = []
+    for index, item in enumerate(tracks["text_animations"], 1):
+        template = text_template_import(
+            item,
+            element_id=str(
+                item.get("storycut_element_id")
+                or item.get("id")
+                or _stable_id("text-template", index)
+            ),
+            window=_time_window(item),
+        )
+        text_templates.append(template)
+        if not any(track["id"] == template["trackId"] for track in track_defs):
+            track_defs.append(
+                {
+                    "id": template["trackId"],
+                    "locked": bool(item.get("storycut_track_locked", False)),
+                    "label": template["metadata"]["storycut_track_label"],
+                    "type": "text",
+                    "projectId": project_id,
+                }
+            )
+
     duration = max(
         [
             int(item.get("timestamp") or 0) + int(item.get("duration") or 0)
-            for item in [*keyframes, *subtitles, *stickers]
+            for item in [*keyframes, *subtitles, *stickers, *text_templates]
         ]
         or [0]
     )
@@ -653,7 +686,7 @@ def build_storycut_bundle(
         "keyframes": keyframes,
         "subtitles": subtitles,
         "stickers": stickers,
-        "textTemplates": tracks["text_animations"],
+        "textTemplates": text_templates,
         "transitions": tracks["transitions"],
     }
 
@@ -919,10 +952,13 @@ def storycut_payload_to_tracks(
                     result["stickers"].append(item)
             elif element_type == "text-template":
                 result["text_animations"].append(
-                    {
-                        **_original_metadata(element),
-                        "timeline_window": _element_window(element),
-                    }
+                    text_template_save(
+                        element,
+                        metadata=_original_metadata(element),
+                        window=_element_window(element),
+                        track=track,
+                        track_index=track_index,
+                    )
                 )
             else:
                 item = _visual_item(element, track, media_by_id, track_index)
@@ -1014,6 +1050,11 @@ async def save_opencut_timeline(
     )
     converted_tracks = storycut_payload_to_tracks(payload)
     validate_converted_media_tracks(payload, converted_tracks)
+    if _timeline_tracks(original)["video"] and not converted_tracks.get("video"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot replace a video timeline with an empty visual track",
+        )
     tracks = merge_tracks_with_original(converted_tracks, _timeline_tracks(original))
     saved = await _update_timeline(
         session_id=session_id,
