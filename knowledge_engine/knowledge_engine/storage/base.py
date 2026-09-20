@@ -24,6 +24,20 @@ if TYPE_CHECKING:
 
 RETRIEVAL_TEXT_METADATA_KEY = "retrieval_text"
 DISPLAY_TEXT_METADATA_KEY = "display_text"
+
+
+def index_strategy_owns_dedicated_index(
+    index_strategy: Dict[str, Any] | None,
+) -> bool:
+    """Whether a naming strategy gives every knowledge base its own index.
+
+    Only ``per_dataset`` does. The shared strategies (``per_user``, ``fixed``,
+    ``rolling``) name one index for several knowledge bases, so nothing scoped
+    to a single knowledge base may drop it.
+    """
+    return (index_strategy or {}).get("mode", "per_dataset") == "per_dataset"
+
+
 # The business ceiling of a complete chunk listing. It bounds the same
 # interface for every backend, so it is declared once beside that interface
 # instead of being repeated as a literal in each implementation.
@@ -295,7 +309,7 @@ class BaseStorageBackend(ABC):
 
     def can_drop_physical_index(self) -> bool:
         """Return True when the storage backend owns a dedicated KB index."""
-        return self.index_strategy.get("mode", "per_dataset") == "per_dataset"
+        return index_strategy_owns_dedicated_index(self.index_strategy)
 
     def _ensure_can_drop_physical_index(self) -> None:
         if not self.can_drop_physical_index():

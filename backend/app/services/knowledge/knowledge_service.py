@@ -132,6 +132,20 @@ def _get_delete_gateway():
     return get_delete_gateway()
 
 
+def _cleanup_knowledge_index(cleanup_spec: Any, *, db: Session) -> Any:
+    """Remove a deleted knowledge base's index through the delete gateway.
+
+    A drop spec means the knowledge base owned the collection; a purge spec
+    means it shared one and only its own rows may go.
+    """
+    from app.services.rag.runtime_specs import DropKnowledgeIndexRuntimeSpec
+
+    gateway = _get_delete_gateway()
+    if isinstance(cleanup_spec, DropKnowledgeIndexRuntimeSpec):
+        return gateway.drop_knowledge_index(cleanup_spec, db=db)
+    return gateway.purge_knowledge_index(cleanup_spec, db=db)
+
+
 def _run_async_in_new_loop(coro):
     """Execute a coroutine in a dedicated event loop for sync call sites."""
     loop = asyncio.new_event_loop()
@@ -1083,8 +1097,15 @@ class KnowledgeService:
             )
             if attachment_id
         }
-        purge_spec = KnowledgeService._build_code_wiki_purge_spec(
-            db, kb, user_id, documents
+        index_cleanup_spec = KnowledgeService._build_index_cleanup_spec(db, kb, user_id)
+
+        # The index goes away before the deletion commits: the remote runtime
+        # re-resolves the retriever from the knowledge base record, so it has
+        # nothing left to resolve once that record is gone. Failing the other
+        # way around would leave a knowledge base whose index was dropped, which
+        # re-indexing repairs, instead of an index no record points at.
+        KnowledgeService._cleanup_knowledge_index_best_effort(
+            db, knowledge_base_id, index_cleanup_spec
         )
 
         for document in documents:
@@ -1129,8 +1150,8 @@ class KnowledgeService:
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
-        KnowledgeService._cleanup_deleted_code_wiki_resources(
-            db, knowledge_base_id, purge_spec, attachment_refs
+        KnowledgeService._cleanup_deleted_knowledge_base_resources(
+            db, knowledge_base_id, attachment_refs
         )
         return True
 
@@ -1192,21 +1213,24 @@ class KnowledgeService:
         return True
 
     @staticmethod
-    def _build_code_wiki_purge_spec(
+    def _build_index_cleanup_spec(
         db: Session,
         knowledge_base: Kind,
         user_id: int,
-        documents: list[KnowledgeDocument],
     ) -> Optional[Any]:
-        """Build the RAG cleanup request before deleting generated pages."""
+        """Build the RAG cleanup request before the knowledge base rows go away.
+
+        The request is built while the knowledge base still exists, because
+        resolving it reads the knowledge base and its retriever.
+        """
         spec = (knowledge_base.json or {}).get("spec", {})
-        if not documents or not spec.get("retrievalConfig"):
+        if not spec.get("retrievalConfig"):
             return None
 
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
         try:
-            return RagRuntimeResolver().build_public_purge_index_runtime_spec(
+            return RagRuntimeResolver().build_public_index_cleanup_runtime_spec(
                 db=db,
                 knowledge_base_id=knowledge_base.id,
                 user_id=user_id,
@@ -1214,33 +1238,39 @@ class KnowledgeService:
             )
         except Exception as exc:
             batch_logger.warning(
-                "Could not prepare RAG cleanup for code wiki %s: %s",
+                "Could not prepare RAG cleanup for knowledge base %s: %s",
                 knowledge_base.id,
                 exc,
             )
             return None
 
     @staticmethod
-    def _cleanup_deleted_code_wiki_resources(
+    def _cleanup_knowledge_index_best_effort(
         db: Session,
         knowledge_base_id: int,
-        purge_spec: Optional[Any],
+        index_cleanup_spec: Optional[Any],
+    ) -> None:
+        """Remove the deleted knowledge base's index without failing the deletion."""
+        if index_cleanup_spec is None:
+            return
+
+        try:
+            _run_async_in_new_loop(_cleanup_knowledge_index(index_cleanup_spec, db=db))
+        except Exception as exc:
+            batch_logger.error(
+                "Failed to clean up the RAG index for knowledge base %s: %s",
+                knowledge_base_id,
+                exc,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _cleanup_deleted_knowledge_base_resources(
+        db: Session,
+        knowledge_base_id: int,
         attachment_refs: set[tuple[int, int]],
     ) -> None:
-        """Clean external resources after the Code Wiki database deletion commits."""
-        if purge_spec is not None:
-            try:
-                _run_async_in_new_loop(
-                    _get_delete_gateway().purge_knowledge_index(purge_spec, db=db)
-                )
-            except Exception as exc:
-                batch_logger.error(
-                    "Failed to delete RAG index for code wiki %s: %s",
-                    knowledge_base_id,
-                    exc,
-                    exc_info=True,
-                )
-
+        """Clean external resources after the knowledge base deletion commits."""
         if not attachment_refs:
             return
 

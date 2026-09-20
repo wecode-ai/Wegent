@@ -29,6 +29,7 @@ from app.services.rag.runtime_specs import (
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
+from knowledge_engine.storage.base import index_strategy_owns_dedicated_index
 from shared.db.capability_reference import resolve_model_kind
 from shared.models import RetrievalScope, SearchHints
 from shared.utils.crypto import decrypt_api_key
@@ -421,6 +422,38 @@ class RagRuntimeResolver:
             current_user_id=user_id,
             user_name=user_name,
             spec_type="drop",
+        )
+
+    def build_public_index_cleanup_runtime_spec(
+        self,
+        *,
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        user_name: str | None,
+    ) -> PurgeKnowledgeRuntimeSpec | DropKnowledgeIndexRuntimeSpec:
+        """Build the cleanup request for a knowledge base that is going away.
+
+        A ``per_dataset`` knowledge base owns its collection, so deleting it
+        drops the collection instead of leaving an empty one behind. The shared
+        strategies name one collection for several knowledge bases, so deleting
+        one of them may only remove that knowledge base's own rows.
+        """
+        purge_spec = self.build_public_purge_index_runtime_spec(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            user_name=user_name,
+        )
+        if not index_strategy_owns_dedicated_index(
+            (purge_spec.retriever_config.storage_config or {}).get("indexStrategy")
+        ):
+            return purge_spec
+
+        return DropKnowledgeIndexRuntimeSpec(
+            knowledge_base_id=purge_spec.knowledge_base_id,
+            index_owner_user_id=purge_spec.index_owner_user_id,
+            retriever_config=purge_spec.retriever_config,
         )
 
     def _build_query_knowledge_base_configs(
