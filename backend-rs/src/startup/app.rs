@@ -8,6 +8,7 @@ use crate::erp_provider::NoopErpProvider;
 use crate::oidc_service::OidcService;
 use crate::shutdown_state::ShutdownState;
 use crate::state::AppState;
+use crate::user_reader::PublicUserReader;
 use crate::{attachments, config, oidc_callback};
 use anyhow::{Context as _, Result};
 use std::sync::Arc;
@@ -36,8 +37,10 @@ pub async fn build() -> Result<AppState> {
         }
     }
     let attachment_http = attachments::minio_client::build_client()?;
-    let mysql =
-        super::mysql::connect(&database.mysql_url()).context("failed to connect MySQL service")?;
+    let master_url = database.mysql_url();
+    let slave_url = database.mysql_slave_url();
+    let mysql = super::mysql::connect_read_write(&master_url, slave_url.as_deref())
+        .context("failed to connect MySQL service")?;
     // The source tolerates an unavailable Redis for the endpoints that use
     // it as a cache (membership/online-info reads degrade to misses); the
     // connection is therefore best-effort, matching the source deployment.
@@ -60,6 +63,7 @@ pub async fn build() -> Result<AppState> {
         workspace_repository: Arc::new(
             crate::subscriptions_list::workspaces::BaseWorkspaceRepository,
         ),
+        user_reader: Arc::new(PublicUserReader::new(mysql.clone())),
         auth,
         internal_chat,
         jwt_secret_keys,
