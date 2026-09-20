@@ -46,6 +46,7 @@ def setup_chat_session(
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
     generation_params: Optional[Dict[str, Any]] = None,
+    omit_mcp_binary_output: bool = False,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -82,6 +83,7 @@ def setup_chat_session(
         source="chat_shell",
         is_api_call=True,
         api_key_name=api_key_name,
+        omit_mcp_binary_output=omit_mcp_binary_output,
         auto_delete_executor=auto_delete_executor,
         generate_params=generation_params,
     )

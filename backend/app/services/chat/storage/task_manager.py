@@ -101,6 +101,8 @@ class TaskCreationParams:
     is_api_call: bool = False
     # Optional API key name for tracing/audit
     api_key_name: Optional[str] = None
+    # Responses API only: replace binary MCP tool output with a placeholder
+    omit_mcp_binary_output: bool = False
     # Whether executor runtime should be deleted immediately after completion
     auto_delete_executor: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
@@ -358,6 +360,11 @@ def create_new_task(
                 ),
                 **(
                     {"api_key_name": params.api_key_name} if params.api_key_name else {}
+                ),
+                **(
+                    {"omitMcpBinaryOutput": "true"}
+                    if params.omit_mcp_binary_output
+                    else {}
                 ),
                 **build_task_skill_labels(params.additional_skills),
             },
