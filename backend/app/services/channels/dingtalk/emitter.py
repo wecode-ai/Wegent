@@ -444,7 +444,8 @@ class StreamingResponseEmitter(ResultEmitter):
         try:
             while True:
                 await asyncio.sleep(20)
-                await lock.extend(60, replace_ttl=True)
+                # Reset the owned lease without a PTTL read in the Lua script.
+                await lock.reacquire()
         except Exception:
             logger.exception("[StreamingEmitter] Failed to renew card writer lease")
             raise
