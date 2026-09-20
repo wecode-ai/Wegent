@@ -45,6 +45,7 @@ export interface ComposerTextInputProps {
   rows: number
   textareaRef: RefObject<HTMLElement | null>
   className: string
+  scrollContainerClassName?: string
   onKeyDown?: (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => boolean | void
   onOpenMentionPlugin?: (reference: PluginReference) => void
   editorServices?: ComposerEditorServices
@@ -72,6 +73,7 @@ export function ComposerTextInput({
   rows,
   textareaRef,
   className,
+  scrollContainerClassName,
   onKeyDown,
   onOpenMentionPlugin,
   editorServices,
@@ -162,6 +164,7 @@ export function ComposerTextInput({
         rows={rows}
         textareaRef={textareaRef}
         className={className}
+        scrollContainerClassName={scrollContainerClassName}
         services={editorServices}
       />
       {links.editingLink && (

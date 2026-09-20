@@ -316,6 +316,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           }
           renderAttachments={onShowTextAttachment => (
             <AttachmentBadges
+              workspacePath={workspaceTarget?.path}
               attachments={attachments}
               uploadingFiles={uploadingFiles}
               errors={attachmentErrors}

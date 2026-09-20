@@ -11,6 +11,7 @@ import {
   pickLocalWorkspaceOpenerExe,
 } from '@/lib/local-terminal'
 import { WorkspacePanelActions } from './WorkspacePanelActions'
+import { getPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
 
 vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
@@ -482,6 +483,12 @@ describe('WorkspacePanelActions', () => {
         path: '/Users/me/project38',
       })
     )
+    expect(getPreferredWorkspaceOpener('/Users/me/project38')).toBe('intellij-idea')
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+    expect(openLocalWorkspaceMock).toHaveBeenLastCalledWith({
+      opener: 'intellij-idea',
+      path: '/Users/me/project38',
+    })
   })
 
   test('on Windows, hides unavailable openers and lets the user add a custom opener', async () => {

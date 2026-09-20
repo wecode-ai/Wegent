@@ -293,7 +293,7 @@ export interface Attachment {
   image_height?: number;
   ui_group_id?: string;
   ui_group_role?: "primary" | "companion";
-  ui_kind?: "appshot";
+  ui_kind?: "appshot" | "pasted-text";
 }
 
 export interface RequestUserInputResponseAnswer {

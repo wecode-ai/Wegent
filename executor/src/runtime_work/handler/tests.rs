@@ -3232,6 +3232,54 @@ fn cached_user_message_preserves_attachment_only_messages() {
 }
 
 #[test]
+fn user_message_presentation_matches_shared_reference_fixtures() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for fixture in fixtures {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "shared-reference",
+            "message": fixture["reference"],
+        }))
+        .unwrap();
+        let expected = match fixture["kind"].as_str() {
+            Some("skill") => json!([{
+                "token": format!("${}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            Some("plugin") => json!([{
+                "token": format!("@{}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            _ => json!([]),
+        };
+        assert_eq!(presentation["content"], fixture["reference"]);
+        assert_eq!(presentation["references"], expected, "{fixture}");
+    }
+}
+
+#[test]
+fn user_message_presentation_preserves_home_relative_skill_references() {
+    let content = "Use [$test-skill](~/.agents/skills/test-skill/SKILL.md)";
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "home-relative-skill",
+        "message": content,
+    }))
+    .expect("home-relative skills should produce presentation metadata");
+
+    assert_eq!(presentation["content"], content);
+    assert_eq!(
+        presentation["references"],
+        json!([{
+            "token": "$test-skill",
+            "href": "~/.agents/skills/test-skill/SKILL.md",
+        }])
+    );
+}
+
+#[test]
 fn user_message_presentation_preserves_visible_content_and_references() {
     let presentation = user_message_presentation(&json!({
         "clientUserMessageId": "runtime-local-pane-1",
@@ -4888,6 +4936,11 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 #[tokio::test]
 async fn cached_task_list_uses_the_existing_runtime_work_store() {
     let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    let project_index = CodexGlobalProjectIndex::from_test_payload(
+        json!({ "electron-saved-workspace-roots": ["/tmp/cached-project"] })
+            .as_object()
+            .unwrap(),
+    );
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "local-task-1".to_owned(),
         runtime: "claude".to_owned(),
@@ -4898,7 +4951,11 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     });
 
     let response = handler
-        .list_tasks(&json!({ "preferCached": true }))
+        .list_tasks_with_project_index(
+            &json!({ "preferCached": true }),
+            &project_index,
+            Instant::now(),
+        )
         .await
         .expect("cached task list should be available");
     let tasks = response["workspaces"]
