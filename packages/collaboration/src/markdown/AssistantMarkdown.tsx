@@ -1,3 +1,4 @@
+import { FileReferenceIcon } from '../composer/FileReferenceIcon';
 import {
   Fragment,
   createContext,
@@ -10,9 +11,10 @@ import {
   useState,
 } from "react";
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from "react";
-import { FileText, Folder, Link2 } from "lucide-react";
+import { Folder, Link2 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { ComposerLinkChip } from "./ComposerLinkChip";
+import { unescapeMarkdownReference } from '../composer/composerReference'
 import "streamdown/styles.css";
 import {
   classifyMarkdownLink,
@@ -52,7 +54,7 @@ const WEWORK_MARKDOWN_FILE_LINK_PATH = "/markdown-file";
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`;
 const WEWORK_MARKDOWN_IMAGE_PATH = "/markdown-image";
 const WEWORK_MARKDOWN_IMAGE_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_IMAGE_PATH}?path=`;
-const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+const MARKDOWN_LINK_PATTERN = /(!?)\[((?:\\[^\r\n]|[^\]\\\r\n])+)\]\(((?:\\[^\r\n]|[^)\\\r\n])+)\)/g;
 const tableMarkdownRehypePlugins = createTableMarkdownRehypePlugins(
   restoreLocalMarkdownLinks,
 );
@@ -626,7 +628,7 @@ function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(
     MARKDOWN_LINK_PATTERN,
     (match, imageMarker, label, rawHref) => {
-      const href = String(rawHref).trim();
+      const href = unescapeMarkdownReference(String(rawHref).trim())
       if (imageMarker) {
         const { destination, titleSuffix } =
           splitMarkdownImageDestination(href);
@@ -737,37 +739,7 @@ function getMarkdownFileOpenOptions(
 }
 
 function getMarkdownFileIcon(path: string): ReactNode {
-  if (/\.(?:json|jsonc)(?:[?#].*)?$/i.test(path)) {
-    return (
-      <span
-        aria-hidden="true"
-        className="shrink-0 font-mono text-code font-medium"
-        data-testid="assistant-markdown-link-icon"
-      >
-        {"{}"}
-      </span>
-    );
-  }
-
-  if (/\.(?:sh|bash|zsh)(?:[?#].*)?$/i.test(path)) {
-    return (
-      <span
-        aria-hidden="true"
-        className="shrink-0 font-mono text-code font-medium"
-        data-testid="assistant-markdown-link-icon"
-      >
-        $
-      </span>
-    );
-  }
-
-  return (
-    <FileText
-      aria-hidden="true"
-      className="h-3.5 w-3.5 shrink-0"
-      data-testid="assistant-markdown-link-icon"
-    />
-  );
+  return <FileReferenceIcon path={path} className="h-3.5 w-3.5 shrink-0" data-testid="assistant-markdown-link-icon" />;
 }
 
 function AssistantMarkdownLink({

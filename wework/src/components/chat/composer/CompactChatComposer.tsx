@@ -320,6 +320,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       <div className="w-full">
         <ComposerErrorBanner error={phraseError} />
         <AttachmentBadges
+          workspacePath={workspaceTarget?.path}
           attachments={attachments}
           uploadingFiles={uploadingFiles}
           errors={attachmentErrors}

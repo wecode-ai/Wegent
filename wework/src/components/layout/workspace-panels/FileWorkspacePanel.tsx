@@ -1,3 +1,4 @@
+import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 import {
   AppWindow,
   Check,
@@ -125,11 +126,14 @@ function mimeTypeForFileName(name: string): string {
     html: 'text/html',
     jpeg: 'image/jpeg',
     jpg: 'image/jpeg',
+    mp4: 'video/mp4',
+    ogv: 'video/ogg',
     pdf: 'application/pdf',
     png: 'image/png',
     ppt: 'application/vnd.ms-powerpoint',
     pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     webp: 'image/webp',
+    webm: 'video/webm',
     xls: 'application/vnd.ms-excel',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }
@@ -216,6 +220,8 @@ export function FileWorkspacePanel({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [selectedPathIsDirectory, setSelectedPathIsDirectory] = useState(false)
+  const [attachmentPreview, setAttachmentPreview] =
+    useState<WorkspaceFileOpenRequest['attachment']>()
   const [preview, setPreview] = useState<WorkspaceTextFileResponse | null>(null)
   const [binaryPreview, setBinaryPreview] = useState<WorkspaceBinaryPreview | null>(null)
   const [previewLineTarget, setPreviewLineTarget] = useState<PreviewLineTarget | null>(null)
@@ -790,6 +796,8 @@ export function FileWorkspacePanel({
     void Promise.resolve().then(() => {
       if (!cancelled) {
         navigateWithDirtyGuard(() => {
+          setAttachmentPreview(openFileRequest.attachment)
+          if (openFileRequest.attachment) return
           setDirectoryTreeVisible(false)
           openFilePath(openFileRequest.path, {
             lineStart: openFileRequest.lineStart,
@@ -807,6 +815,7 @@ export function FileWorkspacePanel({
     navigateWithDirtyGuard,
     openFilePath,
     openFileRequest?.id,
+    openFileRequest?.attachment,
     openFileRequest?.lineEnd,
     openFileRequest?.lineStart,
     openFileRequest?.isDirectory,
@@ -865,6 +874,9 @@ export function FileWorkspacePanel({
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [workspaceTargetMenuOpen])
+
+  if (attachmentPreview && openFileRequest?.attachment === attachmentPreview)
+    return <WorkspaceAttachmentPreview key={openFileRequest?.id} source={attachmentPreview} />
 
   if (!stableTarget) {
     return (

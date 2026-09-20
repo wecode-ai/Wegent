@@ -62,4 +62,11 @@ export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {
   id: number
   path: string
   target?: WorkspaceTarget
+  attachment?: WorkspaceAttachmentPreviewSource
+}
+
+export interface WorkspaceAttachmentPreviewSource {
+  filename: string
+  contentType: string
+  loadFile: () => Promise<Blob>
 }
