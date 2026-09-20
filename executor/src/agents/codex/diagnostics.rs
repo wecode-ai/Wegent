@@ -34,14 +34,18 @@ pub(super) fn serialized_json_len(value: &Value) -> serde_json::Result<usize> {
 
 /// Builds a bounded diagnostic preview with sensitive fields redacted.
 pub(super) fn raw_log_preview(value: &Value) -> String {
-    let sanitized = sanitize_raw_log_value(value, None);
+    let sanitized = sanitize_raw_log_value(value, None, true);
     let preview = serde_json::to_string(&sanitized)
         .unwrap_or_else(|error| format!("failed to serialize codex raw message preview: {error}"));
     truncate_text(&preview, RAW_LOG_PREVIEW_CHARS)
 }
 
-fn sanitize_raw_log_value(value: &Value, key: Option<&str>) -> Value {
-    if key.is_some_and(is_sensitive_key) {
+pub(super) fn debug_stdout_value(value: &Value) -> Value {
+    sanitize_raw_log_value(value, None, false)
+}
+
+fn sanitize_raw_log_value(value: &Value, key: Option<&str>, preview: bool) -> Value {
+    if key.is_some_and(is_sensitive_key) && (preview || value.is_string()) {
         return Value::String("[redacted]".to_owned());
     }
     match value {
@@ -51,7 +55,7 @@ fn sanitize_raw_log_value(value: &Value, key: Option<&str>) -> Value {
                 .map(|(key, value)| {
                     (
                         key.clone(),
-                        sanitize_raw_log_value(value, Some(key.as_str())),
+                        sanitize_raw_log_value(value, Some(key.as_str()), preview),
                     )
                 })
                 .collect(),
@@ -59,10 +63,10 @@ fn sanitize_raw_log_value(value: &Value, key: Option<&str>) -> Value {
         Value::Array(items) => Value::Array(
             items
                 .iter()
-                .map(|item| sanitize_raw_log_value(item, None))
+                .map(|item| sanitize_raw_log_value(item, None, preview))
                 .collect(),
         ),
-        Value::String(text) if should_summarize_raw_log_string(key, text) => {
+        Value::String(text) if preview && should_summarize_raw_log_string(key, text) => {
             Value::String(format!(
                 "[{} chars omitted; preview: {}]",
                 text.chars().count(),

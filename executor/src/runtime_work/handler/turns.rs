@@ -1031,7 +1031,6 @@ impl RuntimeWorkRpcHandler {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
-            crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await;
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
@@ -1169,30 +1168,35 @@ impl RuntimeWorkRpcHandler {
                 finished_turn_handler
                     .clear_active_codex_turn(&finished_turn_local_task_id, execution_id);
             });
-            let result = handler
-                .codex_app_server
-                .run_turn_with_cancel(
-                    request.clone(),
-                    CodexAppServerTurnOptions {
-                        direct_thread_id,
-                        fork_thread_id,
-                        fork_thread_path,
-                        resume_thread_id,
-                        resume_goal_only: request
-                            .extra
-                            .get(RESUME_GOAL_ONLY_MARKER)
-                            .and_then(Value::as_bool)
-                            == Some(true),
-                        initial_thread_goal,
-                        notifications: Some(notification_tx),
-                        cancellation: Some(cancel_rx),
-                        request_user_input_answers: Some(request_user_input_rx),
-                        thread_started: Some(thread_started),
-                        active_turn_started: Some(active_turn_started),
-                        active_turn_finished: Some(active_turn_finished),
-                    },
-                )
-                .await;
+            let result = async {
+                crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
+                handler
+                    .codex_app_server
+                    .run_turn_with_cancel(
+                        request.clone(),
+                        CodexAppServerTurnOptions {
+                            defer_interactive_forms: false,
+                            direct_thread_id,
+                            fork_thread_id,
+                            fork_thread_path,
+                            resume_thread_id,
+                            resume_goal_only: request
+                                .extra
+                                .get(RESUME_GOAL_ONLY_MARKER)
+                                .and_then(Value::as_bool)
+                                == Some(true),
+                            initial_thread_goal,
+                            notifications: Some(notification_tx),
+                            cancellation: Some(cancel_rx),
+                            request_user_input_answers: Some(request_user_input_rx),
+                            thread_started: Some(thread_started),
+                            active_turn_started: Some(active_turn_started),
+                            active_turn_finished: Some(active_turn_finished),
+                        },
+                    )
+                    .await
+            }
+            .await;
             let goal_execution_needs_attention = match result.as_ref() {
                 Err(_) if interrupted_by_executor_shutdown(&result) => false,
                 Err(_) => true,

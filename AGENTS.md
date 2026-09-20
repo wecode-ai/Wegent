@@ -75,7 +75,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 - A Kind resource is identified by `namespace`, `name`, and `user_id`; always query all three.
 - `Task` and `Workspace` use `TaskResource` in `tasks`; other CRDs use `Kind` in `kinds`.
-- Shell types: `ClaudeCode`, `Agno`, `Dify`, and `Chat`.
+- Shell types: `Codex`, `ClaudeCode`, `Agno`, `Dify`, and `Chat`.
 
 ## Engineering rules
 
