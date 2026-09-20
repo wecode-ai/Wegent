@@ -165,6 +165,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   afterCursor?: string | null;
   refresh?: boolean;
   includeFullContent?: boolean;
+  conversationContextOnly?: boolean;
   navigationOnly?: boolean;
 }
 
