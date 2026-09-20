@@ -171,6 +171,7 @@ def _task_to_response_object(
     model_string: str,
     subtasks: list = None,
     previous_response_id: str = None,
+    omit_mcp_binary_output: bool = False,
 ) -> ResponseObject:
     """Convert task dictionary to ResponseObject."""
     task_id = task_dict.get("id")
@@ -185,7 +186,10 @@ def _task_to_response_object(
 
     output = []
     if subtasks:
-        output = build_response_output(subtasks)
+        output = build_response_output(
+            subtasks,
+            omit_mcp_binary_output=omit_mcp_binary_output,
+        )
     pending_user_input, pending_user_input_payload = extract_pending_user_input_state(
         _latest_assistant_subtask(subtasks or [])
     )
@@ -653,6 +657,7 @@ async def _create_non_streaming_response_unified(
         api_key_name,
         auto_delete_executor,
         generation_params=_generation_options_dict(request_body),
+        omit_mcp_binary_output=request_body.omit_mcp_binary_output,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -841,6 +846,7 @@ async def _create_non_streaming_response_unified(
                 subtasks,
                 active_assistant_subtask_id=assistant_subtask_id,
                 active_assistant_status="in_progress",
+                omit_mcp_binary_output=request_body.omit_mcp_binary_output,
             ),
             pending_user_input=pending_user_input or None,
             pending_user_input_payload=pending_user_input_payload,
@@ -889,6 +895,7 @@ async def _create_non_streaming_response_unified(
                 subtasks,
                 active_assistant_subtask_id=assistant_subtask_id,
                 active_assistant_status="in_progress",
+                omit_mcp_binary_output=request_body.omit_mcp_binary_output,
             ),
             pending_user_input=pending_user_input or None,
             pending_user_input_payload=pending_user_input_payload,
@@ -935,6 +942,7 @@ async def _create_non_streaming_response_unified(
             active_assistant_subtask_id=assistant_subtask_id,
             active_assistant_status="completed",
             active_assistant_content=accumulated_content,
+            omit_mcp_binary_output=request_body.omit_mcp_binary_output,
         ),
         pending_user_input=pending_user_input or None,
         pending_user_input_payload=pending_user_input_payload,
@@ -990,6 +998,7 @@ async def _create_streaming_response_unified(
         api_key_name,
         auto_delete_executor,
         generation_params=_generation_options_dict(request_body),
+        omit_mcp_binary_output=request_body.omit_mcp_binary_output,
     )
 
     # Add trace events for session setup
@@ -1533,6 +1542,7 @@ async def _create_streaming_response_unified(
                 chat_stream=raw_chat_stream(),
                 created_at=created_at,
                 previous_response_id=request_body.previous_response_id,
+                omit_mcp_binary_output=request_body.omit_mcp_binary_output,
                 task_context=(
                     {
                         "task_id": task_kind_id,
@@ -1662,21 +1672,25 @@ async def get_response(
     )
 
     model_string = "unknown"
+    omit_mcp_binary_output = False
     if task_kind and task_kind.json:
         task_crd = Task.model_validate(task_kind.json)
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
-        model_id = (
-            task_crd.metadata.labels.get("modelId")
-            if task_crd.metadata.labels
-            else None
-        )
+        labels = task_crd.metadata.labels or {}
+        model_id = labels.get("modelId")
+        omit_mcp_binary_output = labels.get("omitMcpBinaryOutput") == "true"
         if model_id:
             model_string = f"{team_namespace}#{team_name}#{model_id}"
         else:
             model_string = f"{team_namespace}#{team_name}"
 
-    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
+    return _task_to_response_object(
+        task_dict,
+        model_string,
+        subtasks=subtasks,
+        omit_mcp_binary_output=omit_mcp_binary_output,
+    )
 
 
 @router.post(
@@ -1863,21 +1877,25 @@ async def cancel_response(
 
     # Reconstruct model string
     model_string = "unknown"
+    omit_mcp_binary_output = False
     if task_kind and task_kind.json:
         task_crd = Task.model_validate(task_kind.json)
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
-        model_id = (
-            task_crd.metadata.labels.get("modelId")
-            if task_crd.metadata.labels
-            else None
-        )
+        labels = task_crd.metadata.labels or {}
+        model_id = labels.get("modelId")
+        omit_mcp_binary_output = labels.get("omitMcpBinaryOutput") == "true"
         if model_id:
             model_string = f"{team_namespace}#{team_name}#{model_id}"
         else:
             model_string = f"{team_namespace}#{team_name}"
 
-    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
+    return _task_to_response_object(
+        task_dict,
+        model_string,
+        subtasks=subtasks,
+        omit_mcp_binary_output=omit_mcp_binary_output,
+    )
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)

@@ -1495,10 +1495,10 @@ function pasteDesktopControlText(command: DesktopControlCommand): string {
   return text
 }
 
-function dispatchDesktopControlPaths(
+async function dispatchDesktopControlPaths(
   command: DesktopControlCommand,
   eventType: 'drop' | 'paste'
-): string {
+): Promise<string> {
   const element = findDesktopControlElements(command.selector)[0]
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const descriptors = JSON.parse(command.value ?? '[]') as Array<{
@@ -1515,9 +1515,17 @@ function dispatchDesktopControlPaths(
 
   const transfer = new DataTransfer()
   for (const descriptor of descriptors) {
-    const file = new File(descriptor.isDirectory ? [] : ['path-reference'], descriptor.name, {
-      type: descriptor.mimeType ?? '',
-    })
+    const { fileUrlToPath } = await import('@/lib/workspace-path-transfer')
+    const { readElectronLocalFile } = await import('@/lib/electron-local-file')
+    const path = fileUrlToPath(descriptor.uri)
+    if (!path) throw new Error(`Invalid file URI: ${descriptor.uri}`)
+    const file = new File(
+      descriptor.isDirectory ? [] : [await readElectronLocalFile(path)],
+      descriptor.name,
+      {
+        type: descriptor.mimeType ?? '',
+      }
+    )
     transfer.items.add(file)
     const item = transfer.items[transfer.items.length - 1]
     if (item && descriptor.isDirectory) {

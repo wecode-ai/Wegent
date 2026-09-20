@@ -77,12 +77,10 @@ describe('workspace path transfer', () => {
           : '',
     } as unknown as DataTransfer
 
-    await expect(resolveDataTransferWorkspacePaths(dataTransfer, 'drop', 'local')).resolves.toEqual(
-      {
-        attachmentFiles: [],
-        referenceEntries: [{ path: '/workspace/project/docs', isDirectory: true }],
-      }
-    )
+    await expect(resolveDataTransferWorkspacePaths(dataTransfer, 'drop')).resolves.toEqual({
+      attachmentFiles: [],
+      referenceEntries: [{ path: '/workspace/project/docs', isDirectory: true }],
+    })
   })
 
   test('parses file URI clipboard formats and ignores comments and duplicates', () => {
@@ -187,23 +185,25 @@ describe('workspace path transfer', () => {
     })
   })
 
-  test('resolves ordinary local drops to path references through the shared entry point', async () => {
-    const file = new File(['small context'], 'context.md', { type: 'text/markdown' })
-    const data = clipboardData({ 'text/uri-list': 'file:///Users/alice/project/context.md' }, [
-      file,
-    ])
-    mocks.desktopHost.mockResolvedValue([
-      { path: '/Users/alice/project/context.md', isDirectory: false },
-    ])
+  test.each(['drop', 'clipboard'] as const)(
+    'keeps a local Markdown %s as an attachment',
+    async source => {
+      const file = new File(['small context'], 'context.md', { type: 'text/markdown' })
+      const data = clipboardData({ 'text/uri-list': 'file:///Users/alice/project/context.md' }, [
+        file,
+      ])
+      mocks.desktopHost.mockResolvedValue([
+        { path: '/Users/alice/project/context.md', isDirectory: false },
+      ])
 
-    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
-      attachmentFiles: [],
-      referenceEntries: [{ path: '/Users/alice/project/context.md', isDirectory: false }],
-    })
-    expect(mocks.desktopHost).toHaveBeenCalledWith('filesystem.inspectPaths', {
-      paths: ['/Users/alice/project/context.md'],
-    })
-  })
+      await expect(resolveDataTransferWorkspacePaths(data, source)).resolves.toEqual({
+        attachmentFiles: [file],
+        referenceEntries: [],
+      })
+      expect(await file.text()).toBe('small context')
+      expect(mocks.readDroppedFiles).not.toHaveBeenCalled()
+    }
+  )
 
   test('keeps dropped images as attachments', async () => {
     const file = new File(['image'], 'preview.png', { type: 'image/png' })
@@ -253,14 +253,15 @@ describe('workspace path transfer', () => {
     })
   })
 
-  test('reads bytes only for image paths when resolving stored local paths', async () => {
+  test('resolves stored local files as attachments while retaining directory references', async () => {
     const image = new File(['image'], 'preview.png', { type: 'image/png' })
+    const document = new File(['document'], 'context.md', { type: 'text/markdown' })
     mocks.desktopHost.mockResolvedValue([
       { path: '/Users/alice/project', isDirectory: true },
       { path: '/Users/alice/project/context.md', isDirectory: false },
       { path: '/Users/alice/project/preview.png', isDirectory: false },
     ])
-    mocks.readDroppedFiles.mockResolvedValue([image])
+    mocks.readDroppedFiles.mockResolvedValue([document, image])
 
     await expect(
       resolveStoredWorkspacePaths(
@@ -272,12 +273,46 @@ describe('workspace path transfer', () => {
         false
       )
     ).resolves.toEqual({
-      attachmentFiles: [image],
-      referenceEntries: [
-        { path: '/Users/alice/project', isDirectory: true },
-        { path: '/Users/alice/project/context.md', isDirectory: false },
-      ],
+      attachmentFiles: [document, image],
+      referenceEntries: [{ path: '/Users/alice/project', isDirectory: true }],
     })
-    expect(mocks.readDroppedFiles).toHaveBeenCalledWith(['/Users/alice/project/preview.png'])
+    expect(mocks.readDroppedFiles).toHaveBeenCalledWith([
+      '/Users/alice/project/context.md',
+      '/Users/alice/project/preview.png',
+    ])
+  })
+
+  test('reads URI-only pasted files and excludes folder placeholders from attachments', async () => {
+    const folder = new File([], 'docs')
+    const file = new File(['test content'], 'test.md')
+    mocks.desktopHost.mockResolvedValue([
+      { path: '/tmp/docs', isDirectory: true },
+      { path: '/tmp/test.md', isDirectory: false },
+    ])
+    mocks.readDroppedFiles.mockResolvedValue([file])
+    const data = clipboardData({ 'text/uri-list': 'file:///tmp/docs\nfile:///tmp/test.md' }, [
+      folder,
+    ])
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [{ path: '/tmp/docs', isDirectory: true }],
+    })
+    expect(mocks.readDroppedFiles).toHaveBeenCalledWith(['/tmp/test.md'])
+  })
+
+  test('does not swallow a file read failure or replace the file with a reference', async () => {
+    mocks.desktopHost.mockResolvedValue([{ path: '/tmp/test.md', isDirectory: false }])
+    mocks.readDroppedFiles.mockRejectedValue(new Error('File unavailable'))
+
+    await expect(resolveStoredWorkspacePaths(['/tmp/test.md'], false)).rejects.toThrow(
+      'File unavailable'
+    )
+    await expect(
+      resolveDataTransferWorkspacePaths(
+        clipboardData({ 'text/uri-list': 'file:///tmp/test.md' }),
+        'clipboard'
+      )
+    ).rejects.toThrow('File unavailable')
   })
 })

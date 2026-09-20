@@ -8,15 +8,16 @@ export interface ComposerPathEntry {
   path: string
   isDirectory: boolean
 }
+export interface ComposerPathTransfer {
+  referenceEntries: ComposerPathEntry[]
+  attachmentFiles: File[]
+}
 export interface ComposerTransferServices {
   hasPathTransfer: (data: DataTransfer) => boolean
   resolveTransfer: (
     data: DataTransfer,
     source: 'clipboard' | 'drop'
-  ) => Promise<{
-    referenceEntries: ComposerPathEntry[]
-    attachmentFiles: File[]
-  }>
+  ) => Promise<ComposerPathTransfer>
 }
 export const browserComposerTransferServices: ComposerTransferServices = {
   hasPathTransfer: () => false,
@@ -71,7 +72,7 @@ export function useComposerTransfers({
       if (disabled) return true
       const clipboardData = event.clipboardData
       const files = Array.from(clipboardData.files)
-      if (files.length > 0) {
+      if (files.length > 0 || services.hasPathTransfer(clipboardData)) {
         event.preventDefault()
         setTransferError(null)
         void services
