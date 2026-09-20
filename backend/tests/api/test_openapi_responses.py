@@ -786,6 +786,162 @@ class TestOpenAPIResponsesCreate:
             is None
         )
 
+    def test_resolve_requested_model_rejects_non_member_of_group(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_model: Kind,
+    ):
+        """A referenced model must not resolve for callers that are not
+        members of the group namespace."""
+        caller, namespace = self._create_group_with_referenced_model(
+            test_db, test_user, test_model
+        )
+        outsider = User(
+            user_name="referenced-model-outsider",
+            password_hash=get_password_hash("outsiderpassword123"),
+            email="referenced-model-outsider@example.com",
+            is_active=True,
+            git_info=None,
+        )
+        test_db.add(outsider)
+        test_db.commit()
+
+        # Member of the group can resolve it.
+        assert (
+            _resolve_requested_model(
+                test_db, caller.id, namespace.name, test_model.name
+            )
+            is not None
+        )
+        # A non-member cannot, even though the reference exists.
+        assert (
+            _resolve_requested_model(
+                test_db, outsider.id, namespace.name, test_model.name
+            )
+            is None
+        )
+
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_falls_back_to_caller_default_model(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_model: Kind,
+        test_api_key,
+        test_public_shell: Kind,
+    ):
+        """A group team whose bot references a model the caller owns in
+        default still resolves via the legacy caller-default fallback."""
+        from app.schemas.openapi_response import ResponseObject
+
+        namespace = Namespace(
+            name="fallback-model-namespace",
+            display_name="Fallback model namespace",
+            owner_user_id=test_user.id,
+            visibility="internal",
+            description="",
+            level="group",
+            is_active=True,
+        )
+        test_db.add(namespace)
+        test_db.flush()
+
+        team = Kind(
+            user_id=test_user.id,
+            kind="Team",
+            name="fallback-model-team",
+            namespace=namespace.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Team",
+                "metadata": {
+                    "name": "fallback-model-team",
+                    "namespace": namespace.name,
+                },
+                "spec": {
+                    "collaborationModel": "sequential",
+                    "members": [
+                        {
+                            "botRef": {
+                                "name": "fallback-model-bot",
+                                "namespace": namespace.name,
+                            }
+                        }
+                    ],
+                },
+            },
+            is_active=True,
+        )
+        bot = Kind(
+            user_id=test_user.id,
+            kind="Bot",
+            name="fallback-model-bot",
+            namespace=namespace.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Bot",
+                "metadata": {
+                    "name": "fallback-model-bot",
+                    "namespace": namespace.name,
+                },
+                "spec": {
+                    "shellRef": {"name": "chat-shell", "namespace": "default"},
+                    "ghostRef": {"name": "test-ghost", "namespace": "default"},
+                    "modelRef": {"name": "gpt-4", "namespace": "default"},
+                },
+            },
+            is_active=True,
+        )
+        test_db.add_all([team, bot])
+        test_db.flush()
+        test_db.add_all(
+            [
+                ResourceMember(
+                    resource_type="Namespace",
+                    resource_id=namespace.id,
+                    entity_type="user",
+                    entity_id=str(test_user.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+                ResourceMember(
+                    resource_type=ResourceType.TEAM.value,
+                    resource_id=team.id,
+                    entity_type="namespace",
+                    entity_id=str(namespace.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+            ]
+        )
+        test_db.commit()
+
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_125",
+            created_at=int(datetime.now().timestamp()),
+            status="completed",
+            model=f"{namespace.name}#fallback-model-team",
+            output=[],
+        )
+
+        # The group namespace has no direct/referenced "gpt-4"; the request
+        # must fall back to the caller's personal default copy.
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": test_api_key[0]},
+            json={
+                "model": f"{namespace.name}#fallback-model-team#gpt-4",
+                "input": "Hello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["user"].id == test_user.id
+        assert mock_create_sync.call_args.kwargs["team"].id == team.id
+
     @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
     def test_create_response_allows_namespace_shared_team_api_key(
         self,

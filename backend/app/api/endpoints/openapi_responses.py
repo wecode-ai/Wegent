@@ -272,8 +272,20 @@ def _resolve_requested_model(
 
     Directly-owned models win; a model shared into the namespace keeps living
     in its owner's namespace and is resolved through its capability reference.
+
+    A referenced model is only visible to members of the namespace (for the
+    "default" namespace, to the user it was shared with). This keeps group
+    references from leaking to unrelated callers that happen to know the
+    namespace/model name.
     """
-    return resolve_model_kind(db, name=name, namespace=namespace, user_id=user_id)
+    from app.services.readers.group_members import groupMemberReader
+
+    model = resolve_model_kind(db, name=name, namespace=namespace, user_id=user_id)
+    if model is None or namespace == "default":
+        return model
+    if not groupMemberReader.is_member(db, namespace, user_id):
+        return None
+    return model
 
 
 def _generation_options(request_body: ResponseCreateInput) -> Any:
@@ -515,6 +527,19 @@ async def create_response(
         model = _resolve_requested_model(
             db, current_user.id, model_namespace, model_name
         )
+
+        # If not found and namespace is not default, fall back to the
+        # caller's personal default namespace. This preserves the legacy
+        # "group#team#model_id" behavior where the model lives under the
+        # caller's own default namespace.
+        if not model and model_namespace != "default":
+            model = kindReader.get_by_name_and_namespace(
+                db,
+                current_user.id,
+                KindType.MODEL,
+                "default",
+                model_name,
+            )
 
         if not model:
             raise HTTPException(
