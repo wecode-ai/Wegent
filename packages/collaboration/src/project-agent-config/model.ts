@@ -9,7 +9,8 @@ export interface ProjectAgentConfigurationRecord {
   id: string;
   name: string;
   displayName: string;
-  runtime: "codex" | "claude_code" | "wegent";
+  definitionSource: "project" | "shared_agent";
+  executorType: "codex" | "claude_code" | null;
   status: "active" | "archived";
   version: number;
   wegentTeamId: number | null;
@@ -48,9 +49,10 @@ export function normalizeProjectAgent(
     id: String(row.id),
     name,
     displayName,
-    runtime:
+    definitionSource: runtime === "wegent" ? "shared_agent" : "project",
+    executorType:
       runtime === "wegent"
-        ? "wegent"
+        ? null
         : runtime === "claude_code"
           ? "claude_code"
           : "codex",
@@ -82,7 +84,7 @@ export function normalizeProjectAgent(
   };
 }
 
-export function createWegentProjectAgentInput(
+export function createSharedAgentBindingInput(
   team: CollaborationOwnedAgent,
 ): Record<string, unknown> {
   if (!team.team_id) {

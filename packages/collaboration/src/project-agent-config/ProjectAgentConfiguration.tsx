@@ -9,7 +9,7 @@ import type { CollaborationTranslate } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import {
-  createWegentProjectAgentInput,
+  createSharedAgentBindingInput,
   normalizeProjectAgent,
   type ProjectAgentConfigurationRecord,
 } from "./model";
@@ -210,7 +210,7 @@ export function ProjectAgentConfiguration({
 
   async function addExistingAgent() {
     if (!selectedTeam) return;
-    if (await addAgent(createWegentProjectAgentInput(selectedTeam))) {
+    if (await addAgent(createSharedAgentBindingInput(selectedTeam))) {
       setSelectedTeamId("");
       setComposerOpen(false);
     }
@@ -551,19 +551,22 @@ export function ProjectAgentConfiguration({
                     </span>
                     <span className={styles.agentDetails}>
                       <span className={styles.runtimeBadge}>
-                        {agent.runtime === "wegent"
-                          ? "Wegent"
-                          : agent.runtime === "claude_code"
+                        {agent.executorType === null
+                          ? translate(
+                              "todo.agent_executor_from_definition",
+                              "执行器由智能体定义",
+                            )
+                          : agent.executorType === "claude_code"
                             ? "Claude Code"
                             : translate("todo.codex_agent", "Codex")}
                       </span>
                       <span className={styles.metadata}>
-                        {agent.runtime === "wegent"
+                        {agent.definitionSource === "shared_agent"
                           ? translate("todo.shared_agent", "共享智能体")
                           : agent.capabilityDescription ||
                             translate("todo.project_owned_agent", "项目智能体")}
                       </span>
-                      {agent.runtime !== "wegent" ? (
+                      {agent.definitionSource === "project" ? (
                         <span
                           className={styles.capabilitySummary}
                           data-testid={`project-agent-capabilities-${agent.id}`}
@@ -695,8 +698,8 @@ export function ProjectAgentConfiguration({
                         <div className={styles.formFooter}>
                           <p className={styles.hint}>
                             {translate(
-                              "todo.wegent_managed_environment_hint",
-                              "Wegent 托管执行使用智能体自带的 chat_shell，无需选择执行环境。",
+                              "todo.shared_agent_execution_hint",
+                              "所选智能体保留自身执行器与能力配置，具体运行环境在任务开始时解析。",
                             )}
                           </p>
                           {renderPrimaryAction({

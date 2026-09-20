@@ -299,6 +299,16 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
+  it("separates a shared Agent source from its executor type", async () => {
+    const { api } = createApi();
+    await render(api);
+
+    const text = element("project-agent-row-project-agent-1").textContent ?? "";
+    expect(text).toContain("执行器由智能体定义");
+    expect(text).toContain("共享智能体");
+    expect(text).not.toContain("Wegent");
+  });
+
   it("adds an existing Agent without exposing a duplicate inline creator", async () => {
     const { api, create } = createApi();
     await render(api);

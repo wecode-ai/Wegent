@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent } from "../types";
-import { createWegentProjectAgentInput, normalizeProjectAgent } from "./model";
+import { createSharedAgentBindingInput, normalizeProjectAgent } from "./model";
 
 const team: CollaborationOwnedAgent = {
   id: "workspace-agent-1",
@@ -36,7 +36,8 @@ describe("project agent configuration model", () => {
       id: "agent-1",
       name: "Codex",
       displayName: "Codex",
-      runtime: "codex",
+      definitionSource: "project",
+      executorType: "codex",
       status: "active",
       version: 3,
       wegentTeamId: null,
@@ -50,10 +51,27 @@ describe("project agent configuration model", () => {
     });
   });
 
-  it("creates the managed Wegent payload without execution environment fields", () => {
-    expect(createWegentProjectAgentInput(team)).toEqual({
+  it("creates a shared Agent binding without treating its source as an executor type", () => {
+    expect(createSharedAgentBindingInput(team)).toEqual({
       name: "研发团队",
       runtime: "wegent",
+      wegentTeamId: 12,
+    });
+  });
+
+  it("normalizes the legacy Wegent route as a shared definition source", () => {
+    expect(
+      normalizeProjectAgent({
+        id: "agent-2",
+        name: "共享评审智能体",
+        runtime: "wegent",
+        status: "active",
+        version: 1,
+        wegent_team_id: 12,
+      } as WorkspaceProjectAgent),
+    ).toMatchObject({
+      definitionSource: "shared_agent",
+      executorType: null,
       wegentTeamId: 12,
     });
   });

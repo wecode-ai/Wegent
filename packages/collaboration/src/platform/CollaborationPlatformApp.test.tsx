@@ -12,7 +12,7 @@ import { IssueDetail } from "../IssueDetail";
 import { ResourceDestinationDialog } from "./ResourceDestinationDialog";
 import { collaborationMessages, type CollaborationLocale } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import { createWegentProjectAgentInput } from "../project-agent-config";
+import { createSharedAgentBindingInput } from "../project-agent-config";
 import type {
   CollaborationAssignment,
   CollaborationExecutionEnvironment,
@@ -2579,7 +2579,7 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(api.agents.create).toHaveBeenCalledWith(
       project.id,
-      createWegentProjectAgentInput(agent),
+      createSharedAgentBindingInput(agent),
     );
   });
 

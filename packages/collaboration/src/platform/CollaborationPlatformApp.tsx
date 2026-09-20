@@ -48,7 +48,7 @@ import type {
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
 import {
-  createWegentProjectAgentInput,
+  createSharedAgentBindingInput,
   ProjectAgentConfiguration,
 } from "../project-agent-config";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
@@ -3808,7 +3808,7 @@ export function CollaborationPlatformApp({
                       selectedAgents.map((agent) =>
                         api.agents.create(
                           project.id,
-                          createWegentProjectAgentInput(agent),
+                          createSharedAgentBindingInput(agent),
                         ),
                       ),
                     );
