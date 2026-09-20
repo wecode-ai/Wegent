@@ -40,10 +40,18 @@ FRESH_MARKER = "legacyfreshmarker"
 SIBLING_MARKER = "legacysiblingmarker"
 
 
-def test_rewriting_a_document_converges_through_the_upper_layer_pre_delete(
+def test_delete_then_write_converges_on_real_milvus(
     legacy_milvus_env: LegacyContractEnv,
 ) -> None:
-    """A rewrite keeps one version, removed by the caller's own pre-delete."""
+    """The delete-then-write order leaves exactly one version of a document.
+
+    What this case proves is that order's storage result on the real service:
+    the previous version's chunks are gone and the new one is readable and
+    searchable. Which storage types the indexing caller deletes before a write
+    is that caller's decision: the backend indexing tests cover the branch that
+    builds the pre-delete, around the capability read below. This smoke reads
+    the same capability and then performs the two storage calls it implies.
+    """
     knowledge_id = legacy_milvus_env.new_knowledge_id()
     backend = legacy_milvus_env.legacy_backend()
     model = DeterministicEmbedding()
@@ -62,10 +70,10 @@ def test_rewriting_a_document_converges_through_the_upper_layer_pre_delete(
     assert stale_document["chunk_count"] > 1, "the first version must split"
     assert STALE_MARKER in json.dumps(stale_document["chunks"])
 
-    # The order the indexing caller keeps for a storage that does not replace
-    # the document itself: the backend indexing service builds a pre-delete
-    # spec for this type (the capability asserted above is the branch it reads)
-    # and the runtime performs it before the write, which is these two calls.
+    # The order that capability implies for this type: delete the previous
+    # rows, then write the new ones. The backend indexing service is the caller
+    # that builds the pre-delete spec and the runtime performs it; the two
+    # calls below are the storage side of that order.
     delete_document(backend, knowledge_id=knowledge_id, doc_ref="720")
     rewritten = write_document(
         backend,

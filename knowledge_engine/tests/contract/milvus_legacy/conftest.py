@@ -13,6 +13,15 @@ cleanup. They prove that an existing knowledge base keeps serving the
 collection the legacy implementation wrote, without calling the V2 adapter's
 cleanup.
 
+Flat documents keep the whole lifecycle on the real service: write, all three
+retrieval modes, update, delete, purge and drop. For parent bodies the smoke
+promises less, because the pinned server allows less: an existing legacy
+sidecar stays readable, expandable, deletable and droppable, while creating a
+new one fails - the frozen adapter builds it with a 1-dimensional placeholder
+vector, which Milvus 2.5.4 refuses. That refusal is the online main branch's
+own behaviour, and the parent module pins it as a negative contract instead of
+describing the write as compatible.
+
 Legacy and V2 are configured with different Milvus databases, so both
 generations can hold the same knowledge id, the same collection name and the
 same parent sidecar name at once without colliding. The service is the pinned
@@ -21,14 +30,11 @@ the parent-removal wait are that suite's own helpers: a smoke that cannot reach
 the service fails instead of skipping, because a skipped compatibility test
 proves nothing.
 
-One physical difference the pinned server imposes: Milvus 2.5.4 refuses a
-1-dimensional vector, and the frozen adapter creates its parent sidecar with
-exactly that placeholder dimension. A legacy knowledge base's parent sidecar
-therefore cannot be created by the adapter on this server at all, so
-``LegacyContractEnv.write_parent_sidecar`` stores those rows itself - the
-legacy fields, the legacy rows - and the parent tests then verify the
-adapter's own read and expansion path over them. Every document row, on the
-other hand, is written through the product's write seam.
+Because the adapter cannot create that sidecar here,
+``LegacyContractEnv.write_parent_sidecar`` reproduces the legacy rows for an
+existing sidecar - the legacy fields, the legacy rows - so the parent tests can
+verify the adapter's own read and expansion path over them. Every document row,
+on the other hand, is written through the product's write seam.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -215,11 +222,9 @@ class LegacyContractEnv:
     ) -> None:
         """Store the parent bodies of a legacy knowledge base's sidecar.
 
-        Legacy's own ``save_parent_nodes`` creates this collection with a
-        1-dimensional placeholder vector, which Milvus 2.5.4 refuses, so a
-        sidecar can only exist here with the smallest vector the pinned server
-        accepts. The fields, the rows and the read path are the legacy ones;
-        only the never-searched placeholder dimension differs.
+        The frozen ``save_parent_nodes`` cannot create this collection on the
+        pinned server, so the fixture stores the rows itself; the module
+        docstring holds the reason and the field layout it reproduces.
         """
         if not parent_nodes:
             return
@@ -515,7 +520,10 @@ def legacy_database(milvus_uri: str) -> str:
 
 
 @pytest.fixture
-def legacy_milvus_env(milvus_uri: str, legacy_database: str) -> LegacyContractEnv:
+def legacy_milvus_env(
+    milvus_uri: str,
+    legacy_database: str,
+) -> Iterator[LegacyContractEnv]:
     env = LegacyContractEnv(uri=milvus_uri, legacy_database=legacy_database)
     try:
         yield env

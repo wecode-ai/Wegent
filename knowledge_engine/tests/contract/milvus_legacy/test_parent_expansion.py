@@ -2,21 +2,32 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Document bodies and parent expansion of the legacy adapter on a real sidecar.
+"""Reading an existing legacy parent sidecar, and the parent write it cannot do.
 
-A legacy knowledge base stores its child chunks in the index collection and
-their parent bodies in a sidecar next to it. The child rows here are written
-through the same storage seam ``DocumentIndexer`` writes them with, and the
-sidecar rows are the legacy implementation's own layout - see the package
-docstring for why the pinned server cannot let the adapter create that sidecar
-itself. What these cases verify is the restored read chain: the document read
-serves the child bodies, the parent read serves the parent bodies, and the
-query executor expands a child hit to its parent.
+A legacy knowledge base keeps its child chunks in the index collection and
+their parent bodies in a sidecar next to it. These cases cover an existing
+sidecar's read side: ``get_parent_nodes`` serves the stored bodies,
+``QueryExecutor`` expands a child hit to its parent, and a deleted parent
+leaves the child-only answer behind. The fixture reproduces those rows in the
+legacy layout, because the frozen adapter cannot create the sidecar on the
+pinned server (the package docstring holds the reason and the rows it
+reproduces).
+
+The last case pins that limitation as an explicit negative contract instead of
+describing the write as compatible: it drives the adapter's own
+``save_parent_nodes`` against the real server and asserts the refusal. Nothing
+in this module is skipped, expected to fail or mocked.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from pymilvus.exceptions import MilvusException
+
+from knowledge_engine.splitter.hierarchical import HierarchicalNodes
+from knowledge_engine.storage.milvus_backend import MilvusBackend as LegacyMilvusBackend
 
 from ..milvus.conftest import await_parent_removal
 from .conftest import (
@@ -36,22 +47,31 @@ PARENT_MARKER = "legacyparentmarker"
 DOC_REF = "760"
 
 
-def _store_hierarchical_document(
+def _hierarchical_document_text() -> str:
+    """A hierarchical document whose first paragraph carries the marker."""
+    return "\n\n".join(
+        [f"{PARENT_MARKER} opening paragraph " + "filler sentence " * 8]
+        + [
+            f"theta paragraph {index} " + "topic filler sentence " * 8
+            for index in range(5)
+        ]
+    )
+
+
+def _store_existing_sidecar_document(
     env: LegacyContractEnv,
     *,
     knowledge_id: str,
     model: DeterministicEmbedding,
-):
-    """Store one hierarchical document: child rows plus its parent bodies."""
-    nodes = hierarchical_nodes(
-        "\n\n".join(
-            [f"{PARENT_MARKER} opening paragraph " + "filler sentence " * 8]
-            + [
-                f"theta paragraph {index} " + "topic filler sentence " * 8
-                for index in range(5)
-            ]
-        )
-    )
+) -> tuple[LegacyMilvusBackend, HierarchicalNodes]:
+    """Store a document that already has its parent bodies in a sidecar.
+
+    The child rows go through the same storage seam ``DocumentIndexer`` writes
+    them with; the parent bodies are reproduced in the legacy sidecar layout,
+    which is the state a legacy knowledge base reaches on a server that accepts
+    its placeholder dimension.
+    """
+    nodes = hierarchical_nodes(_hierarchical_document_text())
     backend = env.legacy_backend()
     write_chunk_nodes(
         backend,
@@ -78,7 +98,9 @@ def _store_hierarchical_document(
     return backend, nodes
 
 
-def _stored_parent_refs(document: dict) -> tuple[list[str], list[tuple[str, str]]]:
+def _stored_parent_refs(
+    document: dict[str, Any],
+) -> tuple[list[str], list[tuple[str, str]]]:
     """The parent ids and the document-scoped references a document names."""
     parent_node_ids = sorted(
         {
@@ -90,13 +112,13 @@ def _stored_parent_refs(document: dict) -> tuple[list[str], list[tuple[str, str]
     return parent_node_ids, [(DOC_REF, node_id) for node_id in parent_node_ids]
 
 
-def test_a_child_hit_expands_to_the_parent_body_of_the_sidecar(
+def test_an_existing_sidecar_expands_a_child_hit_to_its_parent_body(
     legacy_milvus_env: LegacyContractEnv,
 ) -> None:
-    """The restored read chain serves both halves of a hierarchical document."""
+    """The read chain serves both halves of a stored hierarchical document."""
     knowledge_id = legacy_milvus_env.new_knowledge_id()
     model = DeterministicEmbedding()
-    backend, nodes = _store_hierarchical_document(
+    backend, nodes = _store_existing_sidecar_document(
         legacy_milvus_env,
         knowledge_id=knowledge_id,
         model=model,
@@ -132,13 +154,13 @@ def test_a_child_hit_expands_to_the_parent_body_of_the_sidecar(
     assert expanded[0]["content"] not in child_texts
 
 
-def test_deleting_the_parents_answers_from_the_child_body(
+def test_deleting_the_parents_of_an_existing_sidecar_answers_from_the_child_body(
     legacy_milvus_env: LegacyContractEnv,
 ) -> None:
     """A missing parent body falls back to the child instead of a guess."""
     knowledge_id = legacy_milvus_env.new_knowledge_id()
     model = DeterministicEmbedding()
-    backend, _ = _store_hierarchical_document(
+    backend, _ = _store_existing_sidecar_document(
         legacy_milvus_env,
         knowledge_id=knowledge_id,
         model=model,
@@ -177,3 +199,33 @@ def test_deleting_the_parents_answers_from_the_child_body(
     assert answered[0]["content"] not in {
         row["content"] for row in parent_bodies.values()
     }
+
+
+def test_creating_a_parent_sidecar_on_the_pinned_server_is_refused(
+    legacy_milvus_env: LegacyContractEnv,
+) -> None:
+    """The frozen parent write is refused by the pinned server.
+
+    Removing this limitation means changing the frozen production file, which
+    the transition does not do, so the smoke reports the write as unsupported:
+    the server refuses the 1-dimensional placeholder the adapter builds the
+    sidecar with, and a refused create leaves no collection behind.
+    """
+    knowledge_id = legacy_milvus_env.new_knowledge_id()
+    backend = legacy_milvus_env.legacy_backend()
+    parent_nodes = hierarchical_nodes(_hierarchical_document_text()).parent_nodes
+    assert parent_nodes, "the probe needs at least one parent body to store"
+
+    with pytest.raises(MilvusException, match="invalid dimension"):
+        backend.save_parent_nodes(
+            knowledge_id,
+            parent_nodes,
+            doc_ref=DOC_REF,
+        )
+
+    sidecar = legacy_milvus_env.parent_sidecar_name(knowledge_id)
+    client = legacy_milvus_env.inspector(legacy_milvus_env.legacy_database)
+    try:
+        assert not client.has_collection(sidecar), "a refused create leaves none"
+    finally:
+        client.close()
