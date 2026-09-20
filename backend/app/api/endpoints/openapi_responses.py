@@ -62,6 +62,7 @@ from app.services.openapi.output_builder import (
 from app.services.rag.sources import ExternalRefValidationError
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_access_store, task_store
+from shared.db.capability_reference import resolve_model_kind
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,
@@ -262,6 +263,29 @@ def _model_category_from_kind(model: Any) -> str:
         return "llm"
     model_type = spec.get("modelType") or "llm"
     return str(getattr(model_type, "value", model_type)).strip().lower()
+
+
+def _resolve_requested_model(
+    db: Session, user_id: int, namespace: str, name: str
+) -> Optional[Any]:
+    """Resolve a requested Model through the caller-visible namespace scope.
+
+    Directly-owned models win; a model shared into the namespace keeps living
+    in its owner's namespace and is resolved through its capability reference.
+
+    A referenced model is only visible to members of the namespace (for the
+    "default" namespace, to the user it was shared with). This keeps group
+    references from leaking to unrelated callers that happen to know the
+    namespace/model name.
+    """
+    from app.services.readers.group_members import groupMemberReader
+
+    model = resolve_model_kind(db, name=name, namespace=namespace, user_id=user_id)
+    if model is None or namespace == "default":
+        return model
+    if not groupMemberReader.is_member(db, namespace, user_id):
+        return None
+    return model
 
 
 def _generation_options(request_body: ResponseCreateInput) -> Any:
@@ -496,24 +520,21 @@ async def create_response(
         model_name = model_info["model_id"]
         model_namespace = model_info["namespace"]
 
-        model = kindReader.get_by_name_and_namespace(
-            db,
-            current_user.id,
-            KindType.MODEL,
-            model_namespace,
-            model_name,
+        # Resolve direct models first, then capabilities referenced into the
+        # caller-visible namespace (shared personal/group models). A model
+        # shared into the group keeps living in its owner's namespace, so a
+        # plain namespace query would not find it.
+        model = _resolve_requested_model(
+            db, current_user.id, model_namespace, model_name
         )
 
-        # If not found and namespace is not default, try with default namespace
-        # This handles the case where user passes group#group_team#public_model_id
+        # If not found and namespace is not default, fall back to the caller's
+        # default namespace. This preserves the legacy "group#team#model_id"
+        # behavior where the model lives under the caller's own default
+        # namespace, and also resolves models referenced into the caller's
+        # default namespace by another user.
         if not model and model_namespace != "default":
-            model = kindReader.get_by_name_and_namespace(
-                db,
-                current_user.id,
-                KindType.MODEL,
-                "default",
-                model_name,
-            )
+            model = _resolve_requested_model(db, current_user.id, "default", model_name)
 
         if not model:
             raise HTTPException(
@@ -570,10 +591,11 @@ async def create_response(
                     detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
                 )
             if member_index == 0:
-                default_model = kindReader.get_by_name_and_namespace(
+                # Resolve the same way as an explicit model_id so that models
+                # referenced into the team namespace are recognized here too.
+                default_model = _resolve_requested_model(
                     db,
                     current_user.id,
-                    KindType.MODEL,
                     model_ref.namespace,
                     model_ref.name,
                 )
