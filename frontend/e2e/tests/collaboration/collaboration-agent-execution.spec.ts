@@ -4,6 +4,7 @@
 
 import { APIRequestContext, expect, Page, test, TestInfo } from '@playwright/test'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -253,7 +254,10 @@ test.describe('Collaboration agent execution', () => {
       },
     ]
 
-    await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
+    await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+    })
     await expect(page.getByTestId('cloud-project-header')).toBeVisible()
     await capture(page, testInfo, 'wegent-01-workspace-project-agents')
 
@@ -732,44 +736,99 @@ test.describe('Collaboration agent execution', () => {
         ].join('\n')
       )
       await execFileAsync('zip', ['-qr', archivePath, '.'], { cwd: root })
-      const response = await request.post(`${PROVIDER_NATIVE_API_URL}/api/plugins/upload`, {
-        headers: {
-          Authorization: `Bearer ${resources.token}`,
-          Connection: 'close',
-        },
-        multipart: {
-          enabled: 'true',
-          file: {
-            name: `${PLUGIN_NAME}.zip`,
-            mimeType: 'application/zip',
-            buffer: await readFile(archivePath),
+      const archive = await readFile(archivePath)
+      const initResponse = await request.post(
+        `${PROVIDER_NATIVE_API_URL}/api/plugins/submissions/init`,
+        {
+          headers: authHeaders(resources.token),
+          data: {
+            slug: PLUGIN_NAME,
+            displayName: 'Collaboration Agent E2E Plugin',
+            version: '1.0.0',
+            filename: `${PLUGIN_NAME}.zip`,
+            sha256: createHash('sha256').update(archive).digest('hex'),
+            sizeBytes: archive.byteLength,
+            purpose: 'restricted_share',
+            visibility: 'personal',
           },
+        }
+      )
+      expect(initResponse.status(), await initResponse.text()).toBe(201)
+      const initialized = (await initResponse.json()) as {
+        submissionId: number
+        pluginId: number
+        uploadUrl: string
+      }
+      const uploadResponse = await request.put(initialized.uploadUrl, {
+        data: archive,
+        headers: {
+          'Content-Type': 'application/zip',
         },
       })
-      expect(response.status(), await response.text()).toBe(201)
-      const installed = (await response.json()) as {
-        spec?: {
-          displayName?: string
-          source?: {
-            pluginKey?: string
-            marketplace?: string
-            providerKey?: string
-            catalogItemId?: string
+      expect(uploadResponse.status(), await uploadResponse.text()).toBe(204)
+      const completeResponse = await request.post(
+        `${PROVIDER_NATIVE_API_URL}/api/plugins/submissions/${initialized.submissionId}/complete`,
+        { headers: authHeaders(resources.token) }
+      )
+      expect(completeResponse.status(), await completeResponse.text()).toBe(200)
+      const installResponse = await request.post(
+        `${PROVIDER_NATIVE_API_URL}/api/plugins/marketplace/${initialized.pluginId}/install?device_id=${encodeURIComponent(
+          process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
+        )}`,
+        { headers: authHeaders(resources.token) }
+      )
+      expect(installResponse.ok(), await installResponse.text()).toBe(true)
+
+      let installed:
+        | {
+            spec?: {
+              displayName?: string
+              source?: {
+                pluginKey?: string
+                marketplace?: string
+                providerKey?: string
+                catalogItemId?: string
+              }
+            }
           }
+        | undefined
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const installedResponse = await request.get(
+          `${PROVIDER_NATIVE_API_URL}/api/plugins/installed`,
+          { headers: authHeaders(resources.token) }
+        )
+        expect(installedResponse.ok(), await installedResponse.text()).toBe(true)
+        const body = (await installedResponse.json()) as {
+          items?: Array<{
+            spec?: {
+              displayName?: string
+              source?: {
+                pluginKey?: string
+                marketplace?: string
+                providerKey?: string
+                catalogItemId?: string
+              }
+            }
+          }>
         }
+        installed = body.items?.find(item => item.spec?.source?.pluginKey === PLUGIN_NAME)
+        if (installed) break
+        await new Promise(resolve => setTimeout(resolve, 500))
       }
-      const pluginName = installed.spec?.source?.pluginKey
+      expect(installed, 'Published plugin was not installed for the E2E device').toBeDefined()
+      const installedSpec = installed!.spec
+      const pluginName = installedSpec?.source?.pluginKey
       const marketplaceId =
-        installed.spec?.source?.marketplace ||
-        installed.spec?.source?.providerKey ||
-        installed.spec?.source?.catalogItemId
+        installedSpec?.source?.marketplace ||
+        installedSpec?.source?.providerKey ||
+        installedSpec?.source?.catalogItemId
       expect(pluginName).toBe(PLUGIN_NAME)
       expect(marketplaceId).toBeTruthy()
       return {
         id: `${pluginName}@${marketplaceId}`,
         pluginName: pluginName!,
         marketplaceId: marketplaceId!,
-        displayName: installed.spec?.displayName || PLUGIN_NAME,
+        displayName: installedSpec?.displayName || PLUGIN_NAME,
       }
     } finally {
       await Promise.all([
