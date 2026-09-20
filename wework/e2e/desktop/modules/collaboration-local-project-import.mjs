@@ -6,7 +6,7 @@ import { inCollaborationSidebar } from './workspace-flows.mjs'
 
 export async function verifyCollaborationLocalProjectImport(
   control,
-  { executorHome, scoped, workbenchReadyTimeoutMs }
+  { cloudProjectId, cloudWorkspaceId, executorHome, scoped, workbenchReadyTimeoutMs }
 ) {
   const key = 'issue-home-local-project-e2e'
   const path = join(executorHome, 'issue-home-project')
@@ -28,7 +28,61 @@ export async function verifyCollaborationLocalProjectImport(
     const toggle = inCollaborationSidebar(
       '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]'
     )
+    const localWorkspace = inCollaborationSidebar(
+      '[data-testid="collaboration-workspace-wework-local-workspace"]'
+    )
+    const cloudWorkspace = inCollaborationSidebar(
+      `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
+    )
+    const cloudToggle = inCollaborationSidebar(
+      `[data-testid="collaboration-workspace-toggle-${cloudWorkspaceId}"]`
+    )
+    const cloudProject = inCollaborationSidebar(
+      `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
+    )
     await control.command('waitFor', toggle)
+    await control.command('waitFor', cloudWorkspace)
+    await control.command('waitFor', cloudToggle)
+    if (
+      (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
+    ) {
+      await control.command('click', cloudToggle)
+    }
+    await control.command('waitFor', cloudProject)
+    assert.equal(
+      await control.command(
+        'getAttribute',
+        inCollaborationSidebar(
+          '[data-testid="collaboration-workspace-location-wework-local-workspace"]'
+        ),
+        { value: 'data-location' }
+      ),
+      'local',
+      'The local Workspace must use the local device icon'
+    )
+    assert.equal(
+      await control.command(
+        'getAttribute',
+        inCollaborationSidebar(
+          `[data-testid="collaboration-workspace-location-${cloudWorkspaceId}"]`
+        ),
+        { value: 'data-location' }
+      ),
+      'cloud',
+      'The cloud Workspace must use the cloud icon'
+    )
+    assert.match(await control.command('getText', localWorkspace), /本地/)
+    assert.match(await control.command('getText', cloudWorkspace), /云端/)
+    const [sidebarMetrics] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        scoped('[data-testid="collaboration-platform-sidebar"]')
+      )
+    )
+    assert.ok(
+      sidebarMetrics.scrollWidth <= sidebarMetrics.clientWidth + 1,
+      `The Collaboration sidebar overflowed horizontally: ${sidebarMetrics.scrollWidth}px > ${sidebarMetrics.clientWidth}px`
+    )
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
       await control.command('click', toggle)
     }
@@ -48,6 +102,26 @@ export async function verifyCollaborationLocalProjectImport(
       'waitFor',
       scoped('[data-testid="collaboration-issue-project-trigger"]'),
       { text: projectName }
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', scoped('.collaboration-loading'))),
+      0,
+      'Opening the local Issue composer must not restart the global Collaboration loading state'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', scoped('[role="alert"]'))),
+      0,
+      'Opening the local Issue composer must not report a cloud member or Issue loading error'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', cloudWorkspace)),
+      1,
+      'Opening a local Issue composer must preserve cloud Workspaces in navigation'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', cloudProject)),
+      1,
+      'Opening a local Issue composer must preserve cloud Projects in navigation'
     )
   }
 }

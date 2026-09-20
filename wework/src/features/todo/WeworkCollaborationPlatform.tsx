@@ -682,6 +682,14 @@ export function createWeworkPlatformApi(
   }
   const projectLocation = async (projectId: string) =>
     (await localProject(projectId)) ? 'local' : 'cloud'
+  const localIssue = async (issueId: string) => {
+    try {
+      return await localApi.issues.get(issueId)
+    } catch {
+      return undefined
+    }
+  }
+  const issueLocation = async (issueId: string) => ((await localIssue(issueId)) ? 'local' : 'cloud')
 
   return withoutDefaultWorkItemProject({
     ...cloudApi,
@@ -924,11 +932,63 @@ export function createWeworkPlatformApi(
       },
     },
     issues: {
-      ...cloudApi.issues,
+      async list(projectId, filters) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.list(projectId, filters)
+          : cloudApi.issues.list(projectId, filters)
+      },
+      async listPage(projectId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.listPage(projectId, input)
+          : cloudApi.issues.listPage(projectId, input)
+      },
       async getBoardSnapshot(projectId) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.issues.getBoardSnapshot(projectId)
           : cloudApi.issues.getBoardSnapshot(projectId)
+      },
+      async get(issueId) {
+        return (await localIssue(issueId)) ?? cloudApi.issues.get(issueId)
+      },
+      async create(projectId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.create(projectId, input)
+          : cloudApi.issues.create(projectId, input)
+      },
+      async update(issueId, input) {
+        return (await issueLocation(issueId)) === 'local'
+          ? localApi.issues.update(issueId, input)
+          : cloudApi.issues.update(issueId, input)
+      },
+      async assign(projectId, issueId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.assign(projectId, issueId, input)
+          : cloudApi.issues.assign(projectId, issueId, input)
+      },
+      async approveRun(projectId, issueId, version) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.approveRun(projectId, issueId, version)
+          : cloudApi.issues.approveRun(projectId, issueId, version)
+      },
+      async rejectRun(projectId, issueId, version, reason) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.rejectRun(projectId, issueId, version, reason)
+          : cloudApi.issues.rejectRun(projectId, issueId, version, reason)
+      },
+      async archive(issueId) {
+        return (await issueLocation(issueId)) === 'local'
+          ? localApi.issues.archive(issueId)
+          : cloudApi.issues.archive(issueId)
+      },
+      async reorder(projectId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.issues.reorder(projectId, input)
+          : cloudApi.issues.reorder(projectId, input)
+      },
+      async markRead(issueId) {
+        return (await issueLocation(issueId)) === 'local'
+          ? localApi.issues.markRead(issueId)
+          : cloudApi.issues.markRead(issueId)
       },
     },
     resources: {
