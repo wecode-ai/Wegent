@@ -146,6 +146,45 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(input.current!.getValue()).toBe('/plan')
     expect(plan).not.toHaveBeenCalled()
   })
+  it('keeps a newer Issue picker open when the member selection frame runs late', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    await mount({
+      mentionScope: 'external',
+      externalMentionCandidates: [
+        {
+          id: 'u1',
+          type: 'user',
+          title: 'Alice',
+          reference: '[$@Alice](wework-member://p/1)',
+          testId: 'member-alice',
+        },
+        {
+          id: 'i1',
+          type: 'issue',
+          title: '#1 Fix login',
+          reference: '[$#1 Fix login](wework-issue://p/i1)',
+          testId: 'issue-login',
+        },
+      ],
+    })
+    await act(async () => input.current!.insertReference('@'))
+    await click('member-alice')
+    await act(async () => input.current!.insertReference('#'))
+    expect(element('issue-login')).not.toBeNull()
+
+    await act(async () => {
+      for (const frame of frames.splice(0)) frame(0)
+    })
+
+    expect(element('issue-login')).not.toBeNull()
+    expect(element('member-alice')).toBeNull()
+    await click('issue-login')
+    expect(input.current!.getValue()).toContain('wework-issue://p/i1')
+  })
   it('inserts a picker reference at the live caret without overwriting following text', async () => {
     await mount()
     await act(async () => {
