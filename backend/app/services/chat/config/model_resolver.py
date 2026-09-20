@@ -1198,22 +1198,34 @@ def get_bot_system_prompt(
     Returns:
         Combined system prompt string wrapped in <base_prompt> tags
     """
+    from wecode.cache.skill_mcp import skill_mcp_config_cache
+
     from app.schemas.kind import Ghost
 
     bot_crd = Bot.model_validate(bot.json)
     system_prompt = ""
 
-    # Get Ghost for system prompt
-    ghost = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Ghost",
-            Kind.name == bot_crd.spec.ghostRef.name,
-            Kind.namespace == bot_crd.spec.ghostRef.namespace,
-            Kind.is_active == True,
+    def _load_owner_ghost() -> Optional[Kind]:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Ghost",
+                Kind.name == bot_crd.spec.ghostRef.name,
+                Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
         )
-        .first()
+
+    # Get Ghost for system prompt
+    ghost = skill_mcp_config_cache.get_owner_kind(
+        db,
+        kind="Ghost",
+        user_id=user_id,
+        namespace=bot_crd.spec.ghostRef.namespace,
+        name=bot_crd.spec.ghostRef.name,
+        loader=_load_owner_ghost,
     )
 
     if ghost and ghost.json:
