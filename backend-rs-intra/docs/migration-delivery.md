@@ -165,6 +165,27 @@ Push or create reviews only after explicit authorization. The migration branch
 history is rewritten, so publish it with `--force-with-lease`; never use an
 unprotected force push.
 
+When the public branch is pushed to a personal fork, update the fork's default
+branch before the public delivery. The pre-push gate scopes a new branch against
+the destination remote's default branch; a stale fork `main` makes its local
+check include unrelated upstream history. After authorization to update the
+fork, verify it can fast-forward, then synchronize and refresh its remote
+tracking ref:
+
+```bash
+git -C ../Wegent-github fetch origin <fork-remote>
+git -C ../Wegent-github rev-list --left-right --count \
+  <fork-remote>/main...origin/main
+# Expected before synchronizing: 0 commits ahead; one or more commits behind.
+git -C ../Wegent-github push <fork-remote> origin/main:main
+git -C ../Wegent-github fetch <fork-remote>
+```
+
+Do not repoint `<fork-remote>/HEAD` to another remote. After `apply`, the
+force-push gate compares the previous `dev-migration` tip with the rewritten
+tip, so its quality-check scope can be broader than the retained traffic patch.
+Run that gate as reported, then use the protected `--force-with-lease` command.
+
 `backend-rs-intra` can depend on public APIs introduced in the same delivery.
 Until the public PR is merged and synchronized into internal `develop`, the
 stripped migration branch may not build completely. Do not use it as the final

@@ -25,6 +25,7 @@ mod sharding;
 mod startup;
 mod state;
 mod subscription_workspaces;
+mod user_cache;
 mod user_profile;
 mod video_result_urls;
 

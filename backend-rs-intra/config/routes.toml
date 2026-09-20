@@ -5,24 +5,19 @@ include = ["./routes-public.toml"]
 [[routes]]
 methods = ["GET"]
 path = "/api/quota/claude/quota"
-match_kind = "exact"
 
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/aigc-video/media/playback"
-#match_kind = "exact"
 #
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/cloud-devices/config"
-#match_kind = "exact"
 #
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/grey/status"
-#match_kind = "exact"
 #
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/wecode/external-knowledge/:provider/knowledge-bases"
-#match_kind = "template"
