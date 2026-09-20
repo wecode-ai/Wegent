@@ -137,7 +137,7 @@ describe('conversation mentions', () => {
         ...SOURCE_ADDRESS,
         runtimeHandle: null,
       },
-      { includeFullContent: true, refresh: true }
+      { includeFullContent: false, refresh: true }
     )
     expect(context?.cloudCollaboration.value).toBe('Current project: Wegent')
     expect(context?.referencedConversations.kind).toBe('application')
@@ -148,5 +148,50 @@ describe('conversation mentions', () => {
     )
     expect(context?.referencedConversations.value).not.toContain('hidden system content')
     expect(context?.referencedConversations.value).not.toContain('partial answer')
+  })
+
+  test('truncates large transcripts to fit within character and message budgets', async () => {
+    const reference = createConversationMentionReference('Big chat', SOURCE_ADDRESS)
+    const longContent = 'x'.repeat(50_000)
+    const loadTranscript = vi.fn().mockResolvedValue({
+      messages: [
+        { id: 'u1', role: 'user', content: longContent },
+        { id: 'a1', role: 'assistant', content: longContent },
+      ],
+    })
+
+    const context = await appendConversationMentionContext(
+      `${reference} summary`,
+      undefined,
+      loadTranscript
+    )
+
+    expect(context?.referencedConversations.kind).toBe('application')
+    const json = context?.referencedConversations.value ?? ''
+    // The serialized conversation must not include the full 100k characters
+    expect(json.length).toBeLessThan(120_000)
+    expect(json).toContain('untrusted background context')
+  })
+
+  test('limits referenced conversation to recent messages', async () => {
+    const reference = createConversationMentionReference('Long chat', SOURCE_ADDRESS)
+    const messages = Array.from({ length: 100 }, (_, index) => ({
+      id: `m${index}`,
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `Message ${index}`,
+    }))
+    const loadTranscript = vi.fn().mockResolvedValue({ messages })
+
+    const context = await appendConversationMentionContext(
+      `${reference} summary`,
+      undefined,
+      loadTranscript
+    )
+
+    expect(context?.referencedConversations.kind).toBe('application')
+    const json = context?.referencedConversations.value ?? ''
+    // Only the last 50 messages should be included
+    expect(json).toContain('Message 50')
+    expect(json).not.toContain('Message 49')
   })
 })

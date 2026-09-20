@@ -10,6 +10,9 @@ import { encodeUriComponentStrict } from './uri-component'
 const CONVERSATION_MENTION_SCHEME = 'wework-conversation://'
 const CONVERSATION_MENTION_PATTERN = /\[\$([^\]]+)]\((wework-conversation:\/\/[^)\n]+)\)/g
 
+const MAX_CONVERSATION_MENTION_MESSAGES = 50
+const MAX_CONVERSATION_MENTION_CHARACTERS = 80_000
+
 export interface ConversationMention {
   title: string
   address: RuntimeTaskAddress
@@ -86,7 +89,7 @@ export async function appendConversationMentionContext(
   const conversations = await Promise.all(
     mentions.map(async mention => {
       const transcript = await loadTranscript(mention.address, {
-        includeFullContent: true,
+        includeFullContent: false,
         refresh: true,
       })
       return {
@@ -96,7 +99,9 @@ export async function appendConversationMentionContext(
           taskId: mention.address.taskId,
           threadId: mention.address.threadId ?? null,
         },
-        conversation: transcript.messages.flatMap(messageToConversationEntry),
+        conversation: trimConversationEntries(
+          transcript.messages.flatMap(messageToConversationEntry)
+        ),
       }
     })
   )
@@ -181,6 +186,27 @@ function messageToConversationEntry(
 
 function conversationAddressKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
+}
+
+type ConversationEntry = { role: 'user' | 'assistant'; content: string }
+
+function trimConversationEntries(entries: ConversationEntry[]): ConversationEntry[] {
+  const tail = entries.slice(-MAX_CONVERSATION_MENTION_MESSAGES)
+  const result: ConversationEntry[] = []
+  let used = 0
+  for (const entry of tail) {
+    if (used >= MAX_CONVERSATION_MENTION_CHARACTERS) break
+    if (used + entry.content.length > MAX_CONVERSATION_MENTION_CHARACTERS) {
+      const remaining = MAX_CONVERSATION_MENTION_CHARACTERS - used
+      if (remaining > 0) {
+        result.push({ ...entry, content: entry.content.slice(-remaining) })
+      }
+      break
+    }
+    result.push(entry)
+    used += entry.content.length
+  }
+  return result
 }
 
 function timestamp(value: string | number | null | undefined): number {
