@@ -110,18 +110,35 @@ def _run_indexing_against_storage(
     return gateway, calls, result
 
 
-def test_milvus_indexing_leaves_the_replacement_delete_to_the_backend() -> None:
-    """The Milvus write replaces the document, so indexing must not pre-delete.
+def test_a_self_replacing_milvus_write_leaves_the_delete_to_the_backend() -> None:
+    """The Milvus V2 write replaces the document, so indexing must not pre-delete.
 
-    The Milvus adapter deletes the document's previous rows inside its own
-    write, after it confirms the collection contract, so a business pre-delete
-    would delete the same rows twice and race the write that owns them.
+    The ``milvus_v2`` adapter deletes the document's previous rows inside its
+    own write, after it confirms the collection contract, so a business
+    pre-delete would delete the same rows twice and race the write that owns
+    them.
     """
-    gateway, calls, result = _run_indexing_against_storage(storage_type="milvus")
+    gateway, calls, result = _run_indexing_against_storage(storage_type="milvus_v2")
 
     assert result["status"] == "success"
     assert calls == ["index_document"]
     gateway.delete_document_index.assert_not_awaited()
+    gateway.index_document.assert_awaited_once()
+
+
+def test_the_legacy_milvus_retriever_keeps_its_pre_delete() -> None:
+    """The legacy Milvus adapter receives the document's old index deleted.
+
+    ``milvus`` serves the collections the online main branch wrote, and that
+    adapter owns no document replacement of its own, so the business layer must
+    keep deleting a document's previous rows before it indexes the new version.
+    """
+    gateway, calls, _ = _run_indexing_against_storage(storage_type="milvus")
+
+    assert calls == ["delete_document_index", "index_document"]
+    delete_spec = gateway.delete_document_index.await_args.args[0]
+    assert delete_spec.document_ref == "4"
+    assert delete_spec.retriever_config.storage_config["type"] == "milvus"
     gateway.index_document.assert_awaited_once()
 
 

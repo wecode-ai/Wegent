@@ -28,10 +28,35 @@ def test_import_knowledge_engine_subpackages() -> None:
         assert importlib.import_module(module_name) is not None
 
 
-def test_milvus_adapter_keeps_its_own_sdk_dependency() -> None:
-    """The adapter talks to PyMilvus directly and never restores the wrapper."""
+def _storage_sources(package: str) -> str:
+    """Every production module of one storage adapter package."""
+    root = Path(__file__).resolve().parents[1] / "knowledge_engine" / "storage"
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((root / package).glob("*.py"))
+    )
+
+
+def test_the_legacy_milvus_adapter_keeps_the_llamaindex_wrapper() -> None:
+    """The legacy adapter was built on that wrapper and still writes through it."""
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
 
-    assert "llama-index-vector-stores-milvus" not in text
+    assert "llama-index-vector-stores-milvus>=0.9.0" in text
+    assert "llama_index.vector_stores.milvus" in _storage_sources("milvus_legacy")
+
+
+def test_the_milvus_v2_adapter_keeps_its_own_sdk_dependency() -> None:
+    """The V2 adapter talks to PyMilvus directly and never restores the wrapper."""
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+
     assert "pymilvus>=2.6.3,<2.6.4" in text
+    assert "llama_index.vector_stores.milvus" not in _storage_sources("milvus")
+
+
+def test_the_two_milvus_adapters_share_one_pymilvus_version() -> None:
+    """Both adapters are built from the one SDK version the lock pins."""
+    lock = (Path(__file__).resolve().parents[1] / "uv.lock").read_text(encoding="utf-8")
+
+    assert lock.count('\nname = "pymilvus"\nversion = ') == 1

@@ -11,13 +11,18 @@ from typing import Any, Dict, List, Optional, Type
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 from knowledge_engine.storage.milvus.backend import MilvusBackend
+from knowledge_engine.storage.milvus_legacy import LegacyMilvusBackend
 from knowledge_engine.storage.qdrant_backend import QdrantBackend
 from shared.models import RuntimeRetrieverConfig
 
 STORAGE_BACKEND_REGISTRY: Dict[str, Type[BaseStorageBackend]] = {
     "elasticsearch": ElasticsearchBackend,
     "qdrant": QdrantBackend,
-    "milvus": MilvusBackend,
+    # The one dispatch seam of the two Milvus generations: the type a Retriever
+    # configures decides which physical contract its knowledge base is read
+    # from and written to. Nothing further down the call chain branches on it.
+    "milvus": LegacyMilvusBackend,
+    "milvus_v2": MilvusBackend,
 }
 
 

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.schemas.kind import IndexStrategy
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
@@ -306,6 +307,51 @@ def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> No
         )
 
     assert config.storage_config["indexStrategy"] == {"mode": "per_dataset"}
+
+
+def test_build_resolved_retriever_config_carries_a_milvus_v2_storage_verbatim() -> None:
+    """The second Milvus generation needs no field of its own to be addressed.
+
+    The resolved storage config is the Retriever CRD's own storage config, so a
+    ``milvus_v2`` retriever reaches the storage factory with the URL, the
+    credentials, the index strategy and the extension config it declared -
+    including the Milvus database it must not share with a legacy retriever.
+    """
+    resolver = RagRuntimeResolver()
+    retriever = SimpleNamespace(
+        spec=SimpleNamespace(
+            storageConfig=SimpleNamespace(
+                type="milvus_v2",
+                url="http://milvus:19530",
+                username="tester",
+                password="s3cret",
+                apiKey="retriever-key",
+                indexStrategy=IndexStrategy(mode="per_dataset", prefix="wegent"),
+                ext={"db_name": "wegent_v2", "dim": 1536},
+            )
+        )
+    )
+
+    with patch(
+        "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+        return_value=retriever,
+    ):
+        config = resolver._build_resolved_retriever_config(
+            db=MagicMock(),
+            user_id=7,
+            name="v2-retriever",
+            namespace="default",
+        )
+
+    assert config.storage_config == {
+        "type": "milvus_v2",
+        "url": "http://milvus:19530",
+        "username": "tester",
+        "password": "s3cret",
+        "apiKey": "retriever-key",
+        "indexStrategy": {"mode": "per_dataset", "prefix": "wegent"},
+        "ext": {"db_name": "wegent_v2", "dim": 1536},
+    }
 
 
 def test_build_query_runtime_spec_rejects_control_plane_only_inputs():
