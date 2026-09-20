@@ -37,6 +37,7 @@ describe("collaboration i18n", () => {
 
   it("resolves core English and Chinese keys without leaking raw keys", () => {
     const keys = [
+      "conversation.thinking.completed",
       "todo.projects_home",
       "todo.files_title",
       "todo.manage_project",
@@ -54,7 +55,9 @@ describe("collaboration i18n", () => {
       createCollaborationTranslator("zh-CN")(key),
     );
 
+    expect(english[0]).toBe("Thought process");
+    expect(chinese[0]).toBe("思考过程");
     expect(english.join(" ")).not.toMatch(/\p{Script=Han}/u);
-    expect(chinese.join(" ")).not.toMatch(/\b(?:todo|common)\./);
+    expect(chinese.join(" ")).not.toMatch(/\b(?:conversation|todo|common)\./);
   });
 });
