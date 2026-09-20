@@ -538,6 +538,22 @@ pub async fn load_task_detail(
     if let Some(team_id) = resolved_team_id
         && let Some(team) = kinds.get_by_id("Team", team_id).await.map_err(kind_error)?
     {
+        // `should_redact_team_for_user` runs BEFORE `_convert_to_team_dict`
+        // (`get_task_detail`); the status response discards the outcome, but
+        // the membership resolution traffic is request-owned.
+        crate::remote_workspace_tree::task_detail::team_access_policy::should_redact_team_for_user(
+            &state.mysql,
+            &crate::teams::group_membership::ErpContext {
+                erp: state.erp.as_ref(),
+                redis: state.cache.kinds_cache(),
+            },
+            user_id,
+            team.id,
+            team.user_id,
+            &team.namespace,
+        )
+        .await
+        .map_err(kind_error)?;
         team_members = CrdDocument::project(&team.json.0)
             .spec
             .and_then(|spec| spec.members)
