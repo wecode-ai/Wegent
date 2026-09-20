@@ -91,7 +91,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 3);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
     assert_eq!(
         calls[0].payload["runtime_features"]["interactiveSessions"],
         json!({"codeServer": true, "terminal": true})
@@ -108,6 +108,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
         calls[0].payload["runtime_features"]["runtimeTaskCreate"]["features"]["supervisor"],
         true
     );
+    assert!(calls[0].payload["runtime_features"]["desktop"].is_null());
     assert_eq!(
         calls[0].payload["runtime_features"]["worktrees"]["version"],
         1
@@ -174,7 +175,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 3);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
     assert_eq!(
         calls[0].payload["runtime_features"]["interactiveSessions"],
         json!({"codeServer": true, "terminal": true})
@@ -187,6 +188,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         calls[0].payload["runtime_features"]["worktrees"]["version"],
         1
     );
+    assert!(calls[0].payload["runtime_features"]["desktop"].is_null());
     assert_eq!(
         calls[0].payload["runtime_features"]["worktrees"]["managed"],
         true

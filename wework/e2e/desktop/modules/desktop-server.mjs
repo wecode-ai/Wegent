@@ -4212,20 +4212,18 @@ class DesktopE2EServer {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
       const requestText = JSON.stringify(body).replaceAll('\\', '/')
       const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'
       )
       assert.ok(
-        requestText.includes(filePath),
-        'The pasted file reference was not forwarded to the real Codex request'
+        requestText.includes(PASTED_PATH_FILE_NAME),
+        'The pasted file attachment was not forwarded to the real Codex request'
       )
       assert.equal(
-        requestText.includes('nested path context') ||
-          requestText.includes('# Pasted path context'),
+        requestText.includes('nested path context'),
         false,
-        'The pasted paths copied file contents into the model request'
+        'The pasted directory was incorrectly read as a file'
       )
       this.writeSse(response, [
         responseCreated(responseId),
@@ -4239,20 +4237,18 @@ class DesktopE2EServer {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
       const requestText = JSON.stringify(body).replaceAll('\\', '/')
       const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'
       )
       assert.ok(
-        requestText.includes(filePath),
-        'The dropped file reference was not forwarded to the real Codex request'
+        requestText.includes(DROPPED_PATH_FILE_NAME),
+        'The dropped file attachment was not forwarded to the real Codex request'
       )
       assert.equal(
-        requestText.includes('nested dropped path context') ||
-          requestText.includes('# Dropped path context'),
+        requestText.includes('nested dropped path context'),
         false,
-        'The dropped paths copied file contents into the model request'
+        'The dropped directory was incorrectly read as a file'
       )
       this.writeSse(response, [
         responseCreated(responseId),

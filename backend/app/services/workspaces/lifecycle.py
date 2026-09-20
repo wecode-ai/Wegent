@@ -214,7 +214,8 @@ class WorkspaceLifecycleService:
             is_default=next_default,
             execution_environment=(
                 preparing_execution_environment(
-                    values.execution_environment.model_dump()
+                    values.execution_environment.model_dump(),
+                    current.execution_environment,
                 )
                 if values.execution_environment is not None
                 else None

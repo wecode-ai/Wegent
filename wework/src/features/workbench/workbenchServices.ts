@@ -68,6 +68,11 @@ export interface WorkspaceSessionApi {
   startProjectCodeServer: (projectId: number) => Promise<ProjectDeviceSessionResponse>
   startDeviceTerminal: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
   startDeviceCodeServer: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
+  startDeviceExtensionSession: (
+    deviceId: string,
+    sessionType: string
+  ) => Promise<DeviceSessionResponse>
+  revokeDeviceExtensionSession?: (sessionType: string, sessionId: string) => Promise<void>
   createRemoteTerminalClient: RemoteTerminalClientFactory
 }
 

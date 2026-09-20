@@ -1539,6 +1539,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
             workspacePath="/repo/Wegent",
             afterCursor="offset:10",
             includeFullContent=True,
+            conversationContextOnly=True,
         ),
     )
 
@@ -1553,6 +1554,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
             "taskId": "codex-1",
             "afterCursor": "offset:10",
             "includeFullContent": True,
+            "conversationContextOnly": True,
         },
         timeout_seconds=30,
     )

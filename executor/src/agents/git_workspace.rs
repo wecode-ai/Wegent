@@ -25,6 +25,7 @@ use crate::{
         configure_repo_proxy, request_git_domain, task_git_auth_environment, user_git_email,
         user_git_login, uses_device_local_git_credentials,
     },
+    local::native_git::clear_local_git_env,
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     workspace_paths::workspace_root,
@@ -303,11 +304,18 @@ fn resolve_workspace_path(path: &str) -> PathBuf {
     }
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
+pub(super) fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir().unwrap_or_else(|| PathBuf::from(path));
     }
-    if let Some(rest) = path.strip_prefix("~/") {
+    let rest = path.strip_prefix("~/").or_else(|| {
+        if cfg!(windows) {
+            path.strip_prefix("~\\")
+        } else {
+            None
+        }
+    });
+    if let Some(rest) = rest {
         if let Some(home) = home_dir() {
             return home.join(rest);
         }
@@ -409,7 +417,7 @@ async fn clone_repo(
     }
 
     let mut command = Command::new("git");
-    crate::local::native_git::clear_local_git_env(command.as_std_mut());
+    clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
@@ -501,7 +509,7 @@ async fn clone_repo(
 
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
     let mut command = Command::new("git");
-    crate::local::native_git::clear_local_git_env(command.as_std_mut());
+    clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command
         .arg("-C")
@@ -737,7 +745,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
         let mut command = Command::new("git");
-        crate::local::native_git::clear_local_git_env(command.as_std_mut());
+        clear_local_git_env(command.as_std_mut());
         crate::process::hide_windows_console(&mut command);
         let _ = command
             .arg("-C")
@@ -851,13 +859,27 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn expands_platform_home_relative_paths() {
+        let home = home_dir().expect("test user has a home directory");
+        assert_eq!(expand_tilde("~"), home);
+        assert_eq!(expand_tilde("~/test/SKILL.md"), home.join("test/SKILL.md"));
+        let windows_path = r"~\test\SKILL.md";
+        let expected = if cfg!(windows) {
+            home.join(r"test\SKILL.md")
+        } else {
+            PathBuf::from(windows_path)
+        };
+        assert_eq!(expand_tilde(windows_path), expected);
+        assert_eq!(
+            expand_tilde("./test/SKILL.md"),
+            PathBuf::from("./test/SKILL.md")
+        );
+    }
+
     fn run_test_git(command: &mut StdCommand) -> Output {
-        command
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .output()
-            .unwrap()
+        clear_local_git_env(command);
+        command.output().unwrap()
     }
 
     fn assert_test_git_success(description: &str, command: &mut StdCommand) {

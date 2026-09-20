@@ -4,6 +4,12 @@
 
 import type { Config } from 'jest'
 import nextJest from 'next/jest'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const extensionsPath = existsSync(resolve(__dirname, 'wecode/extensions'))
+  ? '<rootDir>/wecode/extensions/$1'
+  : '<rootDir>/src/extensions/$1'
 
 const createJestConfig = nextJest({
   dir: './',
@@ -14,6 +20,7 @@ const config: Config = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '^@extensions/(.*)$': extensionsPath,
     '^@wegent/chat-core$': '<rootDir>/../packages/chat-core/src/index.ts',
     '^@wegent/chat-core/(.*)$': '<rootDir>/../packages/chat-core/src/$1',
     '^@wegent/collaboration$': '<rootDir>/../packages/collaboration/src/index.ts',

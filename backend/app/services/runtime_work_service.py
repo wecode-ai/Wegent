@@ -3856,6 +3856,11 @@ def _runtime_transcript_payload(
     before_cursor = getattr(request, "before_cursor", None)
     after_cursor = getattr(request, "after_cursor", None)
     include_full_content = getattr(request, "include_full_content", False)
+    conversation_context_only = getattr(
+        request,
+        "conversation_context_only",
+        False,
+    )
     if limit is not None:
         payload["limit"] = limit
     if before_cursor:
@@ -3864,6 +3869,8 @@ def _runtime_transcript_payload(
         payload["afterCursor"] = after_cursor
     if include_full_content:
         payload["includeFullContent"] = True
+    if conversation_context_only:
+        payload["conversationContextOnly"] = True
     return payload
 
 

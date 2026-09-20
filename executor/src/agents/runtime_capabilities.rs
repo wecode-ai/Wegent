@@ -29,7 +29,7 @@ use crate::{
     attachments::{
         device_runtime_attachment_dir, process_prompt, AttachmentPromptProcessor, AttachmentRecord,
     },
-    logging::{log_executor_event, push_error_fields, task_fields},
+    logging::{log_executor_event, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
@@ -39,6 +39,9 @@ use crate::{
 };
 
 use super::claude_code::has_task_skill_names;
+
+mod codex;
+pub use codex::prepare_codex_runtime;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
@@ -495,19 +498,6 @@ fn inject_managed_wework_mcps(
         }),
     );
     Ok(())
-}
-
-pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
-    let task_dir = request
-        .cwd()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join(&request.task_id));
-    let codex_skills_dir = codex_skills_dir(&task_dir);
-    if let Err(error) = deploy_request_skills(request, &codex_skills_dir).await {
-        let mut fields = task_fields(&request.task_id, &request.subtask_id);
-        push_error_fields(&mut fields, error);
-        log_executor_event("codex Skill deployment failed", &fields);
-    }
 }
 
 pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
@@ -2598,10 +2588,6 @@ fn executor_home() -> PathBuf {
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root")))
 }
 
-fn codex_skills_dir(task_dir: &Path) -> PathBuf {
-    task_dir.join(".codex/skills")
-}
-
 fn is_docker_mode() -> bool {
     !is_local_mode()
 }
@@ -2696,6 +2682,8 @@ fn toml_json_value(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    mod codex;
+
     use super::*;
     use std::io::Write;
     use tokio::{

@@ -68,6 +68,13 @@ jest.mock('@/contexts/SocketContext', () => ({
   }),
 }))
 
+jest.mock('@extensions/admin-device-monitor', () => ({
+  useAdminDeviceMonitorExtension: () => ({
+    renderAction: () => null,
+    renderPanel: () => null,
+  }),
+}))
+
 jest.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,

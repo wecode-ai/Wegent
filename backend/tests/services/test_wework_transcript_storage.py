@@ -13,6 +13,7 @@ from minio.error import S3Error
 from app.services.wework_transcript_storage import (
     WeworkTranscriptStorage,
     WeworkTranscriptStorageError,
+    WeworkTranscriptStorageNotFoundError,
 )
 
 
@@ -156,6 +157,18 @@ def test_stream_reads_and_releases_the_object(monkeypatch) -> None:
     assert client.requests == [("transcripts", "user/segment.tgz.enc")]
     assert response.closed is True
     assert response.released is True
+
+
+def test_stream_distinguishes_a_missing_object(monkeypatch) -> None:
+    client = _ObjectClient()
+    client.get_object = lambda *_args: (_ for _ in ()).throw(_s3_error("NoSuchKey"))
+    storage = _storage(client, monkeypatch)
+
+    with pytest.raises(WeworkTranscriptStorageNotFoundError) as raised:
+        next(storage.stream("user/missing.tgz.enc"))
+
+    assert raised.value.code == "archive_not_found"
+    assert str(raised.value) == "Wework transcript segment not found"
 
 
 def test_exists_distinguishes_present_and_missing_objects(monkeypatch) -> None:

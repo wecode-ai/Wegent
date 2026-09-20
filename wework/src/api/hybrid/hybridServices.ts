@@ -26,6 +26,7 @@ import {
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
+import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
@@ -791,6 +792,9 @@ export function createHybridWorkbenchServices(
     executeCommand(deviceId, data) {
       if (isLocalDeviceId(deviceId)) {
         return localServices.deviceApi.executeCommand(deviceId, data)
+      }
+      if (shouldUseCloudDeviceCommand(data.command_key)) {
+        return cloudServices.deviceApi.executeCommand(deviceId, data)
       }
       return cloudRuntimeIpc.request<DeviceCommandResponse>(
         'device.execute_command',

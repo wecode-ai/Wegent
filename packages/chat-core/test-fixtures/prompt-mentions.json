@@ -1,0 +1,108 @@
+[
+  {
+    "reference": "[$test-skill](~/.agents/skills/test-skill/SKILL.md)",
+    "name": "test-skill",
+    "href": "~/.agents/skills/test-skill/SKILL.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](C:/Users/me/.agents/skills/test-skill/SKILL.md)",
+    "name": "test-skill",
+    "href": "C:/Users/me/.agents/skills/test-skill/SKILL.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](C:\\\\Users\\\\me\\\\skills\\\\instructions.md)",
+    "name": "test-skill",
+    "href": "C:\\Users\\me\\skills\\instructions.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](./skills/instructions.md)",
+    "name": "test-skill",
+    "href": "./skills/instructions.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](instructions.md)",
+    "name": "test-skill",
+    "href": "instructions.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](skills/test\\(draft\\)/instructions.md)",
+    "name": "test-skill",
+    "href": "skills/test(draft)/instructions.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill?label=Test%20Skill](./instructions.md)",
+    "name": "test-skill",
+    "href": "./instructions.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](https://example.com/SKILL.md)",
+    "name": "test-skill",
+    "href": "https://example.com/SKILL.md",
+    "kind": null
+  },
+  {
+    "reference": "[$test-skill](HTTP://example.com/instructions.md)",
+    "name": "test-skill",
+    "href": "HTTP://example.com/instructions.md",
+    "kind": null
+  },
+  {
+    "reference": "[instructions](./instructions.md)",
+    "name": "instructions",
+    "href": "./instructions.md",
+    "kind": null,
+    "composerKind": "file"
+  },
+  {
+    "reference": "[@Example](plugin://example@test)",
+    "name": "Example",
+    "href": "plugin://example@test",
+    "kind": "plugin"
+  },
+  {
+    "reference": "[$Example](app://example)",
+    "name": "Example",
+    "href": "app://example",
+    "kind": "app"
+  },
+  {
+    "reference": "[test-label](~/worksapce/skills/test-skill/SKILL.md)",
+    "name": "test-label",
+    "href": "~/worksapce/skills/test-skill/SKILL.md",
+    "kind": null,
+    "composerKind": "file"
+  },
+  {
+    "reference": "[test-label](C:/Users/test/skills/test-skill/SKILL.md)",
+    "name": "test-label",
+    "href": "C:/Users/test/skills/test-skill/SKILL.md",
+    "kind": null,
+    "composerKind": "file"
+  },
+  {
+    "reference": "[test-label](./skills/test-skill/SKILL.md)",
+    "name": "test-label",
+    "href": "./skills/test-skill/SKILL.md",
+    "kind": null,
+    "composerKind": "file"
+  },
+  {
+    "reference": "[$test-skill](C:\\Users\\test\\.agents\\skills\\_test\\SKILL.md)",
+    "name": "test-skill",
+    "href": "C:\\Users\\test\\.agents\\skills\\_test\\SKILL.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](\\\\server\\share\\.agents\\skills\\test\\SKILL.md)",
+    "name": "test-skill",
+    "href": "\\\\server\\share\\.agents\\skills\\test\\SKILL.md",
+    "kind": "skill"
+  }
+]

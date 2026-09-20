@@ -1,3 +1,15 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+export const INTERNAL_CORE_PLUGIN_MANIFEST = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../wecode/dsh/core-plugins.json'
+)
+export const INTERNAL_CORE_PLUGINS = existsSync(INTERNAL_CORE_PLUGIN_MANIFEST)
+  ? JSON.parse(readFileSync(INTERNAL_CORE_PLUGIN_MANIFEST, 'utf8'))
+  : []
+
 export const CORE_PLUGIN_DIRECTORIES = [
   'app-wework',
   'browser-runtime',
@@ -19,6 +31,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-home-developer',
   'ui-git',
   'ui-outputs',
+  ...INTERNAL_CORE_PLUGINS.map(plugin => plugin.source),
 ]
 
 const CORE_PLUGIN_TARGETS = {
@@ -45,7 +58,16 @@ const CORE_PLUGIN_TARGETS = {
 }
 
 export function corePluginTarget(directory) {
-  const target = CORE_PLUGIN_TARGETS[directory]
+  const target =
+    CORE_PLUGIN_TARGETS[directory] ||
+    INTERNAL_CORE_PLUGINS.find(plugin => plugin.source === directory)?.directory
   if (!target) throw new Error(`Unsupported Wework core plugin directory: ${directory}`)
   return target
+}
+
+export function corePluginSource(weworkRoot, directory) {
+  const internal = INTERNAL_CORE_PLUGINS.find(plugin => plugin.source === directory)
+  return internal
+    ? join(weworkRoot, 'wecode', 'dsh', internal.source)
+    : join(weworkRoot, 'dsh', directory)
 }

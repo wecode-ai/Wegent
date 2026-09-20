@@ -119,6 +119,16 @@ class SensitiveDataFormatter(logging.Formatter):
         return mask_string(super().format(record))
 
 
+class WebsocketProtocolDebugFilter(logging.Filter):
+    """Drop high-volume websocket frame traces while preserving other debug logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno != logging.DEBUG:
+            return True
+        pathname = record.pathname.replace("\\", "/")
+        return not ("/websockets/" in pathname and pathname.endswith("/protocol.py"))
+
+
 def _create_file_handler(log_format: str, datefmt: str) -> logging.Handler | None:
     """
     Create a TimedRotatingFileHandler that rotates every natural hour.
@@ -161,6 +171,7 @@ def _create_file_handler(log_format: str, datefmt: str) -> logging.Handler | Non
     file_handler.setFormatter(SensitiveDataFormatter(log_format, datefmt=datefmt))
     file_handler.setLevel(logging.DEBUG)
     file_handler.addFilter(RequestIdFilter())
+    file_handler.addFilter(WebsocketProtocolDebugFilter())
     return file_handler
 
 
@@ -183,6 +194,7 @@ def setup_logging() -> None:
     console_handler.setFormatter(SensitiveDataFormatter(log_format, datefmt=datefmt))
     console_handler.setLevel(logging.DEBUG)
     console_handler.addFilter(RequestIdFilter())
+    console_handler.addFilter(WebsocketProtocolDebugFilter())
 
     # File handler with hourly rotation
     file_handler = _create_file_handler(log_format, datefmt)
@@ -205,6 +217,21 @@ def setup_logging() -> None:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
+
+    # Uvicorn passes its own logger to the websockets protocol implementation.
+    # Keep the filter on the emitting logger as well, so a handler installed by
+    # Uvicorn or its reload supervisor cannot bypass the root-handler filter.
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    if not any(
+        isinstance(filter_, WebsocketProtocolDebugFilter)
+        for filter_ in uvicorn_error_logger.filters
+    ):
+        uvicorn_error_logger.addFilter(WebsocketProtocolDebugFilter())
+
+    # The websockets protocol logger includes every binary frame at DEBUG.
+    # Binary streams are high-throughput, so keep protocol frames out of the
+    # application debug log while preserving connection-level INFO messages.
+    logging.getLogger("websockets").setLevel(max(log_level, logging.INFO))
 
     logging.getLogger("uvicorn.access").handlers.clear()
     logging.getLogger("uvicorn.access").propagate = False

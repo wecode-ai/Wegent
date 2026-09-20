@@ -24,11 +24,11 @@ sidebar_position: 26
 
 ## 已审计的运行模型
 
-三类执行智能体目前不是同一个配置模型，E2E 不得通过测试夹具伪造一个不存在的统一抽象。
+Wegent Shell 与 Wework 项目智能体使用不同配置模型，E2E 必须明确被测运行链。
 
-### Wegent Chat 与 ClaudeCode
+### Wegent Chat、ClaudeCode 与 Codex
 
-Chat 和 ClaudeCode 使用 Wegent 的 CRD 资源链：
+Chat、ClaudeCode 和 Codex 使用 Wegent 的 CRD 资源链：
 
 ```text
 Team
@@ -36,7 +36,7 @@ Team
     -> Ghost
       -> Skill references
       -> MCP servers
-    -> Shell: Chat | ClaudeCode
+    -> Shell: Chat | ClaudeCode | Codex
     -> optional Model
 ```
 
@@ -46,12 +46,11 @@ Team
 - Task 创建后，后端解析 Team、Bot、Ghost、Skill 和 MCP，构造实际执行请求。
 - Chat Shell 进入 Chat Runtime。
 - ClaudeCode Shell 通过 Executor Manager 调度到真实 Executor，并启动 Claude Code CLI。
+- Codex 公共 Shell 同样通过 Executor Manager 调度到真实 Executor，并启动 Codex app-server。
 
-### Codex
+### Wework Codex 项目智能体
 
-Codex 当前不属于 Wegent 的公共 Shell 类型，也不通过上述 Team → Bot → Ghost 链创建。
-
-Codex 使用 Wework 的项目智能体与本地运行时链：
+除公共 Shell 外，Codex 也支持 Wework 的项目智能体与本地运行时链；本文 E2E-06 验证的是这条链：
 
 ```text
 ProjectChatAgent
@@ -65,7 +64,7 @@ ProjectChatAgent
 - 项目智能体由 `ProjectChatAgent` 表达。
 - Codex 的 Skill、MCP 和 Plugin 物化到隔离的 Codex Home。
 - Plugin 可以同时提供 Skill、MCP 和其他 Codex 扩展能力。
-- E2E 必须分别验证 Wegent 智能体链和 Wework Codex 链，不得把 Codex 写成一个不存在的 Wegent `Codex` Shell。
+- E2E 必须分别验证 Wegent Codex Shell 链和 Wework Codex 项目智能体链，不能用一条链的证据替代另一条。
 
 ### 人
 
@@ -311,7 +310,7 @@ Issues:
 
 必须验证：
 
-- 实际调度对象是 ProjectChatAgent，而不是伪造的 Wegent `Codex` Shell。
+- 本场景实际调度对象是 ProjectChatAgent；Wegent `Codex` Shell 需单独验证。
 - Codex Home 中存在目标 Plugin 的物化文件。
 - 初始请求或工具输出中出现正确 Skill locator。
 - Codex 实际读取目标 `SKILL.md`。
@@ -665,10 +664,10 @@ archiveProjectAndWorkspace
 
 fixture 只负责建立前置条件；被验收的关键用户动作仍必须从对应产品 UI 发起。
 
-Chat、ClaudeCode 和 Codex 可以复用执行证据断言接口，但不得共享一个虚假的资源创建接口：
+各运行链可以复用执行证据断言接口，但 fixture 必须创建对应的真实资源：
 
-- Chat/ClaudeCode fixture 创建 Team、Bot 和 Ghost。
-- Codex fixture 创建 ProjectChatAgent 和隔离 Codex Runtime。
+- Wegent Chat/ClaudeCode/Codex Shell fixture 创建 Team、Bot 和 Ghost。
+- Wework Codex 项目智能体 fixture 创建 ProjectChatAgent 和隔离 Codex Runtime。
 - 统一层只表达“执行证据”，不抹平不同运行模型。
 
 ## 清理顺序
@@ -718,13 +717,21 @@ Workspace 归档前必须先归档其中所有 active Project；历史已归档 
 - 真实 Executor 生成准确文件产物。
 - Task、Runtime 和 Issue 状态完成。
 
-### Codex
+### Wegent Codex Shell
+
+- 执行对象是使用 Codex Shell 的 Team/Bot/Ghost，由标准 Executor 执行。
+- Ghost Skill 被加载，MCP 被真实 Codex app-server 调用，输出进入下一轮请求。
+- 真实 Executor 生成准确文件产物，Task、项目消息和 Issue 状态完成。
+- 保存本链路的调度身份、运行日志和产物证据，不能用 Wework Runtime 的结果替代。
+
+### Wework Codex 项目智能体
 
 - 执行对象是 ProjectChatAgent/Wework Runtime。
 - Skill、MCP 和 Plugin 均被真实 Codex Runtime 加载。
 - Plugin MCP 被实际调用，输出进入下一轮请求。
 - 真实产物包含三类独立探针。
 - Task 和 Issue 状态完成。
+- 保存本链路的独立运行证据，不能用 Wegent Codex Shell 的结果替代。
 
 ### 人
 

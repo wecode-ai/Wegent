@@ -8,6 +8,7 @@ import {
 } from "@wegent/chat-core/plugin-reference";
 import {
   composerSkillFilePath,
+  composerPathReference,
   createComposerMentionElement,
   type ComposerMentionPayload,
   type ComposerMentionIconResolver,
@@ -107,7 +108,8 @@ export class ComposerMentionNodeView implements NodeView {
 
   private openFileMention(): boolean {
     const reference = String(this.node.attrs.reference ?? "");
-    const filePath = composerSkillFilePath(reference);
+    const filePath =
+      composerSkillFilePath(reference) ?? composerPathReference(reference)?.path
     if (filePath && this.onOpenFile) {
       this.onOpenFile(filePath);
       return true;

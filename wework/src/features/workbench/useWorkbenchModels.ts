@@ -428,23 +428,30 @@ export function useWorkbenchModels({
       targetScopeKey: string,
       model: UnifiedModel | null,
       options: ModelOptions = {},
-      restoredSelectionConfig?: ModelSelectionConfig | null
+      restoredSelectionConfig?: ModelSelectionConfig | null,
+      persist = false
     ) => {
       const nextOptions = model ? normalizeModelOptions(model, options) : options
+      const persistedSelection = persist && model ? toSelectionConfig(model, nextOptions) : null
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
       const restoredSelectionKey =
         restoredSelectionConfig === undefined
-          ? selectionKey
+          ? persistedSelection
+            ? getSelectionKey(persistedSelection)
+            : selectionKey
           : getSelectionKey(restoredSelectionConfig)
       setRestoredSelectionKeyByScope(current => ({
         ...current,
         [targetScopeKey]: restoredSelectionKey,
       }))
+      if (persistedSelection) {
+        onSelectionChange?.(persistedSelection)
+      }
     },
-    [selectionKey]
+    [onSelectionChange, selectionKey]
   )
 
   const getSelectedModel = useCallback(() => selectedModelRef.current[scopeKey] ?? null, [scopeKey])

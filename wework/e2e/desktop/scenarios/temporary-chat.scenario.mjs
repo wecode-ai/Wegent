@@ -446,8 +446,8 @@ export function createDesktopScenario({
         mimeType: 'text/plain',
         value: Buffer.from(ATTACHMENT_TEXT).toString('base64'),
       })
-      await control.command('waitFor', `${SIDE_CHAT} [data-testid="attachment-text-preview"]`, {
-        text: 'cardInstanceId',
+      await control.command('waitFor', `${SIDE_CHAT} [data-testid="attachment-badge"]`, {
+        text: ATTACHMENT_FILENAME,
         timeoutMs: uiTimeoutMs,
       })
       await control.command('fill', SIDE_COMPOSER, { value: INITIAL_PROMPT })

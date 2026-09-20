@@ -229,6 +229,8 @@ export function BrowserIssueCommentComposer({
             imageServices={images}
             labels={{
               showText: t('todo.show_text_attachment'),
+              addingText: t('todo.adding_pasted_text_attachment'),
+              pastedText: t('todo.pasted_text_attachment'),
               appshot: t('todo.appshot_attachment'),
             }}
           />
