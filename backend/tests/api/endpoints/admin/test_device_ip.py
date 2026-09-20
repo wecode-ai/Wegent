@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Admin lookup of the backend-observed cloud device IP."""
+"""Admin lookup of the backend-observed device IP."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -11,15 +12,15 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.user import User
 
-ENDPOINT = "/api/internal/admin/cloud-devices/{device_id}/ip"
+ENDPOINT = "/api/internal/admin/devices/{device_id}/ip"
 
 
 def _create_device(
     db: Session,
     *,
     user_id: int,
-    device_id: str = "cloud-1",
-    device_type: str = "cloud",
+    device_id: str = "device-1",
+    device_type: str = "local",
     client_ip: str | None = "192.0.2.42",
 ) -> None:
     db.add(
@@ -42,22 +43,29 @@ def _create_device(
     db.commit()
 
 
-def test_admin_reads_backend_observed_ip(
+@pytest.mark.parametrize("device_type", ["local", "app", "cloud", "remote"])
+def test_admin_reads_backend_observed_ip_for_any_device_type(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_admin_token: str,
+    device_type: str,
 ) -> None:
-    _create_device(test_db, user_id=test_user.id, client_ip="2001:0db8:0:0::5")
+    _create_device(
+        test_db,
+        user_id=test_user.id,
+        client_ip="2001:0db8:0:0::5",
+        device_type=device_type,
+    )
 
     response = test_client.get(
-        ENDPOINT.format(device_id="cloud-1"),
+        ENDPOINT.format(device_id="device-1"),
         headers={"Authorization": f"Bearer {test_admin_token}"},
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "device_id": "cloud-1",
+        "device_id": "device-1",
         "ip_address": "2001:db8::5",
         "observed_at": None,
     }
@@ -72,7 +80,7 @@ def test_missing_or_invalid_observed_ip_returns_null(
     _create_device(test_db, user_id=test_user.id, client_ip="not-an-ip")
 
     response = test_client.get(
-        ENDPOINT.format(device_id="cloud-1"),
+        ENDPOINT.format(device_id="device-1"),
         headers={"Authorization": f"Bearer {test_admin_token}"},
     )
 
@@ -89,7 +97,7 @@ def test_lookup_requires_admin_and_accepts_admin_api_key(
     test_admin_api_key: tuple[str, object],
 ) -> None:
     _create_device(test_db, user_id=test_user.id)
-    url = ENDPOINT.format(device_id="cloud-1")
+    url = ENDPOINT.format(device_id="device-1")
 
     assert test_client.get(url).status_code == 401
     assert (
@@ -103,7 +111,7 @@ def test_lookup_requires_admin_and_accepts_admin_api_key(
     assert response.json()["ip_address"] == "192.0.2.42"
 
 
-def test_lookup_rejects_missing_noncloud_and_ambiguous_devices(
+def test_lookup_rejects_missing_and_ambiguous_devices(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -114,13 +122,6 @@ def test_lookup_rejects_missing_noncloud_and_ambiguous_devices(
     assert (
         test_client.get(
             ENDPOINT.format(device_id="missing"), headers=headers
-        ).status_code
-        == 404
-    )
-    _create_device(test_db, user_id=test_user.id, device_type="local")
-    assert (
-        test_client.get(
-            ENDPOINT.format(device_id="cloud-1"), headers=headers
         ).status_code
         == 404
     )
@@ -136,7 +137,7 @@ def test_exact_name_lookup_has_composite_index(test_db: Session) -> None:
     plan = test_db.execute(
         text(
             "EXPLAIN QUERY PLAN SELECT * FROM kinds "
-            "WHERE name = 'cloud-1' AND kind = 'Device' "
+            "WHERE name = 'device-1' AND kind = 'Device' "
             "AND namespace = 'default' AND is_active = 1 LIMIT 2"
         )
     ).fetchall()
