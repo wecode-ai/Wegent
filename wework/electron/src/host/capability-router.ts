@@ -160,6 +160,7 @@ export const HOST_CAPABILITIES = [
   'tray.setState',
   'workspace.listOpeners',
   'workspace.open',
+  'workspace.openFile',
   'workspace.pickOpener',
   'workspace.takePendingOpenRequests',
   'navigation.pendingSchemes',

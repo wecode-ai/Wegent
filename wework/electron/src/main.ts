@@ -129,6 +129,7 @@ import { isEffectivePackagedApplication } from './host/application-packaging-mod
 import {
   createWeworkSyncDownloadTimeout,
   createWeworkSyncFetchInit,
+  describeWeworkSyncRequestFailure,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
   readWeworkSyncResponse,
@@ -1519,14 +1520,22 @@ async function configureDesktopRuntime(): Promise<void> {
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
             const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
             try {
-              const response = await fetch(
-                `${apiBaseUrl}${path}`,
-                await createWeworkSyncFetchInit(
-                  request,
-                  `${credential.tokenType} ${credential.accessToken}`,
-                  downloadTimeout?.signal
+              let response: Response
+              try {
+                response = await fetch(
+                  `${apiBaseUrl}${path}`,
+                  await createWeworkSyncFetchInit(
+                    request,
+                    `${credential.tokenType} ${credential.accessToken}`,
+                    downloadTimeout?.signal
+                  )
                 )
-              )
+              } catch (error) {
+                throw new CloudCredentialError(
+                  'request_failed',
+                  describeWeworkSyncRequestFailure(error)
+                )
+              }
               const body = await readWeworkSyncResponse(
                 response,
                 request.downloadPath,

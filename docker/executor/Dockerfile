@@ -42,6 +42,8 @@ WORKDIR /app
 
 # Install system packages for document generation (AlmaLinux uses dnf)
 RUN dnf install -y \
+    # Codex Linux sandbox helper
+    bubblewrap \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
     # Document and PDF utilities

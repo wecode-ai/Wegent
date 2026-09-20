@@ -723,7 +723,8 @@ async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
     let request = ExecutionRequest {
         task_id: "7793".to_owned(),
         subtask_id: "99".to_owned(),
-        prompt: json!("retry api errors"),
+        // Exceed a normal pipe buffer to expose a fake process that closes stdin early.
+        prompt: json!(format!("retry api errors {}", "x".repeat(128 * 1024))),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
         ..ExecutionRequest::default()
@@ -1280,6 +1281,7 @@ fn write_fake_claude_deferred_once() -> PathBuf {
     fs::write(
         &path,
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"session-deferred"}'
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"session-deferred","stop_reason":"tool_deferred","usage":{},"deferred_tool_use":{"id":"tool-1","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{"questions":[]}}}'
 "#,
@@ -1300,6 +1302,7 @@ fn write_fake_claude_deferred_then_completed(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-retry"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-retry","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-1","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1335,6 +1338,7 @@ fn write_fake_claude_stale_defer_then_completed(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1392,6 +1396,7 @@ fn write_fake_claude_answer_drain_with_new_defer(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer-new-defer"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-new-defer","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1444,6 +1449,7 @@ fn write_fake_claude_api_error_then_completed(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-api-error"}}'
   printf '%s\n' '{{"type":"result","subtype":"error","is_error":true,"session_id":"session-api-error","result":"API Error: Cannot read properties of undefined (reading message)"}}'
   exit 0

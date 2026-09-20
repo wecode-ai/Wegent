@@ -45,6 +45,7 @@ import type { SchemeQueue } from './scheme-queue.js'
 import {
   listLocalWorkspaceOpeners,
   openLocalWorkspace,
+  openFileInWorkspaceApp,
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
@@ -819,6 +820,12 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  router.register('workspace.openFile', params =>
+    openFileInWorkspaceApp(stringParam(params, 'opener'), stringParam(params, 'path'), {
+      open: (opener, path) => openLocalWorkspace(opener, path, app.getPath('userData')),
+      reveal: path => shell.showItemInFolder(path),
+    })
+  )
   router.register(
     'workspace.takePendingOpenRequests',
     () => desktopServices.takePendingWorkspaceOpenRequests?.() ?? []

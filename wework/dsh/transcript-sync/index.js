@@ -179,22 +179,19 @@ export class WeworkSync {
       if (!this.enabled) return false
       if (!(await this.ensureApiBaseUrl())) return false
       const failures = []
-      for (const phase of [
-        () => this.flushPending(),
-        () => this.pullTranscripts(),
-        () => this.syncPreferences(),
+      for (const [phase, synchronize] of [
+        ['Conversation upload', () => this.flushPending()],
+        ['Conversation download', () => this.pullTranscripts()],
+        ['Preference synchronization', () => this.syncPreferences()],
       ]) {
         if (!this.enabled) break
         try {
-          await phase()
+          await synchronize()
         } catch (error) {
-          failures.push(error)
+          failures.push({ phase, error })
         }
       }
-      if (failures.length === 1) throw failures[0]
-      if (failures.length > 1) {
-        throw new AggregateError(failures, 'Wework cloud synchronization phases failed')
-      }
+      if (failures.length) throw synchronizationFailure(failures)
       return this.enabled
     }
     this.processing = operation()
@@ -443,6 +440,7 @@ export class WeworkSync {
           const directory = await mkdtemp(join(tmpdir(), 'wework-transcript-'))
           try {
             const segments = []
+            let missingArchive = null
             for (const archive of archives) {
               if (!this.enabled) return
               if (
@@ -453,21 +451,35 @@ export class WeworkSync {
                 throw new Error('Transcript archive has an invalid encrypted size')
               }
               const path = join(directory, `${archive.toSequence}.tgz.aes256gcm`)
-              await this.request(
-                `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/download`,
-                'GET',
-                undefined,
-                {
-                  downloadPath: path,
-                  downloadSizeBytes: archive.sizeBytes,
-                }
-              )
+              try {
+                await this.request(
+                  `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/download`,
+                  'GET',
+                  undefined,
+                  {
+                    downloadPath: path,
+                    downloadSizeBytes: archive.sizeBytes,
+                  }
+                )
+              } catch (error) {
+                if (!isArchiveNotFound(error)) throw error
+                missingArchive = archive
+                break
+              }
               segments.push({
                 path,
                 sha256: archive.sha256,
                 sequence: archive.toSequence,
                 format: archive.format,
               })
+            }
+            if (missingArchive) {
+              console.warn('[wework-transcript-sync] skipped missing cloud archive', {
+                transcriptId: transcript.transcriptId,
+                archiveId: missingArchive.id,
+                sequence: missingArchive.toSequence,
+              })
+              continue
             }
             const imported = await this.target.restore(transcript, segments, {
               encryptionKey: encryption.key,
@@ -592,6 +604,17 @@ class SyncRequestError extends Error {
   }
 }
 
+function synchronizationFailure(failures) {
+  if (failures.length === 1) return failures[0].error
+  const errors = failures.map(({ error }) => error)
+  const summary = failures
+    .map(
+      ({ phase, error }) => `${phase}: ${error instanceof Error ? error.message : String(error)}`
+    )
+    .join('; ')
+  return new AggregateError(errors, summary)
+}
+
 class SyncState {
   constructor(path) {
     this.path = path
@@ -702,6 +725,10 @@ function isSequenceConflict(error) {
 
 function isSnapshotRequired(error) {
   return error instanceof SyncRequestError && error.code === 'snapshot_required'
+}
+
+function isArchiveNotFound(error) {
+  return error instanceof SyncRequestError && error.code === 'archive_not_found'
 }
 
 async function removeSegmentFile(segment) {

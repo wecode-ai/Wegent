@@ -268,7 +268,12 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     'The multiline composer did not render exactly one caret'
   )
 
-  const [composerMetrics] = JSON.parse(await control.command('getElementMetrics', COMPOSER))
+  const [composerMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      '[data-testid="desktop-empty-composer-frame"] [data-composer-scroll-container]'
+    )
+  )
   const [caretMetrics] = JSON.parse(
     await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
   )
@@ -352,6 +357,24 @@ async function verifyComposerLineNavigation(control) {
   assert.equal(await control.command('getValue', COMPOSER), 'first\n')
 }
 
+async function verifyComposerLinkColor(control, selector) {
+  assert.equal(
+    await control.command('getComputedStyleValue', selector, { value: 'color' }),
+    'rgb(51, 156, 255)',
+    'Composer links must use the shared blue link color'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', selector, { value: 'text-decoration-line' }),
+    'underline'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', selector, {
+      value: 'text-decoration-thickness',
+    }),
+    '1px'
+  )
+}
+
 async function verifyComposerMarkdownEditing(control) {
   const markdown = '| A | B |\n| --- | --- |\n| X | **bold** |\n| Empty |  |'
   await control.command('fill', COMPOSER, { value: '' })
@@ -371,6 +394,7 @@ async function verifyComposerMarkdownEditing(control) {
   assert.equal(Number(await control.command('getElementCount', `${COMPOSER} table`)), 1)
   const url = 'http://example.com/file_name?q=hello_world'
   await control.command('fill', COMPOSER, { value: url })
+  await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
   await control.command('click', `${COMPOSER} [data-testid="composer-text-link"]`)
   await control.command('waitFor', '[data-testid="link-edit-open-link"]', { visible: true })
   assert.equal(await control.command('getValue', COMPOSER), url)
@@ -383,6 +407,14 @@ async function verifyComposerMarkdownEditing(control) {
     await control.command('getValue', COMPOSER),
     String.raw`[Example \[draft\]\\done\]](${url})`
   )
+  await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
+  assert.equal(
+    await control.command('getComputedStyleValue', `${COMPOSER} a[href]`, {
+      value: 'text-decoration-line',
+    }),
+    'none',
+    'The link wrapper must not add a second underline'
+  )
   await control.command('fill', COMPOSER, { value: '' })
   await control.command('pasteText', COMPOSER, { value: url })
   await control.command('setSelectionOffset', COMPOSER, { value: String(url.length) })
@@ -390,6 +422,12 @@ async function verifyComposerMarkdownEditing(control) {
   assert.equal(
     await control.command('getText', `${COMPOSER} [data-testid="composer-text-link"]`),
     url
+  )
+  await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
+  assert.notEqual(
+    await control.command('getComputedStyleValue', COMPOSER, { value: 'color' }),
+    'rgb(51, 156, 255)',
+    'The ordinary text following a link must retain the composer text color'
   )
   const bounded = await control.command('getValue', COMPOSER)
   assert.match(bounded, /\)哈哈哈哈$/)

@@ -20,7 +20,8 @@ function render(element: ReactElement) {
 
 const reloadRuntimeTranscript = vi.fn()
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
   useWorkbenchPaneContext: () => ({
     state: {
       runtimeWork: {
