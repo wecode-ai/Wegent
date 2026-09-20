@@ -43,6 +43,18 @@ const CLAUDE_ARTIFACT_NAME = 'collaboration-claudecode-runtime-evidence.txt'
 const PLUGIN_NAME = `${TEST_PREFIX}-plugin`
 const PLUGIN_MARKER = 'COLLABORATION_AGENT_REAL_PLUGIN'
 const execFileAsync = promisify(execFile)
+const CREATE_ZIP_SCRIPT = `
+from pathlib import Path
+import sys
+import zipfile
+
+archive = Path(sys.argv[1])
+source = Path(sys.argv[2])
+with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+    for path in sorted(source.rglob("*")):
+        if path.is_file():
+            output.write(path, path.relative_to(source))
+`
 
 interface VersionedResource {
   version: number
@@ -731,7 +743,7 @@ test.describe('Collaboration agent execution', () => {
           '',
         ].join('\n')
       )
-      await execFileAsync('zip', ['-qr', archivePath, '.'], { cwd: root })
+      await execFileAsync('python3', ['-c', CREATE_ZIP_SCRIPT, archivePath, root])
       const response = await request.post(`${PROVIDER_NATIVE_API_URL}/api/plugins/upload`, {
         headers: {
           Authorization: `Bearer ${resources.token}`,
