@@ -37,9 +37,9 @@
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge/documents"
-[[routes]]
-methods = ["GET"]
-path = "/api/quota/*path"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/quota/*path"
 [[routes]]
 methods = ["GET"]
 path = "/api/quota"

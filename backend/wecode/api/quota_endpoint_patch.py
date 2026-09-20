@@ -9,11 +9,6 @@ to the unified AIGC quota service (aigc_quota).
 Do not modify open source code, follow minimal intrusion principle.
 """
 
-# MIGRATION-CANDIDATE(api="GET /api/quota/claude/quota"): remove after final confirmation.
-# This module is no longer imported: the route is served by the Rust backend
-# (backend-rs-intra/src/wecode/quota.rs) through the hybrid gateway. Delete this
-# file together with the commented-out import in wecode/api/__init__.py once the
-# Rust cutover is confirmed.
 import logging
 from functools import wraps
 from typing import Callable
