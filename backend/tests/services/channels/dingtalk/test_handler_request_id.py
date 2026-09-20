@@ -85,7 +85,9 @@ async def test_ingress_logs_and_outbound_request_share_id(
     else:
         assert re.fullmatch(r"[0-9a-f]{8}", request_id)
     assert observed["header"] == observed["thread_id"] == request_id
-    received = next(r for r in caplog.records if "Received message:" in r.getMessage())
+    received = next(
+        r for r in caplog.records if "[DingTalkMessage] received" in r.getMessage()
+    )
     assert received.request_id == request_id
     assert span.get_request_id() == "channel-start-request"
 
@@ -116,6 +118,9 @@ async def test_generated_id_reaches_execution_request(monkeypatch):
     builder = MagicMock()
     builder.build.return_value = ExecutionRequest(task_id=1, subtask_id=2)
     monkeypatch.setattr(unified, "SessionLocal", MagicMock())
+    monkeypatch.setattr(
+        "app.services.chat.trigger.request_preparation.SessionLocal", MagicMock()
+    )
     monkeypatch.setattr("app.services.execution.TaskRequestBuilder", lambda db: builder)
     observed = {}
 
@@ -193,7 +198,12 @@ async def test_context_is_restored_on_early_exit(outcome, monkeypatch, caplog):
             else AckMessage.STATUS_SYSTEM_EXCEPTION
         )
         assert result[0] == expected
-    records = [r for r in caplog.records if "[DingTalkHandler]" in r.getMessage()]
+    records = [
+        r
+        for r in caplog.records
+        if "[DingTalkHandler]" in r.getMessage()
+        or "[DingTalkMessage]" in r.getMessage()
+    ]
     assert records
     assert all(r.request_id == "message-request" for r in records)
     assert span.get_request_id() is None

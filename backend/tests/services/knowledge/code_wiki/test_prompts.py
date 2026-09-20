@@ -174,6 +174,7 @@ def test_adaptive_full_prompt_combines_delegated_research_and_writing() -> None:
     assert "`coordinator` or `writer:<work-package-id>`" in prompt
     assert "`section-writer-107`" in prompt
     assert "one complete research-and-writing Work Package" in prompt
+    assert "must not call `plan`, `complete`, or `fail`" in prompt
     assert "do not run a separate exploration delegation first" in normalized
     assert "same standard" in prompt
     assert "purpose, `Must explain`" in prompt

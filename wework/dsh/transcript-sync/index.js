@@ -167,8 +167,8 @@ export class WeworkSync {
   async enqueue(turn) {
     const target = this.outbox.target(turn)
     const knownSequence = this.state.value.transcripts[target]?.currentSequence ?? 0
-    this.outbox.enqueue(turn, knownSequence)
-    if (this.enabled) this.schedule(0)
+    const enqueued = this.outbox.enqueue(turn, knownSequence)
+    if (enqueued !== false && this.enabled) this.schedule(0)
   }
 
   flush() {
@@ -218,40 +218,30 @@ export class WeworkSync {
   }
 
   async flushPending() {
-    const failures = []
     for (const sessionId of this.outbox.sessionIds()) {
-      try {
-        await this.flushPendingSession(sessionId)
-      } catch (error) {
-        if (error?.code === 'transcript_task_missing') {
-          const discarded = this.outbox.discardSession(sessionId)
-          console.warn('[wework-transcript-sync] discarded orphaned transcript session', {
-            sessionId,
-            discarded,
-          })
-          continue
-        }
-        if (error?.code === 'transcript_turn_missing') {
-          failures.push(error)
-          console.error('[wework-transcript-sync] transcript session is blocked', {
-            sessionId,
-            error,
-          })
-          continue
-        }
-        throw error
-      }
-    }
-    if (failures.length === 1) throw failures[0]
-    if (failures.length > 1) {
-      throw new AggregateError(failures, 'Some transcript sessions could not be exported')
+      await this.flushPendingSession(sessionId)
     }
   }
 
   async flushPendingSession(sessionId) {
     let pending
     while (this.enabled && (pending = this.outbox.firstForSession(sessionId))) {
-      await this.flushPendingTurn(pending)
+      try {
+        await this.flushPendingTurn(pending)
+      } catch (error) {
+        if (
+          error?.code !== 'transcript_turn_missing' &&
+          error?.code !== 'transcript_task_missing'
+        ) {
+          throw error
+        }
+        this.outbox.discardTurn(pending)
+        console.warn('[wework-transcript-sync] skipped unavailable transcript turn', {
+          sessionId,
+          turnId: pending.turnId,
+          executorTurnId: pending.executorTurnId,
+        })
+      }
     }
   }
 
@@ -274,7 +264,23 @@ export class WeworkSync {
         encryptionKey: encryption.key,
         summary: summarized.payload,
       })
-      await this.uploadPendingSegment(turn, segment, lease)
+      try {
+        await this.uploadPendingSegment(turn, segment, lease)
+      } catch (error) {
+        if (!snapshot && isSnapshotRequired(error)) {
+          await removeSegmentFile(segment)
+          segment = await this.source.read(turn, {
+            baseSequence: turn.cloudSequence - 1,
+            sequence: turn.cloudSequence,
+            snapshot: true,
+            encryptionKey: encryption.key,
+            summary: summarized.payload,
+          })
+          await this.uploadPendingSegment(turn, segment, lease)
+        } else {
+          throw error
+        }
+      }
     } catch (error) {
       await this.releaseLease(turn, lease)
       released = true
@@ -310,8 +316,12 @@ export class WeworkSync {
   }
 
   async reconcileOrForkPendingTurn(turn, lease) {
-    const delivered = await this.reconcilePendingSegment(turn)
-    await this.releaseLease(turn, lease)
+    let delivered
+    try {
+      delivered = await this.reconcilePendingSegment(turn, lease)
+    } finally {
+      await this.releaseLease(turn, lease)
+    }
     if (!delivered) {
       this.forkPendingTurn(turn, Math.min(turn.baseSequence, lease.currentSequence))
       return
@@ -359,19 +369,7 @@ export class WeworkSync {
     )
   }
 
-  async reconcilePendingSegment(turn) {
-    const encodedTranscriptId = encodeURIComponent(turn.transcriptId)
-    const [transcript, summaries] = await Promise.all([
-      this.request(`/wework-transcripts/${encodedTranscriptId}`),
-      this.request(
-        `/wework-transcripts/${encodedTranscriptId}/turns?after=${turn.cloudSequence - 1}&limit=1`
-      ),
-    ])
-    const existing = transcript.archives?.find(archive => archive.toSequence === turn.cloudSequence)
-    const existingSummary = summaries.turns?.find(
-      candidate => candidate.sequence === turn.cloudSequence
-    )
-    if (!existing || !existingSummary) return null
+  async reconcilePendingSegment(turn, lease) {
     const encryption = await this.transcriptEncryption(turn.transcriptId)
     const snapshot = turn.cloudSequence === 1 || turn.cloudSequence % SNAPSHOT_INTERVAL === 0
     const segment = await this.source.read(turn, {
@@ -381,20 +379,13 @@ export class WeworkSync {
       encryptionKey: encryption.key,
     })
     try {
-      if (
-        existing?.sha256 === segment.sha256 &&
-        existing?.format === segment.format &&
-        existing?.sizeBytes === segment.sizeBytes &&
-        existingSummary?.turnId === turn.turnId &&
-        stableJson(existingSummary.payload) === stableJson(segmentSummary(turn, segment))
-      ) {
-        return { ...turn, rolloutEnd: segment.rolloutEnd }
-      }
-      return null
+      await this.uploadPendingSegment(turn, segment, lease)
+      return { ...turn, rolloutEnd: segment.rolloutEnd }
+    } catch (error) {
+      if (isSequenceConflict(error)) return null
+      throw error
     } finally {
-      await unlink(segment.path).catch(error => {
-        if (error?.code !== 'ENOENT') throw error
-      })
+      await removeSegmentFile(segment)
     }
   }
 
@@ -707,6 +698,10 @@ function isSequenceConflict(error) {
     error instanceof SyncRequestError &&
     ['sequence_conflict', 'segment_conflict', 'turn_conflict'].includes(error.code)
   )
+}
+
+function isSnapshotRequired(error) {
+  return error instanceof SyncRequestError && error.code === 'snapshot_required'
 }
 
 async function removeSegmentFile(segment) {

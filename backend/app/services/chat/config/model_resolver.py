@@ -510,26 +510,11 @@ def _resolve_model_for_bot(
     # Validate against allowed_models whitelist when an override model is used.
     # This is the single validation point covering all call paths (chat, task creation,
     # subscription, retry, etc.).
-    allowed_models = raw_agent_config.get("allowed_models")
-    if not allowed_models and override_model_name and bot_crd.spec.modelRef:
-        _, bound_model_spec = _find_model_with_namespace(
-            db, bot_crd.spec.modelRef.name, user_id
+    if override_model_name:
+        allowed_names = _resolve_allowed_model_names(
+            db, bot_crd=bot_crd, raw_agent_config=raw_agent_config, user_id=user_id
         )
-        if bound_model_spec:
-            bound_model_config = bound_model_spec.get("modelConfig", {})
-            if isinstance(bound_model_config, dict):
-                allowed_models = bound_model_config.get("allowed_models")
-    if (
-        allowed_models
-        and override_model_name
-        and (force_override or override_model_name)
-    ):
-        if isinstance(allowed_models, list) and len(allowed_models) > 0:
-            allowed_names = {
-                m.get("name")
-                for m in allowed_models
-                if isinstance(m, dict) and m.get("name")
-            }
+        if allowed_names is not None:
             if model_name not in allowed_names:
                 raise ValueError(
                     f"Model '{model_name}' is not in the allowed models list for bot '{bot.name}'"
@@ -546,6 +531,140 @@ def _resolve_model_for_bot(
         db, user_id, model_kind, model_spec
     )
     return model_kind, model_spec, model_name, raw_agent_config
+
+
+def _resolve_allowed_model_names(
+    db: Session,
+    *,
+    bot_crd: Bot,
+    raw_agent_config: Dict[str, Any],
+    user_id: int,
+) -> Optional[set[str]]:
+    """Resolve the model names a bot allows.
+
+    The whitelist lives either on the bot's agent_config or, for bots that bind
+    a Model carrying only the restriction, on that Model's modelConfig. Bound
+    Models are read in the same priority order as the model selection itself
+    (agent_config.bind_model, then the legacy spec.modelRef).
+
+    Returns None when the bot does not restrict models. An absent or empty
+    allowed_models list means "no restriction" (the settings UI only writes the
+    key once at least one model is allowed), while an empty set means a
+    whitelist is configured but declares no usable entry, which blocks every
+    override.
+    """
+    allowed_models = raw_agent_config.get("allowed_models")
+    if not allowed_models:
+        for bound_model_name in _bound_model_names(bot_crd, raw_agent_config):
+            _, bound_model_spec = _find_model_with_namespace(
+                db, bound_model_name, user_id
+            )
+            if not bound_model_spec:
+                continue
+            bound_model_config = bound_model_spec.get("modelConfig", {})
+            if not isinstance(bound_model_config, dict):
+                continue
+            bound_allowed_models = bound_model_config.get("allowed_models")
+            if bound_allowed_models:
+                allowed_models = bound_allowed_models
+                break
+
+    if not isinstance(allowed_models, list) or not allowed_models:
+        return None
+
+    return {
+        m.get("name") for m in allowed_models if isinstance(m, dict) and m.get("name")
+    }
+
+
+def _bound_model_names(bot_crd: Bot, raw_agent_config: Dict[str, Any]) -> list[str]:
+    """Return models a bot binds, ordered like the model selection priority."""
+    bound_model_names: list[str] = []
+
+    bind_model = raw_agent_config.get("bind_model")
+    if isinstance(bind_model, str) and bind_model.strip():
+        bound_model_names.append(bind_model.strip())
+
+    model_ref = bot_crd.spec.modelRef
+    if model_ref and model_ref.name not in bound_model_names:
+        bound_model_names.append(model_ref.name)
+
+    return bound_model_names
+
+
+def allowed_model_names_for_bot(
+    db: Session,
+    bot: Kind,
+    user_id: int,
+) -> Optional[set[str]]:
+    """Return the model names a bot allows, or None when it allows everything."""
+    bot_json = bot.json if isinstance(bot.json, dict) else {}
+    bot_crd = Bot.model_validate(bot_json)
+    bot_spec = bot_json.get("spec") or {}
+    raw_agent_config = bot_spec.get("agent_config") or {}
+    if not isinstance(raw_agent_config, dict):
+        raw_agent_config = {}
+    return _resolve_allowed_model_names(
+        db,
+        bot_crd=bot_crd,
+        raw_agent_config=raw_agent_config,
+        user_id=user_id,
+    )
+
+
+def allowed_model_names_for_team(
+    db: Session,
+    team: Kind,
+    user_id: int,
+) -> Optional[set[str]]:
+    """Return the model names every bot of a team allows.
+
+    A model override is applied to every bot of the team, so it has to satisfy
+    each bot's restriction. Returns None when the team JSON is unavailable or
+    no bot restricts models; an empty set means no model satisfies the team.
+    """
+    from app.schemas.kind import Team
+    from app.services.readers import KindType, kindReader
+
+    team_json = getattr(team, "json", None)
+    if not isinstance(team_json, dict):
+        return None
+
+    team_crd = Team.model_validate(team_json)
+    team_user_id = team.user_id or user_id
+    allowed_names: Optional[set[str]] = None
+
+    for member in team_crd.spec.members or []:
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team_user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
+        )
+        if bot is None:
+            continue
+        bot_allowed_names = allowed_model_names_for_bot(db, bot, user_id)
+        if bot_allowed_names is None:
+            continue
+        allowed_names = (
+            bot_allowed_names
+            if allowed_names is None
+            else allowed_names & bot_allowed_names
+        )
+
+    return allowed_names
+
+
+def resolve_model_name_for_bot(
+    db: Session,
+    bot: Kind,
+    user_id: int,
+) -> Optional[str]:
+    """Return the Bot's configured Model resource name."""
+
+    _, _, model_name, _ = _resolve_model_for_bot(db, bot, user_id)
+    return model_name
 
 
 def build_agent_config_for_bot(
@@ -588,11 +707,10 @@ def build_agent_config_for_bot(
     if not model_config_dict:
         return raw_agent_config
 
-    # Include protocol if present in the model spec
-    protocol = model_spec.get("protocol")
-    if protocol:
-        model_config_dict = dict(model_config_dict)
-        model_config_dict["protocol"] = protocol
+    # Preserve explicit transport settings for downstream executor adapters.
+    for key in ("protocol", "apiFormat"):
+        if model_spec.get(key):
+            model_config_dict = {**model_config_dict, key: model_spec[key]}
 
     return model_config_dict
 

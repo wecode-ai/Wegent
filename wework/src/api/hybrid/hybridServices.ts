@@ -1,5 +1,7 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
-import { ApiError } from '@/api/http'
+import { runtimeExecutionSnapshot } from '@wegent/chat-core/runtime-execution-snapshot'
+import { ApiError, createHttpClient } from '@/api/http'
+import { createPluginApi } from '@/api/plugins'
 import {
   createCloudRuntimeIpcClient,
   RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
@@ -340,6 +342,11 @@ function projectCloudRuntimeEventDeviceId(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
+  const cloudRuntimeIpc = createCloudRuntimeIpcClient({
+    socketBaseUrl: options.socketBaseUrl,
+    socketPath: options.socketPath,
+    token: options.token,
+  })
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,
@@ -347,6 +354,7 @@ export function createHybridWorkbenchServices(
     getToken: () => options.token,
     redirectOnUnauthorized: false,
     transportKind: 'backend-relay',
+    runtimeIpc: cloudRuntimeIpc,
   })
   const cloudModelGateway = {
     baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
@@ -354,6 +362,17 @@ export function createHybridWorkbenchServices(
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
   const localServices = createLocalAppServices({
+    listCloudInstalledPlugins: deviceId =>
+      createPluginApi(
+        createHttpClient({
+          baseUrl: options.apiBaseUrl,
+          getToken: () => options.token,
+          redirectOnUnauthorized: false,
+        }),
+        options.apiBaseUrl
+      )
+        .listInstalledPlugins(deviceId)
+        .then(response => response.items),
     cloudModelGateway,
     user: options.user,
     materializeRuntimeTask: async request => {
@@ -366,11 +385,6 @@ export function createHybridWorkbenchServices(
         throw error
       }
     },
-  })
-  const cloudRuntimeIpc = createCloudRuntimeIpcClient({
-    socketBaseUrl: options.socketBaseUrl,
-    socketPath: options.socketPath,
-    token: options.token,
   })
   const cloudRuntimeApis = new Map<string, NonNullable<WorkbenchServices['runtimeWorkApi']>>()
   const cloudAutomationApis = new Map<string, NonNullable<WorkbenchServices['automationApi']>>()
@@ -629,9 +643,13 @@ export function createHybridWorkbenchServices(
     const cloudDevices = await listCloudDevices()
     return cloudDevices.find(device => device.device_id === deviceId) ?? null
   }
-  const listLocalRuntimeWork = async (signal?: AbortSignal) => {
-    const work = signal
-      ? await localServices.runtimeWorkApi!.listRuntimeWork({ signal })
+  const listLocalRuntimeWork = async (
+    requestOptions?: Parameters<
+      NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
+    >[0]
+  ) => {
+    const work = requestOptions
+      ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
       : await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
     return work
@@ -848,7 +866,7 @@ export function createHybridWorkbenchServices(
       return runtimeApiForDevice(data.deviceId).then(api => api.prepareRuntimeModel(data))
     },
     async listRuntimeWork(requestOptions) {
-      return listLocalRuntimeWork(requestOptions?.signal)
+      return listLocalRuntimeWork(requestOptions)
     },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
@@ -874,7 +892,19 @@ export function createHybridWorkbenchServices(
     async getRuntimeTranscript(data: RuntimeTranscriptRequest) {
       const route = isLocalDeviceId(data.deviceId) ? 'local' : 'cloud'
       try {
-        return await routeByAddress(data).getRuntimeTranscript(data)
+        const response = await routeByAddress(data).getRuntimeTranscript(data)
+        const snapshot = runtimeExecutionSnapshot(data, response)
+        if (snapshot && cloudServices.projectChatClient?.reconcileExecutionSnapshot) {
+          // Cloud write-back must not prevent an offline local history read.
+          // A failed report is retried on the next read, never cached as saved.
+          void cloudServices.projectChatClient.reconcileExecutionSnapshot(snapshot).catch(error => {
+            console.error('[Wework] Failed to persist runtime execution status', {
+              address: runtimeAddressDebug(data),
+              error,
+            })
+          })
+        }
+        return response
       } catch (error) {
         console.error('[Wework] Hybrid runtime transcript failed', {
           route,
@@ -1370,6 +1400,17 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    composerCatalogApi: {
+      async readCatalog(address, forceRefresh) {
+        const runtime = await runtimeApiForDevice(address.deviceId)
+        const catalog =
+          runtime === localServices.runtimeWorkApi
+            ? localServices.composerCatalogApi
+            : cloudServices.composerCatalogApi
+        if (!catalog) throw new Error('Composer catalog service is unavailable')
+        return catalog.readCatalog(address, forceRefresh)
+      },
+    },
     branchNameApi: localServices.branchNameApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
@@ -1398,6 +1439,7 @@ export function createHybridWorkbenchServices(
         : undefined,
     },
     pluginApi: projectPluginApi,
+    agentResourceApi: cloudServices.agentResourceApi,
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,

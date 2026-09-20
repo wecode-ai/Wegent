@@ -5,8 +5,10 @@
 
 import uuid
 
+import pytest
 from sqlalchemy.orm import Session
 
+import app.services.project_chat.push as project_chat_push
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -18,6 +20,7 @@ from app.models.delivery import (
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.issue_workflow import (
     WorkflowPlanItemView,
@@ -44,7 +47,14 @@ def _project(db: Session, user: User) -> CloudProject:
     return project
 
 
-def _robot(db: Session, project: CloudProject, user: User) -> ProjectChatAgent:
+def _robot(
+    db: Session,
+    project: CloudProject,
+    user: User,
+    *,
+    name: str = "Developer robot",
+    runtime: str = "codex",
+) -> ProjectChatAgent:
     device_id = f"local-{uuid.uuid4().hex[:10]}"
     db.add(
         Kind(
@@ -59,13 +69,13 @@ def _robot(db: Session, project: CloudProject, user: User) -> ProjectChatAgent:
     robot = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
-        title="Developer robot",
-        name="Developer robot",
+        title=name,
+        name=name,
         status="active",
         created_by_user_id=user.id,
         device_id=device_id,
         metadata_json={
-            "runtime": "codex",
+            "runtime": runtime,
             "model": "test-model",
             "execution_mode": "auto",
             "execution_environment": "local",
@@ -76,6 +86,53 @@ def _robot(db: Session, project: CloudProject, user: User) -> ProjectChatAgent:
     db.commit()
     db.refresh(robot)
     return robot
+
+
+def _two_stage_issue(
+    db: Session,
+    project: CloudProject,
+    user: User,
+    claude: ProjectChatAgent,
+    codex: ProjectChatAgent,
+) -> LoopItem:
+    issue = _issue(db, project, user)
+    issue.metadata_json = {
+        "workflow": {
+            "version": 1,
+            "definition_version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "ai",
+            "coordinator_prompt": "",
+            "approval_policy": "required",
+            "ai_automation_rule_id": "rule-1",
+            "orchestration_status": "idle",
+            "nodes": [
+                {
+                    "id": "claude",
+                    "name": "Claude implementation",
+                    "status": "ready",
+                    "depends_on": [],
+                    "required": True,
+                    "execution_mode": "robot",
+                    "required_assignee_type": "agent",
+                    "required_assignee_id": claude.id,
+                },
+                {
+                    "id": "codex",
+                    "name": "Codex verification",
+                    "status": "blocked",
+                    "depends_on": ["claude"],
+                    "required": True,
+                    "execution_mode": "robot",
+                    "required_assignee_type": "agent",
+                    "required_assignee_id": codex.id,
+                },
+            ],
+        }
+    }
+    db.commit()
+    db.refresh(issue)
+    return issue
 
 
 def _issue(
@@ -423,6 +480,136 @@ def test_child_outcome_projects_to_one_parent_review(
     assert completed.status == "completed"
     assert test_db.get(LoopItem, child_id).status == "completed"
     assert test_db.get(LoopItem, issue.id).status == "completed"
+
+
+def test_approve_review_persists_and_pushes_two_stage_completion_activity(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(test_db, test_user)
+    claude = _robot(
+        test_db,
+        project,
+        test_user,
+        name="Claude agent",
+        runtime="claude_code",
+    )
+    codex = _robot(
+        test_db,
+        project,
+        test_user,
+        name="Codex agent",
+        runtime="codex",
+    )
+    issue = _two_stage_issue(test_db, project, test_user, claude, codex)
+    pushed: list[dict] = []
+
+    def capture_push(payload: dict) -> None:
+        assert not test_db.in_transaction()
+        pushed.append(payload)
+
+    monkeypatch.setattr(project_chat_push, "push_project_chat_message", capture_push)
+
+    issue_workflow_planning_service.ensure_run(
+        test_db,
+        issue=issue,
+        user_id=test_user.id,
+    )
+    test_db.commit()
+    issue_workflow_planning_service.submit(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        values=_plan(claude),
+    )
+    first = issue_workflow_planning_service.approve(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+    first_child_id = first.items[0].task_id
+    assert first_child_id is not None
+    first_child = test_db.get(LoopItem, first_child_id)
+    first_child.status = "in_review"
+    test_db.commit()
+
+    second_run = issue_workflow_planning_service.approve_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+
+    first_activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.project_id == str(project.id),
+            ProjectChatMessage.task_id == issue.id,
+            ProjectChatMessage.metadata_json["workflow_stage_id"].as_string()
+            == "claude",
+        )
+        .one()
+    )
+    assert first_activity.content == (
+        "WORKFLOW_STAGE_CLAUDE_CLAUDE_IMPLEMENTATION_COMPLETED_"
+        "NEXT_CODEX_CODEX_VERIFICATION_READY"
+    )
+    assert first_activity.metadata_json["next_stage_ids"] == ["codex"]
+    assert first_activity.metadata_json["workflow_completed"] is False
+    assert pushed[-1]["messageId"] == first_activity.message_id
+    assert pushed[-1]["projectId"] == str(project.id)
+    assert pushed[-1]["taskId"] == issue.id
+
+    issue_workflow_planning_service.submit(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        values=_plan(codex),
+    )
+    second = issue_workflow_planning_service.approve(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+    second_child_id = second.items[0].task_id
+    assert second_child_id is not None
+    second_child = test_db.get(LoopItem, second_child_id)
+    second_child.status = "in_review"
+    test_db.commit()
+
+    completed = issue_workflow_planning_service.approve_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+    repeated = issue_workflow_planning_service.approve_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+
+    activities = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.project_id == str(project.id),
+            ProjectChatMessage.task_id == issue.id,
+            ProjectChatMessage.metadata_json["kind"].as_string()
+            == "workflow_stage_completed",
+        )
+        .order_by(ProjectChatMessage.id)
+        .all()
+    )
+    assert second_run.stage_id == "codex"
+    assert completed.status == "completed"
+    assert repeated.status == "completed"
+    assert len(activities) == 2
+    assert len(pushed) == 2
+    assert activities[1].content == (
+        "WORKFLOW_STAGE_CODEX_CODEX_VERIFICATION_COMPLETED_" "ALL_STAGES_COMPLETED"
+    )
+    assert activities[1].metadata_json["next_stage_ids"] == []
+    assert activities[1].metadata_json["workflow_completed"] is True
+    assert pushed[-1]["messageId"] == activities[1].message_id
 
 
 def test_needs_rework_stops_old_task_and_starts_new_plan_version(

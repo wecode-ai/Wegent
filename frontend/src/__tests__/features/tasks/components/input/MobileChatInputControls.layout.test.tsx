@@ -359,6 +359,10 @@ const buildProps = (): MobileChatInputControlsProps => ({
 })
 
 describe('MobileChatInputControls layout', () => {
+  it('mounts the model loader before an agent is resolved', () => {
+    render(<MobileChatInputControls {...buildProps()} selectedTeam={null} />)
+    expect(screen.getByTestId('mobile-model-selector')).toHaveAttribute('data-disabled', 'true')
+  })
   beforeEach(() => {
     mockMobileModelSelector.mockClear()
     mockMobileTeamSelector.mockClear()
@@ -399,6 +403,44 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.getByText('Attach')).toBeInTheDocument()
     expect(screen.getByText('Context')).toBeInTheDocument()
     expect(moreDrawer).not.toContainElement(screen.getByTestId('mobile-model-selector'))
+  })
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'shows code repositories with team requirement %s and session requirement %s',
+    (teamRequiresWorkspace, requiresWorkspace) => {
+      render(
+        <MobileChatInputControls
+          {...buildProps()}
+          taskType="code"
+          selectedTeam={{
+            ...selectedTeam,
+            agent_type: 'ClaudeCode',
+            requires_workspace: teamRequiresWorkspace,
+          }}
+          showRepositorySelector
+          effectiveRequiresWorkspace={requiresWorkspace}
+        />
+      )
+
+      fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+
+      expect(screen.getByTestId('mobile-input-more-actions-menu')).toContainElement(
+        screen.getByRole('button', { name: 'Repository' })
+      )
+    }
+  )
+
+  it('keeps repository selection hidden when it is unavailable for the current mode', () => {
+    render(<MobileChatInputControls {...buildProps()} />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+
+    expect(screen.queryByRole('button', { name: 'Repository' })).not.toBeInTheDocument()
   })
 
   it('clears the selected agent from the compact control', () => {

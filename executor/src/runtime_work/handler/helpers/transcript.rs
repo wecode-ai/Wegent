@@ -8,7 +8,13 @@ fn cached_transcript_response(
     after_cursor: Option<&str>,
 ) -> Value {
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
-    transcript_response(TranscriptResponseInput {
+    let turn_navigation = transcript_turn_navigation(&messages);
+    let history_unavailable = !running
+        && link.runtime == "claude_code"
+        && messages.is_empty()
+        && link.runtime_handle.get("userMessagePresentations")
+            .and_then(Value::as_array).is_some_and(|items| !items.is_empty());
+    let mut response = transcript_response(TranscriptResponseInput {
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
         runtime: link.runtime.clone(),
@@ -23,7 +29,18 @@ fn cached_transcript_response(
         ),
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
-    })
+        turn_navigation,
+    });
+    response["historyUnavailable"] = Value::Bool(history_unavailable);
+    if link.runtime == "claude_code" && link.status == "interrupted" && !running {
+        if let Some(turn) = response.get_mut("turns").and_then(Value::as_array_mut)
+            .and_then(|turns| turns.last_mut()) {
+            turn["status"] = json!("failed");
+            turn["runtimeStatus"] = json!("failed");
+            turn["error"] = json!("Execution was interrupted before its outcome was recorded");
+        }
+    }
+    response
 }
 
 pub(super) fn remove_superseded_transcript_turns(
@@ -122,6 +139,7 @@ struct TranscriptResponseInput {
     pagination: TranscriptPagination,
     full_content: bool,
     turn_item_source: TranscriptTurnItemSource,
+    turn_navigation: Vec<Value>,
 }
 
 enum TranscriptPagination {
@@ -144,7 +162,6 @@ struct ResolvedTranscriptPagination {
     before_cursor: Option<String>,
     has_more_after: bool,
     after_cursor: Option<String>,
-    opaque_cursor: bool,
 }
 
 fn transcript_pagination(
@@ -177,6 +194,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         pagination,
         full_content,
         turn_item_source,
+        turn_navigation,
     } = input;
     let ResolvedTranscriptPagination {
         messages,
@@ -186,7 +204,6 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         before_cursor,
         has_more_after,
         after_cursor,
-        opaque_cursor,
     } = match pagination {
         TranscriptPagination::Offset {
             limit,
@@ -207,7 +224,6 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
                 before_cursor: page.before_cursor,
                 has_more_after: page.has_more_after,
                 after_cursor: page.after_cursor,
-                opaque_cursor: false,
             }
         }
         TranscriptPagination::Opaque {
@@ -224,11 +240,9 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
                 before_cursor,
                 has_more_after,
                 after_cursor,
-                opaque_cursor: true,
             }
         }
     };
-    let turn_navigation = transcript_turn_navigation(&messages, opaque_cursor);
     let turns = transcript_canonical_turns(&messages, turn_item_source);
     json!({
         "success": true,
@@ -393,10 +407,7 @@ fn transcript_context_usage(thread: &Value) -> Option<Value> {
     rollout_context_usage(thread)
 }
 
-fn transcript_turn_navigation(messages: &[Value], opaque_cursor: bool) -> Vec<Value> {
-    if opaque_cursor {
-        return Vec::new();
-    }
+fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
     let mut turns: Vec<Value> = Vec::new();
     let mut pending_response_turn_indexes: Vec<usize> = Vec::new();
 
@@ -429,6 +440,52 @@ fn transcript_turn_navigation(messages: &[Value], opaque_cursor: bool) -> Vec<Va
     }
 
     turns
+}
+
+fn transcript_navigation_from_codex_turns(
+    navigation: CodexTranscriptNavigation,
+) -> Vec<Value> {
+    if !navigation.complete {
+        return Vec::new();
+    }
+    navigation
+        .turns
+        .into_iter()
+        .enumerate()
+        .map(|(turn_index, entry)| {
+            json!({
+                "id": entry.turn_id,
+                "turnId": entry.turn_id,
+                "turnIndex": turn_index,
+                "messageIndex": turn_index,
+                "promptPreview": "",
+                "responsePreview": "",
+                "cursor": entry.cursor,
+            })
+        })
+        .collect()
+}
+
+fn transcript_navigation_response(
+    local_task_id: String,
+    workspace_path: String,
+    turn_navigation: Vec<Value>,
+) -> Value {
+    transcript_response(TranscriptResponseInput {
+        local_task_id,
+        workspace_path,
+        runtime: "codex".to_owned(),
+        messages: Vec::new(),
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: false,
+        turn_item_source: TranscriptTurnItemSource::CodexItems,
+        turn_navigation,
+    })
 }
 
 fn transcript_navigation_message_id(message: &Value, message_index: usize) -> String {
@@ -689,17 +746,30 @@ fn attach_user_message_presentations_for_page(
         let content = string_field(message, "content").unwrap_or_default();
         let presentation_content = string_field(&presentation, "content").unwrap_or_default();
         let attachments = normalized_attachments(presentation.get("attachments"));
+        // Codex replaces file/folder mentions with paths, losing their display labels.
+        let restore_content = !attachments.is_empty()
+            || local_presentation_reference_descriptors(&presentation_content)
+                .iter()
+                .any(|reference| {
+                    reference["href"]
+                        .as_str()
+                        .is_some_and(is_local_path_reference)
+                });
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
+            .filter(|_| !restore_content)
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
-            if !attachments.is_empty() {
+            if restore_content {
                 message.insert(
                     "content".to_owned(),
                     Value::String(presentation_content),
                 );
+                message.remove("presentationReferences");
+            }
+            if !attachments.is_empty() {
                 message.insert("attachments".to_owned(), Value::Array(attachments));
             }
             if !references.is_empty() {
@@ -845,11 +915,15 @@ fn is_local_skill_reference(href: &str) -> bool {
     path.starts_with('/') && path.ends_with("/SKILL.md")
 }
 
+fn is_local_path_reference(href: &str) -> bool {
+    href.starts_with("file://") || href.starts_with("folder://")
+}
+
 fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> {
     if name.is_empty() {
         return None;
     }
-    if is_local_skill_reference(href) {
+    if is_local_skill_reference(href) || is_local_path_reference(href) {
         return Some(format!("${name}"));
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))

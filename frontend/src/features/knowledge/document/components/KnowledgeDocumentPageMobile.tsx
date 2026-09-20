@@ -265,7 +265,7 @@ export function KnowledgeDocumentPageMobile({
         const kbType = data.kb_type || createKbType
 
         if (kbType === 'code_wiki') {
-          await createCodeWiki({ namespace, data })
+          const created = await createCodeWiki({ namespace, data })
 
           setShowCreateDialog(false)
           if (createScope === 'organization') {
@@ -278,7 +278,11 @@ export function KnowledgeDocumentPageMobile({
           setCreateGroupName(undefined)
           setCreateScope('personal')
           setCreateKbType('notebook')
-          toast.success(t('codeWiki.create.created'))
+          if (created.scheduledUpdateError) {
+            toast.warning(t('codeWiki.create.scheduleNotConfigured'))
+          } else {
+            toast.success(t('codeWiki.create.created'))
+          }
           return
         }
 
@@ -291,6 +295,7 @@ export function KnowledgeDocumentPageMobile({
           allow_document_download: data.allow_document_download,
           retrieval_config: data.retrieval_config,
           rag_config_mode: data.rag_config_mode,
+          dingtalk_auto_sync_enabled: data.dingtalk_auto_sync_enabled,
           summary_enabled: data.summary_enabled,
           summary_model_ref: data.summary_model_ref,
           kb_type: kbType,
@@ -340,7 +345,6 @@ export function KnowledgeDocumentPageMobile({
       try {
         const updatedKb = await updateKnowledgeBase(editingKb.id, data)
         setDetailKb(updatedKb)
-        setEditingKb(null)
 
         if (editingKb.namespace === tree.orgNamespace) {
           await tree.refreshOrg()
@@ -409,7 +413,7 @@ export function KnowledgeDocumentPageMobile({
           </div>
           <EditKnowledgeBaseDialog
             open={!!editingKb}
-            onOpenChange={open => !isUpdating && !open && setEditingKb(null)}
+            onOpenChange={open => !open && setEditingKb(null)}
             knowledgeBase={editingKb}
             onSubmit={handleUpdate}
             loading={isUpdating}

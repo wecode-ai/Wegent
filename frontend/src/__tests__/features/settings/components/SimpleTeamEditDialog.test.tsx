@@ -16,7 +16,7 @@ import { createTeam, updateTeam } from '@/features/settings/services/teams'
 import type { Bot, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
-const mockRefreshTeams = jest.fn()
+const mockInvalidateTeams = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -73,9 +73,26 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.bind_mode.code.title': 'Code',
         'settings:team.simple.bind_mode.task.description': 'Use for device tasks.',
         'settings:team.simple.bind_mode.task.title': 'Device',
+        'settings:team.simple.bind_mode.advanced_title': 'Advanced settings',
+        'settings:team.simple.bind_mode.available_modules': 'Available modules',
+        'settings:team.simple.bind_mode.automatic': 'Automatic (based on how it runs)',
+        'settings:team.simple.bind_mode.selected': 'Selected',
+        'settings:team.simple.bind_mode.automatic_hint': 'Leave empty to choose automatically.',
+        'settings:team.simple.bind_mode.summary_separator': ', ',
+        'settings:team.simple.bind_mode.more_modes': 'More modes',
+        'settings:team.simple.bind_mode.collapse_more_modes': 'Collapse more modes',
+        'settings:team.simple.bind_mode.video.description': 'Use for video tasks.',
+        'settings:team.simple.bind_mode.video.title': 'Video',
+        'settings:team.simple.bind_mode.image.description': 'Use for image tasks.',
+        'settings:team.simple.bind_mode.image.title': 'Image',
         'settings:team.simple.executor.complex.description':
           'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
         'settings:team.simple.executor.complex.title': 'Complex',
+        'settings:team.simple.executor.coding_runtime_label': 'Coding engine',
+        'settings:team.simple.executor.codex.description': 'Codex description.',
+        'settings:team.simple.executor.codex.title': 'Codex',
+        'settings:team.simple.executor.claude_code.description': 'Claude Code description.',
+        'settings:team.simple.executor.claude_code.title': 'Claude Code',
         'settings:team.simple.executor.custom.description': 'Use an executor you created.',
         'settings:team.simple.executor.custom.title': 'Custom',
         'settings:team.simple.executor.custom_shell_placeholder': 'Choose custom executor',
@@ -83,7 +100,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           'Manage custom executors in Resource Library - Executors.',
         'settings:team.simple.executor.no_custom_shells': 'No custom executors available',
         'settings:team.simple.executor.required': 'Choose executor',
-        'settings:team.simple.executor.requires_complex_hint': 'Code requires complex.',
+        'settings:team.simple.executor.requires_coding_agent_hint': 'Code requires a coding agent.',
         'settings:team.simple.executor.simple.description': 'Chat executor.',
         'settings:team.simple.executor.simple.title': 'Simple',
         'settings:team.simple.executor.title': 'Executor',
@@ -162,7 +179,7 @@ jest.mock('@/apis/skills', () => ({
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    refreshTeams: mockRefreshTeams,
+    invalidateTeams: mockInvalidateTeams,
   }),
 }))
 
@@ -322,10 +339,16 @@ function makeTeam(overrides: Partial<Team> = {}): Team {
 describe('Simple TeamEditDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockRefreshTeams.mockResolvedValue(undefined)
+    mockInvalidateTeams.mockReturnValue(undefined)
     mockedGetUnifiedShells.mockResolvedValue({
       data: [
         { name: 'Chat', type: 'public', displayName: 'Chat', shellType: 'Chat' },
+        {
+          name: 'Codex',
+          type: 'public',
+          displayName: 'Codex',
+          shellType: 'Codex',
+        },
         {
           name: 'ClaudeCode',
           type: 'public',
@@ -380,7 +403,7 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('defaults new agents to simple mode with chat bind mode selected', async () => {
+  it('defaults new agents to automatic modules and keeps the module picker collapsed', async () => {
     render(
       <TeamEditDialog
         open
@@ -394,10 +417,17 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    expect(await screen.findByRole('checkbox', { name: /chat/i })).toBeChecked()
+    expect(await screen.findByRole('radio', { name: /simple/i })).toBeChecked()
+    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Automatic (based on how it runs) · Chat'
+    )
+    expect(screen.queryByRole('checkbox', { name: /chat/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
+
+    expect(screen.getByRole('checkbox', { name: /chat/i })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: /code/i })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: /device/i })).not.toBeChecked()
-    expect(screen.getByRole('radio', { name: /simple/i })).toBeChecked()
     const scrollContent = screen.getByTestId('team-edit-scroll-content')
     expect(scrollContent).toContainElement(screen.getByTestId('team-publish-scope-section'))
     expect(scrollContent).not.toContainElement(screen.getByRole('button', { name: /save/i }))
@@ -442,7 +472,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        undefined,
+        'Chat',
         false,
         'personal',
         undefined,
@@ -451,7 +481,8 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('shows and preserves an existing model that is no longer visible', async () => {
+  it('shows an unavailable existing model but blocks saving its binding', async () => {
+    const toast = jest.fn()
     const team = makeTeam()
     const hiddenModelBot = makeBot({
       agent_config: {
@@ -470,7 +501,7 @@ describe('Simple TeamEditDialog', () => {
         editingTeamId={team.id}
         bots={[hiddenModelBot]}
         setBots={jest.fn()}
-        toast={jest.fn()}
+        toast={toast}
       />
     )
 
@@ -482,16 +513,131 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        title: 'common:bot.errors.model_not_available_for_shell',
+      })
+    })
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
+    expect(mockedUpdateTeam).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { name: 'model-a', retained: false },
+    { name: 'model-b', retained: true },
+  ])('switching to Claude Code retains $name only when compatible', async ({ name, retained }) => {
+    const team = makeTeam()
+    const bot = makeBot({
+      agent_config: { bind_model: name, bind_model_type: 'public' },
+    })
+    const gpt = { name: 'model-a', type: 'public', provider: 'openai', namespace: 'default' }
+    const claude = {
+      name: 'model-b',
+      type: 'public',
+      provider: 'claude',
+      namespace: 'default',
+    }
+    mockedGetUnifiedModels.mockImplementation(async (shellName: string) => ({
+      data: shellName === 'ClaudeCode' ? [claude] : [gpt, claude],
+    }))
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[bot]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        'Chat',
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+      expect(screen.getByTestId('simple-model-select')).toBeEnabled()
+    })
+    expect(screen.getByTestId('simple-model-select')).toHaveTextContent(name)
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenLastCalledWith(
+        'ClaudeCode',
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+      expect(screen.getByTestId('simple-model-select')).toBeEnabled()
+      expect(screen.getByTestId('simple-model-select')).toHaveTextContent(
+        retained ? name : 'Select model'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('simple-model-select'))
+    expect(await screen.findByTestId('model-option-model-b')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-model-a')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('model-option-model-b'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
       expect(mockedUpdateBot).toHaveBeenCalledWith(
-        hiddenModelBot.id,
+        bot.id,
         expect.objectContaining({
-          agent_config: {
-            bind_model: 'retired-model',
-            bind_model_type: 'public',
-          },
+          shell_name: 'ClaudeCode',
+          agent_config: { bind_model: 'model-b', bind_model_type: 'public' },
         })
       )
     })
+  })
+
+  it('blocks an existing OpenAI binding when Claude Code only returns Claude models', async () => {
+    const toast = jest.fn()
+    const team = makeTeam()
+    const bot = makeBot({
+      shell_name: 'ClaudeCode',
+      shell_type: 'ClaudeCode',
+      agent_config: { bind_model: 'model-a', bind_model_type: 'public' },
+    })
+    mockedGetUnifiedModels.mockResolvedValue({
+      data: [{ name: 'model-b', type: 'public', namespace: 'default' }],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[bot]}
+        setBots={jest.fn()}
+        toast={toast}
+      />
+    )
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
+        'ClaudeCode',
+        false,
+        'personal',
+        undefined,
+        'llm'
+      )
+      expect(screen.getByTestId('simple-model-select')).toBeEnabled()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(toast).toHaveBeenCalledWith({
+      variant: 'destructive',
+      title: 'common:bot.errors.model_not_available_for_shell',
+    })
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -513,7 +659,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        undefined,
+        'Chat',
         false,
         'personal',
         undefined,
@@ -521,13 +667,13 @@ describe('Simple TeamEditDialog', () => {
       )
     })
 
-    fireEvent.click(screen.getByTestId('simple-bind-mode-chat-card'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
     fireEvent.click(screen.getByTestId('team-bind-mode-more-toggle'))
     fireEvent.click(screen.getByTestId(`simple-bind-mode-${mode}-card`))
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        undefined,
+        'Chat',
         false,
         'personal',
         undefined,
@@ -600,7 +746,8 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: /code/i }))
+    fireEvent.click(await screen.findByTestId('simple-bind-mode-settings-toggle'))
+    fireEvent.click(screen.getByRole('checkbox', { name: /code/i }))
 
     expect(await screen.findByText('Settings repository hint.')).toBeInTheDocument()
     expect(screen.queryByText('Common repository hint.')).not.toBeInTheDocument()
@@ -693,6 +840,139 @@ describe('Simple TeamEditDialog', () => {
       )
       expect(onSaved).toHaveBeenCalled()
     })
+  })
+
+  it('automatically saves code and device modules for a complex executor', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+
+    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Automatic (based on how it runs) · Code, Device'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateTeam).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bind_mode: ['code', 'task'],
+        })
+      )
+    })
+  })
+
+  it('saves exactly the modules explicitly selected in advanced settings', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+    fireEvent.change(await screen.findByLabelText(/^Name/), {
+      target: { value: 'device-agent' },
+    })
+    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-task-card'))
+
+    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent('Selected · Device')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateTeam).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bind_mode: ['task'],
+        })
+      )
+    })
+  })
+
+  it('preserves explicit modules when editing and restores automatic policy after clearing them', async () => {
+    const team = makeTeam({ bind_mode: ['code'] })
+    const codingBot = makeBot({
+      shell_name: 'ClaudeCode',
+      shell_type: 'ClaudeCode',
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[codingBot]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Selected · Code'
+    )
+    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
+    expect(screen.getByRole('checkbox', { name: /code/i })).toBeChecked()
+
+    fireEvent.click(screen.getByTestId('simple-bind-mode-code-card'))
+    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Automatic (based on how it runs) · Code, Device'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({
+          bind_mode: ['code', 'task'],
+        })
+      )
+    })
+  })
+
+  it('shows a persisted default module combination as automatic when reopened', async () => {
+    const team = makeTeam({ bind_mode: ['chat'] })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Automatic (based on how it runs) · Chat'
+    )
+    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
+    expect(screen.getByRole('checkbox', { name: /chat/i })).not.toBeChecked()
   })
 
   it('lets an existing personal agent be distributed to a team', async () => {
@@ -1099,10 +1379,10 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
     fireEvent.click(screen.getByTestId('team-marketplace-example-conversations-add'))
     fireEvent.change(screen.getByTestId('team-marketplace-example-conversations-title-0'), {
-      target: { value: 'Example task' },
+      target: { value: 'Item A' },
     })
     fireEvent.change(screen.getByTestId('team-marketplace-example-conversations-url-0'), {
-      target: { value: 'https://example.com/shared/task' },
+      target: { value: 'https://a.invalid/x/y' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -1113,8 +1393,8 @@ describe('Simple TeamEditDialog', () => {
           source_id: 1,
           example_conversations: [
             {
-              title: 'Example task',
-              url: 'https://example.com/shared/task',
+              title: 'Item A',
+              url: 'https://a.invalid/x/y',
             },
           ],
         })
@@ -1140,6 +1420,9 @@ describe('Simple TeamEditDialog', () => {
         bots={[makeBot()]}
         setBots={jest.fn()}
         toast={toast}
+        onSaved={() => {
+          toast({ title: 'Saved' })
+        }}
       />
     )
 
@@ -1149,9 +1432,10 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => {
       expect(mockedUpdateTeam).toHaveBeenCalled()
       expect(mockedCreateListing).toHaveBeenCalled()
+      expect(mockInvalidateTeams).toHaveBeenCalled()
       expect(onClose).toHaveBeenCalled()
     })
-    expect(toast).toHaveBeenCalledWith({
+    expect(toast).toHaveBeenLastCalledWith({
       variant: 'destructive',
       title: 'resource-library:messages.agent_saved_publication_failed',
     })
@@ -1250,6 +1534,7 @@ describe('Simple TeamEditDialog', () => {
 
     fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
     fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+    fireEvent.click(screen.getByTestId('simple-coding-runtime-claude_code-card'))
     fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
     fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -1267,6 +1552,35 @@ describe('Simple TeamEditDialog', () => {
               is_public: false,
             },
           },
+        })
+      )
+    })
+  })
+
+  it('keeps Claude Code as the default coding engine', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shell_name: 'ClaudeCode',
         })
       )
     })

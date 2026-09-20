@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
 import { updateAppPreferences } from '@/desktop/appPreferences'
+import { DesktopCloudCredentialError } from '@/desktop/cloudCredentials'
 import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
 import { CloudConnectionProvider } from './CloudConnectionProvider'
 import { getJwtExpiry, saveStoredCloudConnection } from './cloudConnectionStorage'
@@ -115,6 +116,7 @@ describe('CloudConnectionProvider', () => {
   })
 
   afterEach(() => {
+    delete window.weworkElectronLifecycle
     vi.restoreAllMocks()
   })
 
@@ -602,6 +604,148 @@ describe('CloudConnectionProvider', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('recovers when desktop credentials become available after the initial refresh fails', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
+      credentialMode: 'desktop_refresh' as const,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    saveStoredCloudConnection(storedConnection)
+    credentialMocks.refreshAccessToken
+      .mockRejectedValueOnce(
+        new DesktopCloudCredentialError(
+          'credentials_unavailable',
+          'Desktop cloud credentials are unavailable',
+          null
+        )
+      )
+      .mockResolvedValueOnce({
+        accessToken: tokenWithExp(),
+        tokenType: 'bearer',
+        expiresIn: 3600,
+      })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://cloud.example.com',
+          socket_url: 'wss://backend-socket.example.com',
+        })
+      }
+      if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('error')
+    )
+
+    window.dispatchEvent(new Event('online'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    )
+    expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(2)
+  })
+
+  it('periodically retries a transient desktop credential refresh failure', async () => {
+    vi.useFakeTimers()
+    try {
+      const storedConnection = {
+        backendUrl: 'https://cloud.example.com',
+        apiBaseUrl: 'https://cloud.example.com/api',
+        socketBaseUrl: 'wss://backend-socket.example.com',
+        socketPath: '/socket.io',
+        webUrl: 'https://cloud.example.com',
+        credentialMode: 'desktop_refresh' as const,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-20T00:00:00.000Z',
+      }
+      saveStoredCloudConnection(storedConnection)
+      credentialMocks.refreshAccessToken
+        .mockRejectedValueOnce(new Error('network unavailable'))
+        .mockResolvedValueOnce({
+          accessToken: tokenWithExp(),
+          tokenType: 'bearer',
+          expiresIn: 3600,
+        })
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/auth/wework/config') {
+          return Promise.resolve({
+            web_url: 'https://cloud.example.com',
+            socket_url: 'wss://backend-socket.example.com',
+          })
+        }
+        if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+        return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+      })
+
+      render(
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('error')
+      expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retry a terminal desktop credential expiry', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
+      credentialMode: 'desktop_refresh',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    })
+    credentialMocks.refreshAccessToken.mockRejectedValue(
+      new DesktopCloudCredentialError('cloud_auth_expired', 'Refresh token expired', 401)
+    )
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('expired')
+    )
+
+    window.dispatchEvent(new Event('online'))
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1)
   })
 
   it('uses the configured Socket URL for the packaged Backend', async () => {

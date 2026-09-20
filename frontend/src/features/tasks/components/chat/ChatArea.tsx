@@ -54,6 +54,7 @@ import { useSchemeMessageActions } from '@/lib/scheme'
 import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
+import { useDefaultTeam } from '../../hooks/useDefaultTeam'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
@@ -212,6 +213,10 @@ function getSystemQuickLaunchFunctionId(selection: QuickPresetSelection): string
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
+  /** Error from the latest failed team list load, so the UI can offer a retry. */
+  loadError?: Error | null
+  /** Whether the raw team cache (before any mode filtering) is empty. */
+  rawTeamsEmpty?: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
   taskType?: TaskType
@@ -260,8 +265,10 @@ interface ChatAreaProps {
  * Must be rendered inside QuoteProvider.
  */
 function ChatAreaContent({
-  teams,
+  teams: catalogTeams,
   isTeamsLoading,
+  loadError = null,
+  rawTeamsEmpty = catalogTeams.length === 0,
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
@@ -346,6 +353,28 @@ function ChatAreaContent({
     []
   )
 
+  const searchParams = useSearchParams()
+  const searchParamsString = stringifySearchParams(searchParams)
+  const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
+  const teamIdFromUrl =
+    getSearchParam(searchParams, 'teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
+  const earlyDefaultTeam = useDefaultTeam(
+    taskType,
+    (isTeamsLoading || Boolean(loadError)) &&
+      !effectiveTaskId &&
+      !taskIdFromUrl &&
+      !teamIdFromUrl &&
+      !selectedTeamForNewTask
+  )
+  // The completed catalog remains authoritative for visibility and refreshes.
+  const teams = useMemo(
+    () =>
+      earlyDefaultTeam && !catalogTeams.some(team => team.id === earlyDefaultTeam.id)
+        ? [earlyDefaultTeam, ...catalogTeams]
+        : catalogTeams,
+    [catalogTeams, earlyDefaultTeam]
+  )
+
   // Select the team before resolving generation models. Attachment limits are synchronized
   const chatState = useChatAreaState({
     teams,
@@ -383,6 +412,7 @@ function ChatAreaContent({
     taskModelId: taskVideoModelId,
     selectedTeam: chatState.selectedTeam,
     disabled: !usesVideoModel,
+    enabled: usesVideoModel,
     modelCategoryType: 'video',
   })
   const selectVideoModelByKey = videoModelSelection.selectModelByKey
@@ -394,6 +424,7 @@ function ChatAreaContent({
     taskId: effectiveTaskId ?? null,
     selectedTeam: chatState.selectedTeam,
     disabled: taskType !== 'image',
+    enabled: taskType === 'image',
     modelCategoryType: 'image',
   })
 
@@ -1079,13 +1110,6 @@ function ChatAreaContent({
     return Boolean(hasSelectedTask || hasContextMessages)
   }, [effectiveTaskId, taskState?.messages])
 
-  // Get taskId from URL for team sync logic
-  const searchParams = useSearchParams()
-  const searchParamsString = stringifySearchParams(searchParams)
-  const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
-  // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
-  const teamIdFromUrl =
-    getSearchParam(searchParams, 'teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
   // Get project info when in project context
   const projectIdFromUrl = getSearchParam(searchParams, 'projectId')
   const { projects } = useProjectContext()
@@ -1134,6 +1158,7 @@ function ChatAreaContent({
 
   const handleUserTeamChange = useCallback(
     (team: Team | null) => {
+      hasInitializedTeamRef.current = true
       handleTeamChange(team)
       const routeTaskId =
         typeof window === 'undefined'
@@ -1159,7 +1184,7 @@ function ChatAreaContent({
   // Team selection logic - using default team from server configuration
   useEffect(() => {
     if (isExitingGenerationRef.current) return
-    if (filteredTeams.length === 0) return
+    if (filteredTeams.length === 0 && (!selectedTeam || isTeamsLoading || loadError)) return
     if (!teamIdFromUrl) {
       ignoredTeamIdParamRef.current = null
     }
@@ -1221,6 +1246,9 @@ function ChatAreaContent({
       }
     }
 
+    // A partial or failed catalog cannot invalidate an already selected agent.
+    if (selectedTeam && (isTeamsLoading || loadError)) return
+
     // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
       // Use the default team computed from server config
@@ -1245,7 +1273,7 @@ function ChatAreaContent({
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
       if (!exists) {
         const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
-        handleTeamChange(defaultTeamForMode || filteredTeams[0])
+        handleTeamChange(defaultTeamForMode || filteredTeams[0] || null)
       }
     }
   }, [
@@ -1257,6 +1285,8 @@ function ChatAreaContent({
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
+    isTeamsLoading,
+    loadError,
   ])
 
   // Reset initialization when switching from task to new chat
@@ -2426,14 +2456,21 @@ function ChatAreaContent({
     hasNoTeams: filteredTeams.length === 0,
     // Knowledge base ID to exclude from context selector (used in notebook mode)
     knowledgeBaseId,
-    // Reason why input is disabled (shown as placeholder)
-    disabledReason,
+    // Reason why input is disabled (shown as placeholder). While the team list is
+    // still loading, tell the user instead of asking them to create an agent.
+    disabledReason:
+      isTeamsLoading && !chatState.selectedTeam
+        ? t('chat:input.loading_teams_placeholder')
+        : disabledReason,
     // Project context
     projectId: projectIdFromUrl ? Number(projectIdFromUrl) : null,
     // Skill selector props
     availableSkills: skillSelector.availableSkills,
     teamSkillNames: skillSelector.teamSkillNames,
     preloadedSkillNames: skillSelector.preloadedSkillNames,
+    selectedSkillIds: skillSelector.selectedSkills.flatMap(skill =>
+      skill.skill_id === undefined ? [] : [skill.skill_id]
+    ),
     selectedSkillNames: skillSelector.selectedSkillNames,
     onToggleSkill: skillSelector.toggleSkill,
     // Video mode props - only passed when taskType is 'video'
@@ -2619,8 +2656,9 @@ function ChatAreaContent({
                   onPhraseSelect={handleQuickPhraseSelect}
                   onPresetSelect={handleQuickPresetSelect}
                   currentMode={teamModeFilter}
-                  isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
+                  loadError={loadError}
+                  rawTeamsEmpty={rawTeamsEmpty}
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={effectiveTaskType === 'chat'}

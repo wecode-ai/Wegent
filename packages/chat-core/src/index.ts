@@ -9,10 +9,12 @@ export type {
   TaskStatus,
 } from './api-types'
 export { nestMessageBlocks } from './message-blocks'
+export { fetchAllPages } from './pagination'
 export type { CardBlock, MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
   getLatestThinkingContent,
   isGenericTaskStatusError,
+  limitWorkbenchProcessingBlock,
   nestWorkbenchProcessingBlocks,
   projectWorkbenchSubagentActivity,
   normalizeWorkbenchBlockStatus,
@@ -69,3 +71,9 @@ export type {
   SocketClientStateListener,
   SocketReconnectCallback,
 } from './socket'
+
+export * from './project-chat'
+
+export * from './runtime-ipc'
+
+export * from './runtime-conversation-client'

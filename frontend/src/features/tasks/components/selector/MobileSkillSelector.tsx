@@ -24,8 +24,9 @@ interface MobileSkillSelectorProps {
   skills: UnifiedSkill[]
   teamSkillNames: string[]
   preloadedSkillNames: string[]
+  selectedSkillIds?: number[]
   selectedSkillNames: string[]
-  onToggleSkill: (skillName: string) => void
+  onToggleSkill: (skill: UnifiedSkill) => void
   disabled?: boolean
   readOnly?: boolean
   open?: boolean
@@ -37,6 +38,7 @@ export default function MobileSkillSelector({
   skills,
   teamSkillNames,
   preloadedSkillNames,
+  selectedSkillIds = [],
   selectedSkillNames,
   onToggleSkill,
   disabled = false,
@@ -207,7 +209,7 @@ export default function MobileSkillSelector({
                   </p>
                   <div className="overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
                     {filteredTemporarySkills.map((skill, index) => {
-                      const isSelected = selectedSkillNames.includes(skill.name)
+                      const isSelected = selectedSkillIds.includes(skill.id)
 
                       return (
                         <button
@@ -215,7 +217,7 @@ export default function MobileSkillSelector({
                           type="button"
                           disabled={readOnly}
                           aria-pressed={isSelected}
-                          onClick={() => onToggleSkill(skill.name)}
+                          onClick={() => onToggleSkill(skill)}
                           data-testid={`mobile-skill-option-${skill.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
                           className={cn(
                             'flex min-h-14 w-full items-center gap-3 px-3 py-2.5 text-left',

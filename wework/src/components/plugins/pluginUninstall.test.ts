@@ -47,6 +47,17 @@ function installedPlugin(origin: 'created' | 'market'): InstalledPlugin {
   }
 }
 
+function managedStorePlugin(cloudInstalledPluginId: number | null = 104): InstalledPlugin {
+  const plugin = installedPlugin('market')
+  plugin.metadata.labels = { id: '104-wegent-dev-tools-1.0.0' }
+  plugin.spec.pluginId = undefined
+  plugin.spec.sourcePayload = {
+    managedByWegent: true,
+    cloudInstalledPluginId,
+  }
+  return plugin
+}
+
 describe('uninstallPluginIdentities', () => {
   test('removes the cloud installation before a linked local plugin', async () => {
     const uninstallCloud = vi.fn().mockResolvedValue(undefined)
@@ -80,6 +91,38 @@ describe('uninstallPluginIdentities', () => {
     })
 
     expect(uninstallCloud).toHaveBeenCalledWith(104, 'device-1')
+    expect(uninstallLocal).not.toHaveBeenCalled()
+  })
+
+  test('only calls the cloud API for a Wegent managed store package', async () => {
+    const uninstallCloud = vi.fn().mockResolvedValue(undefined)
+    const uninstallLocal = vi.fn().mockResolvedValue(undefined)
+
+    await uninstallPluginIdentities(
+      managedStorePlugin(),
+      '104-wegent-dev-tools-1.0.0',
+      'device-1',
+      { uninstallCloud, uninstallLocal }
+    )
+
+    expect(uninstallCloud).toHaveBeenCalledWith(104, 'device-1')
+    expect(uninstallLocal).not.toHaveBeenCalled()
+  })
+
+  test('does not fall back to local uninstall when a managed store account id is missing', async () => {
+    const uninstallCloud = vi.fn().mockResolvedValue(undefined)
+    const uninstallLocal = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      uninstallPluginIdentities(
+        managedStorePlugin(null),
+        '104-wegent-dev-tools-1.0.0',
+        'device-1',
+        { uninstallCloud, uninstallLocal }
+      )
+    ).rejects.toThrow(/account install id is unavailable/i)
+
+    expect(uninstallCloud).not.toHaveBeenCalled()
     expect(uninstallLocal).not.toHaveBeenCalled()
   })
 

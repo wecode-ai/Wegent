@@ -5,6 +5,7 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { observeOperation } from '@/telemetry/observeOperation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
@@ -538,8 +539,10 @@ export function PluginManagementWorkspace({
   }
 
   const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
-    const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
-    const installed = await localPluginApi.importMarketplaceCopy(descriptor)
+    const installed = await observeOperation('plugin.copy', async () => {
+      const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
+      return localPluginApi.importMarketplaceCopy(descriptor)
+    })
     const item = toInstalledPluginItem(installed)
     setInstalledPlugins(previous => [
       item,

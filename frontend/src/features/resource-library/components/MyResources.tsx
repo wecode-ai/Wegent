@@ -35,6 +35,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
+import type { Team } from '@/types/api'
 import { getResourceLibrarySortMode, type ResourceLibrarySortMode } from '../resourceSorting'
 import type {
   ManagedResourceSourceFilter,
@@ -140,7 +141,7 @@ function getGroupNameFromSearchParams(params: SearchParamReader): string | null 
 }
 
 function getSortModeFromSearchParams(params: SearchParamReader): ResourceLibrarySortMode {
-  return getResourceLibrarySortMode(params.get(resourceLibraryUrlParams.sort))
+  return getResourceLibrarySortMode(params.get(resourceLibraryUrlParams.sort) || 'latest')
 }
 
 function getInitialResourceType(): ManagedResourceType {
@@ -153,10 +154,6 @@ function getInitialSourceFilter(): ManagedResourceSourceFilter {
 
 function getInitialGroupName(): string | null {
   return getGroupNameFromSearchParams(getInitialSearchParams())
-}
-
-function getInitialSortMode(): ResourceLibrarySortMode {
-  return getSortModeFromSearchParams(getInitialSearchParams())
 }
 
 function getGroupDisplayName(group: Group): string {
@@ -488,6 +485,7 @@ interface MyResourcesProps {
   hideModelCategoryFilter?: boolean
   createRequest?: ResourceCreateRequest & { type: ManagedResourceType }
   onResourceCreated?: (type: 'agent' | 'skill', sourceId?: number) => void
+  onTeamSaved?: (team: Team, created: boolean) => void
   onCreateRequestClose?: () => void
   creationOnly?: boolean
   leadingFilterControls?: ReactNode
@@ -512,6 +510,7 @@ export function MyResources({
   hideModelCategoryFilter = false,
   createRequest,
   onResourceCreated,
+  onTeamSaved,
   onCreateRequestClose,
   creationOnly = false,
   leadingFilterControls,
@@ -533,7 +532,10 @@ export function MyResources({
   const [selectedGroup, setSelectedGroup] = useState<string | null>(() =>
     fixedGroup === undefined ? getInitialGroupName() : fixedGroup
   )
-  const [sortMode, setSortMode] = useState<ResourceLibrarySortMode>(getInitialSortMode)
+  const [sortMode, setSortMode] = useState<ResourceLibrarySortMode>(() =>
+    getSortModeFromSearchParams(getInitialSearchParams())
+  )
+  const effectiveSortMode = hideSortControls ? 'latest' : sortMode
 
   const replaceResourceLibraryUrl = useCallback(
     ({
@@ -567,11 +569,7 @@ export function MyResources({
       }
 
       if (sort) {
-        if (sort === 'latest') {
-          params.set(resourceLibraryUrlParams.sort, sort)
-        } else {
-          params.delete(resourceLibraryUrlParams.sort)
-        }
+        params.set(resourceLibraryUrlParams.sort, sort)
       }
 
       if (source && source !== 'group') {
@@ -625,7 +623,8 @@ export function MyResources({
     const params = new URLSearchParams(searchParamsSnapshot)
     const nextType = getResourceTypeFromSearchParams(params)
     const nextAllowedTypes = allowedTypesKey.split(',') as ManagedResourceType[]
-    setResourceType(nextAllowedTypes.includes(nextType) ? nextType : nextAllowedTypes[0])
+    const resolvedType = nextAllowedTypes.includes(nextType) ? nextType : nextAllowedTypes[0]
+    setResourceType(resolvedType)
     setSourceFilter(fixedSource || getSourceFilterFromSearchParams(params))
     setSelectedGroup(fixedGroup === undefined ? getGroupNameFromSearchParams(params) : fixedGroup)
     setSortMode(getSortModeFromSearchParams(params))
@@ -682,16 +681,17 @@ export function MyResources({
           sortControls={sortControls}
           groups={groups}
           groupFilter={groupFilter}
-          sortMode={sortMode}
+          sortMode={effectiveSortMode}
           modeFilter={teamModeFilter}
           onModeFilterChange={onTeamModeFilterChange}
           hideModeFilter={hideTeamModeFilter}
           createRequest={createRequest?.type === 'agent' ? createRequest : undefined}
           creationOnly={creationOnly}
           onCreateRequestClose={onCreateRequestClose}
+          onSaved={onTeamSaved}
           onCreated={
             createRequest?.type === 'agent'
-              ? team => onResourceCreated?.('agent', team.id)
+              ? (team: Team) => onResourceCreated?.('agent', team.id)
               : undefined
           }
           compact
@@ -710,7 +710,7 @@ export function MyResources({
           sortControls={sortControls}
           groups={groups}
           groupFilter={groupFilter}
-          sortMode={sortMode}
+          sortMode={effectiveSortMode}
           createRequest={createRequest?.type === 'model' ? createRequest : undefined}
           onCreateRequestClose={onCreateRequestClose}
           creationOnly={creationOnly}
@@ -733,7 +733,7 @@ export function MyResources({
           sortControls={sortControls}
           groups={groups}
           groupFilter={groupFilter}
-          sortMode={sortMode}
+          sortMode={effectiveSortMode}
           createRequest={createRequest?.type === 'shell' ? createRequest : undefined}
           onCreateRequestClose={onCreateRequestClose}
           creationOnly={creationOnly}
@@ -753,7 +753,7 @@ export function MyResources({
           sortControls={sortControls}
           groups={groups}
           groupFilter={groupFilter}
-          sortMode={sortMode}
+          sortMode={effectiveSortMode}
           createRequest={createRequest?.type === 'skill' ? createRequest : undefined}
           onCreateRequestClose={onCreateRequestClose}
           creationOnly={creationOnly}
@@ -762,7 +762,7 @@ export function MyResources({
           compact
           onCreated={
             createRequest?.type === 'skill'
-              ? skillId => onResourceCreated?.('skill', skillId)
+              ? (skillId?: number) => onResourceCreated?.('skill', skillId)
               : undefined
           }
           searchQuery={searchQuery}
@@ -779,7 +779,7 @@ export function MyResources({
           sortControls={sortControls}
           groups={groups}
           groupFilter={groupFilter}
-          sortMode={sortMode}
+          sortMode={effectiveSortMode}
           createRequest={createRequest?.type === 'retriever' ? createRequest : undefined}
           onCreateRequestClose={onCreateRequestClose}
           creationOnly={creationOnly}

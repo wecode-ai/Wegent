@@ -75,9 +75,16 @@ export function PluginAutoUpdateCoordinator() {
           localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
         listMarketplacePlugins: deviceId => cloudPluginApi.listMarketplacePlugins({ deviceId }),
         updateBatch: () => cloudPluginApi.autoUpdateInstalledPlugins(),
+        syncPlugin: (deviceId, installedPluginId) =>
+          cloudPluginApi.syncInstalledPluginToDevice(installedPluginId, deviceId),
         syncDevice: deviceId => cloudPluginApi.syncInstalledPluginsToDevice(deviceId),
       })
-      if (!result || (result.updatedCount === 0 && !result.deviceSyncPerformed)) return
+      if (
+        !result ||
+        (result.updatedCount === 0 && result.failedCount === 0 && !result.deviceSyncPerformed)
+      ) {
+        return
+      }
 
       clearLocalCodexPluginsReadStateCache()
       notifyLocalPluginSkillsChanged()
@@ -86,6 +93,10 @@ export function PluginAutoUpdateCoordinator() {
         console.info(
           `[Plugins] Automatically updated ${result.updatedCount} plugin(s) on ${result.deviceId}`
         )
+      }
+      if (result.failedCount > 0) {
+        console.warn('[Plugins] Automatic plugin updates failed', result.failures)
+        track('operation_failed', { operation: 'plugin_auto_update' })
       }
     }
 

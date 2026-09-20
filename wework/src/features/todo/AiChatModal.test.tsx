@@ -25,6 +25,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     createProjectRuntimeTask: mocks.createProjectRuntimeTask,
+    state: {
+      devices: [
+        { device_id: 'cloud-device', name: '云端构建机', device_type: 'cloud', status: 'online' },
+      ],
+    },
   }),
 }))
 
@@ -211,6 +216,27 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  it('handles Escape inside an embedded conversation without a global keyboard listener', async () => {
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'device', taskId: 'run-1' }}
+        embedded
+        open
+        onClose={onClose}
+      />
+    )
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+    screen.getByTestId('ai-chat-modal-close').focus()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('opens a blank embedded task composer in the right sidebar', () => {
     render(
       <AiChatModal
@@ -649,6 +675,53 @@ describe('AiChatModal', () => {
 
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('shows the execution device in the embedded conversation header', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'cloud-device', taskId: 'runtime-1' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('ai-chat-execution-device')).toHaveTextContent('云端构建机')
+  })
+
+  it('shows the execution device name in the split task detail', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'cloud-device', taskId: 'runtime-1' }}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('ai-chat-execution-device')).toHaveTextContent('云端构建机')
+  })
+
+  it('falls back to the device id when the device is unknown', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'retired-device', taskId: 'runtime-1' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('ai-chat-execution-device')).toHaveTextContent('retired-device')
   })
 
   it('notifies the parent only once when a new task address becomes available', () => {

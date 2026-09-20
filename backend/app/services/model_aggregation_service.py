@@ -16,6 +16,7 @@ import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
@@ -26,10 +27,11 @@ from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.capability_reference_service import (
     get_referenced_capability,
-    list_referenced_capabilities,
+    list_referenced_capabilities_by_namespace,
 )
 from app.services.kind import kind_service
 from app.services.model_capabilities import normalize_model_capabilities
+from app.services.model_listing_queries import load_direct_models_by_namespace
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_CATEGORY_TYPE,
     CODEX_RUNTIME_MODEL_DISPLAY_NAME,
@@ -340,63 +342,12 @@ class ModelAggregationService:
                 "model_capabilities": None,
             }
 
-    def _is_model_compatible_with_shell(
-        self,
-        provider: Optional[str],
-        shell_type: str,
-        support_model: List[str],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> bool:
-        """
-        Check if a model is compatible with the given shell type.
-
-        Args:
-            provider: Model provider (e.g., 'openai', 'claude')
-            shell_type: Shell type (e.g., 'Agno', 'ClaudeCode')
-            support_model: List of supported model providers from shell spec
-
-        Returns:
-            True if compatible, False otherwise
-        """
-        # Shell type to model provider mapping
-        # Agno supports OpenAI, Claude and Gemini models
-        shell_provider_map = {
-            "Agno": ["openai", "claude", "gemini"],
-            "ClaudeCode": ["claude", "openai"],
-        }
-
-        if support_model:
-            if provider not in support_model:
-                return False
-
-        if shell_type == "ClaudeCode" and provider == "openai":
-            return self._is_codex_compatible_model_config(config or {})
-
-        if support_model:
-            return True
-
-        # Otherwise, filter by shell's supported providers
-        supported_providers = shell_provider_map.get(shell_type)
-        if supported_providers:
-            if isinstance(supported_providers, list):
-                return provider in supported_providers
-            else:
-                return provider == supported_providers
-
-        # No filter, allow all
-        return True
-
     @staticmethod
-    def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
-        """Return whether an OpenAI model config can run through CodeXAgent."""
-        api_format = str(config.get("apiFormat") or config.get("api_format") or "")
-        protocol = str(config.get("protocol") or "")
-        wire_api = str(config.get("wire_api") or "")
-        return (
-            api_format.lower() == "responses"
-            or protocol.lower() == "openai-responses"
-            or wire_api.lower() == "responses"
-        )
+    def _is_model_compatible_with_shell(
+        provider: Optional[str], support_model: List[str]
+    ) -> bool:
+        """Apply the Shell provider allowlist; an empty list allows all models."""
+        return not support_model or provider in support_model
 
     def _get_shell_support_model(
         self, db: Session, shell_name: str, current_user: Optional[User] = None
@@ -411,22 +362,25 @@ class ModelAggregationService:
 
         Returns:
             Tuple of (supported model list, shell type)
+
+        Raises:
+            HTTPException: If the shell is missing or its configuration is invalid.
         """
         user_id = current_user.id if current_user else None
         shell_json = find_shell_json(db, shell_name, user_id)
         if not shell_json:
-            return ([], shell_name)
+            raise HTTPException(status_code=400, detail="Shell not found")
 
         try:
             shell_crd = Shell.model_validate(shell_json)
             support_model = shell_crd.spec.supportModel or []
-            return (
-                [str(x) for x in support_model if x],
-                shell_crd.spec.shellType,
-            )
+            if any(not provider.strip() for provider in support_model):
+                raise ValueError("Model providers must not be blank")
+            return support_model, shell_crd.spec.shellType
         except (ValueError, KeyError, AttributeError) as e:
-            logger.warning("Failed to parse shell config: %s", e)
-            return ([], shell_name)
+            raise HTTPException(
+                status_code=400, detail="Invalid shell configuration"
+            ) from e
 
     def _is_custom_model(self, model_data: Dict[str, Any]) -> bool:
         """
@@ -540,9 +494,8 @@ class ModelAggregationService:
         from app.services.group_permission import get_user_groups
 
         support_model: List[str] = []
-        actual_shell_type: str = shell_type or ""
         if shell_type:
-            support_model, actual_shell_type = self._get_shell_support_model(
+            support_model, _ = self._get_shell_support_model(
                 db, shell_type, current_user
             )
 
@@ -569,34 +522,19 @@ class ModelAggregationService:
         else:
             raise ValueError(f"Invalid scope: {scope}")
 
-        # 1. Get user models from specified namespaces
-        # Note: Only include non-custom models (isCustomConfig != True)
-        # Custom models are user-specific configurations that should not appear in unified list
+        direct_by_namespace = load_direct_models_by_namespace(
+            db, user_id=current_user.id, namespaces=namespaces_to_query
+        )
+        references_by_namespace = list_referenced_capabilities_by_namespace(
+            db, kind="Model", user_id=current_user.id, namespaces=namespaces_to_query
+        )
+
+        # Keep namespace order and direct-first selection before display filters.
         for namespace in namespaces_to_query:
-            if namespace == "default":
-                # Query personal models
-                user_model_resources = kind_service.list_resources(
-                    user_id=current_user.id, kind="Model", namespace="default"
-                )
-                resource_type = ModelType.USER  # Personal models
-            else:
-                # Query group models (namespace = group_name, user_id can be any member)
-                group_model_resources = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Model",
-                        Kind.namespace == namespace,
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                user_model_resources = group_model_resources
-                resource_type = ModelType.GROUP  # Group models
-            referenced_models = list_referenced_capabilities(
-                db,
-                kind="Model",
-                user_id=current_user.id,
-                namespace=namespace,
+            user_model_resources = direct_by_namespace[namespace]
+            referenced_models = references_by_namespace[namespace]
+            resource_type = (
+                ModelType.USER if namespace == "default" else ModelType.GROUP
             )
             direct_model_by_name: dict[str, Kind] = {}
             for direct_model in sorted(
@@ -636,9 +574,7 @@ class ModelAggregationService:
 
                 if shell_type and not self._is_model_compatible_with_shell(
                     info["provider"],
-                    actual_shell_type,
                     support_model,
-                    info.get("config"),
                 ):
                     continue
 
@@ -704,9 +640,7 @@ class ModelAggregationService:
 
             if shell_type and not self._is_model_compatible_with_shell(
                 provider,
-                actual_shell_type,
                 support_model,
-                config,
             ):
                 continue
 
@@ -766,8 +700,10 @@ class ModelAggregationService:
 
         # Convert to dict - each dict will have 'type' field
         if include_config:
-            return [m.to_full_dict() for m in result]
-        return [m.to_dict() for m in result]
+            response = [m.to_full_dict() for m in result]
+        else:
+            response = [m.to_dict() for m in result]
+        return response
 
     def get_model_by_name_and_type(
         self, db: Session, current_user: User, name: str, model_type: ModelType

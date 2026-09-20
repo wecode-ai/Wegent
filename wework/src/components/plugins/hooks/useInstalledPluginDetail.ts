@@ -6,7 +6,8 @@ import type { InstalledPluginItem } from '../PluginManagementRows'
 export function useInstalledPluginDetail(
   summary: InstalledPluginItem | null,
   read: (plugin: InstalledPlugin) => Promise<InstalledPlugin>,
-  onError: (pluginId: string | number, error: unknown) => void
+  onError: (pluginId: string | number, error: unknown) => void,
+  revision = 0
 ): InstalledPluginItem | null {
   const [detail, setDetail] = useState<{
     key: string
@@ -17,7 +18,7 @@ export function useInstalledPluginDetail(
     refs.current = { summary, onError }
   }, [summary, onError])
   const local = summary && (summary.origin === 'created' || !summary.raw.spec.pluginId)
-  const key = local ? JSON.stringify([summary.id, summary.version]) : null
+  const key = local ? JSON.stringify([summary.id, summary.version, revision]) : null
   useEffect(() => {
     const plugin = refs.current.summary
     if (!key || !plugin) return

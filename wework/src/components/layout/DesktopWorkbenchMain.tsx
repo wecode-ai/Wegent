@@ -111,6 +111,7 @@ import {
 } from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
+import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
@@ -354,10 +355,6 @@ interface SelectedAssistantPlan {
   fallbackContent: string
 }
 
-interface SelectedSubagentPanel {
-  conversationId: string | null
-}
-
 interface SubagentTranscriptState {
   loading: boolean
   messages: WorkbenchMessage[]
@@ -417,16 +414,16 @@ function findSelectedAssistantPlanContent(
 
 function findSelectedSubagentConversation(
   messages: WorkbenchMessage[],
-  selection: SelectedSubagentPanel | null
+  conversationId: string | null
 ): SubagentBlock | null {
-  if (!selection?.conversationId) return null
+  if (!conversationId) return null
 
   const getConversationId = (block: SubagentBlock) =>
     block.agentThreadId ?? block.agentId ?? block.id
   const findInBlocks = (blocks: SubagentBlock['children']): SubagentBlock | null => {
     for (const block of blocks ?? []) {
       if (block.type !== 'subagent') continue
-      if (getConversationId(block) === selection.conversationId) return block
+      if (getConversationId(block) === conversationId) return block
       const nested = findInBlocks(block.children)
       if (nested) return nested
     }
@@ -756,17 +753,26 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [onLocalHarnessSessionClose, removeLocalHarnessSession]
   )
   const [resourceOwnersByPane, setResourceOwnersByPane] = useState<Record<string, string[]>>({})
+  const [pendingBrowserOpenRequests, setPendingBrowserOpenRequests] = useState<
+    Record<string, EmbeddedBrowserOpenRequest>
+  >({})
   const paneWorkspaceStateRef = useRef(new Map<string, WorkbenchPaneWorkspaceState>())
-  const retainedResourceKeys = useMemo(
-    () => Object.keys(resourceOwnersByPane).filter(key => resourceOwnersByPane[key].length > 0),
-    [resourceOwnersByPane]
-  )
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
   const runtimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
   const activePaneKey = getWorkbenchPaneKey(props.activePane)
+  const retainedResourceKeys = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...Object.keys(resourceOwnersByPane).filter(key => resourceOwnersByPane[key].length > 0),
+          ...Object.keys(pendingBrowserOpenRequests),
+        ])
+      ),
+    [pendingBrowserOpenRequests, resourceOwnersByPane]
+  )
   const setPaneResourceRetained = useCallback(
     (paneKey: string, owner: string, retained: boolean) => {
       setResourceOwnersByPane(current => {
@@ -863,6 +869,47 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       state.runtimeWork,
     ]
   )
+  const resolveBrowserOpenRequestPaneKey = useCallback(
+    (request: EmbeddedBrowserOpenRequest) => {
+      const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
+      if (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL) {
+        return props.visible === false ? null : activePaneKey
+      }
+      return (
+        Array.from(new Set([activePaneKey, ...runtimePaneKeys])).find(paneKey => {
+          const pane = resolvePane(paneKey)
+          const labelSegment = pane?.currentRuntimeTask?.taskId ?? paneKey
+          return (
+            pane !== null &&
+            requestBaseLabel ===
+              `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(labelSegment)}`
+          )
+        }) ?? null
+      )
+    },
+    [activePaneKey, props.visible, resolvePane, runtimePaneKeys]
+  )
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserOpenRequests(request => {
+      const paneKey = resolveBrowserOpenRequestPaneKey(request)
+      if (!paneKey) return
+      setPendingBrowserOpenRequests(current => ({
+        ...current,
+        [paneKey]: request,
+      }))
+    })
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [resolveBrowserOpenRequestPaneKey])
+  const markBrowserOpenRequestHandled = useCallback((paneKey: string, requestId: string) => {
+    setPendingBrowserOpenRequests(current => {
+      if (current[paneKey]?.id !== requestId) return current
+      const next = { ...current }
+      delete next[paneKey]
+      return next
+    })
+  }, [])
   const getPaneTitle = useCallback(
     (pane: WorkbenchPaneIdentity) => {
       if (!pane.currentRuntimeTask) {
@@ -899,6 +946,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         onSidebarCollapsedChange={props.onSidebarCollapsedChange}
         onEnvironmentInfoVisibilityChange={updateEnvironmentInfoVisibility}
         onPaneResourceRetained={setPaneResourceRetained}
+        pendingBrowserOpenRequest={pendingBrowserOpenRequests[getWorkbenchPaneKey(pane)] ?? null}
+        onBrowserOpenRequestHandled={markBrowserOpenRequestHandled}
         initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
         onWorkspaceStateChange={rememberPaneWorkspaceState}
         onRuntimeTaskCreated={transferPaneWorkspaceState}
@@ -922,9 +971,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       props.sidebarCollapsed,
       props.sidebarResizing,
       props.visible,
+      pendingBrowserOpenRequests,
       registerLocalHarnessSession,
       rememberPaneWorkspaceState,
       removeLocalHarnessSession,
+      markBrowserOpenRequestHandled,
       setPaneResourceRetained,
       sharedWorkbenchContentWidth,
       splitMode,
@@ -1009,6 +1060,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange,
   onEnvironmentInfoVisibilityChange,
   onPaneResourceRetained,
+  pendingBrowserOpenRequest,
+  onBrowserOpenRequestHandled,
   initialWorkspaceState,
   onWorkspaceStateChange,
   onRuntimeTaskCreated,
@@ -1032,6 +1085,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     patch: Partial<EnvironmentInfoVisibilityState>
   ) => void
   onPaneResourceRetained: (paneKey: string, owner: string, retained: boolean) => void
+  pendingBrowserOpenRequest: EmbeddedBrowserOpenRequest | null
+  onBrowserOpenRequestHandled: (paneKey: string, requestId: string) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
   onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void
@@ -1054,6 +1109,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoPinned = environmentInfoVisibility.pinned
   const environmentInfoOverlayOpen = environmentInfoVisibility.overlayOpen
   const paneActiveRef = useRef(paneActive)
+  const routedBrowserOpenRequestIdRef = useRef<string | null>(null)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appPreferences = useAppPreferencesState()
   const appearanceContext = useOptionalAppearance()
@@ -1252,7 +1308,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithExistingItem,
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
-    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
@@ -1554,25 +1609,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     () => initialWorkspaceState?.selectedAssistantPlan ?? null
   )
-  const [selectedSubagentPanel, setSelectedSubagentPanel] = useState<SelectedSubagentPanel | null>(
-    null
-  )
+  const [selectedSubagentConversationId, setSelectedSubagentConversationId] = useState<
+    string | null
+  >(null)
   const [subagentTranscripts, setSubagentTranscripts] = useState<
     Record<string, SubagentTranscriptState>
   >({})
   const requestedSubagentTranscriptIdsRef = useRef(new Set<string>())
-  const restoreEnvironmentInfoAfterSubagentRef = useRef(false)
-  const previousSubagentPanelOpenRef = useRef(false)
+  const restoreEnvironmentInfoAfterSubagentsRef = useRef(false)
   const subagentConversations = useMemo(
     () => collectSubagentConversations(paneSession.messages),
     [paneSession.messages]
   )
   const selectedSubagentBlock = useMemo(
-    () => findSelectedSubagentConversation(paneSession.messages, selectedSubagentPanel),
-    [paneSession.messages, selectedSubagentPanel]
+    () => findSelectedSubagentConversation(paneSession.messages, selectedSubagentConversationId),
+    [paneSession.messages, selectedSubagentConversationId]
   )
-  const subagentPanelOpen = selectedSubagentPanel !== null
-  const selectedSubagentConversationId = selectedSubagentPanel?.conversationId ?? null
   const selectedSubagentTranscript = selectedSubagentConversationId
     ? subagentTranscripts[selectedSubagentConversationId]
     : undefined
@@ -1810,6 +1862,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const workbenchScrollbarRef = useRef<HTMLDivElement | null>(null)
   const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -1877,20 +1930,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [currentRuntimeTask?.taskId, paneActive, paneVisible, workbenchVisible])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const closeRightPanel = () => {
-    if (subagentPanelOpen) {
-      setSelectedSubagentPanel(null)
-      return
-    }
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
-  const displayedRightPanelOpen = rightPanelOpen || subagentPanelOpen
-  const displayedRightPanelExpanded = subagentPanelOpen ? false : rightPanelExpanded
+  const displayedRightPanelOpen = rightPanelOpen
+  const displayedRightPanelExpanded = rightPanelExpanded
   const compactRightPanelOpen =
-    subagentPanelOpen ||
     (rightPanelTabs.length === 1 &&
       rightPanelTabs[0].startsWith('chat:') &&
       rightPanelView === rightPanelTabs[0]) ||
+    rightPanelView === 'subagents' ||
     isRightWorkspaceExtensionTab(rightPanelView)
   const {
     width: rightSplitChatWidth,
@@ -1938,16 +1987,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
   useEffect(() => {
-    if (
-      previousSubagentPanelOpenRef.current &&
-      !subagentPanelOpen &&
-      restoreEnvironmentInfoAfterSubagentRef.current
-    ) {
-      restoreEnvironmentInfoAfterSubagentRef.current = false
-      setEnvironmentInfoOpen(true)
-    }
-    previousSubagentPanelOpenRef.current = subagentPanelOpen
-  }, [setEnvironmentInfoOpen, subagentPanelOpen])
+    if (rightPanelOpen || !restoreEnvironmentInfoAfterSubagentsRef.current) return
+    restoreEnvironmentInfoAfterSubagentsRef.current = false
+    setEnvironmentInfoOpen(true)
+  }, [rightPanelOpen, setEnvironmentInfoOpen])
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
@@ -3080,32 +3123,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
       if (options?.immediateLayout) setRightPanelImmediateLayout(true)
-      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
-    [setRightPanelOpen, setRightPanelTabs, setRightPanelView, setSelectedSubagentPanel]
+    [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
   const openSubagentConversation = useCallback(
     (block: SubagentBlock) => {
-      if (!subagentPanelOpen) {
-        restoreEnvironmentInfoAfterSubagentRef.current = environmentInfoOpen
-        if (environmentInfoOpen) setEnvironmentInfoOpen(false)
+      if (environmentInfoOpen) {
+        restoreEnvironmentInfoAfterSubagentsRef.current = true
+        setEnvironmentInfoOpen(false)
       }
-      setSelectedSubagentPanel({
-        conversationId: block.agentThreadId ?? block.agentId ?? block.id,
-      })
+      setSelectedSubagentConversationId(block.agentThreadId ?? block.agentId ?? block.id)
+      openRightPanelTab('subagents')
     },
-    [environmentInfoOpen, setEnvironmentInfoOpen, setSelectedSubagentPanel, subagentPanelOpen]
+    [
+      environmentInfoOpen,
+      openRightPanelTab,
+      setEnvironmentInfoOpen,
+      setSelectedSubagentConversationId,
+    ]
   )
   const openSubagentOverview = useCallback(() => {
-    if (!subagentPanelOpen) {
-      restoreEnvironmentInfoAfterSubagentRef.current = environmentInfoOpen
-      if (environmentInfoOpen) setEnvironmentInfoOpen(false)
-    }
-    setSelectedSubagentPanel({ conversationId: null })
-  }, [environmentInfoOpen, setEnvironmentInfoOpen, setSelectedSubagentPanel, subagentPanelOpen])
+    restoreEnvironmentInfoAfterSubagentsRef.current = true
+    if (environmentInfoOpen) setEnvironmentInfoOpen(false)
+    setSelectedSubagentConversationId(null)
+    openRightPanelTab('subagents')
+  }, [
+    environmentInfoOpen,
+    openRightPanelTab,
+    setEnvironmentInfoOpen,
+    setSelectedSubagentConversationId,
+  ])
   const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
     ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
     : paneKey
@@ -3167,7 +3217,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         integrated
         project={boundCloudProject}
         item={boundCloudItem}
-        statusOverride={boundCloudItemStatusOverride}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}
@@ -3264,7 +3313,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       })
       setRightPanelImmediateLayout(true)
-      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
@@ -3277,7 +3325,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       defaultEmbeddedBrowserLabel,
       syncActiveEmbeddedBrowserLabel,
       setRightPanelImmediateLayout,
-      setSelectedSubagentPanel,
     ]
   )
   const closeSmartAppDevelopmentPreviewBrowser = useCallback(
@@ -3513,15 +3560,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       const installationIds = new Set<string>()
       Object.entries(browserStatesRef.current).forEach(([tab, browserState]) => {
-        if (!browserState) return
-        if (browserState.developmentPreview) {
-          installationIds.add(browserState.developmentPreview.installationId)
-          const browserTab = tab as RightWorkspaceBrowserTab
-          previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
-        }
+        if (!browserState?.developmentPreview) return
+        installationIds.add(browserState.developmentPreview.installationId)
+        const browserTab = tab as RightWorkspaceBrowserTab
+        previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
         void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
           error => {
-            console.error('Failed to close embedded browser during workbench disposal:', error)
+            console.error('Failed to close Smart app browser during workbench disposal:', error)
           }
         )
       })
@@ -3620,7 +3665,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
-      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelView(tab)
       if (isRightWorkspaceBrowserTab(tab)) {
@@ -3628,7 +3672,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
       }
     },
-    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel, setSelectedSubagentPanel]
+    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {
@@ -3713,7 +3757,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
   }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
-    (request: EmbeddedBrowserOpenRequest) => {
+    (request: EmbeddedBrowserOpenRequest, assignedToPane = false) => {
       const states = browserStatesRef.current
       const targetByLabel = findBrowserTabByPopupParent(
         states,
@@ -3721,8 +3765,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )
       const requestBaseLabel = request.baseLabel || request.label || DEFAULT_EMBEDDED_BROWSER_LABEL
       const baseLabelMatchesPane =
-        requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL ||
         requestBaseLabel === defaultEmbeddedBrowserLabel ||
+        (requestBaseLabel === DEFAULT_EMBEDDED_BROWSER_LABEL && assignedToPane) ||
         Boolean(targetByLabel)
       if (!baseLabelMatchesPane) {
         logBrowserOpenDiagnostic('routeRequestDropped', {
@@ -3766,25 +3810,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [defaultEmbeddedBrowserLabel, openBrowserTab, rightPanelView]
   )
   useEffect(() => {
-    if (!paneActive) return undefined
-
-    const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (!paneActiveRef.current) return
-      logBrowserOpenDiagnostic('openRequestReceived', {
-        requestId: request.id,
-        url: request.url,
-        label: request.label ?? null,
-        source: request.source ?? null,
-      })
-      routeEmbeddedBrowserOpenRequest(request)
+    if (!pendingBrowserOpenRequest) return
+    if (routedBrowserOpenRequestIdRef.current === pendingBrowserOpenRequest.id) return
+    routedBrowserOpenRequestIdRef.current = pendingBrowserOpenRequest.id
+    logBrowserOpenDiagnostic('openRequestReceived', {
+      requestId: pendingBrowserOpenRequest.id,
+      url: pendingBrowserOpenRequest.url,
+      label: pendingBrowserOpenRequest.label ?? null,
+      source: pendingBrowserOpenRequest.source ?? null,
     })
-
-    return () => {
-      void listener?.then(unlisten => unlisten())
-    }
-  }, [paneActive, routeEmbeddedBrowserOpenRequest])
+    routeEmbeddedBrowserOpenRequest(pendingBrowserOpenRequest, true)
+  }, [pendingBrowserOpenRequest, routeEmbeddedBrowserOpenRequest])
   useEffect(() => {
-    if (!paneActive || typeof listenEmbeddedBrowserPopupRequests !== 'function') return
+    if (!pendingBrowserOpenRequest) return
+    const handled = Object.values(browserStates).some(
+      browserState => browserState?.openRequest?.id === pendingBrowserOpenRequest.id
+    )
+    if (handled) {
+      onBrowserOpenRequestHandled(paneKey, pendingBrowserOpenRequest.id)
+    }
+  }, [browserStates, onBrowserOpenRequestHandled, paneKey, pendingBrowserOpenRequest])
+  useEffect(() => {
+    if (typeof listenEmbeddedBrowserPopupRequests !== 'function') return
     const listener = listenEmbeddedBrowserPopupRequests(request => {
       const parentTab = findBrowserTabByPopupParent(
         browserStatesRef.current,
@@ -3814,7 +3861,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [defaultEmbeddedBrowserLabel, paneActive, routeEmbeddedBrowserOpenRequest])
+  }, [defaultEmbeddedBrowserLabel, routeEmbeddedBrowserOpenRequest])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -3889,20 +3936,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     }
-    setRightPanelTabs(current => {
-      const currentTabs = current.includes(tab) ? current : [...current, tab]
-      const next = currentTabs.filter(openTab => openTab !== tab)
-      if (next.length === 0) {
-        setRightPanelExpanded(false)
-        setRightPanelOpen(false)
-        setRightPanelView('launcher')
-        return next
-      }
-      if (rightPanelView === tab) {
-        setRightPanelView(next[next.length - 1])
-      }
-      return next
-    })
+    const currentTabs = rightPanelTabs.includes(tab) ? rightPanelTabs : [...rightPanelTabs, tab]
+    const nextTabs = currentTabs.filter(openTab => openTab !== tab)
+    setRightPanelTabs(nextTabs)
+    if (nextTabs.length === 0) {
+      setRightPanelExpanded(false)
+      setRightPanelOpen(false)
+      setRightPanelView('launcher')
+      return
+    }
+    if (tab === 'subagents' && restoreEnvironmentInfoAfterSubagentsRef.current) {
+      restoreEnvironmentInfoAfterSubagentsRef.current = false
+      setEnvironmentInfoOpen(true)
+    }
+    if (rightPanelView === tab) {
+      setRightPanelView(nextTabs[nextTabs.length - 1])
+    }
   }
   const closeRightPanelTabFromExtension = useEffectEvent((tab: RightWorkspacePanelTab) => {
     closeRightPanelTab(tab)
@@ -4385,10 +4434,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
 
   const toggleRightPanel = () => {
-    if (subagentPanelOpen) {
-      setSelectedSubagentPanel(null)
-      return
-    }
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -4887,27 +4932,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         />
-        <div
-          data-testid="desktop-workbench-scroll-frame"
-          className={cn(
+        <TaskDetailScrollArea
+          viewportRef={workbenchScrollRef}
+          scrollbarRef={workbenchScrollbarRef}
+          hasConversation={hasConversation}
+          showPageTopBar={showPageTopBar}
+          defaultEmbeddedBrowserLabel={defaultEmbeddedBrowserLabel}
+          frameClassName={cn(
             'relative flex h-full min-w-0 flex-none',
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
-          style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
+          frameStyle={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
+          overlay={
+            <aside
+              data-testid="environment-info-panel-container"
+              className={cn(
+                'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
+                environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
+                showPageTopBar && 'pt-11',
+                environmentInfoTransitionEnabled
+                  ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                  : 'transition-none'
+              )}
+            >
+              <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
+            </aside>
+          }
         >
-          <div
-            ref={workbenchScrollRef}
-            data-testid="desktop-workbench-content"
-            data-scroll-origin={hasConversation ? 'bottom' : 'top'}
-            data-embedded-browser-label={defaultEmbeddedBrowserLabel}
-            className={cn(
-              'relative flex h-full min-w-0 flex-1',
-              hasConversation
-                ? 'flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
-                : 'overflow-hidden',
-              showPageTopBar && 'pt-11'
-            )}
-          >
+          <>
             <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
               {isBootstrapping ? (
                 <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -4959,6 +5011,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 >
                   <ScrollableMessageArea
                     messages={paneMessages}
+                    turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
                     isWaitingForAssistant={
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
@@ -4969,8 +5022,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
                     autoScrollSuspended={!paneVisible || !workbenchVisible}
                     onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-                    onLoadFullTranscript={paneSession.loadFullTranscript}
-                    loadingFullTranscript={paneSession.transcriptLoadingFullContent}
                     onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
                     onLoadTranscriptGap={paneSession.loadTranscriptGap}
                     conversationKey={
@@ -4981,6 +5032,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     className="min-h-full"
                     scrollTestId="desktop-chat-scroll"
                     externalScrollRef={workbenchScrollRef}
+                    externalScrollInteractionRef={workbenchScrollbarRef}
                     turnNavigationPortalTarget={turnNavigationPortalTarget}
                     scrollerClassName="min-h-full overflow-visible"
                     contentClassName={displayedRightPanelExpanded ? 'invisible' : undefined}
@@ -5159,6 +5211,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         }
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
+                                        goalExecutionStatus={paneSession.goalExecutionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5432,6 +5485,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           }
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
+                          goalExecutionStatus={paneSession.goalExecutionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
@@ -5484,21 +5538,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
               />
             </div>
-          </div>
-          <aside
-            data-testid="environment-info-panel-container"
-            className={cn(
-              'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
-              environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
-              showPageTopBar && 'pt-11',
-              environmentInfoTransitionEnabled
-                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
-                : 'transition-none'
-            )}
-          >
-            <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
-          </aside>
-        </div>
+          </>
+        </TaskDetailScrollArea>
         {displayedRightPanelOpen && !displayedRightPanelExpanded && (
           <div
             data-testid="right-workspace-resize-handle"
@@ -5541,22 +5582,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }}
           aria-hidden={!displayedRightPanelOpen}
         >
-          {selectedSubagentBlock ? (
-            <SubagentConversationPanel
-              block={selectedSubagentBlock}
-              onBack={() => setSelectedSubagentPanel({ conversationId: null })}
-              onOpenSubagent={openSubagentConversation}
-              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
-              transcriptMessages={selectedSubagentTranscript?.messages}
-              transcriptLoading={selectedSubagentTranscript?.loading}
-              transcriptError={selectedSubagentTranscript?.error}
-            />
-          ) : subagentPanelOpen ? (
-            <SubagentOverviewPanel
-              blocks={subagentConversations}
-              onSelect={openSubagentConversation}
-            />
-          ) : shouldRenderRightPanel ? (
+          {shouldRenderRightPanel ? (
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground && !displayedRightPanelExpanded}
               visible={paneVisible && workbenchVisible && displayedRightPanelOpen}
@@ -5583,6 +5609,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              subagentPanel={
+                selectedSubagentBlock ? (
+                  <SubagentConversationPanel
+                    block={selectedSubagentBlock}
+                    onBack={() => setSelectedSubagentConversationId(null)}
+                    onOpenSubagent={openSubagentConversation}
+                    onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+                    transcriptMessages={selectedSubagentTranscript?.messages}
+                    transcriptLoading={selectedSubagentTranscript?.loading}
+                    transcriptError={selectedSubagentTranscript?.error}
+                  />
+                ) : (
+                  <SubagentOverviewPanel
+                    blocks={subagentConversations}
+                    onSelect={openSubagentConversation}
+                  />
+                )
+              }
               extensionTabs={rightPanelExtensionTabs}
               extensionScope={rightWorkspaceExtensionScope}
               workItemPanel={

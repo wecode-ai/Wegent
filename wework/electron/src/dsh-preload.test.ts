@@ -15,6 +15,7 @@ describe('DSH preload', () => {
     expect(source).not.toMatch(/from\s+['"]\.\.?\//)
     expect(source).toContain("location.protocol === 'file:'")
     expect(source).toContain("'weworkElectronCloudCredentials'")
+    expect(source).toContain("'weworkElectronNetwork'")
     expect(source).toContain("'window:focus-changed'")
   })
 })

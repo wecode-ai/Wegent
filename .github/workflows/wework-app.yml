@@ -337,7 +337,7 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
-          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
+          VITE_WEGENT_BACKEND_URL: https://your.wegent-backend.address
           VITE_WEWORK_POSTHOG_HOST: ${{ secrets.WEWORK_POSTHOG_HOST }}
           VITE_WEWORK_POSTHOG_KEY: ${{ secrets.WEWORK_POSTHOG_KEY }}
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}

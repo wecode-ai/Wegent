@@ -4,7 +4,7 @@ sidebar_position: 27
 
 # Plugin and Smart App telemetry
 
-Audit date: September 10, 2026. Existing PostHog connectivity is confirmed by the operator. This change repairs client coverage and event semantics; local tests are not proof of production ingestion.
+Audit date: September 20, 2026. Existing PostHog connectivity is confirmed by the operator. This change repairs client coverage and event semantics; local tests are not proof of production ingestion.
 
 ## Contract
 
@@ -21,6 +21,24 @@ Audit date: September 10, 2026. Existing PostHog connectivity is confirmed by th
 | Smart App publication            | Accepted requests and confirmed publication are separate. Only immediately observed published/rejected responses emit final publication outcomes.                                                                                                                                                                                                |
 
 Device confirmation tracks requests observed in the current client session, bounded to 100 pending entries, without persistence across restart. It is not a complete backend installation ledger. Later asynchronous approval is not counted unless observed by the publishing operation. Actual tool invocation, generation completion, latency and cancellation funnels require executor facts or a separate contract; visits, trial and task submission cannot establish them.
+
+## Plugin use in chat
+
+The current `recordPluginUsageFromInput` parses `plugin://` references after a message is accepted and stores display names and timestamps in local storage. It supports 30-day ordering and first-use guidance. It is not sent to PostHog and does not prove that the model invoked a plugin. A message can reference a plugin without using a tool, while the model can invoke an enabled MCP tool without an explicit reference.
+
+Actual invocation facts should originate in the executor at MCP tool start and completion, then enter the shared telemetry dispatcher. The data contract must first map each MCP server to a verified plugin owner. Counting every MCP call as plugin use would include built-in workspace, browser and computer tools. Skills provide prompt and context capabilities without one uniform terminal invocation, so skill activation and MCP calls require separate metrics.
+
+Public PostHog events should emit one `plugin_invocation_succeeded` or `plugin_invocation_failed` event for each confirmed MCP call, with only these bounded dimensions:
+
+- `capability_type`: `mcp`
+- `execution_surface`: `task`, `project_task`, `automation` or `unknown`
+- `executor_location`: `local` or `cloud`
+- `plugin_distribution`: `official`, `enterprise`, `personal` or `unknown`
+- `failure_stage` on failures: `invoke`, `timeout`, `cancelled` or `unknown`
+
+Public events must exclude plugin names, MCP server names, tool names, task IDs, arguments, outputs and raw errors. Deduplicate start and completion with `execution_id + tool_call_id`, emitting one terminal outcome. The internal sink may also carry a stable `plugin_key`, marketplace, version, tool name, trace ID, duration and controlled error code for per-plugin diagnostics, while still excluding arguments, output and credentials.
+
+Ordinary backend logs should not be the source of truth for usage. Local execution can complete offline without reaching the backend, and relayed backend events may not include reliable plugin provenance. The executor should produce the structured invocation fact; the cloud backend may receive, persist and aggregate it. Sampled operational logs can use the same internal fields and a defined retention period instead of writing free-form text for every call.
 
 ## Distribution and privacy
 

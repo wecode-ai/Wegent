@@ -59,6 +59,17 @@ from app.services.subscription.helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _reject_code_wiki_scheduled_update(subscription: Kind) -> None:
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        reject_code_wiki_scheduled_update,
+    )
+
+    reject_code_wiki_scheduled_update(
+        subscription,
+        detail="Code Wiki scheduled updates cannot be shared",
+    )
+
+
 class SubscriptionFollowService:
     """Service class for subscription follow operations."""
 
@@ -464,6 +475,8 @@ class SubscriptionFollowService:
                 status_code=403, detail="Only the owner can send invitations"
             )
 
+        _reject_code_wiki_scheduled_update(subscription)
+
         # Find target user
         target_user = None
         if target_user_id:
@@ -575,6 +588,8 @@ class SubscriptionFollowService:
             raise HTTPException(
                 status_code=403, detail="Only the owner can send invitations"
             )
+
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Verify namespace exists
         namespace = db.query(Namespace).filter(Namespace.id == namespace_id).first()

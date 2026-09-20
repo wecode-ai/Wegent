@@ -273,7 +273,12 @@ def test_list_runs_hides_internal_ai_manager_runs(
         description="Run the complete workflow",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"trigger_type": "event", "timezone": "Asia/Shanghai"},
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.tag_added",
+            "event_config": {"tags": ["review"]},
+            "timezone": "Asia/Shanghai",
+        },
     )
     test_db.add(rule)
     test_db.flush()
@@ -285,7 +290,10 @@ def test_list_runs_hides_internal_ai_manager_runs(
         source="event",
         status="running",
         created_by_user_id=test_user.id,
-        metadata_json={"scheduled_for": datetime(2026, 8, 25).isoformat()},
+        metadata_json={
+            "scheduled_for": datetime(2026, 8, 25).isoformat(),
+            "event": {"type": "task.tag_added", "subject_id": "issue-1"},
+        },
     )
     test_db.add(parent_run)
     test_db.flush()
@@ -316,6 +324,9 @@ def test_list_runs_hides_internal_ai_manager_runs(
     )
 
     assert [run["id"] for run in result] == [str(parent_run.id)]
+    assert result[0]["trigger_type"] == "event"
+    assert result[0]["event_type"] == "task.tag_added"
+    assert result[0]["event_config"] == {"tags": ["review"]}
 
 
 def test_list_runs_repairs_terminal_execution_projection(
@@ -520,6 +531,210 @@ def test_list_runs_projects_root_workflow_execution_state(
         assert result[0]["error"] == "Runtime failed"
 
 
+@pytest.mark.asyncio
+async def test_cancel_waiting_runtime_automation_run(
+    test_db,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = CloudProject(
+        project_key="CANCELWAIT",
+        name="Cancel waiting runtime",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/cancel-waiting-runtime",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Waiting rule",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger_type": "event", "timezone": "Asia/Shanghai"},
+    )
+    test_db.add(rule)
+    test_db.flush()
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Waiting runtime Issue",
+        status="pending",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(item)
+    test_db.flush()
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        source="event",
+        status="waiting_runtime",
+        created_by_user_id=test_user.id,
+        metadata_json={"scheduled_for": datetime(2026, 9, 14, 12, 0).isoformat()},
+    )
+    test_db.add(run)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        automation_run_id=str(run.id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        execution_environment="local",
+        status="waiting_runtime",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    monkeypatch.setattr(
+        project_automations_module, "require_cloud_project_role", lambda *_args: None
+    )
+
+    result = await project_automation_service.cancel_run(
+        test_db,
+        str(project.id),
+        str(run.id),
+        test_user.id,
+    )
+
+    test_db.refresh(run)
+    test_db.refresh(execution)
+    assert run.status == "cancelled"
+    assert execution.status == "cancelled"
+    assert result["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_workflow_root_cascades_to_running_stage(
+    test_db,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = CloudProject(
+        project_key="CANCELCHAIN",
+        name="Cancel workflow chain",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/cancel-workflow-chain",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Workflow rule",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger_type": "event", "timezone": "Asia/Shanghai"},
+    )
+    test_db.add(rule)
+    test_db.flush()
+    root = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        source="event",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(root)
+    test_db.flush()
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Running workflow Issue",
+        status="in_progress",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow_automation": {
+                "rule_id": str(rule.id),
+                "run_id": str(root.id),
+            },
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "nodes": [
+                    {
+                        "id": "implement",
+                        "name": "Implement",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "running",
+                    }
+                ],
+            },
+        },
+    )
+    test_db.add(item)
+    test_db.flush()
+    root.task_id = item.id
+    child = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        task_id=item.id,
+        source="workflow",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow_parent_run_id": str(root.id),
+            "workflow_node_id": "implement",
+        },
+    )
+    test_db.add(child)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        automation_run_id=str(child.id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        execution_environment="local",
+        status="running",
+        runtime_device_id="device-1",
+        runtime_task_id="codex-queue-stage",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    monkeypatch.setattr(
+        project_automations_module, "require_cloud_project_role", lambda *_args: None
+    )
+
+    def confirm_runtime_cancellation(
+        executions: list[LoopItemExecution],
+    ) -> set[int]:
+        confirmed: set[int] = set()
+        for candidate in executions:
+            cancelled = loop_item_execution_service.confirm_runtime_cancelled(
+                test_db,
+                execution_id=candidate.id,
+                note="Runtime confirmed cancellation",
+            )
+            assert cancelled is not None
+            confirmed.add(candidate.id)
+        return confirmed
+
+    async def run_inline(function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.emit_runtime_cancels",
+        confirm_runtime_cancellation,
+    )
+    monkeypatch.setattr(project_automations_module.asyncio, "to_thread", run_inline)
+
+    result = await project_automation_service.cancel_run(
+        test_db,
+        str(project.id),
+        str(root.id),
+        test_user.id,
+    )
+
+    test_db.expire_all()
+    assert test_db.get(ProjectAutomationRun, root.id).status == "cancelled"
+    assert test_db.get(ProjectAutomationRun, child.id).status == "cancelled"
+    assert test_db.get(LoopItemExecution, execution.id).status == "cancelled"
+    assert result["status"] == "cancelled"
+
+
 def test_create_generic_manual_rule_does_not_persist_null_robot_id(
     test_db,
     test_user,
@@ -559,6 +774,27 @@ def test_create_generic_manual_rule_does_not_persist_null_robot_id(
     rule = test_db.get(ProjectAutomationRule, created["id"])
     assert rule is not None
     assert rule.assignee_agent_id == ""
+
+
+def test_generic_manual_rule_accepts_direct_runtime_configuration() -> None:
+    rule = ProjectAutomationCreate(
+        name="Direct Codex workflow",
+        prompt="Run the configured node",
+        triggerType="event",
+        eventType="task.created",
+        eventConfig={},
+        assignmentMode="manual",
+        roleSource="generic",
+        model="gpt-5.6-codex",
+        executionEnvironment="local",
+        executionDeviceId="55",
+        runtimeSource="runtime_user",
+        runtimeUserId=1,
+    )
+
+    assert rule.model == "gpt-5.6-codex"
+    assert rule.execution_environment == "local"
+    assert rule.execution_device_id == "55"
 
 
 def test_create_rejects_invalid_runtime_workflow_definition(
@@ -748,6 +984,125 @@ def test_direct_workflow_node_runs_without_binding_to_an_automation_rule(
     assert rule is not None
     definition = rule.metadata_json["event_config"]["runtime_workflow_definition"]
     assert definition["nodes"][1]["execution_config"]["agent_id"] == "agent-1"
+
+
+def test_collaboration_group_stage_compiles_agent_runtime_capabilities(
+    test_db,
+    test_user,
+) -> None:
+    project = CloudProject(
+        project_key="GROUPCAP",
+        name="Collaboration group capability project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/group-capability",
+    )
+    test_db.add(project)
+    test_db.flush()
+    agent = ProjectChatAgent(
+        id="claude-group-agent",
+        cloud_project_id=project.id,
+        title="Claude group agent",
+        name="Claude group agent",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "runtime": "claude_code",
+            "model": "claude-sonnet",
+            "additional_skills": [{"name": "review", "namespace": "project"}],
+            "mcp_servers": {
+                "repository": {
+                    "command": "node",
+                    "args": ["repository-server.mjs"],
+                }
+            },
+        },
+    )
+    test_db.add(agent)
+    test_db.commit()
+
+    definition = project_automation_execution._collaboration_group_workflow_definition(
+        test_db,
+        project_id=str(project.id),
+        group={
+            "name": "Implementation group",
+            "leader": {"kind": "agent", "id": agent.id},
+            "members": [
+                {"kind": "agent", "id": agent.id},
+                {"kind": "human", "id": str(test_user.id)},
+            ],
+            "stages": [
+                {
+                    "name": "Implement",
+                    "description": "Implement the change",
+                    "assignee": {"kind": "agent", "id": agent.id},
+                },
+                {
+                    "name": "Approve",
+                    "description": "Approve the implementation",
+                    "assignee": {"kind": "human", "id": str(test_user.id)},
+                },
+                {
+                    "name": "Review",
+                    "description": "Review the implementation",
+                    "assignee": {"kind": "agent", "id": agent.id},
+                },
+            ],
+        },
+    )
+
+    first_node, human_node, final_node = definition.nodes
+    assert first_node.workspace_policy == "composer"
+    assert human_node.workspace_policy == "inherit"
+    assert human_node.depends_on == [first_node.id]
+    assert human_node.execution_mode == "human"
+    assert human_node.required_assignee_type == "user"
+    assert human_node.required_assignee_id == str(test_user.id)
+    assert final_node.depends_on == [human_node.id]
+    config = first_node.execution_config
+    assert config is not None
+    assert config.agent_id == agent.id
+    assert config.runtime == "claude_code"
+    assert config.additional_skills == [{"name": "review", "namespace": "project"}]
+    assert config.mcp_servers == {
+        "repository": {
+            "command": "node",
+            "args": ["repository-server.mjs"],
+        }
+    }
+
+
+def test_collaboration_group_stage_rejects_assignee_outside_group(
+    test_db,
+    test_user,
+) -> None:
+    project = CloudProject(
+        project_key="GROUPMEMBER",
+        name="Collaboration group membership project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/group-membership",
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    with pytest.raises(
+        RuntimeError,
+        match="stage assignee must be a collaboration-group member",
+    ):
+        project_automation_execution._collaboration_group_workflow_definition(
+            test_db,
+            project_id=str(project.id),
+            group={
+                "name": "Invalid group",
+                "leader": {"kind": "human", "id": str(test_user.id)},
+                "members": [{"kind": "human", "id": str(test_user.id)}],
+                "stages": [
+                    {
+                        "name": "Invalid stage",
+                        "assignee": {"kind": "human", "id": "999999"},
+                    }
+                ],
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -1447,6 +1802,137 @@ async def test_direct_workflow_node_queues_without_robot_rule(
     assert profile.execution_prompt == "Implement the requested change"
     assert profile.model == "custom-model"
     assert context["workspace_binding"]["type"] == "standalone"
+
+
+@pytest.mark.asyncio
+async def test_direct_agent_workflow_node_preserves_runtime_capabilities(
+    test_db,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = CloudProject(
+        project_key="DIRECTCAP",
+        name="Direct agent capability project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/direct-agent-capability",
+    )
+    test_db.add(project)
+    test_db.flush()
+    agent = ProjectChatAgent(
+        id="direct-claude-agent",
+        cloud_project_id=project.id,
+        title="Direct Claude agent",
+        name="Direct Claude agent",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "runtime": "claude_code",
+            "model": "claude-sonnet",
+            "execution_mode": "auto",
+            "additional_skills": [{"name": "review", "namespace": "project"}],
+            "mcp_servers": {
+                "repository": {
+                    "command": "node",
+                    "args": ["repository-server.mjs"],
+                }
+            },
+        },
+    )
+    test_db.add(agent)
+    test_db.flush()
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Direct Claude workflow issue",
+        description="",
+        status="pending",
+        priority="medium",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "nodes": [
+                    {
+                        "id": "review",
+                        "name": "Review",
+                        "prompt": "Review the implementation",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "workspace_policy": "none",
+                        "execution_config_override": True,
+                        "execution_config": {
+                            "agent_id": agent.id,
+                            "runtime": "claude_code",
+                            "model": "claude-sonnet",
+                            "workspace_binding": {"type": "standalone"},
+                            "additional_skills": [
+                                {"name": "review", "namespace": "project"}
+                            ],
+                            "mcp_servers": {
+                                "repository": {
+                                    "command": "node",
+                                    "args": ["repository-server.mjs"],
+                                }
+                            },
+                        },
+                        "status": "ready",
+                    }
+                ],
+            }
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+    monkeypatch.setattr(
+        project_automations_module, "require_cloud_project_role", lambda *_args: None
+    )
+
+    result = await project_automation_service.run_direct_workflow_node(
+        test_db,
+        str(project.id),
+        str(item.id),
+        "review",
+        test_user.id,
+    )
+
+    execution = test_db.get(LoopItemExecution, result["execution_id"])
+    assert execution is not None
+    assert execution.executor_type == "project_robot"
+    assert execution.agent_id == agent.id
+    assert execution.runtime_origin_context["runtime"] == "claude_code"
+    assert execution.runtime_origin_context["additional_skills"] == [
+        {"name": "review", "namespace": "project"}
+    ]
+    assert execution.runtime_origin_context["mcp_servers"] == {
+        "repository": {
+            "command": "node",
+            "args": ["repository-server.mjs"],
+        }
+    }
+
+    request = loop_item_execution_service._persist_runtime_request_intent(
+        test_db,
+        execution=execution,
+    )
+    assert request.runtime == "claude_code"
+    assert request.additional_skills == [{"name": "review", "namespace": "project"}]
+    assert request.bot == [
+        {
+            "id": agent.id,
+            "name": "Direct Claude agent",
+            "shell_type": "ClaudeCode",
+            "mcp_servers": [
+                {
+                    "name": "repository",
+                    "command": "node",
+                    "args": ["repository-server.mjs"],
+                }
+            ],
+        }
+    ]
 
 
 @pytest.mark.asyncio

@@ -48,6 +48,7 @@ export interface DeviceCardProps {
   onEditAlias?: (device: DeviceInfo) => void
   isUpgrading?: boolean
   upgradeStatus?: DeviceUpgradeState
+  highlighted?: boolean
 }
 
 /**
@@ -71,6 +72,7 @@ export function DeviceCard({
   onEditAlias,
   isUpgrading,
   upgradeStatus,
+  highlighted = false,
 }: DeviceCardProps) {
   const { t } = useTranslation('devices')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -96,8 +98,10 @@ export function DeviceCard({
   return (
     <div
       data-testid={`device-record-${device.id}`}
+      data-highlighted={highlighted ? 'true' : undefined}
       className={cn(
-        'bg-surface border rounded-lg p-4',
+        'bg-surface border rounded-lg p-4 transition-shadow',
+        highlighted && 'ring-2 ring-primary/20 shadow-sm',
         device.is_default ? 'border-primary' : 'border-border'
       )}
     >

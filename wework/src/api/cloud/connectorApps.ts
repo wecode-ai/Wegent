@@ -166,15 +166,20 @@ export async function authorizeWegentConnector(
         throw new Error('GitHub 授权已取消')
       }
       if (result.status === 'failed') {
+        attempt.fail('confirm')
         throw new Error(result.error || 'GitHub 授权失败')
       }
-      if (!result.connection) throw new Error('GitHub 授权状态缺失')
+      if (!result.connection) {
+        attempt.fail('confirm')
+        throw new Error('GitHub 授权状态缺失')
+      }
       await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
       if (result.connection.status === 'connected') attempt.succeed()
       else attempt.fail('confirm')
       notifyConnectorAuthorizationChanged()
       return result.connection
     }
+    attempt.fail('confirm')
     throw new Error('GitHub 授权已超时')
   } catch (error) {
     attempt.fail('request')

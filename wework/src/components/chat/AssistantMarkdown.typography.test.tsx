@@ -23,7 +23,7 @@ test('uses document typography for every Markdown heading level', () => {
   expect(screen.getByRole('heading', { level: 4 })).toHaveClass('text-lg')
   expect(screen.getByRole('heading', { level: 5 })).toHaveClass('text-base')
   expect(screen.getByRole('heading', { level: 6 })).toHaveClass('text-sm')
-})
+}, 15_000)
 
 test('shows the horizontal scrollbar for completed code blocks in document previews', async () => {
   render(

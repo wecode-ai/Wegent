@@ -4,7 +4,7 @@ sidebar_position: 27
 
 # 插件与智能应用埋点
 
-核查日期：2026-09-10。用户已确认现有 PostHog 链路可通；本次修复客户端覆盖和统计口径，不以本地测试代替生产入库验收。
+核查日期：2026-09-20。用户已确认现有 PostHog 链路可通；本次修复客户端覆盖和统计口径，不以本地测试代替生产入库验收。
 
 ## 事件合同
 
@@ -24,6 +24,24 @@ sidebar_position: 27
 | 智能应用发布   | 发布申请与正式发布                                                 | 申请接受独立统计；立即 published/rejected 才产生正式发布结果                                                                                                |
 
 设备安装结果追踪限当前客户端会话观察到的请求，队列最多 100 条；不跨应用重启持久化，不能替代后端全量安装台账。异步审批完成后未被本次客户端观察到的结果也不纳入正式发布计数。单插件实际工具调用、生成完成、耗时与取消漏斗仍需执行器事实或新的数据合同，不能从任务提交、访问或试用事件推断。
+
+## 聊天中的插件使用
+
+最新代码中的 `recordPluginUsageFromInput` 只在消息被接受后解析 `plugin://` 引用，把展示名和时间写入本机 `localStorage`，用于 30 天内的插件排序和首次试用引导。它不进入 PostHog，也不能证明模型实际调用了插件。一次消息可能引用插件但未触发工具；模型也可能在没有显式引用的情况下调用已经启用的 MCP 工具。
+
+真实调用应由执行器在 MCP 工具开始和结束的事实边界产生，再通过统一遥测分发。数据合同需要先为 MCP server 建立可验证的插件来源映射；没有该映射时，把所有 MCP 调用都算作插件使用会把内置的空间、浏览器和计算机工具混入统计。Skill 是提示与上下文能力，没有统一的独立调用终态，应和 MCP 工具调用分开统计。
+
+公开 PostHog 建议按每个已确认的 MCP 调用终态上报 `plugin_invocation_succeeded` 或 `plugin_invocation_failed`，并只保留下列低基数维度：
+
+- `capability_type`: `mcp`
+- `execution_surface`: `task`、`project_task`、`automation` 或 `unknown`
+- `executor_location`: `local` 或 `cloud`
+- `plugin_distribution`: `official`、`enterprise`、`personal` 或 `unknown`
+- 失败事件的 `failure_stage`: `invoke`、`timeout`、`cancelled` 或 `unknown`
+
+公开事件不应包含插件名、MCP server 名、工具名、任务 ID、参数、输出或原始错误。开始与结束按 `execution_id + tool_call_id` 去重，只产生一个最终结果。内部 sink 可以额外保存稳定的 `plugin_key`、marketplace、版本、工具名、trace ID、耗时和受控错误码，用于按插件排障，但仍不能记录参数、输出和认证信息。
+
+后端普通日志不适合作为插件使用量的主数据源：本地执行可离线完成，不一定经过后端；后端看到的转发事件也未必带有可靠的插件归属。应由执行器产生结构化调用事实，云端后端只负责接收、持久化和聚合该事实。需要在线排障时，可以按采样和保留期打印上述内部字段，避免为每次工具调用输出自由文本日志。
 
 ## 分发与隐私
 

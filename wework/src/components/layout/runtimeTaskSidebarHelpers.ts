@@ -11,7 +11,7 @@ export const RUNTIME_PROJECT_TASK_PREVIEW_LIMIT = 5
 export const RUNTIME_PROJECT_TASK_EXPAND_STEP = 10
 
 export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
-  return task.updatedAt || task.createdAt || undefined
+  return task.recencyAt ?? task.updatedAt ?? task.createdAt ?? undefined
 }
 
 export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
@@ -19,7 +19,7 @@ export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  const value = task.updatedAt ?? task.createdAt ?? task.completedAt
+  const value = task.recencyAt ?? task.updatedAt ?? task.createdAt ?? task.completedAt
   if (value == null) return 0
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp

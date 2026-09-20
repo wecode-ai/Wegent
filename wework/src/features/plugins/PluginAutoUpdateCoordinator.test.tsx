@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     listLocalInstalledPlugins: vi.fn(async () => ({ items: [], deviceId: 'device-1' })),
     listMarketplacePlugins: vi.fn(async () => ({ items: [] })),
     autoUpdateInstalledPlugins: vi.fn(),
+    syncInstalledPluginToDevice: vi.fn(),
     syncInstalledPluginsToDevice: vi.fn(),
     clearLocalCache: vi.fn(),
     notifyLocalPluginSkillsChanged: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock('@/api/plugins', () => ({
   createPluginApi: () => ({
     listMarketplacePlugins: mocks.listMarketplacePlugins,
     autoUpdateInstalledPlugins: mocks.autoUpdateInstalledPlugins,
+    syncInstalledPluginToDevice: mocks.syncInstalledPluginToDevice,
     syncInstalledPluginsToDevice: mocks.syncInstalledPluginsToDevice,
   }),
 }))
@@ -125,13 +127,31 @@ describe('PluginAutoUpdateCoordinator', () => {
         results: [],
       },
     })
+    mocks.syncInstalledPluginToDevice.mockResolvedValue({
+      deviceId: 'device-1',
+      pendingCount: 0,
+      sync: {
+        success: true,
+        device_id: 'device-1',
+        mode: 'merge',
+        skills: [],
+        plugins: [{ id: 1, name: 'plugin-1', status: 'synced' }],
+        mcps: [],
+        errors: [],
+        synced: 1,
+        failed: 0,
+        skipped: 0,
+        results: [],
+      },
+    })
   })
 
   test('checks on startup and when a published release event arrives', async () => {
     render(<PluginAutoUpdateCoordinator />)
 
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
-    expect(mocks.syncInstalledPluginsToDevice).toHaveBeenCalledWith('device-1')
+    expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledWith(1, 'device-1')
+    expect(mocks.syncInstalledPluginsToDevice).not.toHaveBeenCalled()
     expect(mocks.clearLocalCache).toHaveBeenCalledOnce()
     expect(mocks.notifyLocalPluginSkillsChanged).toHaveBeenCalledOnce()
 

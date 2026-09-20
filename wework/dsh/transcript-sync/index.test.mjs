@@ -166,6 +166,133 @@ test('uploads a native snapshot and persists only its locator', async () => {
   assert.equal(upload.fileContent, 'native-codex-state')
 })
 
+test('reuploads the same native segment when its commit was already recorded', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    transcriptId: 'shared',
+    taskId: 'shared',
+    baseSequence: 0,
+    cloudSequence: 1,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const requests = []
+  const acknowledgements = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source,
+    state: state(),
+    target: {
+      async acknowledge(value) {
+        acknowledgements.push(value)
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.file) {
+            request.fileContent = await readFile(request.file.path, 'utf8')
+          }
+          requests.push(request)
+          if (request.path.endsWith('/lease')) {
+            return { status: 200, body: { fencingToken: 2, currentSequence: 1 } }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.endsWith('/segments')) {
+            return { status: 200, body: { currentSequence: 1, appended: 0 } }
+          }
+          return { status: 200, body: { released: true } }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  assert.equal(acknowledgements.length, 1)
+  const upload = requests.find(request => request.path.endsWith('/segments'))
+  assert.equal(upload.body.turnId, pending.turnId)
+  assert.equal(upload.body.sequence, 1)
+  assert.equal(upload.fileContent, 'native-codex-state')
+  assert.equal(
+    requests.some(
+      request =>
+        request.path === '/wework-transcripts/shared' ||
+        request.path.startsWith('/wework-transcripts/shared/turns')
+    ),
+    false
+  )
+})
+
+test('retries a pending delta as a snapshot when the cloud recovery chain is missing', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    sequence: 2,
+    turnId: 'turn-2',
+    baseSequence: 1,
+    cloudSequence: 2,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const uploads = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source,
+    state: state(),
+    target: { async acknowledge() {} },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path.endsWith('/lease')) {
+            return { status: 200, body: { fencingToken: 3, currentSequence: 1 } }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.endsWith('/segments')) {
+            uploads.push(structuredClone(request.body))
+            if (uploads.length === 1) {
+              return {
+                status: 409,
+                body: {
+                  detail: {
+                    code: 'snapshot_required',
+                    message: 'The cloud transcript recovery chain is incomplete',
+                  },
+                },
+              }
+            }
+            return { status: 200, body: { currentSequence: 2, appended: 1 } }
+          }
+          return { status: 200, body: { released: true } }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  assert.equal(uploads.length, 2)
+  assert.equal(uploads[0].format, 'codex-delta.v1.tgz.aes256gcm')
+  assert.equal(uploads[1].format, 'codex-snapshot.v1.tgz.aes256gcm')
+  assert.deepEqual(
+    source.calls.map(call => call.options.snapshot),
+    [false, true]
+  )
+})
+
 test('restores the latest snapshot and contiguous native deltas', async () => {
   const restored = []
   const downloadPaths = []
@@ -299,6 +426,17 @@ test('branches deterministically when the cloud causal head changed', async () =
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
             }
           }
+          if (request.path.includes('/shared/') && request.path.endsWith('/segments')) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'segment_conflict',
+                  message: 'A different native segment already exists at this sequence',
+                },
+              },
+            }
+          }
           return { status: 200, body: {} }
         },
       },
@@ -350,6 +488,17 @@ test('branches from the available cloud head when the cached causal base is newe
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
             }
           }
+          if (request.path.includes('/shared/') && request.path.endsWith('/segments')) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'segment_conflict',
+                  message: 'A different native segment already exists at this sequence',
+                },
+              },
+            }
+          }
           return { status: 200, body: {} }
         },
       },
@@ -365,7 +514,7 @@ test('branches from the available cloud head when the cached causal base is newe
   assert.equal(source.calls.at(-1).options.snapshot, true)
 })
 
-test('discards an orphaned session and continues uploading healthy sessions', async () => {
+test('skips every unavailable orphaned turn and continues uploading healthy sessions', async () => {
   const source = await segmentSource()
   const summarize = source.summarize.bind(source)
   source.summarize = async locator => {
@@ -435,11 +584,11 @@ test('discards an orphaned session and continues uploading healthy sessions', as
   assert.ok(requests.some(request => request.path.includes('/healthy/')))
 })
 
-test('isolates a missing turn while other sessions continue uploading', async () => {
+test('permanently skips a missing turn and continues the same session', async () => {
   const source = await segmentSource()
   const summarize = source.summarize.bind(source)
   source.summarize = async locator => {
-    if (locator.sessionId === 'blocked-session') {
+    if (locator.turnId === 'missing-turn') {
       throw Object.assign(new Error('executor turn is unavailable'), {
         code: 'transcript_turn_missing',
       })
@@ -447,13 +596,21 @@ test('isolates a missing turn while other sessions continue uploading', async ()
     return summarize(locator)
   }
   const blocked = turn({
-    transcriptId: 'blocked',
-    taskId: 'blocked',
-    turnId: 'blocked-turn',
-    sessionId: 'blocked-session',
+    transcriptId: 'shared',
+    taskId: 'shared',
+    turnId: 'missing-turn',
+    sessionId: 'shared-session',
   })
   const outbox = new MemorySyncOutbox([
     blocked,
+    turn({
+      transcriptId: 'shared',
+      taskId: 'shared',
+      sequence: 2,
+      turnId: 'later-turn',
+      sessionId: 'shared-session',
+      baseSequence: 1,
+    }),
     turn({
       transcriptId: 'healthy',
       taskId: 'healthy',
@@ -461,6 +618,7 @@ test('isolates a missing turn while other sessions continue uploading', async ()
       sessionId: 'healthy-session',
     }),
   ])
+  const uploadedTurns = []
   const sync = new WeworkSync({
     apiBaseUrl: 'https://cloud.example.com/api',
     clientId: 'client-1',
@@ -480,16 +638,40 @@ test('isolates a missing turn while other sessions continue uploading', async ()
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
             }
           }
+          if (request.path.endsWith('/segments')) {
+            uploadedTurns.push(request.body.turnId)
+          }
           return { status: 200, body: {} }
         },
       },
     },
   })
 
-  await assert.rejects(sync.flushPending(), error => error.code === 'transcript_turn_missing')
+  await sync.flushPending()
 
+  assert.equal(outbox.count(), 0)
+  assert.deepEqual(uploadedTurns, ['later-turn', 'healthy-turn'])
+  await sync.enqueue(
+    turn({
+      transcriptId: 'shared',
+      taskId: 'shared',
+      turnId: 'missing-turn',
+      sessionId: 'shared-session',
+    })
+  )
+  assert.equal(outbox.count(), 0)
+  await sync.enqueue(
+    turn({
+      transcriptId: 'shared',
+      taskId: 'shared',
+      sequence: 3,
+      turnId: 'future-turn',
+      sessionId: 'shared-session',
+    })
+  )
   assert.equal(outbox.count(), 1)
-  assert.equal(outbox.first().turnId, blocked.turnId)
+  await sync.flushPending()
+  assert.deepEqual(uploadedTurns, ['later-turn', 'healthy-turn', 'future-turn'])
 })
 
 test('continues download and preference phases after an upload phase failure', async () => {

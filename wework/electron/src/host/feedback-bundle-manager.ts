@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
+import { ensureDirectory } from './ensure-directory.js'
 
 const MAX_LOG_BYTES = 200 * 1024 * 1024
 const MAX_ENTRY_PREVIEW_CHARS = 20_000
@@ -101,7 +102,7 @@ export class FeedbackBundleManager {
   async confirm(stagingIdInput: string): Promise<{ reportId: string; path: string }> {
     const { stagingId, staged } = await this.resolveStaged(stagingIdInput)
     const downloadsDirectory = this.options.downloadsDirectory()
-    await mkdir(downloadsDirectory, { recursive: true })
+    await ensureDirectory(downloadsDirectory)
     const destination = join(downloadsDirectory, `wework-feedback-${staged.reportId}.zip`)
     try {
       await rename(staged.path, destination)
@@ -265,7 +266,7 @@ export class FeedbackBundleManager {
         return []
       })
       for (const entry of directoryEntries) {
-        if (!entry.isFile() || extname(entry.name) !== '.log') continue
+        if (!entry.isFile() || !isRuntimeLogFile(entry.name)) continue
         const path = join(directory, entry.name)
         if (seen.has(path)) continue
         seen.add(path)
@@ -290,6 +291,10 @@ export class FeedbackBundleManager {
       }
     }
   }
+}
+
+function isRuntimeLogFile(fileName: string): boolean {
+  return /\.log(?:\.\d+)?$/i.test(fileName)
 }
 
 async function writeBundleArchive(bundle: PendingBundle, destination: string): Promise<void> {

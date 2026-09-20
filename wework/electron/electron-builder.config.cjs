@@ -77,6 +77,7 @@ module.exports = {
   },
   dmg: {
     sign: false,
+    writeUpdateInfo: false,
   },
   win: {
     artifactName: `${artifactPrefix}_\${version}_windows_\${arch}-setup.\${ext}`,

@@ -354,6 +354,7 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         "auto",
         description="RAG configuration mode: auto-fill or disabled",
     )
+    dingtalk_auto_sync_enabled: bool = Field(default=False)
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
@@ -435,6 +436,9 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     retrieval_config: Optional[RetrievalConfigUpdate] = Field(
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
+    )
+    dingtalk_auto_sync_enabled: Optional[bool] = Field(
+        default=None, description="Refresh imported DingTalk copies once a day"
     )
     summary_enabled: Optional[bool] = Field(
         None,
@@ -522,6 +526,34 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
                         f"Guided question at index {i} exceeds 200 characters"
                     )
         return v
+
+
+class CodeWikiScheduledUpdateSettings(BaseModel):
+    enabled: bool = True
+    cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
+    interval_days: int = Field(7, ge=1, le=365)
+    weekday: int = Field(0, ge=0, le=6, description="Monday is 0")
+    hour: int = Field(9, ge=0, le=23)
+    minute: int = Field(0, ge=0, le=59)
+    timezone: str = Field("UTC", min_length=1, max_length=100)
+    execution_principal_user_id: Optional[int] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_cadence(self) -> "CodeWikiScheduledUpdateSettings":
+        fixed_intervals = {
+            "daily": 1,
+            "weekly": 7,
+            "biweekly": 14,
+            "four_weeks": 28,
+        }
+        if self.cadence == "custom":
+            if self.interval_days < 2:
+                raise ValueError(
+                    "Custom update interval must be between 2 and 365 days"
+                )
+        else:
+            self.interval_days = fixed_intervals[self.cadence]
+        return self
 
 
 class CodeWikiCreate(KnowledgeBaseCreate):
@@ -783,6 +815,36 @@ class CodeWikiRunResponse(BaseModel):
     strategy_revision: int = Field(0, description="Resolved strategy revision")
 
 
+class CodeWikiScheduledUpdateRequest(CodeWikiScheduledUpdateSettings):
+    """The future schedule for one Code Wiki."""
+
+    enabled: bool = False
+
+
+class CodeWikiScheduledUpdateExecution(BaseModel):
+    id: int
+    status: str
+    error_message: str = ""
+    result_summary: str = ""
+    task_id: int = 0
+    created_at: datetime
+
+
+class CodeWikiScheduledUpdate(BaseModel):
+    can_configure: bool = False
+    enabled: bool = False
+    configured: bool = False
+    cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
+    interval_days: int = 7
+    weekday: int = 0
+    hour: int = 9
+    minute: int = 0
+    timezone: str = "UTC"
+    execution_principal_user_id: Optional[int] = None
+    next_execution_time: Optional[datetime] = None
+    executions: List[CodeWikiScheduledUpdateExecution] = Field(default_factory=list)
+
+
 class CodeWikiRunRecord(BaseModel):
     """One past attempt at generating this wiki.
 
@@ -931,6 +993,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
         default_factory=dict,
         description="Safe derived retrieval and query-hint capabilities",
     )
+    dingtalk_auto_sync_enabled: bool = Field(default=False)
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
@@ -1039,6 +1102,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             retrieval_capabilities=derive_retrieval_capabilities(
                 spec.get("retrievalConfig")
             ),
+            dingtalk_auto_sync_enabled=spec.get("dingtalkAutoSyncEnabled", False),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             execution_model_ref=execution_model_ref,
@@ -1271,6 +1335,15 @@ class ExternalDocumentBatchImportResponse(BaseModel):
     processing: list[KnowledgeDocumentResponse]
     requested_count: int = Field(
         description="Number of distinct external resources in the request"
+    )
+
+
+class DingtalkSyncQueuedResponse(BaseModel):
+    """Receipt of a queued DingTalk copy scan, before any copy has been read."""
+
+    task_id: str = Field(description="Task running the scan of this knowledge base")
+    status: Literal["queued"] = Field(
+        default="queued", description="The scan is queued, not finished"
     )
 
 

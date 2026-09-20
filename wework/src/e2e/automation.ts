@@ -1,4 +1,5 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
+import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
@@ -51,6 +52,10 @@ import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import {
+  E2E_DROPPED_RUNTIME_EVENTS_KEY,
+  E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
+} from '@/api/runtime/runtimeChatStream'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -81,6 +86,7 @@ interface ScrollStabilitySample {
 }
 
 interface ElementMetricsSamplePoint {
+  elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
   connected: boolean
   height: number
   label: string | null
@@ -1164,7 +1170,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
   )
 }
 
-function fillDesktopControlElement(element: HTMLElement, value: string) {
+export async function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
   const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
@@ -1179,6 +1185,7 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
     return
   }
 
+  const ownValueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
   if (element instanceof HTMLSelectElement) {
     selectDesktopControlOption(element, value)
     return
@@ -1189,21 +1196,44 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
         : HTMLTextAreaElement.prototype
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
-  } else {
-    const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
-    if (valueSetter) {
-      valueSetter.call(element, value)
+  } else if (ownValueSetter) {
+    ownValueSetter.call(element, value)
+    return
+  } else if (element.isContentEditable) {
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    if (!value) {
+      document.execCommand('delete', false)
       return
-    } else {
-      const selection = window.getSelection()
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      range.collapse(false)
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      document.execCommand('selectAll', false)
-      document.execCommand('insertText', false, value)
     }
+    const windowLabel = getDesktopWindowLabel()
+    const lines = value.replace(/\r\n?/g, '\n').split('\n')
+    for (const [index, line] of lines.entries()) {
+      if (index > 0) {
+        await invokeDesktopHost('e2e.pressKey', {
+          windowLabel,
+          key: 'Enter',
+          phase: 'press',
+        })
+        await waitForDesktopControlTick()
+      }
+      if (!line) continue
+      await invokeDesktopHost('e2e.insertText', { windowLabel, text: line })
+      await waitForDesktopControlTick()
+    }
+    return
+  } else {
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    range.collapse(false)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, value)
   }
 
   element.dispatchEvent(
@@ -1215,6 +1245,39 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
     })
   )
   element.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+function desktopControlTextWithLineBreaks(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+  if (node instanceof HTMLBRElement) return '\n'
+  return Array.from(node.childNodes).map(desktopControlTextWithLineBreaks).join('')
+}
+
+function desktopControlComposerDisplayValue(element: HTMLElement, value: string): string {
+  let displayValue = value
+  let searchOffset = 0
+  const tokens = element.querySelectorAll<HTMLElement>(
+    '[data-composer-skill-reference], [data-composer-link-url]'
+  )
+  tokens.forEach(token => {
+    const reference =
+      token.getAttribute('data-composer-skill-reference') ??
+      token.getAttribute('data-composer-link-url')
+    if (!reference) return
+    const label =
+      token.getAttribute('data-composer-skill-label') ??
+      token.getAttribute('data-composer-link-label') ??
+      token.textContent ??
+      reference
+    const referenceOffset = displayValue.indexOf(reference, searchOffset)
+    if (referenceOffset < 0) return
+    displayValue =
+      displayValue.slice(0, referenceOffset) +
+      label +
+      displayValue.slice(referenceOffset + reference.length)
+    searchOffset = referenceOffset + label.length
+  })
+  return displayValue
 }
 
 function selectDesktopControlText(selector: string, value: string): string {
@@ -1569,6 +1632,43 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'setLocalRuntimeMaxConcurrentTasks':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.settings.update', {
+          maxConcurrentTasks: Number(command.value),
+        })
+      )
+    case 'dropNextRuntimeEvent': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
+      }
+      root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
+      root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
+      return ''
+    }
+    case 'clearRuntimeGoalDirectly':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.goal.clear', JSON.parse(command.value ?? '{}'))
+      )
+    case 'dispatchRuntimeEventLagged': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_RUNTIME_EVENT_DISPATCHERS_KEY]?: Set<
+          (event: { event: string; payload: Record<string, unknown> }) => void
+        >
+      }
+      const dispatchers = root[E2E_RUNTIME_EVENT_DISPATCHERS_KEY]
+      if (!dispatchers?.size) {
+        throw new Error('No runtime event dispatcher is registered')
+      }
+      for (const dispatch of dispatchers) {
+        dispatch({
+          event: 'executor.event_lagged',
+          payload: { skipped: 1 },
+        })
+      }
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
@@ -1726,14 +1826,61 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
-      const processMemory = navigator.platform.toLowerCase().includes('mac')
-        ? await invokeDesktopHost('e2e.getProcessSnapshot')
-        : null
+      const debugSnapshot = getWorkbenchDebugSnapshot()
+      const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
+      const runtimeMessages = currentRuntimeTask
+        ? getRuntimeConversationMessagesForLogicalAddress({
+            deviceId: currentRuntimeTask.deviceId,
+            taskId: currentRuntimeTask.taskId,
+            threadId: currentRuntimeTask.threadId,
+            workspacePath: currentRuntimeTask.workspacePath,
+          })
+        : []
+      const activeAssistantMessage = runtimeMessages.findLast(
+        message => message.role === 'assistant'
+      )
+      const narrativeBlocks =
+        activeAssistantMessage?.blocks?.filter(
+          block => block.type === 'thinking' || block.type === 'text' || block.type === 'plan'
+        ) ?? []
+      const assistantContentElements = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
+      )
+      const [processMemory, rendererHeap] = await Promise.all([
+        navigator.platform.toLowerCase().includes('mac')
+          ? invokeDesktopHost('e2e.getProcessSnapshot')
+          : null,
+        invokeDesktopHost('e2e.getRendererHeapUsage'),
+      ])
       return JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
+        assistantDom: {
+          contentElementCount: assistantContentElements.length,
+          textChars: assistantContentElements.reduce(
+            (total, element) => total + (element.textContent?.length ?? 0),
+            0
+          ),
+          markdownChunkCount: document.querySelectorAll('[data-markdown-window-chunk]').length,
+        },
+        activeRuntimeAssistant: activeAssistantMessage
+          ? {
+              contentChars: activeAssistantMessage.content.length,
+              contentOriginalChars: activeAssistantMessage.contentOriginalChars ?? null,
+              contentTruncated: activeAssistantMessage.contentTruncated === true,
+              displayItemCount: activeAssistantMessage.runtimeDisplayItems?.length ?? 0,
+              maxNarrativeBlockChars: Math.max(
+                0,
+                ...narrativeBlocks.map(block => block.content.length)
+              ),
+              truncatedNarrativeBlockCount: narrativeBlocks.filter(
+                block => block.contentTruncated === true
+              ).length,
+            }
+          : null,
         runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
+        rendererHeap,
       })
     }
     case 'focusMainWindow':
@@ -1847,8 +1994,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         : initialElements[0]
       if (!initialElement) throw new Error(`Unable to find selector "${command.selector}"`)
       activeElementMetricsSample?.stop()
-      const startedAt = performance.now()
+      let startedAt: number | undefined
       let animationFrame = 0
+      const sampleElements = command.target
+        ? createElementFrameSampler(initialElement, command.target)
+        : undefined
       const sample: ElementMetricsSample = {
         done: false,
         frames: [],
@@ -1860,6 +2010,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (animationFrame) window.cancelAnimationFrame(animationFrame)
       }
       const captureFrame = (time: number) => {
+        startedAt ??= time
         const element = initialElement
         const rect = element?.getBoundingClientRect()
         const testIds = element
@@ -1868,6 +2019,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               .filter((testId): testId is string => Boolean(testId))
           : []
         sample.frames.push({
+          elements: sampleElements?.(),
           connected: element?.isConnected ?? false,
           height: rect?.height ?? 0,
           label: element?.dataset.weworkBrowserWebview ?? null,
@@ -1886,7 +2038,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       sample.stop = finish
       activeElementMetricsSample = sample
-      animationFrame = window.requestAnimationFrame(captureFrame)
+      // Use the rAF clock for every sample, including the baseline. Its timestamp
+      // can precede performance.now() when a callback runs in the current frame.
+      await new Promise<void>(resolve => {
+        animationFrame = window.requestAnimationFrame(time => {
+          captureFrame(time)
+          resolve()
+        })
+      })
       return ''
     }
     case 'getElementMetricsSample': {
@@ -2027,6 +2186,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const declaredValue =
         element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
       if (declaredValue !== null && declaredValue !== undefined) return declaredValue
+      if (element.isContentEditable) {
+        const propertyValue = (element as HTMLElement & { value?: unknown }).value
+        if (
+          typeof propertyValue === 'string' &&
+          element.classList.contains('composer-prosemirror-editor')
+        ) {
+          return desktopControlComposerDisplayValue(element, propertyValue)
+        }
+        const blockValues = Array.from(
+          element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
+        ).map(block => desktopControlTextWithLineBreaks(block).trim())
+        if (blockValues.length > 0) return blockValues.join('\n').trim()
+        return element.innerText.replace(/\r\n?/g, '\n').trim()
+      }
       return element.textContent?.trim() ?? ''
     }
     case 'getSelectionOffset': {
@@ -2315,8 +2488,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
       const startedAt = Date.now()
       while (Date.now() - startedAt < timeoutMs) {
-        const element = findDesktopControlElements(command.selector).find(candidate =>
-          (candidate.textContent ?? '').includes(text)
+        const element = findDesktopControlElements(command.selector).find(
+          candidate =>
+            (!command.visible || desktopControlElementVisible(candidate)) &&
+            (candidate.textContent ?? '').includes(text)
         )
         if (element) {
           element.dataset.e2eAnchorId = value
@@ -2337,7 +2512,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      fillDesktopControlElement(element, command.value ?? '')
+      await fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
     case 'finishAnimations': {
@@ -2482,7 +2657,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const form = element instanceof HTMLFormElement ? element : element.closest('form')
       if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
       if (command.value !== undefined) {
-        fillDesktopControlElement(element, command.value)
+        await fillDesktopControlElement(element, command.value)
       }
       form.requestSubmit()
       return ''

@@ -122,6 +122,8 @@ describe('desktop resource migration', () => {
 
     expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
+    expect(packageApp).toContain('prepareSharedElectronZip({')
+    expect(packageApp).toContain('electronZipDir,')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
     expect(prepareElectron).toContain("WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true'")
     expect(packageApp).toContain('await releaseToolchainLock()')
@@ -221,6 +223,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('sourceSha,')
     expect(source).toContain('path: `bin/${dwsName}`')
     expect(source).toContain("path: 'codex'")
+    expect(source).toContain(
+      'cp(codexSource, codexResources, { recursive: true, dereference: true })'
+    )
     expect(source).toContain('sha256: await hashComponentPath(codexResources)')
     expect(source).not.toContain('path: `codex/${codexRuntime.binaryPath}`')
     expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")

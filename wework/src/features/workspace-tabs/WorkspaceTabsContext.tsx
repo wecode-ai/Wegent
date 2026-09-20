@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { navigateTo, replaceTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo, replaceTo } from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -26,6 +26,8 @@ import {
 } from './workspaceTabs'
 import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
+import { writeSettingsReturnPath } from './settingsReturnPath'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -77,10 +79,23 @@ function validTab(value: unknown): value is WorkspaceTab {
 function normalizePersistedTab(tab: WorkspaceTab, labels: WorkspaceTabLabels): WorkspaceTab {
   const isLegacyDefaultBoard =
     tab.kind === 'board' &&
-    tab.contentRoute === '/todo' &&
-    ['工作项', '项目空间', 'Work items', 'Project spaces'].includes(tab.title)
+    (tab.contentRoute === '/todo' || projectSpaceRouteRequestsDefaultProject(tab.contentRoute)) &&
+    [
+      '工作项',
+      '项目空间',
+      '工作空间',
+      '协作',
+      '协作 (Beta)',
+      'Work items',
+      'Project spaces',
+      'Workspaces',
+      'Collaboration',
+      'Collaboration (Beta)',
+    ].includes(tab.title)
   const normalized = { ...tab, fixed: tab.fixed === true }
-  return isLegacyDefaultBoard ? { ...normalized, title: labels.board } : normalized
+  return isLegacyDefaultBoard
+    ? { ...normalized, title: labels.board, contentRoute: '/todo' }
+    : normalized
 }
 
 function loadPersistedTabs(
@@ -310,6 +325,7 @@ export function WorkspaceTabsProvider({
   children,
 }: WorkspaceTabsProviderProps) {
   const startupTabApplied = useRef(false)
+  const previousPathnameRef = useRef(pathname)
   const [state, dispatch] = useReducer(
     workspaceTabsReducer,
     undefined,
@@ -327,6 +343,13 @@ export function WorkspaceTabsProvider({
   }, [fixedTabs])
 
   useLayoutEffect(() => {
+    const enteringSettings =
+      isSettingsRoute(pathname) && !isSettingsRoute(previousPathnameRef.current)
+    if (enteringSettings) {
+      const activeTab = stateRef.current.tabs.find(tab => tab.id === stateRef.current.activeTabId)
+      if (activeTab) writeSettingsReturnPath(activeTab.contentRoute)
+    }
+    previousPathnameRef.current = pathname
     dispatch({ type: 'routeChanged', pathname, search, labels })
   }, [labels, pathname, search])
 

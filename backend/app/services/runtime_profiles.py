@@ -291,7 +291,7 @@ class RuntimeProfileService:
         self, db: Session, project_id: str, user_id: int, profile_id: str
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.RestrictedAnalyst)
-        self.require_owned(db, profile_id, user_id)
+        self.require_runnable(db, profile_id, user_id)
         binding = self._default_binding(db, project_id, user_id, for_update=True)
         if binding is None:
             binding = RuntimeBinding(
@@ -400,7 +400,9 @@ class RuntimeProfileService:
         )
         execution.execution_environment = environment
         execution.execution_device_id = device_id
-        execution.status = "queued"
+        execution.status = (
+            "pending_approval" if execution.approval_status == "pending" else "queued"
+        )
         execution.execution_note = ""
         execution.queued_at = datetime.now(timezone.utc).replace(tzinfo=None)
         execution.version += 1

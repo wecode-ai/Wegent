@@ -22,7 +22,8 @@
  * Regular expression to match URLs
  * Matches http://, https://, and www. URLs
  */
-const URL_REGEX = /(?:https?:\/\/|www\.)[^\s<>\[\]()]*[^\s<>\[\]().,;:!?'")\]}>]/gi
+const URL_REGEX =
+  /(?:https?:\/\/|www\.)[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]*[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF.,;:!?'")\]}>]/gi
 
 /**
  * Check if a position is inside a code block or inline code

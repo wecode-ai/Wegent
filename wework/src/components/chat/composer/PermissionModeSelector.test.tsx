@@ -1,17 +1,30 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import '@/i18n'
 import { PermissionModeSelector } from './PermissionModeSelector'
 
 describe('PermissionModeSelector', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   test('renders an accessible icon-only trigger for compact toolbars', () => {
+    vi.useFakeTimers()
     render(<PermissionModeSelector value="full-access" iconOnly onChange={vi.fn()} />)
 
     const trigger = screen.getByTestId('permission-mode-menu-button')
     expect(trigger).toHaveAccessibleName('权限模式: 完整访问')
-    expect(trigger).toHaveAttribute('title', '权限模式: 完整访问')
+    expect(trigger).not.toHaveAttribute('title')
     expect(trigger).toHaveTextContent('')
     expect(trigger.querySelector('svg')).toBeInTheDocument()
+
+    fireEvent.pointerEnter(trigger.parentElement as HTMLElement)
+    act(() => vi.advanceTimersByTime(700))
+
+    expect(screen.getByTestId('permission-mode-menu-button-tooltip')).toHaveTextContent(
+      '权限模式: 完整访问'
+    )
   })
 
   test('changes between restricted modes without confirmation', () => {

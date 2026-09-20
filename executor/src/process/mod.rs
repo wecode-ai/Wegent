@@ -10,51 +10,50 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
     time::Duration,
     time::Instant,
 };
 
-use chrono::{Local, SecondsFormat};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
     process::Command,
-    sync::mpsc::{unbounded_channel, UnboundedSender},
-    sync::oneshot,
     time::timeout,
 };
 
 use crate::{
+    agent_session,
     agents::interactive_mcp::{
         deferred_proxy_exception_failure, deferred_proxy_response_decision,
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
-    claude_session,
-    emitter::{EventEnvelope, ResponsesEventBuilder},
+    emitter::ResponsesEventBuilder,
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::ExecutionRequest,
-    runner::{AgentEngine, EventSink, ExecutionOutcome},
+    runner::{streaming::StreamingEventDispatcher, AgentEngine, EventSink, ExecutionOutcome},
     stream::{
-        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_child_blocks,
-        extract_claude_result_error, extract_claude_subagent_update, extract_claude_tool_results,
-        extract_claude_tool_uses, extract_reasoning, extract_text, ClaudeAsyncTaskTracker,
-        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolUse,
+        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_message_blocks,
+        extract_claude_result_error, extract_claude_subagent_update, extract_reasoning,
+        extract_text, ClaudeAsyncTaskTracker, ClaudeChildBlock, ClaudeMessageBlock,
+        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolResult, ClaudeToolUse,
     },
 };
 
 #[cfg(windows)]
 mod windows_batch;
 
+pub(crate) mod debug_stdout;
+use debug_stdout::line as debug_claude_stdout_line;
+#[cfg(test)]
+use debug_stdout::{
+    line_with_timestamp as debug_claude_stdout_line_with_timestamp, ENV as DEBUG_CLAUDE_STDOUT_ENV,
+};
+
 const DEFAULT_STREAM_TEXT_CHUNK_CHARS: usize = 256;
 const DEFAULT_STREAM_REASONING_CHUNK_CHARS: usize = 4_096;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
-const DEBUG_CLAUDE_STDOUT_ENV: &str = "WEGENT_DEBUG_CLAUDE_STDOUT";
 const STDERR_PREVIEW_MAX_CHARS: usize = 500;
 
 #[derive(Clone, Default)]
@@ -68,240 +67,30 @@ impl EventSink for NoopEventSink {
     }
 }
 
-#[derive(Clone)]
-struct StreamingEventDispatcher {
-    sender: UnboundedSender<QueuedStreamEvent>,
-    pending: Arc<AtomicUsize>,
-    compact_pending_text: Arc<AtomicBool>,
+#[derive(Default)]
+struct ClaudeOutputTextState {
+    item_id: Option<String>,
+    offset: usize,
+    segment_count: usize,
 }
 
-struct QueuedStreamEvent {
-    kind: QueuedStreamEventKind,
-}
-
-enum QueuedStreamEventKind {
-    Callback {
-        event: Box<EventEnvelope>,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-        text_delta_chars: usize,
-    },
-    Flush {
-        done: oneshot::Sender<()>,
-    },
-}
-
-struct CompactedTextDelta {
-    event: EventEnvelope,
-    text: String,
-}
-
-fn compact_text_delta(
-    compacted: &mut Option<CompactedTextDelta>,
-    event: Box<EventEnvelope>,
-) -> Result<(), Box<EventEnvelope>> {
-    if event.event_type != "response.output_text.delta" {
-        return Err(event);
-    }
-    let Some(delta) = event
-        .data
-        .get("delta")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-    else {
-        return Err(event);
-    };
-    if delta.is_empty() {
-        return Ok(());
-    }
-    if let Some(existing) = compacted.as_mut() {
-        existing.text.push_str(&delta);
-        return Ok(());
-    }
-    let event = *event;
-    *compacted = Some(CompactedTextDelta { event, text: delta });
-    Ok(())
-}
-
-async fn send_compacted_text_delta<S>(sink: &S, compacted: &mut Option<CompactedTextDelta>)
-where
-    S: EventSink,
-{
-    let Some(mut compacted_text) = compacted.take() else {
-        return;
-    };
-    let text_chars = compacted_text.text.chars().count();
-    compacted_text.event.data["delta"] = Value::String(compacted_text.text);
-    let task_id = compacted_text.event.task_id.clone();
-    let subtask_id = compacted_text.event.subtask_id.clone();
-    if let Err(message) = sink.send(compacted_text.event).await {
-        let fields = vec![
-            ("task_id", task_id.clone()),
-            ("subtask_id", subtask_id.clone()),
-            ("error_len", message.len().to_string()),
-        ];
-        log_executor_event("streaming compacted text callback failed", &fields);
-    }
-    let fields = vec![
-        ("task_id", task_id),
-        ("subtask_id", subtask_id),
-        ("text_chars", text_chars.to_string()),
-    ];
-    log_executor_event("streaming compacted text emitted", &fields);
-}
-
-impl StreamingEventDispatcher {
-    fn new<S>(sink: S) -> Self
-    where
-        S: EventSink,
-    {
-        let (sender, mut receiver) = unbounded_channel::<QueuedStreamEvent>();
-        let pending = Arc::new(AtomicUsize::new(0));
-        let worker_pending = Arc::clone(&pending);
-        let compact_pending_text = Arc::new(AtomicBool::new(false));
-        let worker_compact_pending_text = Arc::clone(&compact_pending_text);
-        tokio::spawn(async move {
-            let mut compacted_text: Option<CompactedTextDelta> = None;
-            while let Some(queued) = receiver.recv().await {
-                match queued.kind {
-                    QueuedStreamEventKind::Callback {
-                        event,
-                        log_name,
-                        fields,
-                        text_delta_chars,
-                    } => {
-                        let event = if worker_compact_pending_text.load(Ordering::Relaxed)
-                            && text_delta_chars > 0
-                        {
-                            match compact_text_delta(&mut compacted_text, event) {
-                                Ok(()) => {
-                                    worker_pending.fetch_sub(1, Ordering::Relaxed);
-                                    continue;
-                                }
-                                Err(original_event) => original_event,
-                            }
-                        } else {
-                            event
-                        };
-                        send_compacted_text_delta(&sink, &mut compacted_text).await;
-                        let event = *event;
-                        let started = Instant::now();
-                        let event_type = event.event_type.clone();
-                        let task_id = event.task_id.clone();
-                        let subtask_id = event.subtask_id.clone();
-                        let message_id = event.message_id.map(|value| value.to_string());
-                        if let Err(message) = sink.send(event).await {
-                            let mut fields = fields;
-                            fields.push(("error_len", message.len().to_string()));
-                            log_executor_event(log_name, &fields);
-                        }
-                        let remaining = worker_pending
-                            .fetch_sub(1, Ordering::Relaxed)
-                            .saturating_sub(1);
-                        let elapsed_ms = started.elapsed().as_millis();
-                        if elapsed_ms >= 1_000 {
-                            let fields = vec![
-                                ("task_id", task_id),
-                                ("subtask_id", subtask_id),
-                                ("event_type", event_type),
-                                ("elapsed_ms", elapsed_ms.to_string()),
-                                ("pending_depth", remaining.to_string()),
-                                ("message_id", message_id.unwrap_or_default()),
-                            ];
-                            log_executor_event("streaming callback dispatch slow", &fields);
-                        }
-                    }
-                    QueuedStreamEventKind::Flush { done } => {
-                        send_compacted_text_delta(&sink, &mut compacted_text).await;
-                        let _ = done.send(());
-                    }
-                }
-            }
-        });
-        Self {
-            sender,
-            pending,
-            compact_pending_text,
+impl ClaudeOutputTextState {
+    fn item_id(&mut self, task_id: &str, subtask_id: &str) -> String {
+        if let Some(item_id) = self.item_id.as_ref() {
+            return item_id.clone();
         }
+        self.segment_count += 1;
+        let item_id = format!(
+            "claude-{task_id}-{subtask_id}-output-{}",
+            self.segment_count
+        );
+        self.item_id = Some(item_id.clone());
+        item_id
     }
 
-    async fn flush(&self) {
-        let (done, wait) = oneshot::channel();
-        if self
-            .sender
-            .send(QueuedStreamEvent {
-                kind: QueuedStreamEventKind::Flush { done },
-            })
-            .is_err()
-        {
-            log_executor_event("streaming callback queue closed", &[]);
-            return;
-        }
-        let _ = wait.await;
-    }
-
-    async fn compact_pending_text_and_flush(&self, task_id: &str, subtask_id: &str) {
-        self.compact_pending_text.store(true, Ordering::Relaxed);
-        let fields = vec![
-            ("task_id", task_id.to_string()),
-            ("subtask_id", subtask_id.to_string()),
-            (
-                "pending_depth",
-                self.pending.load(Ordering::Relaxed).to_string(),
-            ),
-        ];
-        log_executor_event("streaming callback queue compaction requested", &fields);
-        self.flush().await;
-    }
-
-    fn send(
-        &self,
-        event: EventEnvelope,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-    ) {
-        self.send_internal(event, log_name, fields, 0);
-    }
-
-    fn send_text_delta(
-        &self,
-        event: EventEnvelope,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-        text_delta_chars: usize,
-    ) {
-        self.send_internal(event, log_name, fields, text_delta_chars);
-    }
-
-    fn send_internal(
-        &self,
-        event: EventEnvelope,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-        text_delta_chars: usize,
-    ) {
-        let depth = self.pending.fetch_add(1, Ordering::Relaxed) + 1;
-        if depth % 100 == 0 {
-            let mut queue_fields = fields.clone();
-            queue_fields.push(("pending_depth", depth.to_string()));
-            queue_fields.push(("event_type", event.event_type.clone()));
-            log_executor_event("streaming callback queue depth", &queue_fields);
-        }
-        if self
-            .sender
-            .send(QueuedStreamEvent {
-                kind: QueuedStreamEventKind::Callback {
-                    event: Box::new(event),
-                    log_name,
-                    fields,
-                    text_delta_chars,
-                },
-            })
-            .is_err()
-        {
-            self.pending.fetch_sub(1, Ordering::Relaxed);
-            log_executor_event("streaming callback queue closed", &[]);
-        }
+    fn finish_segment(&mut self) {
+        self.item_id = None;
+        self.offset = 0;
     }
 }
 
@@ -460,7 +249,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     let summary = handle_retryable_api_errors(
                         spec.clone(),
@@ -487,13 +276,13 @@ impl AgentEngine for StreamProcessEngine {
                     let stderr_text = decode_output(stderr.clone().into_bytes());
                     let stdout_text = decode_output(stdout.clone().into_bytes());
                     if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
-                        claude_session::delete_saved_session_files(&request);
+                        agent_session::delete_saved_session_files(&request);
                         let retry_spec = claude_spec_without_resume(&spec);
                         match run_command_output(retry_spec, timeout_seconds).await {
                             CommandOutcome::Success { stdout } => {
                                 let summary = collect_claude_stream_summary(&stdout);
                                 if let Some(session_id) = &summary.session_id {
-                                    claude_session::save_session_id(&request, session_id);
+                                    agent_session::save_session_id(&request, session_id);
                                 }
                                 summary.outcome
                             }
@@ -541,7 +330,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     let follow_up_runner = FollowUpCommandRunner::Streaming {
                         sink,
@@ -574,7 +363,7 @@ impl AgentEngine for StreamProcessEngine {
                     let stderr_text = decode_output(stderr.clone().into_bytes());
                     let stdout_text = decode_output(stdout.clone().into_bytes());
                     if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
-                        claude_session::delete_saved_session_files(&request);
+                        agent_session::delete_saved_session_files(&request);
                         let retry_spec = claude_spec_without_resume(&spec);
                         let runner = FollowUpCommandRunner::Streaming {
                             sink: sink.clone(),
@@ -586,7 +375,7 @@ impl AgentEngine for StreamProcessEngine {
                             CommandOutcome::Success { stdout } => {
                                 let summary = collect_claude_stream_summary(&stdout);
                                 if let Some(session_id) = &summary.session_id {
-                                    claude_session::save_session_id(&request, session_id);
+                                    agent_session::save_session_id(&request, session_id);
                                 }
                                 let summary = handle_retryable_api_errors(
                                     spec.clone(),
@@ -655,7 +444,7 @@ async fn handle_retryable_api_errors(
             CommandOutcome::Success { stdout } => {
                 summary = collect_claude_stream_summary(&stdout);
                 if let Some(session_id) = &summary.session_id {
-                    claude_session::save_session_id(request, session_id);
+                    agent_session::save_session_id(request, session_id);
                 }
             }
             CommandOutcome::Failure { stderr, stdout, .. } => {
@@ -709,7 +498,7 @@ async fn handle_deferred_mcp_loop(
                 CommandOutcome::Success { stdout } => {
                     summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, session_id);
+                        agent_session::save_session_id(&request, session_id);
                     }
                     continue;
                 }
@@ -783,7 +572,7 @@ async fn handle_deferred_mcp_loop(
                     CommandOutcome::Success { stdout } => {
                         summary = collect_claude_stream_summary(&stdout);
                         if let Some(session_id) = &summary.session_id {
-                            claude_session::save_session_id(&request, session_id);
+                            agent_session::save_session_id(&request, session_id);
                         }
                         if summary.deferred_tool_use.is_none() {
                             return summary.outcome;
@@ -968,7 +757,7 @@ impl Drop for ProcessTreeGuard {
 }
 
 #[cfg(windows)]
-fn kill_windows_process_tree(pid: u32) {
+pub(crate) fn kill_windows_process_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -1246,7 +1035,8 @@ where
     let mut output = String::new();
     let mut debug_stdout_file =
         debug_stdout_path.and_then(|path| open_debug_claude_stdout_file(&path).ok());
-    let mut offset = 0usize;
+    let mut anonymous_block_count = 0usize;
+    let mut output_text_state = ClaudeOutputTextState::default();
     let mut tool_uses: HashMap<String, ClaudeToolUse> = HashMap::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut line_number = 0usize;
@@ -1283,6 +1073,9 @@ where
             continue;
         };
         async_tasks.observe(&value);
+        if value.get("type").and_then(Value::as_str) == Some("user") {
+            output_text_state.finish_segment();
+        }
         if let Some(update) = extract_claude_subagent_update(&value) {
             let parent_tool_use_id = tool_uses
                 .get(&update.tool_use_id)
@@ -1299,50 +1092,26 @@ where
                 &subtask_id,
             );
         }
-        for block in extract_claude_child_blocks(&value) {
-            let event = builder.response_child_block_created(
-                &block.id,
-                &block.block_type,
-                &block.parent_tool_use_id,
-                &block.content,
-            );
-            dispatcher.send(
-                event,
-                "streaming child agent block callback failed",
-                vec![
-                    ("task_id", task_id.clone()),
-                    ("subtask_id", subtask_id.clone()),
-                    ("parent_tool_use_id", block.parent_tool_use_id),
-                ],
-            );
-        }
-        if let Some(reasoning) = extract_reasoning(&value) {
-            if !reasoning.is_empty() {
-                emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
-            }
-        }
-        for tool_use in extract_claude_tool_uses(&value) {
-            emit_claude_tool_use(&dispatcher, &builder, &tool_use, &task_id, &subtask_id);
-            tool_uses.insert(tool_use.id.clone(), tool_use);
-        }
-        for tool_result in extract_claude_tool_results(&value) {
-            let tool_use = tool_uses
-                .remove(&tool_result.tool_use_id)
-                .unwrap_or_else(|| ClaudeToolUse {
-                    id: tool_result.tool_use_id.clone(),
-                    name: "Tool".to_owned(),
-                    input: Value::Object(Default::default()),
-                    parent_tool_use_id: tool_result.parent_tool_use_id.clone(),
-                });
-            emit_claude_tool_result(
+        let message_blocks = extract_claude_message_blocks(&value);
+        if !message_blocks.is_empty() {
+            emit_claude_message_blocks(
                 &dispatcher,
                 &builder,
-                &tool_use,
-                tool_result.content.as_deref(),
-                tool_result.is_error,
+                message_blocks,
+                &mut tool_uses,
+                &mut anonymous_block_count,
+                &mut output_text_state,
+                !async_tasks.has_active_task(),
                 &task_id,
                 &subtask_id,
             );
+            continue;
+        }
+        if let Some(reasoning) = extract_reasoning(&value) {
+            if !reasoning.is_empty() {
+                output_text_state.finish_segment();
+                emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
+            }
         }
         if async_tasks.has_active_task() {
             continue;
@@ -1353,26 +1122,199 @@ where
         if text.is_empty() {
             continue;
         }
-        let emitted = emit_text_chunks(
+        emit_claude_output_text(
             &dispatcher,
             &builder,
             &text,
-            &mut offset,
+            &mut output_text_state,
             &task_id,
             &subtask_id,
         );
-        let fields = vec![
-            ("task_id", task_id.to_string()),
-            ("subtask_id", subtask_id.to_string()),
-            ("chunk_count", emitted.to_string()),
-            ("text_chars", text.chars().count().to_string()),
-        ];
-        log_executor_event("streaming text chunks emitted", &fields);
     }
     dispatcher
-        .compact_pending_text_and_flush(&task_id, &subtask_id)
+        .compact_pending_and_flush(&task_id, &subtask_id)
         .await;
     StreamingStdoutOutcome::Success(output.trim().to_owned())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_claude_message_blocks(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    blocks: Vec<ClaudeMessageBlock>,
+    tool_uses: &mut HashMap<String, ClaudeToolUse>,
+    anonymous_block_count: &mut usize,
+    output_text_state: &mut ClaudeOutputTextState,
+    emit_root_text: bool,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    for block in blocks {
+        match block {
+            ClaudeMessageBlock::Root(block) if block.block_type != "text" || emit_root_text => {
+                output_text_state.finish_segment();
+                emit_claude_root_block(
+                    dispatcher,
+                    builder,
+                    block,
+                    anonymous_block_count,
+                    task_id,
+                    subtask_id,
+                );
+            }
+            ClaudeMessageBlock::Root(_) => output_text_state.finish_segment(),
+            ClaudeMessageBlock::OutputText(text) if emit_root_text => {
+                emit_claude_output_text(
+                    dispatcher,
+                    builder,
+                    &text.content,
+                    output_text_state,
+                    task_id,
+                    subtask_id,
+                );
+            }
+            ClaudeMessageBlock::OutputText(_) => output_text_state.finish_segment(),
+            ClaudeMessageBlock::ToolUse(tool_use) => {
+                output_text_state.finish_segment();
+                emit_claude_tool_use(dispatcher, builder, &tool_use, task_id, subtask_id);
+                tool_uses.insert(tool_use.id.clone(), tool_use);
+            }
+            ClaudeMessageBlock::ToolResult(tool_result) => {
+                output_text_state.finish_segment();
+                emit_claude_tool_result_from_state(
+                    dispatcher,
+                    builder,
+                    tool_uses,
+                    tool_result,
+                    task_id,
+                    subtask_id,
+                );
+            }
+            ClaudeMessageBlock::Child(block) => {
+                output_text_state.finish_segment();
+                emit_claude_child_block(dispatcher, builder, block, task_id, subtask_id);
+            }
+        }
+    }
+}
+
+fn emit_claude_output_text(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    text: &str,
+    state: &mut ClaudeOutputTextState,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let item_id = state.item_id(task_id, subtask_id);
+    emit_text_chunks_with_log(
+        dispatcher,
+        builder,
+        text,
+        &mut state.offset,
+        task_id,
+        subtask_id,
+        Some(&item_id),
+    );
+}
+
+fn emit_claude_root_block(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    block: crate::stream::ClaudeRootBlock,
+    anonymous_block_count: &mut usize,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let block_id = resolve_claude_block_id(
+        block.id,
+        &block.block_type,
+        anonymous_block_count,
+        task_id,
+        subtask_id,
+    );
+    let event = builder.response_process_block_created(
+        &block_id,
+        &block.block_type,
+        &block.process_kind,
+        &block.content,
+    );
+    dispatcher.send(
+        event,
+        "streaming Claude process block callback failed",
+        vec![
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("block_id", block_id),
+        ],
+    );
+}
+
+fn resolve_claude_block_id(
+    block_id: Option<String>,
+    block_type: &str,
+    anonymous_block_count: &mut usize,
+    task_id: &str,
+    subtask_id: &str,
+) -> String {
+    block_id.unwrap_or_else(|| {
+        *anonymous_block_count += 1;
+        format!(
+            "claude-{task_id}-{subtask_id}-{block_type}-{}",
+            *anonymous_block_count
+        )
+    })
+}
+
+fn emit_claude_child_block(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    block: ClaudeChildBlock,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let event = builder.response_child_block_created(
+        &block.id,
+        &block.block_type,
+        &block.parent_tool_use_id,
+        &block.content,
+    );
+    dispatcher.send(
+        event,
+        "streaming child agent block callback failed",
+        vec![
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("parent_tool_use_id", block.parent_tool_use_id),
+        ],
+    );
+}
+
+fn emit_claude_tool_result_from_state(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    tool_uses: &mut HashMap<String, ClaudeToolUse>,
+    tool_result: ClaudeToolResult,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let tool_use = tool_uses
+        .remove(&tool_result.tool_use_id)
+        .unwrap_or_else(|| ClaudeToolUse {
+            id: tool_result.tool_use_id.clone(),
+            name: "Tool".to_owned(),
+            input: Value::Object(Default::default()),
+            parent_tool_use_id: tool_result.parent_tool_use_id.clone(),
+        });
+    emit_claude_tool_result(
+        dispatcher,
+        builder,
+        &tool_use,
+        tool_result.content.as_deref(),
+        tool_result.is_error,
+        task_id,
+        subtask_id,
+    );
 }
 
 fn emit_claude_tool_use(
@@ -1515,11 +1457,15 @@ fn emit_text_chunks(
     offset: &mut usize,
     task_id: &str,
     subtask_id: &str,
+    item_id: Option<&str>,
 ) -> usize {
     let chunks = split_stream_text(text, stream_text_chunk_chars());
     let chunk_count = chunks.len();
     for delta in chunks {
-        let event = builder.response_text_delta(&delta, *offset);
+        let event = match item_id {
+            Some(item_id) => builder.response_text_delta_for_item(item_id, &delta, *offset),
+            None => builder.response_text_delta(&delta, *offset),
+        };
         let delta_chars = delta.chars().count();
         *offset += delta_chars;
         dispatcher.send_text_delta(
@@ -1533,6 +1479,27 @@ fn emit_text_chunks(
         );
     }
     chunk_count
+}
+
+fn emit_text_chunks_with_log(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    text: &str,
+    offset: &mut usize,
+    task_id: &str,
+    subtask_id: &str,
+    item_id: Option<&str>,
+) {
+    let emitted = emit_text_chunks(
+        dispatcher, builder, text, offset, task_id, subtask_id, item_id,
+    );
+    let fields = vec![
+        ("task_id", task_id.to_owned()),
+        ("subtask_id", subtask_id.to_owned()),
+        ("chunk_count", emitted.to_string()),
+        ("text_chars", text.chars().count().to_string()),
+    ];
+    log_executor_event("streaming text chunks emitted", &fields);
 }
 
 fn split_stream_text(text: &str, chunk_chars: usize) -> Vec<String> {
@@ -1741,40 +1708,12 @@ fn append_debug_claude_stdout(path: &PathBuf, stdout: &str) -> std::io::Result<(
     Ok(())
 }
 
-fn debug_claude_stdout_line(line: &str) -> String {
-    debug_claude_stdout_line_with_timestamp(
-        line,
-        Local::now().to_rfc3339_opts(SecondsFormat::Millis, false),
-    )
-}
-
-fn debug_claude_stdout_line_with_timestamp(line: &str, received_at: String) -> String {
-    match serde_json::from_str::<Value>(line.trim()) {
-        Ok(Value::Object(mut object)) => {
-            object.insert("received_at".to_owned(), Value::String(received_at));
-            Value::Object(object).to_string()
-        }
-        Ok(value) => {
-            let mut object = Map::new();
-            object.insert("received_at".to_owned(), Value::String(received_at));
-            object.insert("value".to_owned(), value);
-            Value::Object(object).to_string()
-        }
-        Err(_) => {
-            let mut object = Map::new();
-            object.insert("received_at".to_owned(), Value::String(received_at));
-            object.insert("raw".to_owned(), Value::String(line.to_owned()));
-            Value::Object(object).to_string()
-        }
-    }
-}
-
 fn debug_claude_stdout_path_for_spec(
     spec: &CommandSpec,
     task_id: Option<&str>,
     subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
-    (is_claude_program(&spec.program) && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
+    (is_claude_program(&spec.program) && debug_stdout::enabled())
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
 }
 
@@ -1783,15 +1722,6 @@ fn is_claude_program(program: &str) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         == Some("claude")
-}
-
-fn env_flag_enabled(name: &str) -> bool {
-    env::var(name)
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            !matches!(value.as_str(), "0" | "false" | "no" | "off")
-        })
-        .unwrap_or(false)
 }
 
 fn debug_claude_stdout_path(task_id: Option<&str>, subtask_id: Option<&str>) -> PathBuf {

@@ -1,13 +1,5 @@
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  Bot,
-  ChevronDown,
-  MessageSquare,
-  Plus,
-  Undo2,
-  X,
-} from 'lucide-react'
+import { IssueTaskConversationPanel } from '@wegent/collaboration'
+import { ArrowUpRight, Bot, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -21,6 +13,7 @@ import {
   withoutRuntimeTaskWorkspaceBinding,
 } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
+import { findWorkbenchDevice, getWorkbenchDeviceDisplayName } from '@/lib/workbench-device'
 import type {
   ProjectExecutionMode,
   ProjectWithTasks,
@@ -150,20 +143,26 @@ export function AiChatModal({
     () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
     [project, task, workflowNodeId]
   )
+  const executionDeviceName = useMemo(() => {
+    const deviceId = initialAddress?.deviceId ?? null
+    return getWorkbenchDeviceDisplayName(
+      findWorkbenchDevice(state?.devices ?? [], deviceId),
+      deviceId
+    )
+  }, [initialAddress?.deviceId, state?.devices])
 
-  // The task detail modal stays open underneath; Escape only closes the chat
-  // first so the user never loses the task context in one keystroke.
+  // Embedded panes handle Escape locally so sibling drawers keep their context.
   useEffect(() => {
-    if (!open) return
+    if (!open || embedded) return
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
         event.stopPropagation()
         onClose()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, open])
+  }, [embedded, onClose, open])
 
   const taskRequest = useMemo(
     () =>
@@ -275,69 +274,30 @@ export function AiChatModal({
   if (initialAddress) {
     if (embedded) {
       return (
-        <aside
-          data-testid="ai-chat-modal-backdrop"
-          data-presentation="sidebar"
-          className={cn(
-            'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
-            !open && 'hidden'
-          )}
+        <IssueTaskConversationPanel
+          issueId={task?.id}
+          open={open}
+          existingTask={true}
+          executionDeviceName={executionDeviceName}
+          onClose={onClose}
+          onBack={onBack}
+          translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
+          onOpenTask={onOpenRuntimeTask ? () => onOpenRuntimeTask(initialAddress) : undefined}
         >
-          <section
-            data-testid="ai-chat-modal"
-            className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
-          >
-            <header className="flex h-12 shrink-0 items-center gap-2 px-3">
-              <button
-                type="button"
-                data-testid="ai-chat-modal-back"
-                onClick={onBack ?? onClose}
-                aria-label={t('workbench.back_to_work_item', '返回 Issue')}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </button>
-              <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
-                <b className="font-medium text-text-secondary">{task?.id}</b>
-                {' · '}
-                {t('workbench.task_conversation', '任务对话')}
-              </span>
-              {onOpenRuntimeTask ? (
-                <button
-                  type="button"
-                  data-testid="ai-chat-open-runtime-task"
-                  onClick={() => void onOpenRuntimeTask(initialAddress)}
-                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                >
-                  {t('workbench.open_full_task', '打开完整任务')}
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                data-testid="ai-chat-modal-close"
-                onClick={onClose}
-                aria-label={t('common.close', '关闭')}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </header>
-            <TemporaryChatPanel
-              currentProject={selectedLocalProject}
-              source={initialAddress}
-              instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
-              testId="work-item-task-chat-panel"
-              initialAddress={currentAddress}
-              onAddressChange={rememberAddress}
-              runtimeContext={runtimeContext}
-              sendEphemeral={false}
-              emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
-              placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
-              expanded
-            />
-          </section>
-        </aside>
+          <TemporaryChatPanel
+            currentProject={selectedLocalProject}
+            source={initialAddress}
+            instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
+            testId="work-item-task-chat-panel"
+            initialAddress={currentAddress}
+            onAddressChange={rememberAddress}
+            runtimeContext={runtimeContext}
+            sendEphemeral={false}
+            emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
+            placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
+            expanded
+          />
+        </IssueTaskConversationPanel>
       )
     }
 
@@ -399,7 +359,9 @@ export function AiChatModal({
                 <dt className="text-text-muted">{t('workbench.runtime_task', '执行任务')}</dt>
                 <dd className="truncate text-text-primary">{taskTitle || initialAddress.taskId}</dd>
                 <dt className="text-text-muted">{t('workbench.device', '设备')}</dt>
-                <dd className="truncate text-text-primary">{initialAddress.deviceId}</dd>
+                <dd className="truncate text-text-primary" data-testid="ai-chat-execution-device">
+                  {executionDeviceName || initialAddress.deviceId}
+                </dd>
               </dl>
             </div>
           </aside>
@@ -443,41 +405,20 @@ export function AiChatModal({
 
   if (embedded) {
     return (
-      <aside
-        data-testid="ai-chat-modal-backdrop"
-        data-presentation="sidebar"
-        className={cn(
-          'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
-          !open && 'hidden'
-        )}
+      <IssueTaskConversationPanel
+        issueId={task?.id}
+        open={open}
+        existingTask={false}
+        onClose={onClose}
+        onBack={onBack}
+        translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
       >
-        <section
-          data-testid="ai-chat-modal"
-          className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
-        >
-          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
-            <button
-              type="button"
-              data-testid="ai-chat-modal-close"
-              onClick={onClose}
-              aria-label={t('workbench.back_to_work_item', '返回工作空间')}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
-              <b className="font-medium text-text-secondary">{task?.id}</b>
-              {' · '}
-              {t('todo.new_task')}
-            </span>
-          </header>
-          {renderNewTaskComposer(
-            `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,
-            'work-item-new-task-chat-panel',
-            { expanded: true, startFresh: true }
-          )}
-        </section>
-      </aside>
+        {renderNewTaskComposer(
+          `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,
+          'work-item-new-task-chat-panel',
+          { expanded: true, startFresh: true }
+        )}
+      </IssueTaskConversationPanel>
     )
   }
 

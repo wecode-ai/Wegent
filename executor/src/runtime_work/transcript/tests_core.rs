@@ -672,6 +672,7 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
     assert_eq!(messages[2]["content"], "inspect runtime");
     assert_eq!(messages[3]["role"], "assistant");
     assert_eq!(messages[3]["content"], "Done.");
+    assert_eq!(messages[3]["createdAt"], 1_780_000_005_000_i64);
     assert_eq!(messages[3]["blocks"][0]["type"], "text");
     assert_eq!(
         messages[3]["blocks"][0]["content"],
@@ -1006,6 +1007,32 @@ fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
         "# Plan\n\n- Inspect the repo."
     );
     assert_eq!(messages[1]["blocks"][0]["status"], "done");
+}
+
+#[test]
+fn transcript_keeps_in_progress_codex_plan_items_streaming() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "status": "inProgress",
+            "items": [{
+                "id": "plan-1",
+                "type": "plan",
+                "text": "# Plan\n\n- Inspect the repo.",
+                "status": "inProgress"
+            }]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["status"], "streaming");
+    assert_eq!(messages[0]["blocks"][0]["type"], "plan");
+    assert_eq!(messages[0]["blocks"][0]["status"], "streaming");
 }
 
 #[test]

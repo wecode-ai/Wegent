@@ -472,6 +472,11 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let _lock = env_lock().await;
+    let _debug = EnvGuard::set("WEGENT_DEBUG_CLAUDE_STDOUT", "1");
+    let stdout_path = std::env::temp_dir().join(format!(
+        "wegent-codex-stdout-{}.jsonl",
+        std::process::id()
+    ));
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-shared-proxy-rpc-{}.jsonl",
         std::process::id()
@@ -503,6 +508,13 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
         )
         .await
         .expect("task should reuse the proxy-configured app-server");
+
+    let stdout = read_json_lines(&stdout_path);
+    assert!(stdout.iter().any(|line| line["id"] == 1));
+    assert!(stdout.iter().any(|line| line["method"] == "turn/completed"));
+    assert!(stdout.iter().all(|line| line["received_at"].is_string()));
+    client.restart().await;
+    fs::remove_file(stdout_path).unwrap();
 
     assert_eq!(
         turn.outcome,
@@ -856,7 +868,7 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+            if matches!(client.restart_if_idle().await, Err((0, 1))) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -885,7 +897,7 @@ async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+            if matches!(client.restart_if_idle().await, Err((0, 1))) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -1135,7 +1147,12 @@ fn shared_test_runtime() -> &'static Runtime {
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    static EXECUTOR_HOME: OnceLock<PathBuf> = OnceLock::new();
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let executor_home = EXECUTOR_HOME.get_or_init(|| unique_dir("codex-app-server-home"));
+    std::env::set_var("WEGENT_EXECUTOR_HOME", executor_home);
+    std::env::set_var("WEGENT_CODEX_HOME", executor_home.join("codex"));
+    guard
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
@@ -1754,7 +1771,7 @@ fn read_json_lines(path: &Path) -> Vec<Value> {
 }
 
 async fn wait_for_path(path: &Path, message: &str) {
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while !path.exists() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

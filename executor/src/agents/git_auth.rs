@@ -35,7 +35,7 @@ struct GitTokenDiagnostics {
 }
 
 const ENCRYPTED_REQUEST_TOKEN: &str = "encrypted_request_token";
-const DEVICE_LOCAL: &str = "device_local";
+pub(crate) const DEVICE_LOCAL: &str = "device_local";
 
 pub async fn setup_git_authentication(request: &ExecutionRequest) {
     set_git_environment(request);

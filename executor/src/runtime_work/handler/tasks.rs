@@ -214,16 +214,11 @@ impl RuntimeWorkRpcHandler {
                 ("last_turn_id", last_turn_id.clone()),
             ],
         );
+        let request = runtime_event_request_from_link(&source);
+        self.ensure_notification_router().await;
         let response = match self
-            .call_codex_thread_method(
-                "thread/fork",
-                json!({
-                    "threadId": source_thread_id,
-                    "lastTurnId": last_turn_id,
-                    "cwd": source.workspace_path,
-                    "excludeTurns": true,
-                }),
-            )
+            .codex_app_server
+            .fork_thread_at(&source_thread_id, None, &last_turn_id, &request)
             .await
         {
             Ok(response) => response,
@@ -249,7 +244,7 @@ impl RuntimeWorkRpcHandler {
         let link = forked_task_link(
             &source,
             local_task_id.clone(),
-            thread_id,
+            thread_id.clone(),
             title,
             json!({
                 "taskId": source.local_task_id,
@@ -258,6 +253,7 @@ impl RuntimeWorkRpcHandler {
             }),
         );
         self.upsert_local_task(link);
+        let transcript = self.transcript(json!({ "taskId": local_task_id })).await?;
         log_executor_event(
             "runtime task fork completed",
             &[
@@ -279,6 +275,7 @@ impl RuntimeWorkRpcHandler {
                 "workspacePath": source.workspace_path,
             },
             "runtime": "codex",
+            "transcript": transcript,
         }))
     }
 
@@ -331,6 +328,9 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if is_claude_runtime(&runtime) {
+            ensure_claude_execution_identity(&local_task_id, &mut request);
+        }
         set_runtime_task_title(&mut request, &title);
         log_executor_event(
             "runtime task create identity",
@@ -386,6 +386,25 @@ impl RuntimeWorkRpcHandler {
             .get("workspaceSourceTask")
             .or_else(|| payload.get("workspace_source_task"))
             .and_then(Value::as_object);
+        let mut side_source = side_source_thread(&payload)?;
+        let side_source_workspace_path = side_source
+            .as_ref()
+            .map(|source| source.workspace_path.clone());
+        if let Some(source_workspace_path) = side_source_workspace_path.as_deref() {
+            for requested_workspace_path in [payload_workspace_path.as_deref(), request.cwd()]
+                .into_iter()
+                .flatten()
+            {
+                if normalize_workspace_path(requested_workspace_path)
+                    != normalize_workspace_path(source_workspace_path)
+                {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "sideSource workspacePath conflicts with the requested workspace",
+                    ));
+                }
+            }
+        }
         let inherited_workspace_path = if let Some(source) = workspace_source_task {
             let source_device_id = source
                 .get("deviceId")
@@ -420,7 +439,8 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let source_workspace_path = payload_workspace_path
+        let source_workspace_path = side_source_workspace_path
+            .or(payload_workspace_path)
             .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
@@ -467,7 +487,9 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
+        let workspace_path = if side_source.is_none()
+            && request.workspace_source.as_deref() == Some("git_worktree")
+        {
             let git_ref = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
@@ -533,6 +555,7 @@ impl RuntimeWorkRpcHandler {
         link.project_instructions = request.system_prompt.clone();
         link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
         if let (Some(runtime_handle), Some(payload_handle)) = (
             link.runtime_handle.as_object_mut(),
             payload
@@ -619,7 +642,6 @@ impl RuntimeWorkRpcHandler {
             }
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-            let mut side_source = side_source_thread(&payload);
             if let Some(source) = &mut side_source {
                 self.wait_for_running_side_source_turn(&source.thread_id)
                     .await;
@@ -896,6 +918,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "runtime"))
             .unwrap_or_else(|| "codex".to_owned());
         if is_claude_runtime(&runtime) {
+            ensure_claude_execution_identity(&local_task_id, &mut request);
+            if let Some(session) = existing_link
+                .as_ref()
+                .and_then(|link| link.runtime_handle.get("executorSession"))
+            {
+                request.inherited_sessions.insert(0, session.clone());
+            }
             if request.extra.get("runtime_executable_path").is_none() {
                 if let Some(executable_path) = existing_link
                     .as_ref()
@@ -985,6 +1014,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        self.store.update_task(&local_task_id, |link| {
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
         if let Some(turn_id) = retry_source_turn_id(&payload) {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
@@ -1557,13 +1589,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        let link = self
-            .store
-            .update_task(&local_task_id, |link| {
-                link.updated_at = now_ms();
-                link.completed_at = Some(link.updated_at);
-            })
-            .or_else(|| self.local_task_link(&local_task_id));
+        let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link
             .as_ref()
@@ -1881,6 +1907,20 @@ pub(super) fn forked_task_link(
     link.runtime_workspace_roots = source.runtime_workspace_roots.clone();
     link.project_instructions = source.project_instructions.clone();
     link.project_plugin_ids = source.project_plugin_ids.clone();
+    if let Some(execution_request) = source
+        .runtime_handle
+        .get("executionRequest")
+        .or_else(|| source.runtime_handle.get("execution_request"))
+    {
+        link.runtime_handle["executionRequest"] = execution_request.clone();
+    }
+    if let Some(model_selection) = source
+        .runtime_handle
+        .get("modelSelection")
+        .or_else(|| source.runtime_handle.get("model_selection"))
+    {
+        link.runtime_handle["modelSelection"] = model_selection.clone();
+    }
     link
 }
 

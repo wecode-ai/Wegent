@@ -12,7 +12,7 @@ from starlette.datastructures import Headers
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.trigger.unified import (
+from app.services.chat.trigger.request_preparation import (
     _build_codex_runtime_model_config,
     build_wework_runtime_model_config,
 )
@@ -542,7 +542,9 @@ def test_cloud_runtime_rejects_invalid_protocol_before_dispatch(
     api_format: str | None,
 ) -> None:
     from app.core.config import settings
-    from app.services.chat.trigger.unified import _build_cloud_gateway_model_config
+    from app.services.chat.trigger.request_preparation import (
+        _build_cloud_gateway_model_config,
+    )
 
     model = _model_kind(0, protocol=protocol, api_format=api_format)
     test_db.add(model)

@@ -59,7 +59,11 @@ const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
 const SUBAGENT_SEARCH_CALL_ID = 'wework-subagent-tool-search'
 const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
 const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
+const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
 const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
+const SUBAGENT_CHILD_TOOL_MARKER = 'WEWORK_DESKTOP_E2E_SUBAGENT_TOOL'
+const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
+const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
 const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
 const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\nWEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE`
 const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
@@ -641,6 +645,12 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   return duration
 }
 
+function processingDurationSeconds(text) {
+  const minutes = Number(text.match(/(\d+)\s*分钟/)?.[1] ?? 0)
+  const seconds = Number(text.match(/(\d+)\s*秒/)?.[1] ?? 0)
+  return minutes * 60 + seconds
+}
+
 async function expandCompletedProcessing(control, timeoutMs) {
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
   await control.command('waitFor', finalToggle, { timeoutMs })
@@ -863,9 +873,11 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
+  const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   let active = false
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
+  let subagentChildStage = 'initial'
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
@@ -877,6 +889,7 @@ export function createDesktopScenario({
   let releaseSubagentCompletion
   let releaseToolCompletion
   let releaseToolFinalCompletion
+  let releaseTimerFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveRequest
@@ -924,6 +937,9 @@ export function createDesktopScenario({
   const toolCompletionRelease = new Promise(resolve => {
     releaseToolCompletion = resolve
   })
+  const timerFinalCompletionRelease = new Promise(resolve => {
+    releaseTimerFinalCompletion = resolve
+  })
   const toolFollowUpReceived = new Promise(resolve => {
     resolveToolFollowUp = resolve
   })
@@ -933,7 +949,6 @@ export function createDesktopScenario({
   const toolFinalCompletionRelease = new Promise(resolve => {
     releaseToolFinalCompletion = resolve
   })
-
   const verifyLongCodeTerminalBurst = async control => {
     await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
     await openNewChatWithE2EModel(control, uiTimeoutMs)
@@ -961,6 +976,16 @@ export function createDesktopScenario({
       Number(await control.command('getElementCount', THINKING_INDICATOR_SELECTOR)),
       0,
       'The generic thinking indicator remained after long-code output became visible'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+        )
+      ),
+      0,
+      'The processing timeline completed while final assistant text was still streaming'
     )
 
     releaseLongCodeStream()
@@ -1082,6 +1107,14 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
     }
+    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    const durationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
+    const completedDuration = await control.command('getText', durationSelector)
+    assert.match(completedDuration, /用时/)
+    assert.ok(
+      processingDurationSeconds(completedDuration) >= 2,
+      `The turn following a stopped turn lost its elapsed time: ${completedDuration}`
+    )
     for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1100,6 +1133,12 @@ export function createDesktopScenario({
       0,
       'The latest transcript position remained on the older stopped turn'
     )
+    const restoredDuration = await control.command('getText', durationSelector)
+    assert.match(restoredDuration, /用时/)
+    assert.ok(
+      processingDurationSeconds(restoredDuration) >= 2,
+      `The resumed turn duration reset after transcript restoration: ${restoredDuration}`
+    )
     await capture(control, 'streaming-text-17-stopped-turn-order-restored.png')
   }
 
@@ -1111,28 +1150,85 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="subagent-activity-chip"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-01-inline-activity.png')
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The child agent stream leaked into the root conversation'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-01-inline-activity.png')
     await control.command('click', '[data-testid="subagent-activity-chip"]')
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The subagent conversation was not opened inside the active right workspace tab'
+    )
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The running child tool leaked into the root conversation'
+    )
     await subagentPartialWritten
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-02-streaming-conversation.png')
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The rendered child agent stream leaked into the root conversation'
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The completed child tool leaked into the root conversation'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-02-streaming-conversation.png')
     releaseSubagentCompletion()
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-03-completed-conversation.png')
+    await captureSubagent(control, 'streaming-text-subagent-03-completed-conversation.png')
 
     await control.command('click', '[data-testid="subagent-conversation-back"]')
     await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The subagent overview lost its right workspace tab'
+    )
     assert.equal(
       Number(await control.command('getElementCount', '[data-testid="subagent-overview-item"]')),
       1,
@@ -1145,13 +1241,13 @@ export function createDesktopScenario({
       false,
       'A completed subagent retained the running preview'
     )
-    await capture(control, 'streaming-text-subagent-04-completed-overview.png')
+    await captureSubagent(control, 'streaming-text-subagent-04-completed-overview.png')
 
-    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
     await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-05-environment-summary.png')
+    await captureSubagent(control, 'streaming-text-subagent-05-environment-summary.png')
 
     const readyCountBeforeReload = control.readyCount
     await control.command('reloadMainWindow', 'body')
@@ -1171,13 +1267,31 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      await control.command('getAttribute', '[data-testid="right-workspace-subagents-tab"]', {
+        value: 'aria-selected',
+      }),
+      'true',
+      'The restored subagent overview was not opened inside the right workspace tab'
+    )
     await control.command('click', '[data-testid="subagent-overview-item"]')
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
-    await capture(control, 'streaming-text-subagent-06-restored-history.png')
-    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_TOOL_MARKER
+      ),
+      false,
+      'The restored child tool leaked into the root conversation'
+    )
+    await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
+    await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
   }
 
   return {
@@ -1221,6 +1335,34 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (request.headers['x-openai-subagent']) {
+        if (subagentChildStage === 'initial') {
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            `printf '${SUBAGENT_CHILD_TOOL_START}\\n'; sleep 2; printf '${SUBAGENT_CHILD_TOOL_COMPLETE}\\n'`,
+            10_000
+          )
+          subagentChildStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall(SUBAGENT_CHILD_TOOL_CALL_ID, tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        assert.equal(
+          subagentChildStage,
+          'awaiting-tool-output',
+          `Unexpected subagent child stage: ${subagentChildStage}`
+        )
+        assert.ok(
+          requestContainsToolOutputForCall(body, SUBAGENT_CHILD_TOOL_CALL_ID),
+          'The child tool output was not returned to the subagent'
+        )
+        subagentChildStage = 'streaming-text'
         const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -1242,6 +1384,7 @@ export function createDesktopScenario({
             )
           )
         )
+        subagentChildStage = 'complete'
         response.end(sse(stream.finish))
         return true
       }
@@ -1372,9 +1515,13 @@ export function createDesktopScenario({
       }
       if (followUpNumber !== null) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(sse([responseCreated(responseId)]))
+        if (followUpNumber === ORDER_FOLLOW_UP_COUNT) {
+          response.write(sse([assistantMessage('继续检查耗时。', 'commentary')]))
+          await new Promise(resolve => setTimeout(resolve, 2100))
+        }
         response.end(
           sse([
-            responseCreated(responseId),
             assistantMessage(`${ORDER_COMPLETION_PREFIX}_${followUpNumber}`),
             responseCompleted(responseId),
           ])
@@ -1392,15 +1539,13 @@ export function createDesktopScenario({
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
-        timerStage = 'complete'
+        timerStage = 'awaiting-final-completion'
+        const stream = streamingEvents(responseId, TIMER_COMPLETION)
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(TIMER_COMPLETION),
-            responseCompleted(responseId),
-          ])
-        )
+        response.write(sse([...stream.start, ...textDeltaEvents(stream.itemId, TIMER_COMPLETION)]))
+        await timerFinalCompletionRelease
+        timerStage = 'complete'
+        response.end(sse(stream.finish))
         return true
       }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
@@ -1942,6 +2087,15 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       const toolDurationBeforeSwitch = await waitForToolDuration(control, 3, uiTimeoutMs)
+      const processingDurationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
+      const runningDurationBeforeSwitch = await control.command(
+        'getText',
+        processingDurationSelector
+      )
+      assert.match(runningDurationBeforeSwitch, /已处理/, 'The running turn duration was missing')
+      const elapsedBeforeSwitch = processingDurationSeconds(runningDurationBeforeSwitch)
+      // The turn label refreshes once per second; tool rows refresh every 100 ms.
+      assert.ok(elapsedBeforeSwitch >= 2, 'The turn timer did not advance with the running tool')
       const summaryBeforeSwitch = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
       assert.equal(
         toolDurationSeconds(summaryBeforeSwitch),
@@ -1955,6 +2109,15 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       const toolDurationAfterSwitch = await waitForToolDuration(control, 1, uiTimeoutMs)
+      const runningDurationAfterSwitch = await control.command(
+        'getText',
+        processingDurationSelector
+      )
+      assert.match(runningDurationAfterSwitch, /已处理/)
+      assert.ok(
+        processingDurationSeconds(runningDurationAfterSwitch) >= elapsedBeforeSwitch,
+        `The turn timer reset after switching tasks: ${runningDurationAfterSwitch}`
+      )
       assert.ok(
         toolDurationAfterSwitch >= toolDurationBeforeSwitch,
         `The running tool timer reset from ${toolDurationBeforeSwitch}s to ${toolDurationAfterSwitch}s after switching pages`
@@ -1966,11 +2129,36 @@ export function createDesktopScenario({
         `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
       )
       await capture(control, 'streaming-text-07-running-tool-restored.png')
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: TIMER_COMPLETION,
-        timeoutMs: 25_000,
-      })
+      let elapsedDuringFinalText
+      try {
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: TIMER_COMPLETION,
+          timeoutMs: 25_000,
+        })
+        const finalTextDuration = await control.command('getText', processingDurationSelector)
+        assert.match(finalTextDuration, /已处理/, 'The timer stopped when final text arrived')
+        await new Promise(resolve => setTimeout(resolve, 2100))
+        const advancingDuration = await control.command('getText', processingDurationSelector)
+        assert.match(advancingDuration, /已处理/)
+        elapsedDuringFinalText = processingDurationSeconds(advancingDuration)
+        assert.ok(
+          elapsedDuringFinalText > processingDurationSeconds(finalTextDuration),
+          `The timer froze during final answer streaming: ${finalTextDuration} -> ${advancingDuration}`
+        )
+      } finally {
+        releaseTimerFinalCompletion()
+      }
+      await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
+      const completedProcessingDuration = await control.command(
+        'getText',
+        processingDurationSelector
+      )
+      assert.match(completedProcessingDuration, /用时/, 'The completed turn duration was missing')
+      assert.ok(
+        processingDurationSeconds(completedProcessingDuration) >= elapsedDuringFinalText,
+        `The turn duration reset on completion: ${completedProcessingDuration}`
+      )
       await capture(control, 'streaming-text-08-tool-completed.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1983,6 +2171,11 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       const completedDurationAfterSwitch = await completedToolDuration(control, uiTimeoutMs)
+      assert.equal(
+        await control.command('getText', processingDurationSelector),
+        completedProcessingDuration,
+        'The completed turn duration changed after switching tasks'
+      )
       assert.equal(
         completedDurationAfterSwitch,
         completedDurationBeforeSwitch,
@@ -2202,7 +2395,7 @@ export function createDesktopScenario({
         distanceFromBottom(scrollerBeforeAppend) > 8,
         'The simulated user scroll did not move the streaming conversation away from the bottom'
       )
-      const anchorBeforeAppend = await getSingleElementMetrics(
+      let anchorBeforeAppend = await getSingleElementMetrics(
         control,
         VIEWPORT_ANCHOR_SELECTOR,
         'The viewport anchor before later content'
@@ -2212,6 +2405,32 @@ export function createDesktopScenario({
           anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
         `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
       )
+      // Small consecutive wheel steps must move the same text by the requested pixels, including
+      // after virtual measurements settle. Return to the starting position before testing append.
+      const anchorStartTop = anchorBeforeAppend.top
+      for (const delta of [12, 24, 36, 0]) {
+        await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+          value: String(distanceFromBottom(scrollerBeforeAppend) + delta),
+        })
+        await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+          text: VIEWPORT_ANCHOR_TEXT,
+          stableMs: 200,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('markElementWithText', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+          text: VIEWPORT_ANCHOR_TEXT,
+          value: VIEWPORT_ANCHOR_E2E_ID,
+        })
+        anchorBeforeAppend = await getSingleElementMetrics(
+          control,
+          VIEWPORT_ANCHOR_SELECTOR,
+          `The viewport anchor after a ${delta}px reading offset`
+        )
+        assert.ok(
+          Math.abs(anchorBeforeAppend.top - anchorStartTop - delta) <= 8,
+          `The reading position bounced: expected ${anchorStartTop + delta}px, got ${anchorBeforeAppend.top}px`
+        )
+      }
       await capture(control, 'streaming-text-12-user-scrolled-up.png')
 
       const previousContentLength = (await control.command('getText', PROCESS_TEXT_SELECTOR)).length
@@ -2335,6 +2554,18 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The scroll-to-bottom button left the growing streaming conversation ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom`
       )
+      // Regression: the bottom pin must survive past the previous fixed release window so a
+      // response that keeps growing cannot leave the user staring at the middle of the chat.
+      await new Promise(resolve => setTimeout(resolve, 1_200))
+      const pinnedAfterReleaseWindow = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The growing streaming conversation after the bottom release window'
+      )
+      assert.ok(
+        distanceFromBottom(pinnedAfterReleaseWindow) <= 8,
+        `The jump-to-bottom pin was dropped after the release window, leaving the conversation ${distanceFromBottom(pinnedAfterReleaseWindow)}px from the bottom`
+      )
       await capture(control, 'streaming-text-14-scroll-button-followed-layout-growth.png')
       await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -2454,10 +2685,87 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
+
+      // Regression: a small upward scroll that stays within the bottom tolerance must keep
+      // its up-scroll pause so the follow engine cannot snap the viewport straight back to
+      // the bottom (the reported "cannot scroll up while the assistant replies" issue).
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       await waitForBottom(
         control,
-        'The completed conversation after restoring the downstream test precondition',
+        'The completed conversation before the small up-scroll regression',
+        uiTimeoutMs
+      )
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '3' })
+      const smallUpScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation immediately after a small up-scroll'
+      )
+      assert.ok(
+        distanceFromBottom(smallUpScrollPosition) > 0,
+        'The small up-scroll did not move the completed conversation away from the very bottom'
+      )
+      const smallUpScrollDeadline = Date.now() + 2_000
+      while (Date.now() < smallUpScrollDeadline) {
+        const current = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          'The completed conversation while pending bottom-follow work could run'
+        )
+        assert.ok(
+          distanceFromBottom(current) > 0,
+          `The small up-scroll was snapped straight back to the bottom (paused follow cleared the up-scroll intent; now ${distanceFromBottom(current)}px from the bottom)`
+        )
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      // Regression: sweeping upward through the history must keep moving the reader away from
+      // the bottom. Re-measured rows used to drag the viewport back down, which the user saw
+      // as small bounces while reading and as being yanked back to the very bottom.
+      const sweepStart = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation before the fast upward sweep'
+      )
+      const sweepMaximum = Math.max(
+        1,
+        sweepStart.scrollHeight - sweepStart.clientHeight,
+        distanceFromBottom(sweepStart)
+      )
+      let sweepDistanceFromBottom = distanceFromBottom(sweepStart)
+      let previousSweepFraction = 0
+      for (const fraction of [0.25, 0.5, 0.75, 1]) {
+        await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+          value: String(Math.round(sweepMaximum * fraction)),
+        })
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const sweepStep = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          `The completed conversation after fast upward sweep step ${fraction}`
+        )
+        const stepDistanceFromBottom = distanceFromBottom(sweepStep)
+        // Re-measured rows above the viewport keep the reader's text still, so the distance from the
+        // bottom legitimately lands short of the requested position. What must hold is that the sweep
+        // moves the reader further up the history instead of leaving the viewport near the bottom.
+        const requestedStepDistance = Math.round(sweepMaximum * (fraction - previousSweepFraction))
+        assert.ok(
+          stepDistanceFromBottom >= sweepDistanceFromBottom + requestedStepDistance / 2,
+          `The fast upward sweep did not advance (${Math.round(sweepDistanceFromBottom)}px -> ${Math.round(stepDistanceFromBottom)}px from the bottom)`
+        )
+        sweepDistanceFromBottom = stepDistanceFromBottom
+        previousSweepFraction = fraction
+      }
+      await capture(control, 'streaming-text-19-fast-up-scroll-stable.png')
+      assert.ok(
+        sweepDistanceFromBottom > 0,
+        'The fast upward sweep never left the bottom of the completed conversation'
+      )
+
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await waitForBottom(
+        control,
+        'The completed conversation after clearing the small up-scroll regression',
         uiTimeoutMs
       )
       const completedSnapshot = JSON.parse(

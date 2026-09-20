@@ -358,6 +358,8 @@ class TaskRequestBuilder:
             team_crd,
             bot,
             user_id=user.id,
+            user_name=user.user_name,
+            task_id=task.id,
             override_model_name=override_model_name,
             force_override=force_override,
             runtime_model_config=(
@@ -404,10 +406,10 @@ class TaskRequestBuilder:
                     if server.get("name") not in managed_names
                 ] + managed_bot_servers
 
-        # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
+        # Coding executors share resolved Skills and coordinate member capabilities.
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
-            if shell_type == "ClaudeCode":
+            if shell_type in {"ClaudeCode", "Codex"}:
                 if collaboration_model == "coordinate":
                     self._extend_resolved_skills_from_bot_configs(
                         bot_configs=bot_config,
@@ -417,7 +419,8 @@ class TaskRequestBuilder:
                         user=user,
                     )
                     self._merge_coordinate_capabilities_into_leader(bot_config)
-                self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
+                    self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
+                self._prepare_mcp_for_coding_executor(bot_config[0], resolved_skills)
 
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
@@ -686,7 +689,7 @@ class TaskRequestBuilder:
 
         This is used when downstream context processing adds preload skills after the
         initial build phase, such as selected knowledge bases that must turn into a
-        concrete public skill with ClaudeCode MCP wiring.
+        concrete public skill with coding-executor MCP wiring.
         """
         requested_skill_names = []
         for skill_name in [
@@ -723,6 +726,8 @@ class TaskRequestBuilder:
                 "namespace": skill_ref.get("namespace", "default"),
                 "is_public": skill_ref.get("is_public", False),
             }
+            if skill_ref.get("skill_id") is not None:
+                explicit_ref["skill_id"] = skill_ref["skill_id"]
 
             if get_mcp_service_by_skill_name(skill_name):
                 explicit_ref["namespace"] = "default"
@@ -746,6 +751,19 @@ class TaskRequestBuilder:
             user_id=user.id,
             user_preload_skills=user_preload_skills,
         )
+
+        if (
+            request.bot
+            and request.bot[0].get("shell_type") in {"ClaudeCode", "Codex"}
+            and request.collaboration_model == "coordinate"
+        ):
+            self._extend_resolved_skills_from_bot_configs(
+                bot_configs=request.bot,
+                resolved_skills=resolved_skills,
+                skill_refs=skill_refs,
+                team=team,
+                user=user,
+            )
 
         preload_skill_refs = {
             name: skill_refs[name]
@@ -771,14 +789,14 @@ class TaskRequestBuilder:
                 existing_bot_skills.add(skill_name)
         self._sync_skill_refs_to_bot_configs(request.bot, skill_refs)
 
-        if bot_config.get("shell_type") == "ClaudeCode":
+        if bot_config.get("shell_type") in {"ClaudeCode", "Codex"}:
             new_skill_configs = [
                 skill_config
                 for skill_config in resolved_skills
                 if skill_config.get("name") in missing_skill_names
             ]
             if new_skill_configs:
-                self._prepare_mcp_for_claude_code(bot_config, new_skill_configs)
+                self._prepare_mcp_for_coding_executor(bot_config, new_skill_configs)
 
         logger.info(
             "[TaskRequestBuilder] Resolved request preload skills: added=%s, total_skills=%s",
@@ -1911,6 +1929,8 @@ Response template:
         override_model_name: str | None = None,
         force_override: bool = False,
         runtime_model_config: dict[str, Any] | None = None,
+        user_name: str = "",
+        task_id: int | None = None,
     ) -> list[dict]:
         """Build bot configuration list.
 
@@ -1922,16 +1942,22 @@ Response template:
             override_model_name: Optional model name override from task
             force_override: Whether override takes priority
             runtime_model_config: Optional already-resolved runtime model config
+            user_name: Current user name for member model placeholders
+            task_id: Current task ID for member model placeholders
 
         Returns:
             List of bot configuration dictionaries
         """
         from app.services.chat.config.model_resolver import (
             build_agent_config_for_bot,
+            extract_and_process_model_config,
         )
 
         members = team_crd.spec.members or []
         collaboration_model = team_crd.spec.collaborationModel or "solo"
+        codex_coordinate = collaboration_model == "coordinate" and (
+            self._resolve_shell_info(first_bot, team.user_id)["shell_type"] == "Codex"
+        )
 
         bot_members: list[tuple[Kind, TeamMember | None]] = []
         if collaboration_model == "pipeline":
@@ -2007,6 +2033,27 @@ Response template:
                     override_model_name=override_model_name,
                     force_override=force_override,
                 )
+                if (
+                    codex_coordinate
+                    and bot.id != first_bot.id
+                    and agent_config.get("env")
+                ):
+                    member_model_config = extract_and_process_model_config(
+                        model_spec={"modelConfig": agent_config},
+                        user_id=user_id,
+                        user_name=user_name,
+                        agent_config=bot_spec_json.get("agent_config", {}),
+                        task_data=ExecutionRequest(
+                            task_id=task_id,
+                            team_id=team.id,
+                            team_name=team.name,
+                            team_namespace=team.namespace,
+                            user={"id": user_id, "name": user_name},
+                        ),
+                    )
+                    agent_config = self._build_runtime_agent_config(
+                        {**agent_config["env"], **member_model_config}
+                    )
 
             bot_config = {
                 "id": bot.id,
@@ -2424,50 +2471,41 @@ Response template:
         return merged_preload_skills
 
     # =========================================================================
-    # Claude Code MCP Processing
+    # Coding Executor MCP Processing
     # =========================================================================
 
-    def _prepare_mcp_for_claude_code(
+    def _prepare_mcp_for_coding_executor(
         self, bot_config: dict, skill_configs: list
     ) -> None:
-        """Prepare MCP servers for Claude Code executor.
+        """Merge Skill MCP servers, then apply shell-specific configuration in-place.
 
-        For ClaudeCode shell type, this method:
-        1. Extracts skill MCP servers and merges into bot mcp_servers
-        2. Normalizes types (streamable-http -> http) for Claude Code SDK
-        3. Filters out unreachable servers to prevent SDK initialization timeout
-
-        Modifies bot_config in-place.
-
-        Args:
-            bot_config: Single bot configuration dict (modified in-place)
-            skill_configs: List of resolved skill config dicts
+        Codex handles transport configuration in its runtime adapter. Only Claude
+        Code needs SDK type normalization and its existing configuration filter.
         """
-        # Step 1: Extract skill MCP servers and merge
         skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
         if skill_mcp:
             bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
             logger.info(
-                "[MCP-CLAUDE] Merged %d skill MCP server(s): %s",
+                "[SKILL-MCP] Merged %d skill MCP server(s): %s",
                 len(skill_mcp),
                 [s.get("name", "?") for s in skill_mcp],
             )
 
         mcp_list = bot_config.get("mcp_servers", [])
-        if not mcp_list:
+        if not mcp_list or bot_config.get("shell_type") != "ClaudeCode":
             return
 
-        # Step 2: Normalize types (streamable-http -> http)
+        # Claude Code SDK requires http for streamable HTTP transports.
         self._normalize_mcp_types_for_claude_code(mcp_list)
 
-        # Step 3: Filter out unreachable servers
+        # Keep the existing Claude configuration validation.
         bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
         if not bot_config["mcp_servers"]:
             logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
 
     @staticmethod
     def _merge_coordinate_capabilities_into_leader(bot_configs: list[dict]) -> None:
-        """Merge member Bot capabilities into the Leader Claude Code config."""
+        """Merge member Bot capabilities into the coding executor's leader config."""
         if len(bot_configs) <= 1:
             return
 
@@ -2532,7 +2570,7 @@ Response template:
                     skill = self._find_skill(skill_name, team)
                 if not skill:
                     logger.warning(
-                        "[MCP-CLAUDE] Coordinate member skill not found: %s",
+                        "[SKILL-MCP] Coordinate member skill not found: %s",
                         skill_name,
                     )
                     continue

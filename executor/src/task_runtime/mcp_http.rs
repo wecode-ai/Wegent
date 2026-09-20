@@ -8,7 +8,7 @@ use std::{
     sync::mpsc,
     sync::{Mutex as StdMutex, OnceLock},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -32,16 +32,15 @@ use crate::logging::log_executor_event;
 
 use super::{
     mcp::{
-        decode_space_context_grant, handle_request_with_context, SpaceMcpRequestContext,
+        handle_request_with_context, SpaceMcpRequestContext, WeworkMcpSurface,
         SPACE_MCP_SERVER_NAME,
     },
     TaskRuntime,
 };
 
-const CONTEXT_GRANT_HEADER: &str = "x-wework-space-context-grant";
-const BACKEND_URL_HEADER: &str = "x-wework-space-backend-url";
-const BACKEND_TOKEN_HEADER: &str = "x-wework-space-backend-token";
+const CONTEXT_HANDLE_HEADER: &str = "x-wework-mcp-context";
 const MCP_SESSION_ID_HEADER: &str = "mcp-session-id";
+const CONTEXT_HANDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone)]
 pub(crate) struct SpaceMcpEndpoint {
@@ -49,17 +48,30 @@ pub(crate) struct SpaceMcpEndpoint {
     pub(crate) token: String,
 }
 
+pub(crate) struct RegisteredSpaceMcpContext {
+    pub(crate) endpoint: SpaceMcpEndpoint,
+    pub(crate) context_handle: String,
+}
+
+#[derive(Clone)]
+struct RegisteredContext {
+    context: SpaceMcpRequestContext,
+    expires_at: Instant,
+}
+
 #[derive(Clone)]
 struct SpaceMcpHttpState {
     runtime: TaskRuntime,
     token: String,
     sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
+    contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
 }
 
 static SPACE_MCP_START_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct RunningSpaceMcpEndpoint {
     endpoint: SpaceMcpEndpoint,
+    contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     server_task: Option<thread::JoinHandle<()>>,
 }
@@ -83,6 +95,11 @@ impl RunningSpaceMcpEndpoint {
 fn running_endpoint() -> &'static StdMutex<Option<RunningSpaceMcpEndpoint>> {
     static RUNNING: OnceLock<StdMutex<Option<RunningSpaceMcpEndpoint>>> = OnceLock::new();
     RUNNING.get_or_init(|| StdMutex::new(None))
+}
+
+fn local_mcp_token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN.get_or_init(|| Uuid::new_v4().to_string())
 }
 
 pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint, String> {
@@ -111,16 +128,22 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .map_err(|error| format!("failed to read project-space MCP endpoint address: {error}"))?;
     let endpoint = SpaceMcpEndpoint {
         url: format!("http://{address}/mcp"),
-        token: Uuid::new_v4().to_string(),
+        token: local_mcp_token().to_owned(),
     };
+    let contexts = std::sync::Arc::new(StdMutex::new(HashMap::new()));
     let state = SpaceMcpHttpState {
         runtime,
         token: endpoint.token.clone(),
         sessions: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        contexts: contexts.clone(),
     };
     let app = Router::new()
         .route("/health", get(health))
         .route("/mcp", post(handle_mcp).delete(delete_mcp_session))
+        .route(
+            "/notifications/mcp",
+            post(handle_notifications_mcp).delete(delete_mcp_session),
+        )
         .with_state(state);
     let server_endpoint = endpoint.clone();
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -163,6 +186,7 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .map_err(|error| format!("failed to start project-space MCP endpoint: {error}"))?;
     let running = RunningSpaceMcpEndpoint {
         endpoint: endpoint.clone(),
+        contexts,
         shutdown_tx: Some(shutdown_tx),
         server_task: Some(server_task),
     };
@@ -233,6 +257,44 @@ fn active_endpoint() -> Option<SpaceMcpEndpoint> {
     running.as_ref().map(|running| running.endpoint.clone())
 }
 
+pub(crate) fn register_space_mcp_context(
+    context: SpaceMcpRequestContext,
+) -> Result<RegisteredSpaceMcpContext, String> {
+    let running = running_endpoint()
+        .lock()
+        .map_err(|_| "project-space MCP endpoint state is poisoned".to_owned())?;
+    let Some(running) = running.as_ref() else {
+        #[cfg(test)]
+        {
+            return Ok(RegisteredSpaceMcpContext {
+                endpoint: space_mcp_http_endpoint()
+                    .expect("test project-space MCP endpoint should exist"),
+                context_handle: "test-space-mcp-context-handle".to_owned(),
+            });
+        }
+        #[cfg(not(test))]
+        return Err("project-space MCP endpoint is not ready".to_owned());
+    };
+    let context_handle = Uuid::new_v4().to_string();
+    let mut contexts = running
+        .contexts
+        .lock()
+        .map_err(|_| "project-space MCP context registry is poisoned".to_owned())?;
+    let now = Instant::now();
+    contexts.retain(|_, registered| registered.expires_at > now);
+    contexts.insert(
+        context_handle.clone(),
+        RegisteredContext {
+            context,
+            expires_at: now + CONTEXT_HANDLE_TTL,
+        },
+    );
+    Ok(RegisteredSpaceMcpContext {
+        endpoint: running.endpoint.clone(),
+        context_handle,
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
     Some(SpaceMcpEndpoint {
@@ -262,6 +324,23 @@ async fn handle_mcp(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
+    handle_mcp_for_surface(state, headers, request, false).await
+}
+
+async fn handle_notifications_mcp(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    handle_mcp_for_surface(state, headers, request, true).await
+}
+
+async fn handle_mcp_for_surface(
+    state: SpaceMcpHttpState,
+    headers: HeaderMap,
+    request: Value,
+    notifications_only: bool,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -271,11 +350,16 @@ async fn handle_mcp(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let (session_id, context) = if method == "initialize" {
-        let Some(context) = initial_context(&headers) else {
+        let expected_surface = if notifications_only {
+            WeworkMcpSurface::Notifications
+        } else {
+            WeworkMcpSurface::ProjectSpace
+        };
+        let Some(context) = registered_context(&state, &headers, expected_surface) else {
             return json_rpc_http_error(
                 request.get("id").cloned().unwrap_or(Value::Null),
                 -32001,
-                "Invalid or expired project-space ContextGrant",
+                "Invalid or expired Wework MCP context",
                 StatusCode::UNAUTHORIZED,
             );
         };
@@ -326,16 +410,19 @@ async fn delete_mcp_session(
     StatusCode::NO_CONTENT.into_response()
 }
 
-fn initial_context(headers: &HeaderMap) -> Option<SpaceMcpRequestContext> {
-    let grant = match header_text(headers, CONTEXT_GRANT_HEADER) {
-        Some(encoded) => Some(decode_space_context_grant(&encoded)?),
-        None => None,
-    };
-    Some(SpaceMcpRequestContext::new(
-        grant,
-        header_text(headers, BACKEND_URL_HEADER),
-        header_text(headers, BACKEND_TOKEN_HEADER),
-    ))
+fn registered_context(
+    state: &SpaceMcpHttpState,
+    headers: &HeaderMap,
+    expected_surface: WeworkMcpSurface,
+) -> Option<SpaceMcpRequestContext> {
+    let handle = header_text(headers, CONTEXT_HANDLE_HEADER)?;
+    let now = Instant::now();
+    let mut contexts = state.contexts.lock().ok()?;
+    contexts.retain(|_, registered| registered.expires_at > now);
+    contexts
+        .get(&handle)
+        .filter(|registered| registered.context.surface() == expected_surface)
+        .map(|registered| registered.context.clone())
 }
 
 fn authorized(headers: &HeaderMap, token: &str) -> bool {
@@ -392,6 +479,48 @@ mod tests {
     }
 
     #[test]
+    fn context_registry_expires_handles_and_preserves_surface_isolation() {
+        let now = Instant::now();
+        let mut contexts = HashMap::from([
+            (
+                "expired".to_owned(),
+                RegisteredContext {
+                    context: SpaceMcpRequestContext::new(None, None, None),
+                    expires_at: now,
+                },
+            ),
+            (
+                "notifications".to_owned(),
+                RegisteredContext {
+                    context: SpaceMcpRequestContext::notifications(None, None),
+                    expires_at: now + Duration::from_secs(1),
+                },
+            ),
+        ]);
+        contexts.retain(|_, registered| registered.expires_at > now);
+
+        assert!(!contexts.contains_key("expired"));
+        assert_eq!(
+            contexts
+                .get("notifications")
+                .map(|registered| registered.context.surface()),
+            Some(WeworkMcpSurface::Notifications)
+        );
+        assert_ne!(
+            contexts
+                .get("notifications")
+                .map(|registered| registered.context.surface()),
+            Some(WeworkMcpSurface::ProjectSpace)
+        );
+    }
+
+    #[test]
+    fn local_mcp_authentication_is_stable_for_the_executor_process() {
+        assert_eq!(local_mcp_token(), local_mcp_token());
+        assert!(!local_mcp_token().is_empty());
+    }
+
+    #[test]
     fn endpoint_stop_signals_shutdown_and_joins_the_server_thread() {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = mpsc::sync_channel(1);
@@ -410,6 +539,7 @@ mod tests {
                 url: "http://127.0.0.1:1/mcp".to_owned(),
                 token: "test".to_owned(),
             },
+            contexts: std::sync::Arc::new(StdMutex::new(HashMap::new())),
             shutdown_tx: Some(shutdown_tx),
             server_task: Some(server_task),
         }
@@ -424,6 +554,8 @@ mod tests {
         let same_endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
+        let registered =
+            register_space_mcp_context(SpaceMcpRequestContext::new(None, None, None)).unwrap();
 
         let client = reqwest::Client::new();
         let unauthorized = client
@@ -442,6 +574,7 @@ mod tests {
         let initialized = client
             .post(&endpoint.url)
             .bearer_auth(&endpoint.token)
+            .header(CONTEXT_HANDLE_HEADER, registered.context_handle)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -499,11 +632,17 @@ mod tests {
             }))
             .unwrap(),
         );
+        let context = SpaceMcpRequestContext::new(
+            super::super::mcp::decode_space_context_grant(&grant),
+            None,
+            None,
+        );
+        let registered = register_space_mcp_context(context).unwrap();
         let client = reqwest::Client::new();
         let initialized = client
             .post(&endpoint.url)
             .bearer_auth(&endpoint.token)
-            .header(CONTEXT_GRANT_HEADER, grant)
+            .header(CONTEXT_HANDLE_HEADER, registered.context_handle)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -542,5 +681,86 @@ mod tests {
             .unwrap()
             .iter()
             .any(|tool| tool["name"] == "get_current_context"));
+    }
+
+    #[tokio::test]
+    async fn notifications_endpoint_exposes_only_send_notification() {
+        let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
+        let notifications_url = format!(
+            "{}/notifications/mcp",
+            endpoint.url.trim_end_matches("/mcp")
+        );
+        let registered = register_space_mcp_context(SpaceMcpRequestContext::notifications(
+            Some("https://wework.example.com".to_owned()),
+            Some("runtime-token".to_owned()),
+        ))
+        .unwrap();
+        let client = reqwest::Client::new();
+        let wrong_surface = client
+            .post(&endpoint.url)
+            .bearer_auth(&endpoint.token)
+            .header(CONTEXT_HANDLE_HEADER, registered.context_handle.as_str())
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong_surface.status(), StatusCode::UNAUTHORIZED);
+
+        let initialized = client
+            .post(&notifications_url)
+            .bearer_auth(&endpoint.token)
+            .header(CONTEXT_HANDLE_HEADER, registered.context_handle)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(initialized.status(), StatusCode::OK);
+        let session_id = initialized
+            .headers()
+            .get(MCP_SESSION_ID_HEADER)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let initialized_body = initialized.json::<Value>().await.unwrap();
+        assert_eq!(
+            initialized_body["result"]["serverInfo"]["name"],
+            "wework_notifications"
+        );
+
+        let tools = client
+            .post(&notifications_url)
+            .bearer_auth(&endpoint.token)
+            .header(MCP_SESSION_ID_HEADER, session_id)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(tools.status(), StatusCode::OK);
+        let tools = tools.json::<Value>().await.unwrap();
+        assert_eq!(
+            tools["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["send_notification"]
+        );
     }
 }

@@ -315,6 +315,7 @@ class KnowledgeService:
                 data.kb_type or KnowledgeBaseType.NOTEBOOK
             ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
+            "dingtalkAutoSyncEnabled": data.dingtalk_auto_sync_enabled,
             "summaryEnabled": data.summary_enabled,
         }
         if data.allow_document_download is not None:
@@ -947,6 +948,9 @@ class KnowledgeService:
                     )
                 spec["retrievalConfig"] = current_retrieval_config
 
+        if data.dingtalk_auto_sync_enabled is not None:
+            spec["dingtalkAutoSyncEnabled"] = data.dingtalk_auto_sync_enabled
+
         # Update summary_enabled if provided
         if data.summary_enabled is not None:
             spec["summaryEnabled"] = data.summary_enabled
@@ -1105,6 +1109,20 @@ class KnowledgeService:
 
         forget_repository(db, knowledge_base_id)
 
+        # The scheduler projection belongs to the wiki. It is deliberately removed
+        # in the same transaction so no due worker can observe an orphaned plan.
+        from app.models.subscription import BackgroundExecution
+        from app.services.knowledge.code_wiki.scheduled_update import (
+            scheduled_update_for,
+        )
+
+        scheduled_update = scheduled_update_for(db, kb)
+        if scheduled_update is not None:
+            db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == scheduled_update.id
+            ).delete(synchronize_session=False)
+            db.delete(scheduled_update)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
@@ -1131,6 +1149,7 @@ class KnowledgeService:
                 Kind.user_id == knowledge_base.user_id,
                 Kind.is_active.is_(True),
             )
+            .populate_existing()
             .with_for_update()
             .first()
         )
@@ -3349,7 +3368,7 @@ class KnowledgeService:
             organization_count=len(org_kbs),
         )
 
-        return AllGroupedKnowledgeResponse(
+        response = AllGroupedKnowledgeResponse(
             personal=AllGroupedPersonal(
                 created_by_me=created_by_me,
                 shared_with_me=shared_with_me,
@@ -3358,6 +3377,7 @@ class KnowledgeService:
             organization=organization,
             summary=summary,
         )
+        return response
 
     @staticmethod
     def can_manage_knowledge_base(

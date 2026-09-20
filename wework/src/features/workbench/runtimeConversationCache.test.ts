@@ -6,6 +6,7 @@ import {
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeConversationHydration,
+  beginRuntimeGoalSnapshot,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
   cacheRuntimeConversationQueuedMessages,
@@ -22,6 +23,7 @@ import {
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
   getRuntimeConversationTurns,
+  isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
@@ -66,6 +68,27 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('reuses the projection while the canonical turns are unchanged', () => {
+    const projected = applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+
+    expect(getRuntimeConversationMessages(address)).toBe(projected)
+    expect(getRuntimeConversationMessages(address)).toBe(projected)
+
+    const updated = applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-1',
+      content: 'next',
+    })
+
+    expect(updated).not.toBe(projected)
+    expect(getRuntimeConversationMessages(address)).toBe(updated)
   })
 
   test('resolves the local-device alias to a unique executor conversation', () => {
@@ -166,6 +189,29 @@ describe('runtimeConversationCache', () => {
         items: [expect.objectContaining({ content: 'authoritative output' })],
       }),
     ])
+  })
+
+  test('invalidates a projection when the same snapshot reference is replaced', () => {
+    const snapshot = [
+      {
+        id: 'server-turn',
+        status: 'done' as const,
+        items: [
+          {
+            id: 'server-assistant',
+            type: 'assistant_text' as const,
+            content: 'first projection',
+            createdAt: '2026-09-11T00:00:00Z',
+          },
+        ],
+      },
+    ]
+
+    replaceRuntimeConversationSnapshot(address, snapshot)
+    snapshot[0].items[0].content = 'updated projection'
+    replaceRuntimeConversationSnapshot(address, snapshot)
+
+    expect(getRuntimeConversationMessages(address)[0]?.content).toBe('updated projection')
   })
 
   test('evicts an unobserved terminal conversation after the idle ttl', () => {
@@ -465,6 +511,32 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('settles a sent queue item confirmed by transcript hydration without a start event', () => {
+    const acceptedMessage = {
+      id: 'accepted-message',
+      content: 'already completed',
+      status: 'sending' as const,
+      deliveryMode: 'message' as const,
+      awaitingTurnStart: true,
+      createdAt: '2026-09-16T00:00:00Z',
+    }
+    const nextMessage = { ...acceptedMessage, id: 'next-message', status: 'queued' as const }
+    cacheRuntimeConversationQueuedMessages(address, [acceptedMessage, nextMessage])
+    const token = beginRuntimeConversationHydration(address)
+
+    completeRuntimeConversationHydration(address, token, [
+      { id: 'other-turn', clientUserMessageId: 'unrelated-message', status: 'done', items: [] },
+    ])
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([acceptedMessage, nextMessage])
+
+    const acceptedToken = beginRuntimeConversationHydration(address)
+    completeRuntimeConversationHydration(address, acceptedToken, [
+      { id: 'accepted-turn', clientUserMessageId: acceptedMessage.id, status: 'done', items: [] },
+    ])
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([nextMessage])
+  })
+
   test('requeues an interrupted send and removes a send already present after transport replacement', () => {
     cacheRuntimeConversationQueuedMessages(address, [
       {
@@ -561,6 +633,42 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
   })
 
+  test('bounds subagent status metadata across a long-running conversation', () => {
+    for (let index = 0; index < 300; index += 1) {
+      applyRuntimeConversationSubagentActivity(address, {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        agentId: `agent-${index}`,
+        agentPath: `agents/agent-${index}`,
+        status: 'done',
+        occurredAtMs: index,
+      })
+    }
+
+    const statuses = getRuntimeConversationMetadata(address).subagentStatuses
+    expect(statuses).toHaveLength(256)
+    expect(statuses[0]?.id).toBe('agent-299')
+    expect(statuses.at(-1)?.id).toBe('agent-44')
+  })
+
+  test('retains the newest subagent status when timestamps tie', () => {
+    for (let index = 0; index <= 256; index += 1) {
+      applyRuntimeConversationSubagentActivity(address, {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        agentId: `agent-${index}`,
+        agentPath: `agents/agent-${index}`,
+        status: 'done',
+        occurredAtMs: 1,
+      })
+    }
+
+    const statuses = getRuntimeConversationMetadata(address).subagentStatuses
+    expect(statuses).toHaveLength(256)
+    expect(statuses[0]?.id).toBe('agent-256')
+    expect(statuses.some(status => status.id === 'agent-0')).toBe(false)
+  })
+
   test('does not let an older active Goal snapshot overwrite completion', () => {
     setRuntimeConversationGoal(address, {
       threadId: 'thread-1',
@@ -585,6 +693,29 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMetadata(address).goal?.status).toBe('complete')
+  })
+
+  test('invalidates older Goal snapshot requests when newer state is committed', () => {
+    const olderSnapshot = beginRuntimeGoalSnapshot(address)
+    const newerSnapshot = beginRuntimeGoalSnapshot(address)
+
+    expect(isRuntimeGoalSnapshotCurrent(address, olderSnapshot)).toBe(false)
+    expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(true)
+
+    setRuntimeConversationGoal(address, null)
+
+    expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(false)
+  })
+
+  test('does not reuse Goal snapshot versions after conversation eviction', () => {
+    const preEvictionSnapshot = beginRuntimeGoalSnapshot(address)
+
+    evictRuntimeConversation(address)
+    const postEvictionSnapshot = beginRuntimeGoalSnapshot(address)
+
+    expect(postEvictionSnapshot).not.toBe(preEvictionSnapshot)
+    expect(isRuntimeGoalSnapshotCurrent(address, preEvictionSnapshot)).toBe(false)
+    expect(isRuntimeGoalSnapshotCurrent(address, postEvictionSnapshot)).toBe(true)
   })
 
   test('uses device and task identity across normalized workspace paths', () => {

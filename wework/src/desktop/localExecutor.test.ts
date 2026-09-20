@@ -5,7 +5,10 @@ import {
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
-import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import {
+  saveLocalProxyConfig,
+  saveLocalProxyUrl,
+} from '@/features/model-settings/localProxySettings'
 import {
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
@@ -62,6 +65,7 @@ function mockStartup(): void {
 describe('localExecutor', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete window.weworkElectronNetwork
     resetLocalExecutorStateForTests()
     describeDshExecutorMock.mockReset()
     requestDshExecutorMock.mockReset()
@@ -111,13 +115,39 @@ describe('localExecutor', () => {
     })
   })
 
+  test('passes the system proxy into the startup barrier when no local proxy is configured', async () => {
+    window.weworkElectronNetwork = {
+      resolveProxy: vi.fn().mockResolvedValue('http://127.0.0.1:7891'),
+    }
+
+    await ensureLocalExecutorStarted()
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.runtime_config.update', {
+      proxyUrl: 'http://127.0.0.1:7891',
+    })
+  })
+
+  test('passes no proxy into the startup barrier in direct mode', async () => {
+    const resolveProxy = vi.fn().mockResolvedValue('http://127.0.0.1:7891')
+    window.weworkElectronNetwork = { resolveProxy }
+    saveLocalProxyConfig('direct')
+
+    await ensureLocalExecutorStarted()
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.codex.runtime_config.update', {
+      proxyUrl: null,
+    })
+    expect(resolveProxy).not.toHaveBeenCalled()
+  })
+
   test('reuses the initialized executor status for repeated startup checks', async () => {
     const first = await ensureLocalExecutorStarted()
 
     await expect(getLocalExecutorStatus()).resolves.toEqual(first)
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(3)
+    // Startup also reconciles the bundled marketplace into Codex (local RPC).
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
   })
 
   test('invalidates the initialized status after an executor request failure', async () => {
@@ -146,7 +176,7 @@ describe('localExecutor', () => {
     await ensureLocalExecutorStarted()
 
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
-    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(5)
   })
 
   test('installs a declared bundled plugin through Codex app-server', async () => {

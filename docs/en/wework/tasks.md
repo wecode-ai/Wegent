@@ -12,6 +12,12 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+### Edit Markdown and tables
+
+Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
+
+Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
+
 ## Add a conversation to a project-space board
 
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. Sending the first message creates the corresponding board task and links the conversation. A project space inherited from the local-project automatic-join setting appears through the same control.
@@ -113,6 +119,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 ## Manage conversations
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 
 ### Export a conversation
 

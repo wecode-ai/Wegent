@@ -27,6 +27,7 @@ import {
   mkdir,
   pathToFileURL,
   resultDir,
+  withTimeout,
   writeFile,
 } from './shared.mjs'
 
@@ -178,6 +179,36 @@ async function verifySystemDragPanelLayout(control) {
   }
 }
 
+async function verifySentWorkspacePaths(control, folderName, fileName) {
+  for (const [kind, name] of [
+    ['folder', folderName],
+    ['file', fileName],
+  ]) {
+    const token = name.replace(/[^a-zA-Z0-9_-]/g, '-')
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="sent-${kind}-token-${token}"]`,
+      { text: name, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+  }
+}
+
+async function verifyPersistedWorkspacePaths(control, folderName, fileName, completionText) {
+  await verifySentWorkspacePaths(control, folderName, fileName)
+  const readyCount = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCount),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The path reference reload did not reconnect to the desktop controller'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: completionText,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await verifySentWorkspacePaths(control, folderName, fileName)
+}
+
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
   control.setScenario('pasted_workspace_paths')
   const folderPath = join(workspacePath, PASTED_PATH_FOLDER_NAME)
@@ -226,6 +257,12 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     text: PASTED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyPersistedWorkspacePaths(
+    control,
+    PASTED_PATH_FOLDER_NAME,
+    PASTED_PATH_FILE_NAME,
+    PASTED_PATH_COMPLETION_TEXT
+  )
 }
 
 async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
@@ -324,7 +361,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   )
   assert.equal(
     await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
+    SELECTED_TEXT_FILE_CONTENT,
     'Dragging selected workspace editor text did not insert it into the composer'
   )
   assert.equal(
@@ -439,6 +476,12 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
     text: DROPPED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyPersistedWorkspacePaths(
+    control,
+    DROPPED_PATH_FOLDER_NAME,
+    DROPPED_PATH_FILE_NAME,
+    DROPPED_PATH_COMPLETION_TEXT
+  )
 }
 
 async function verifySideChatAttachmentIsolation({
@@ -547,6 +590,24 @@ async function verifySideChatAttachmentIsolation({
     'The side chat exposed a runtime busy error instead of queueing the follow-up'
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  await control.command('click', `${sideChatSelector} [data-testid^="queue-more-button-"]`)
+  await control.command('click', '[data-testid^="queue-edit-button-"]')
+  await control.command('waitFor', sideComposerSelector, {
+    text: SIDE_CHAT_QUEUE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'Editing a side-chat reply did not remove its pending queue entry',
+    DEFAULT_STEP_TIMEOUT_MS,
+    sideChatSelector
+  )
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
+    text: SIDE_CHAT_QUEUE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', `${sideChatSelector} [data-testid^="queue-cancel-button-"]`)
   await waitForSnapshot(
     control,
@@ -575,6 +636,13 @@ async function verifySideChatAttachmentIsolation({
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
   control.releaseSideChatGuidanceResponse()
   await control.awaitScenarioRequestCount('side_chat_guidance', 2)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'Applied guidance remained in the side-chat queue',
+    DEFAULT_STEP_TIMEOUT_MS,
+    sideChatSelector
+  )
 
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(

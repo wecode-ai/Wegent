@@ -63,6 +63,7 @@ class LoopItemUpdate(BaseModel):
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
@@ -83,6 +84,7 @@ class LoopItemUpdate(BaseModel):
             value
             for field, value in (
                 ("assignee_user_id", self.assignee_user_id),
+                ("assignee_group_id", self.assignee_group_id),
                 ("assignee_agent_id", self.assignee_agent_id),
                 ("assignee_team_id", self.assignee_team_id),
             )
@@ -101,6 +103,13 @@ class LoopItemReorder(BaseModel):
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
+class LoopItemPermissions(BaseModel):
+    edit_content: bool = False
+    comment: bool = False
+    assign: bool = False
+    execute: bool = False
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -112,6 +121,8 @@ class LoopItemResponse(BaseModel):
     description: str
     status: str
     assignee_user_id: int | None
+    assignee_group_id: str | None = None
+    assignee_group_name: str | None = None
     assignee_name: str | None = None
     assignee_agent_id: str | None = None
     assignee_agent_name: str | None = None
@@ -143,6 +154,7 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
     content_revision: int = 1
     is_unread: bool = False
@@ -292,6 +304,11 @@ class LoopItemCommentResponse(BaseModel):
     updated_at: datetime
 
 
+class CollaborationMessageImportResponse(BaseModel):
+    issue: LoopItemResponse
+    comment: LoopItemCommentResponse | None = None
+
+
 class LoopItemAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -328,6 +345,18 @@ class LoopItemAttachmentResponse(BaseModel):
 class LoopItemAttachmentAccessResponse(BaseModel):
     url: str
     expires_in_seconds: int
+
+
+class ProjectLoopItemAttachmentResponse(LoopItemAttachmentResponse):
+    loop_item_title: str
+
+
+class ProjectLoopItemAttachmentListResponse(BaseModel):
+    items: list[ProjectLoopItemAttachmentResponse]
+
+
+class LoopItemAttachmentImport(BaseModel):
+    context_ids: list[int] = Field(min_length=1)
 
 
 class MyWorkItemResponse(LoopItemResponse):

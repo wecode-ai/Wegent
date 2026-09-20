@@ -226,7 +226,7 @@ async def test_repeated_cancellation_keeps_lock_until_sdk_request_finishes(
 
     async def write():
         async with emitter._update_lock:
-            await emitter._call_card("ai_streaming", "in flight", append=False)
+            await emitter._call_card("update", "in flight")
 
     pending = asyncio.create_task(write())
     terminal = None

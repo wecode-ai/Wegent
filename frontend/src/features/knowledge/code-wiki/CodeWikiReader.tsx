@@ -56,6 +56,9 @@ interface CodeWikiReaderProps {
   onConfigure?: () => void
 }
 
+const PAGE_TREE_RETRY_INTERVAL_MS = 1_000
+const PAGE_TREE_RETRY_ATTEMPTS = 30
+
 /** Depth-first, so "the first page" means the first one the reader would see. */
 const firstReadable = (nodes: CodeWikiPageNode[]): CodeWikiPageNode | null => {
   for (const node of nodes) {
@@ -175,7 +178,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
+  const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   const [pages, setPages] = useState<CodeWikiPageNode[]>([])
   const [loading, setLoading] = useState(true)
@@ -212,7 +215,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // page it was just asked to show.
   const [navigationOpen, setNavigationOpen] = useState(false)
   const pagesRequest = useRef(0)
-  const pageTreeGenerationId = useRef<number | null>(null)
+  const [pageTreeGenerationId, setPageTreeGenerationId] = useState<number | null>(null)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -230,13 +233,15 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         const response = await codeWikiApi.pages(wiki.id)
         if (pagesRequest.current !== request) return
 
-        pageTreeGenerationId.current = response.published_generation_id ?? 0
+        const publishedGenerationId = response.published_generation_id ?? 0
+        setPageTreeGenerationId(publishedGenerationId)
         setPages(response.pages)
         const first = firstReadable(response.pages)
         setActivePath(current => {
           const stillExists = current ? findByPath(response.pages, current) : null
           return stillExists?.has_content ? current : (first?.path ?? '')
         })
+        return publishedGenerationId
       } catch (error) {
         if (showError && pagesRequest.current === request) {
           toast.error(error instanceof Error ? error.message : String(error))
@@ -264,14 +269,34 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
 
   useEffect(() => {
     if (runState !== 'completed' || runGenerationId === undefined) return
-    if (pageTreeGenerationId.current === runGenerationId) return
+    if (pageTreeGenerationId === runGenerationId) return
 
-    // Status is intentionally the only thing polled during a long run. Compare its
-    // completed version with the version the tree actually came from instead of
-    // inferring a transition from this component's lifetime: the reader may mount
-    // after completion, and the first tree request may have started before publish.
-    void reloadPages(true, false).catch(() => undefined)
-  }, [reloadPages, runGenerationId, runState])
+    // Status is intentionally the only thing polled during a long run. Once it ends,
+    // keep reconciling the cheaper tree until it exposes that exact published
+    // generation. One failed or stale response must not leave a completed first run
+    // looking empty until the reader reloads the browser.
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let attempts = PAGE_TREE_RETRY_ATTEMPTS
+    const reconcile = async () => {
+      let observedGenerationId: number | undefined
+      try {
+        observedGenerationId = await reloadPages(false, false)
+      } catch {
+        // A later attempt handles a transient tree read failure.
+      }
+      attempts -= 1
+      if (!cancelled && observedGenerationId !== runGenerationId && attempts > 0) {
+        timer = setTimeout(() => void reconcile(), PAGE_TREE_RETRY_INTERVAL_MS)
+      }
+    }
+    void reconcile()
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [pageTreeGenerationId, reloadPages, runGenerationId, runState])
 
   const handleRepublished = useCallback(async () => {
     // A restore replaces the whole published version. Re-fetch its tree so both
@@ -391,6 +416,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                     knowledgeBaseId={wiki.id}
                     status={runStatus.status}
                     onRepublished={handleRepublished}
+                    canManage={canConfigure}
                   />
                 </div>
                 <WikiNavigation
@@ -416,18 +442,6 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           {projectName || wiki.name}
         </Button>
         <span className="flex-1" />
-        {canConfigure && onConfigure && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onConfigure}
-            aria-label={t('document.knowledgeBase.edit')}
-            data-testid="code-wiki-configure"
-            className="h-11 w-11 shrink-0"
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        )}
         {canConfigure && (
           <Button
             variant="outline"
@@ -440,6 +454,18 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           >
             <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
             {hasPublishedVersion ? t('codeWiki.reader.update') : control.label}
+          </Button>
+        )}
+        {canConfigure && onConfigure && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onConfigure}
+            aria-label={t('document.knowledgeBase.edit')}
+            data-testid="code-wiki-configure"
+            className="h-11 w-11 shrink-0"
+          >
+            <Settings className="h-4 w-4" />
           </Button>
         )}
       </div>
@@ -469,7 +495,11 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                 onValueChange={value => setUpdateMode(value as 'check' | 'full')}
               >
                 <div className="flex items-start gap-3 rounded-md border p-3">
-                  <RadioGroupItem value="check" id="code-wiki-update-check" />
+                  <RadioGroupItem
+                    value="check"
+                    id="code-wiki-update-check"
+                    data-testid="code-wiki-update-check"
+                  />
                   <Label htmlFor="code-wiki-update-check" className="space-y-1">
                     <span>{t('codeWiki.reader.checkAndUpdate')}</span>
                     <span className="block text-xs font-normal text-text-secondary">
@@ -478,7 +508,11 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                   </Label>
                 </div>
                 <div className="flex items-start gap-3 rounded-md border p-3">
-                  <RadioGroupItem value="full" id="code-wiki-update-full" />
+                  <RadioGroupItem
+                    value="full"
+                    id="code-wiki-update-full"
+                    data-testid="code-wiki-update-full"
+                  />
                   <Label htmlFor="code-wiki-update-full" className="space-y-1">
                     <span>{t('codeWiki.reader.fullUpdate')}</span>
                     <span className="block text-xs font-normal text-text-secondary">
@@ -486,10 +520,17 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                     </span>
                   </Label>
                 </div>
+                <p className="text-xs text-text-muted" data-testid="code-wiki-update-strategy-hint">
+                  {t('codeWiki.reader.updateStrategyHint')}
+                </p>
               </RadioGroup>
             )}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setConfirmingRegenerate(false)}>
+              <Button
+                variant="outline"
+                onClick={() => setConfirmingRegenerate(false)}
+                data-testid="code-wiki-regenerate-confirm-cancel"
+              >
                 {t('common:actions.cancel')}
               </Button>
               <Button
@@ -515,7 +556,9 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+              <AlertDialogCancel data-testid="code-wiki-cancel-confirm-cancel">
+                {t('common:actions.cancel')}
+              </AlertDialogCancel>
               <AlertDialogAction
                 variant="primary"
                 onClick={handleCancel}
@@ -527,7 +570,6 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           </AlertDialogContent>
         </AlertDialog>
       )}
-
       <div className="flex min-h-0 flex-1">
         {/* The left column carries what is true of the wiki: when it last changed,
             and what it contains. Both stay put while the middle column changes.
@@ -541,6 +583,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
               knowledgeBaseId={wiki.id}
               status={runStatus.status}
               onRepublished={handleRepublished}
+              canManage={canConfigure}
             />
           </div>
           {pages.length > 0 && (
@@ -622,6 +665,8 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                 <ChatArea
                   teams={knowledgeTeams}
                   isTeamsLoading={isTeamsLoading}
+                  loadError={teams.length === 0 ? loadError : null}
+                  rawTeamsEmpty={teams.length === 0}
                   showRepositorySelector={false}
                   taskType="knowledge"
                   knowledgeBaseId={wiki.id}
@@ -642,6 +687,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                       onNavigate={openPage}
                       onScrollHostChange={setScrollHost}
                       onEmptyStateChange={handleChatEmptyStateChange}
+                      publishedGenerationId={pageTreeGenerationId ?? 0}
                     />
                   }
                 />
@@ -670,6 +716,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                       knownPaths={knownPaths}
                       onNavigate={openPage}
                       onScrollHostChange={setScrollHost}
+                      publishedGenerationId={pageTreeGenerationId ?? 0}
                     />
                   </div>
                 </div>
@@ -693,6 +740,7 @@ interface WikiPageBodyProps {
   knownPaths: ReadonlySet<string>
   onNavigate: (path: string) => void
   onScrollHostChange: (host: HTMLElement | null) => void
+  publishedGenerationId: number
   /**
    * Whether the chat is still showing its empty state. Passed only by the instance
    * the chat renders — the overlay copy must not answer for the chat, which is
@@ -717,6 +765,7 @@ function WikiPageBody({
   knownPaths,
   onNavigate,
   onScrollHostChange,
+  publishedGenerationId,
   onEmptyStateChange,
 }: WikiPageBodyProps) {
   return (
@@ -735,6 +784,7 @@ function WikiPageBody({
         onContentChange={onContentChange}
         knownPaths={knownPaths}
         onNavigate={onNavigate}
+        publishedGenerationId={publishedGenerationId}
       />
     </div>
   )

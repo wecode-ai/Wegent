@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Eye, MoreHorizontal, Pencil, RefreshCw, Settings2, Unlink } from 'lucide-react'
+import { Eye, MoreHorizontal, Pencil, Plug, RefreshCw, Settings2, Unlink } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import {
@@ -42,12 +42,13 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { canEditContent } from '@/types/base-role'
+import type { Team } from '@/types/api'
 import type { Group } from '@/types/group'
 import type { ResourceLibraryInstall, ResourceLibraryListing } from '../types'
-import type { ResourceListState } from '@/features/settings/components/SkillListWithScope'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 import { AutoEnabledSkillConfigDialog } from '@/features/settings/components/skills/AutoEnabledSkillConfigDialog'
+import { TeamApiCallButton } from '@/features/settings/components/TeamApiCallButton'
 import SkillUploadModal from '@/features/settings/components/skills/SkillUploadModal'
 
 type InstalledResourceType = 'agent' | 'skill'
@@ -58,11 +59,7 @@ interface InstalledResourcesProps {
   resourceType: InstalledResourceType
   keyword?: string
   groupNamespaces?: string[]
-  excludeGroupOwned?: boolean
   groups?: Group[]
-  hideLoadingState?: boolean
-  hideEmptyState?: boolean
-  onListStateChange?: (state: ResourceListState) => void
 }
 
 interface InstalledResource extends ResourceLibraryInstall {
@@ -73,27 +70,13 @@ function hasInstalledListing(install: ResourceLibraryInstall): install is Instal
   return install.install_status === 'installed' && Boolean(install.listing)
 }
 
-function isGroupOwnedSkill(install: ResourceLibraryInstall): boolean {
-  return (
-    install.resource_type === 'skill' &&
-    (install.installed_reference.ownership === 'group' ||
-      install.installed_reference.kind === 'Skill' ||
-      (Boolean(install.installed_reference.namespace) &&
-        install.installed_reference.kind !== 'SkillBinding'))
-  )
-}
-
-function normalizeInstalls(
-  items: ResourceLibraryInstall[],
-  excludeGroupOwned = false
-): InstalledResource[] {
-  const installsByListingId = new Map<number, InstalledResource>()
+function normalizeInstalls(items: ResourceLibraryInstall[]): InstalledResource[] {
+  const installsById = new Map<number, InstalledResource>()
 
   items.filter(hasInstalledListing).forEach(install => {
-    if (excludeGroupOwned && isGroupOwnedSkill(install)) return
-    if (installsByListingId.has(install.listing.id)) return
+    if (installsById.has(install.id)) return
 
-    installsByListingId.set(install.listing.id, {
+    installsById.set(install.id, {
       ...install,
       listing: {
         ...install.listing,
@@ -102,7 +85,7 @@ function normalizeInstalls(
     })
   })
 
-  return Array.from(installsByListingId.values())
+  return Array.from(installsById.values())
 }
 
 function matchesKeyword(listing: ResourceLibraryListing, keyword: string): boolean {
@@ -118,6 +101,28 @@ function buildAgentUseHref(listing: ResourceLibraryListing, teamId: number): str
     getBindModesTargetPage(listing.bind_modes, 'all'),
     new URLSearchParams({ teamId: String(teamId) })
   )
+}
+
+function buildInstalledAgentTeam(install: InstalledResource): Team | null {
+  const teamId = install.installed_reference.team_id
+  if (typeof teamId !== 'number') return null
+
+  const { listing } = install
+  return {
+    id: teamId,
+    name: install.installed_reference.name || listing.name,
+    displayName: listing.display_name || listing.name,
+    namespace: install.installed_reference.namespace || 'default',
+    description: listing.description || '',
+    bots: [],
+    workflow: {},
+    is_active: true,
+    user_id: install.user_id,
+    created_at: listing.created_at,
+    updated_at: listing.updated_at,
+    bind_mode: listing.bind_modes as Team['bind_mode'],
+    publication_status: listing.status === 'archived' ? 'archived' : 'published',
+  }
 }
 
 function buildConfigurableSkill(install: InstalledResource, binding?: SkillBinding): UnifiedSkill {
@@ -183,11 +188,7 @@ export function InstalledResources({
   resourceType,
   keyword,
   groupNamespaces,
-  excludeGroupOwned = false,
   groups = [],
-  hideLoadingState = false,
-  hideEmptyState = false,
-  onListStateChange,
 }: InstalledResourcesProps) {
   const router = useRouter()
   const { t } = useTranslation('resource-library')
@@ -202,6 +203,7 @@ export function InstalledResources({
   const [hasError, setHasError] = useState(false)
   const [selectedListing, setSelectedListing] = useState<ResourceLibraryListing | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const [apiCallTeam, setApiCallTeam] = useState<Team | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<InstalledResource | null>(null)
   const [removingInstallId, setRemovingInstallId] = useState<number | null>(null)
   const requestGenerationRef = useRef(0)
@@ -241,7 +243,7 @@ export function InstalledResources({
       ])
 
       if (requestGeneration === requestGenerationRef.current) {
-        setInstalls(normalizeInstalls(items, excludeGroupOwned))
+        setInstalls(normalizeInstalls(items))
         setSkillBindings(bindings)
       }
     } catch {
@@ -254,7 +256,7 @@ export function InstalledResources({
         setIsLoading(false)
       }
     }
-  }, [excludeGroupOwned, groupNamespacesKey, isGroupMode, resourceType])
+  }, [groupNamespacesKey, isGroupMode, resourceType])
 
   useEffect(() => {
     void loadInstalls()
@@ -268,14 +270,6 @@ export function InstalledResources({
     const normalizedKeyword = keyword?.trim().toLowerCase() || ''
     return installs.filter(install => matchesKeyword(install.listing, normalizedKeyword))
   }, [installs, keyword])
-
-  useEffect(() => {
-    onListStateChange?.({
-      loading: isLoading,
-      hasItems: filteredInstalls.length > 0,
-      hasError,
-    })
-  }, [filteredInstalls.length, hasError, isLoading, onListStateChange])
 
   const handleUse = (listing: ResourceLibraryListing) => {
     if (listing.resource_type !== 'agent') return
@@ -349,8 +343,6 @@ export function InstalledResources({
   }
 
   if (isLoading) {
-    if (hideLoadingState) return null
-
     return (
       <div
         className={getResourceGridClassName(true)}
@@ -386,8 +378,6 @@ export function InstalledResources({
   }
 
   if (filteredInstalls.length === 0) {
-    if (hideEmptyState) return null
-
     return (
       <div
         className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary"
@@ -405,6 +395,7 @@ export function InstalledResources({
           const title = install.listing.display_name || install.listing.name
           const isRemoving = removingInstallId === install.id
           const group = groups.find(item => item.name === install.installed_reference.namespace)
+          const apiTeam = resourceType === 'agent' ? buildInstalledAgentTeam(install) : null
           const canEditGroupSkill =
             isGroupMode &&
             resourceType === 'skill' &&
@@ -426,6 +417,17 @@ export function InstalledResources({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {apiTeam && (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      window.setTimeout(() => setApiCallTeam(apiTeam), 0)
+                    }}
+                    data-testid={`api-call-installed-agent-${install.id}-button`}
+                  >
+                    <Plug className="mr-2 h-4 w-4" aria-hidden />
+                    {t('common:teams.api_call.action')}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   danger
                   onSelect={() => setPendingRemoval(install)}
@@ -536,6 +538,17 @@ export function InstalledResources({
           onClose={saved => {
             setEditingGroupSkill(null)
             if (saved) void loadInstalls()
+          }}
+        />
+      )}
+
+      {apiCallTeam && (
+        <TeamApiCallButton
+          team={apiCallTeam}
+          hideTrigger
+          open
+          onOpenChange={open => {
+            if (!open) setApiCallTeam(null)
           }}
         />
       )}

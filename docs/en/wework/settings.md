@@ -6,7 +6,10 @@ sidebar_position: 9
 
 Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
-The context indicator beside the task composer shows the current model's context usage. Its used
+The context indicator beside the task composer shows the current model's context usage. The ratio
+is measured against the context available to the input, which is the model's maximum context minus
+its configured maximum output; upstream providers charge the completion budget against the same
+window as the input, so the context cannot grow any further once the ratio reaches 100%. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage
 reaches the compaction threshold, the indicator switches to a warning color and, when compaction
 is available, offers the compact action.
@@ -26,6 +29,20 @@ Under **Settings → General → General**, choose the Wework feature mode:
 The preference stays on the current device. Switching modes automatically restarts the managed
 Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
 cannot be enabled or disabled separately from the plugin management page.
+
+## Local device proxy
+
+Under **Settings → Proxy**, the local device proxy has three modes:
+
+- **Use system proxy** follows the system proxy or PAC configuration. When the system does not use
+  a proxy for the current address, the page shows **Direct (system proxy not used)**.
+- **Force direct** ignores the system proxy and connects directly to the target service.
+- **Custom proxy** uses the HTTP, HTTPS, or SOCKS5 proxy URL entered by the user.
+
+The status badge shows the saved mode, while **Current connection** shows the connection produced by
+that mode. After saving a change, restart Codex when prompted. Running tasks are not interrupted
+immediately; new chats use the new network settings. Local device proxy settings stay on the current
+device and are not synced to cloud.
 
 Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
 **Agent**. This device-local preference activates the matching top-level tab when the Wework main

@@ -315,6 +315,46 @@ def test_webhook_branch_reuses_selected_project_subscription(test_db):
     }
 
 
+def test_webhook_branch_reuses_one_subscription_per_platform(test_db):
+    project = _project(test_db)
+    hooks = {}
+    for platform, url in (
+        ("github", "https://github.example/acme/app"),
+        ("gitlab", "https://gitlab.example/acme/app"),
+    ):
+        hooks[platform] = project_incoming_hook_service.create(
+            test_db,
+            str(project.id),
+            1,
+            ProjectIncomingHookCreate(
+                name=f"{platform} webhook",
+                source_type=platform,
+                collection_mode="webhook",
+                resource={"url": url},
+            ),
+        )
+    definition = _multi_platform_definition()
+    branch = next(node for node in definition.nodes if node.id == "br")
+    branch.event_wait = branch.event_wait.model_copy(
+        update={
+            "collection_mode": "webhook",
+            "subscription_id": None,
+            "poll_interval_seconds": None,
+        }
+    )
+    item = _item(test_db, project, definition=definition)
+    nodes = _nodes(item)
+
+    changed = ensure_branch_collectors(test_db, item, nodes=nodes)
+
+    assert changed == 2
+    stored_branch = next(node for node in nodes if node["id"] == "br")
+    assert {
+        platform: collector["collector_id"]
+        for platform, collector in stored_branch["collectors"].items()
+    } == {platform: str(hook.id) for platform, hook in hooks.items()}
+
+
 def test_release_disables_collector_when_workflow_terminal(test_db):
     project = _project(test_db)
     item = _item(test_db, project)

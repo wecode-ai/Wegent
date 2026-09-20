@@ -112,6 +112,12 @@ describe('local codex plugin readState cache', () => {
         }
         if (method === 'executor.plugins.links.link') return null
         if (method === 'executor.plugins.links.unlink') return null
+        if (method === 'runtime.codex.plugin.uninstall_local') {
+          return {
+            pluginKey: 'dev-tools@wework-personal',
+            localCommitted: true,
+          }
+        }
         if (method === 'executor.plugins.store.list') {
           return { storePath: '/tmp/store/plugins', plugins: [] }
         }
@@ -139,6 +145,49 @@ describe('local codex plugin readState cache', () => {
     await expect(
       createLocalCodexPluginApi().listInstalledPlugins({ requireComplete: true })
     ).rejects.toThrow('Store unavailable')
+  })
+
+  test('waits for bundled plugin initialization before replacing imported Codex config', async () => {
+    let finishExecutorStartup: (() => void) | undefined
+    let finishMarketplaceReconciliation: (() => void) | undefined
+    mocks.ensureLocalExecutorStarted.mockReturnValue(
+      new Promise(resolve => {
+        finishExecutorStartup = () => resolve({ deviceId: 'local-device' })
+      })
+    )
+    mocks.ensureBundledPluginMarketplaceRegistered.mockReturnValue(
+      new Promise(resolve => {
+        finishMarketplaceReconciliation = () => resolve(undefined)
+      })
+    )
+    mocks.requestLocalExecutor.mockResolvedValue({
+      source: 'codex',
+      sourcePath: '/home/user/.codex',
+      destinationPath: '/executor/codex',
+      importedEntries: ['config.toml'],
+    })
+
+    const importing = createLocalCodexPluginApi().importExternalContent('codex')
+
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.ensureBundledPluginMarketplaceRegistered).not.toHaveBeenCalled()
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+
+    finishExecutorStartup?.()
+    await vi.waitFor(() =>
+      expect(mocks.ensureBundledPluginMarketplaceRegistered).toHaveBeenCalledOnce()
+    )
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+
+    finishMarketplaceReconciliation?.()
+    await expect(importing).resolves.toMatchObject({
+      source: 'codex',
+      importedEntries: ['config.toml'],
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.codex_home.import_external_content',
+      { source: 'codex' }
+    )
   })
 
   test('membership summaries preserve managed plugins default prompts', async () => {
@@ -241,6 +290,13 @@ describe('local codex plugin readState cache', () => {
 
     await api.deletePersonalPlugin('dev-tools')
 
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.uninstall_local',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'dev-tools',
+      }
+    )
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
       marketplacePath: '/tmp/wework-personal',
       pluginName: 'dev-tools',
@@ -252,8 +308,19 @@ describe('local codex plugin readState cache', () => {
 
     await api.deletePersonalPlugin('quality-gate', '/Users/test/.agents/plugins/marketplace.json')
 
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.uninstall_local',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'quality-gate',
+      }
+    )
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
       marketplacePath: '/Users/test/.agents/plugins/marketplace.json',
+      pluginName: 'quality-gate',
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
+      marketplacePath: '/tmp/wework-personal',
       pluginName: 'quality-gate',
     })
   })
@@ -807,6 +874,32 @@ describe('local codex plugin readState cache', () => {
     expect(resolvedOlder.marketplaces.map(marketplace => marketplace.id)).toContain(
       'desktop-e2e-openai-official'
     )
+  })
+
+  test('explicit invalidation prevents an in-flight snapshot from reviving stale membership', async () => {
+    let finish: ((value: unknown) => void) | undefined
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list') {
+          return await new Promise(resolve => {
+            finish = resolve
+          })
+        }
+        throw new Error(`Unexpected request ${method}`)
+      }
+    )
+    const pending = createLocalCodexPluginApi().readState({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    clearLocalCodexPluginsReadStateCache()
+    finish!({ marketplaces: [personalMarketplace] })
+    await pending
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
   })
 
   test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
@@ -3057,5 +3150,44 @@ describe('local codex plugin readState cache', () => {
       { name: 'github', featured: true },
       { name: 'notion', featured: false },
     ])
+  })
+  test('routes desktop app and skill catalogs through the shared decoders', async () => {
+    mocks.requestLocalExecutor.mockImplementation(async (method, payload) => {
+      expect(method).toBe('codex.app_server_request')
+      if (payload.method === 'app/list')
+        return { data: [{ id: 'app', name: 'App', isAccessible: false }], nextCursor: null }
+      if (payload.method === 'skills/list')
+        return {
+          data: [
+            {
+              skills: [
+                {
+                  name: 'pdf',
+                  path: '/task/pdf',
+                  scope: 'repo',
+                  interface: { shortDescription: 'Read documents' },
+                },
+              ],
+            },
+          ],
+        }
+      throw new Error('Unexpected catalog method')
+    })
+    const api = createLocalCodexPluginApi()
+    expect(await api.listApps({ includeInaccessible: true })).toEqual([
+      expect.objectContaining({ id: 'app', isAccessible: false, source: 'codex-app' }),
+    ])
+    expect(await api.listSkills({ cwds: ['/task'], forceReload: true })).toEqual([
+      expect.objectContaining({
+        name: 'pdf',
+        description: 'Read documents',
+        source: 'codex',
+        scope: 'repo',
+      }),
+    ])
+    expect(mocks.requestLocalExecutor).toHaveBeenLastCalledWith('codex.app_server_request', {
+      method: 'skills/list',
+      params: { cwds: ['/task'], forceReload: true },
+    })
   })
 })

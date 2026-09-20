@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,10 +8,16 @@ import type {
   ModelOptions,
   ModelSelectionConfig,
   RuntimeTaskAddress,
+  RuntimeContextUsage,
   UnifiedModel,
+  LocalDeviceApp,
 } from '@/types/api'
 import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRetry'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  useComposerCatalogBinding,
+  type ComposerCatalogBinding,
+} from '@/components/chat/composer/ComposerCatalogContext'
 
 const attachment: Attachment = {
   id: -1,
@@ -30,7 +36,14 @@ const address: RuntimeTaskAddress = {
 }
 
 const mocks = vi.hoisted(() => ({
+  catalogBindings: new Map<string, ComposerCatalogBinding>(),
+  readCatalog: vi.fn(),
+  mainListApps: vi.fn(),
+  usageHandlers: [] as Array<{ onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }>,
   resetAttachments: vi.fn(),
+  busy: false,
+  lifecycleOwnerEpoch: 0,
+  interruptAndSendRuntimePaneMessage: vi.fn(async () => true),
   sendRuntimePaneMessage: vi.fn(async () => true),
   createTask: vi.fn(),
   loadRuntimeTranscriptForPane: vi.fn(),
@@ -46,6 +59,7 @@ const mocks = vi.hoisted(() => ({
     createdAt: string
   }>,
   lifecycleSnapshot: null as {
+    turn?: { id: string | null }
     derived: {
       isRunning: boolean
       isTurnActive: boolean
@@ -60,6 +74,12 @@ const mocks = vi.hoisted(() => ({
   } | null,
 }))
 
+function CatalogBindingProbe({ scope }: { scope?: string }) {
+  const catalog = useComposerCatalogBinding()
+  if (scope) mocks.catalogBindings.set(scope, catalog)
+  return null
+}
+
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
   ScrollableMessageArea: ({
     messages,
@@ -70,6 +90,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onOpenAssistantPlan,
     onRequestUserInputSubmit,
     onRequestUserInputIgnore,
+    scrollOrigin,
   }: {
     messages: Array<{
       id: string
@@ -88,8 +109,9 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
       answers: Record<string, { answers: string[] }>
     }) => void
     onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
+    scrollOrigin?: 'top' | 'bottom'
   }) => (
-    <div data-testid="mock-message-list">
+    <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
       {messages.flatMap(message =>
         (message.attachments ?? []).map(messageAttachment => (
           <span key={messageAttachment.id} data-testid="sent-message-attachment">
@@ -173,21 +195,56 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onSetGoal,
     onCancelGoalDraft,
     projectChat,
+    queuedMessages,
   }: {
-    onSubmit: (valueOverride?: string) => Promise<boolean>
+    onSubmit: (
+      valueOverride?: string,
+      options?: { interruptWhenBusy?: boolean }
+    ) => Promise<boolean>
+    queuedMessages?: Array<{ id: string; content: string }>
     disabled?: boolean
     error?: string | null
     collapseWhenIdle?: boolean
     goalDraftActive?: boolean
     onSetGoal?: () => void
     onCancelGoalDraft?: () => void
-    projectChat?: { selectedModel?: UnifiedModel | null }
+    projectChat?: {
+      scopeKey?: string
+      selectedModel?: UnifiedModel | null
+      contextUsage?: RuntimeContextUsage
+      trialPluginName?: string
+      showTrialGuide?: (title: string, app: LocalDeviceApp) => void
+      dismissTrialGuide?: () => void
+    }
   }) => (
     <div
       data-testid="mock-composer"
       data-collapse-when-idle={String(collapseWhenIdle)}
       data-selected-model={projectChat?.selectedModel?.name}
+      data-context-tokens={projectChat?.contextUsage?.last.totalTokens}
+      data-trial-plugin={projectChat?.trialPluginName}
     >
+      <CatalogBindingProbe scope={projectChat?.scopeKey} />
+      <button
+        type="button"
+        data-testid="mock-select-plugin"
+        onClick={() =>
+          projectChat?.showTrialGuide?.('Side PDF', {
+            id: 'pdf',
+            name: 'Side PDF',
+            trialTemplates: [{ name: 'Read', path: 'read' }],
+          })
+        }
+      >
+        Select plugin
+      </button>
+      <button
+        type="button"
+        data-testid="mock-dismiss-plugin"
+        onClick={projectChat?.dismissTrialGuide}
+      >
+        Dismiss plugin
+      </button>
       {onSetGoal ? (
         <button type="button" data-testid="set-goal-button" onClick={onSetGoal}>
           设置目标
@@ -206,6 +263,17 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
       >
         发送
       </button>
+      <button
+        data-testid="mock-interrupt"
+        onClick={() => void onSubmit('立即发送', { interruptWhenBusy: true })}
+      >
+        打断发送
+      </button>
+      {queuedMessages?.map(message => (
+        <span key={message.id} data-testid="mock-queue-row">
+          {message.content}
+        </span>
+      ))}
       {error ? <span data-testid="mock-error">{error}</span> : null}
     </div>
   ),
@@ -213,13 +281,20 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
-    services: {},
+    services: {
+      deviceApi: { readWorkspaceFileChunk: vi.fn() },
+      composerCatalogApi: { readCatalog: mocks.readCatalog },
+    },
     state: {
       devices: [],
       isBootstrapping: mocks.isBootstrapping,
       runtimeWork: mocks.runtimeWork,
     },
     projectChat: {
+      listLocalApps: mocks.mainListApps,
+      trialPluginName: 'Main plugin',
+      trialTemplates: [{ name: 'Main task', path: 'main' }],
+      contextUsage: { last: { totalTokens: 999 } },
       models: [],
       selectedModel: null,
       selectedModelOptions: undefined,
@@ -245,9 +320,16 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
     },
     createTemporaryRuntimeTask: vi.fn(),
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance: vi.fn(),
     cancelRuntimePaneTask: mocks.cancelRuntimePaneTask,
-    subscribeRuntimeTaskStream: () => () => undefined,
+    subscribeRuntimeTaskStream: (
+      _address: RuntimeTaskAddress,
+      handlers: { onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }
+    ) => {
+      mocks.usageHandlers.push(handlers)
+      return () => undefined
+    },
     loadRuntimeTranscriptForPane: mocks.loadRuntimeTranscriptForPane,
     loadTurnFileChangesDiff: mocks.loadTurnFileChangesDiff,
     revertTurnFileChanges: mocks.revertTurnFileChanges,
@@ -279,12 +361,16 @@ vi.mock('@/features/workbench/runtimeModelSelection', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
-  deriveRuntimePaneStatus: () => ({ isBusy: false }),
+  deriveRuntimePaneStatus: () => ({ isBusy: mocks.busy }),
   isRuntimeTaskBusyError: () => false,
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   abortRuntimeConversationHydration: vi.fn(),
+  getRuntimeConversationTurnIds: () => new Set<string>(),
+  appendAcceptedRuntimeConversationMessage: (_address: RuntimeTaskAddress, message: unknown) => [
+    message,
+  ],
   applyRuntimeConversationAction: (
     _address: RuntimeTaskAddress,
     action: { type: string; message?: unknown }
@@ -292,21 +378,47 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   beginRuntimeConversationHydration: vi.fn(),
   completeRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationMessages: () => mocks.conversationMessages,
+  getRuntimeConversationTurns: () => [],
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
   updateRuntimeConversationBlocks: () => mocks.conversationMessages,
 }))
 
-vi.mock('@/features/workbench/runtimeTaskLifecycle', () => ({
-  useRuntimeTaskLifecycle: () => mocks.lifecycleSnapshot,
-  useRuntimeTaskLifecycleStore: () => ({
-    getTask: () => mocks.lifecycleSnapshot,
-    syncTranscript: mocks.syncTranscript,
-  }),
-}))
+vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
+  let epoch = -1
+  let store = { getTask: () => mocks.lifecycleSnapshot, syncTranscript: mocks.syncTranscript }
+  return {
+    runtimeTaskLifecycleTransitionChanged: (a: unknown, b: unknown) => a !== b,
+    useRuntimeTaskLifecycle: () => mocks.lifecycleSnapshot,
+    useRuntimeTaskLifecycleStore: () => {
+      if (epoch !== mocks.lifecycleOwnerEpoch) {
+        epoch = mocks.lifecycleOwnerEpoch
+        store = { getTask: () => mocks.lifecycleSnapshot, syncTranscript: mocks.syncTranscript }
+      }
+      return store
+    },
+  }
+})
 
 describe('TemporaryChatPanel', () => {
   beforeEach(() => {
+    mocks.catalogBindings.clear()
+    mocks.mainListApps.mockClear()
+    mocks.readCatalog.mockReset()
+    mocks.readCatalog.mockImplementation(async (target: RuntimeTaskAddress) => ({
+      taskId: target.taskId,
+      workspacePath: '/side',
+      projectPluginIds: [],
+      apps: [],
+      skills: [],
+      marketplaces: [],
+      store: { storePath: '/store', plugins: [] },
+      cloudInstalledPlugins: [],
+    }))
+    mocks.usageHandlers = []
+    mocks.lifecycleOwnerEpoch++
+    mocks.busy = false
+    mocks.interruptAndSendRuntimePaneMessage.mockClear()
     mocks.resetAttachments.mockReset()
     mocks.sendRuntimePaneMessage.mockClear()
     mocks.createTask.mockReset()
@@ -335,6 +447,121 @@ describe('TemporaryChatPanel', () => {
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
     mocks.runtimeWork = null
+  })
+
+  it('binds parallel drawer catalogs to their own devices and tasks', async () => {
+    const second = { deviceId: 'device-2', taskId: 'task-2' }
+    render(
+      <>
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          instanceId="first"
+        />
+        <TemporaryChatPanel
+          currentProject={null}
+          source={second}
+          initialAddress={second}
+          instanceId="second"
+        />
+      </>
+    )
+    const firstCatalog = mocks.catalogBindings.get('first')!
+    const secondCatalog = mocks.catalogBindings.get('second')!
+    expect(firstCatalog.appsStore).not.toBe(secondCatalog.appsStore)
+    await Promise.all([firstCatalog.listApps!(), secondCatalog.listSkills!()])
+    expect(mocks.readCatalog).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' }, true)
+    expect(mocks.readCatalog).toHaveBeenCalledWith(second, true)
+    expect(mocks.mainListApps).not.toHaveBeenCalled()
+  })
+
+  it('uses side-task usage and keeps live updates ahead of a delayed transcript', async () => {
+    const usage = (tokens: number): RuntimeContextUsage => {
+      const breakdown = {
+        totalTokens: tokens,
+        inputTokens: tokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      }
+      return { modelContextWindow: 1000, last: breakdown, total: breakdown }
+    }
+    let finish!: (transcript: unknown) => void
+    mocks.loadRuntimeTranscriptForPane.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="side-task-usage"
+        initialAddress={address}
+        sendEphemeral={false}
+      />
+    )
+    expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-context-tokens')
+    await waitFor(() => expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenCalled())
+    act(() => mocks.usageHandlers.at(-1)?.onContextUsageUpdated?.(usage(700)))
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
+    await act(async () =>
+      finish({ running: false, messages: [], turns: [], contextUsage: usage(100) })
+    )
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
+  })
+
+  it('owns its plugin guide independently from the main workbench', async () => {
+    const address = { deviceId: 'device-1', taskId: 'side-trial-task' }
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="side-trial"
+        initialAddress={address}
+        sendEphemeral={false}
+      />
+    )
+    expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-trial-plugin')
+    await userEvent.click(screen.getByTestId('mock-select-plugin'))
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-trial-plugin', 'Side PDF')
+    await userEvent.click(screen.getByTestId('mock-dismiss-plugin'))
+    expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-trial-plugin')
+  })
+
+  it('uses bottom-origin scrolling by default and allows an explicit override', () => {
+    mocks.conversationMessages = [
+      {
+        id: 'existing-message',
+        role: 'assistant',
+        content: 'existing conversation',
+        status: 'done',
+        createdAt: '2026-09-15T00:00:00.000Z',
+      },
+    ]
+    const { rerender } = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="bottom-origin-default"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'bottom')
+
+    rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="top-origin-override"
+        initialAddress={address}
+        scrollOrigin="top"
+      />
+    )
+
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'top')
   })
 
   it('passes the collapsed idle state through to the shared composer', () => {
@@ -675,5 +902,86 @@ describe('TemporaryChatPanel', () => {
 
     expect(onOpenRuntimeTask).toHaveBeenCalledTimes(4)
     expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
+  })
+  it('uses the shared pending queue while busy and drains it after becoming idle', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    const { rerender } = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="queue"
+        initialAddress={address}
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    expect(screen.getByTestId('mock-queue-row')).toHaveTextContent('发送附件')
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    mocks.busy = false
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: false, isTurnActive: false },
+      turn: { id: null },
+    }
+    rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="queue"
+        initialAddress={address}
+      />
+    )
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        message: '发送附件',
+        attachments: [expect.objectContaining({ local_path: attachment.local_path })],
+      }),
+      expect.any(Object)
+    )
+  })
+  it('uses the addressed interrupt endpoint when the composer requests immediate send', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="interrupt"
+        initialAddress={address}
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-interrupt'))
+    expect(mocks.interruptAndSendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ address, message: '立即发送' }),
+      expect.any(Object)
+    )
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('mock-queue-row')).toBeNull()
+  })
+  it('preserves the task queue when its drawer closes and reopens', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    const first = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="queue-first"
+        initialAddress={address}
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    first.unmount()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="queue-reopened"
+        initialAddress={address}
+      />
+    )
+    expect(screen.getByTestId('mock-queue-row')).toHaveTextContent('发送附件')
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
   })
 })

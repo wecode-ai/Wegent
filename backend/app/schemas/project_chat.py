@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.types import SnowflakeId
+
 
 def _to_camel(value: str) -> str:
     head, *tail = value.split("_")
@@ -16,7 +18,7 @@ def _to_camel(value: str) -> str:
 BotVisibility = Literal["private", "creator_admin", "public"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
-BotRuntime = Literal["codex", "wegent"]
+BotRuntime = Literal["codex", "claude_code", "wegent"]
 BotWorkspacePolicy = Literal["project", "git_worktree"]
 WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
 
@@ -90,6 +92,20 @@ class ProjectChatAgentPlugin(ProjectChatSchema):
     display_name: str = Field(min_length=1, max_length=255)
 
 
+class ProjectChatAgentSkill(ProjectChatSchema):
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    namespace: str = Field(
+        default="default",
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+
+
 class ProjectChatAgentCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=100)
     runtime: BotRuntime = "codex"
@@ -110,6 +126,11 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     workspace_policy: BotWorkspacePolicy = "project"
     default_runtime_profile_id: str | None = Field(default=None, max_length=64)
     plugins: list[ProjectChatAgentPlugin] = Field(default_factory=list, max_length=50)
+    additional_skills: list[ProjectChatAgentSkill] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    mcp_servers: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
@@ -134,6 +155,11 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     workspace_policy: BotWorkspacePolicy | None = None
     default_runtime_profile_id: str | None = Field(default=None, max_length=64)
     plugins: list[ProjectChatAgentPlugin] | None = Field(default=None, max_length=50)
+    additional_skills: list[ProjectChatAgentSkill] | None = Field(
+        default=None,
+        max_length=100,
+    )
+    mcp_servers: dict[str, Any] | None = None
 
 
 class ProjectChatAgentView(ProjectChatSchema):
@@ -158,6 +184,8 @@ class ProjectChatAgentView(ProjectChatSchema):
     workspace_policy: BotWorkspacePolicy
     default_runtime_profile_id: str | None
     plugins: list[ProjectChatAgentPlugin]
+    additional_skills: list[Any]
+    mcp_servers: dict[str, Any]
     created_by_user_id: int | None
     created_by_user_name: str | None = None
     version: int
@@ -172,8 +200,16 @@ class LoopItemAssign(ProjectChatSchema):
     notify_self: bool = False
 
     version: int = Field(ge=1)
-    assignee_type: Literal["user", "agent"]
+    assignee_type: Literal["user", "agent", "team"]
     assignee_id: str = Field(min_length=1, max_length=128)
+    workflow_step: str | None = Field(default=None, max_length=128)
+    trigger: Literal[
+        "manual",
+        "rule",
+        "workflow",
+        "automation",
+        "mention",
+    ] = "manual"
 
 
 class LoopItemApproval(ProjectChatSchema):
@@ -253,6 +289,7 @@ class LoopItemExecutionCancel(ProjectChatSchema):
 
 class LoopItemExecutionView(ProjectChatSchema):
     id: int
+    workspace_id: SnowflakeId | None = None
     loop_item_id: str
     cloud_project_id: str
     task_title: str
@@ -307,7 +344,7 @@ class LoopItemExecutionView(ProjectChatSchema):
     created_at: Any
     updated_at: Any
 
-    @field_validator("team_id", "backend_task_id", mode="before")
+    @field_validator("workspace_id", "team_id", "backend_task_id", mode="before")
     @classmethod
     def normalize_optional_execution_id(cls, value: object) -> object:
         return None if value == 0 else value

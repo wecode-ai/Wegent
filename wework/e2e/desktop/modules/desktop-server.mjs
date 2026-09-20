@@ -110,6 +110,10 @@ import {
   FORK_ENCRYPTED_CONTENT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
+  FORK_PROVIDER_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+  FORK_PROVIDER_SOURCE_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
   GENERIC_MCP_TOOL_BLOCK_ID,
@@ -123,7 +127,12 @@ import {
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
+  GOAL_SNAPSHOT_RECONCILIATION_TEXT,
   GOAL_RESTART_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_COMPLETION_TEXT,
+  GOAL_RESTART_BLOCKER_INITIAL_TEXT,
+  GOAL_RESTART_BLOCKER_PROMPT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
@@ -143,6 +152,8 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MODEL_SERVICE_CONNECTION_ERROR,
+  MODEL_SERVICE_CONNECTION_PROMPT,
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -244,6 +255,7 @@ import {
   join,
   pathToFileURL,
   randomUUID,
+  readNonNegativeNumber,
   withTimeout,
 } from './shared.mjs'
 
@@ -387,6 +399,12 @@ function readyPluginWorkspaceResult(body) {
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
 
+const HELD_WORKTREE_SCENARIOS = new Set([
+  'worktree_queue_hold',
+  'worktree_restart_hold',
+  'worktree_status_hold',
+])
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -428,6 +446,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
+    this.userPreferences = {}
     this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
@@ -554,11 +573,20 @@ class DesktopE2EServer {
     this.goalIdleFollowUpRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleFollowUp = resolvePromise
     })
+    this.goalSnapshotReconciliationRelease = new Promise(resolvePromise => {
+      this.releaseGoalSnapshotReconciliation = resolvePromise
+    })
     this.goalBusyPlanRelease = new Promise(resolvePromise => {
       this.releaseGoalBusyPlan = resolvePromise
     })
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
+    })
+    this.goalRestartBlockerRelease = new Promise(resolvePromise => {
+      this.releaseGoalRestartBlocker = resolvePromise
+    })
+    this.firstGoalRestartResumeRelease = new Promise(resolvePromise => {
+      this.releaseFirstGoalRestartResume = resolvePromise
     })
     this.supervisorInitialRelease = new Promise(resolvePromise => {
       this.releaseSupervisorInitial = resolvePromise
@@ -590,8 +618,10 @@ class DesktopE2EServer {
     this.goalIdleStage = 'initial'
     this.goalBusyStage = 'plan'
     this.goalRestartStage = 'initial'
+    this.goalRestartBlockerStage = 'initial'
+    this.goalRestartScenarioByThreadId = new Map()
+    this.firstResumedGoalRestartScenario = null
     this.cloudGoalRestartStage = 'initial'
-    this.goalRestartResumeRequested = false
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -770,6 +800,8 @@ class DesktopE2EServer {
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
+        'fork_provider_source',
+        'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
         'mcp_elicitation',
@@ -777,7 +809,9 @@ class DesktopE2EServer {
         'background_completion_restore',
         'background_follow_up_restore',
         'goal_idle',
+        'goal_snapshot_reconciliation',
         'goal_busy_handoff',
+        'goal_restart_blocker',
         'goal_restart',
         'cloud_goal_restart',
         'turn_navigation',
@@ -787,11 +821,11 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'model_service_connection_error',
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
-        'worktree_queue_hold',
-        'worktree_restart_hold',
+        ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -827,7 +861,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      HELD_WORKTREE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -871,6 +905,11 @@ class DesktopE2EServer {
         this.scenarioWaiters.set(scenario, resolvePromise)
       })
     )
+  }
+
+  awaitNextScenarioRequest(scenario, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    const nextCount = (this.scenarioRequests.get(scenario)?.length ?? 0) + 1
+    return this.awaitScenarioRequestCount(scenario, nextCount, timeoutMs)
   }
 
   async awaitScenarioRequestCount(scenario, count, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
@@ -1005,6 +1044,10 @@ class DesktopE2EServer {
     this.releaseGoalIdleFollowUp()
   }
 
+  releaseGoalSnapshotReconciliationResponse() {
+    this.releaseGoalSnapshotReconciliation()
+  }
+
   releaseGoalBusyPlanResponse() {
     this.releaseGoalBusyPlan()
   }
@@ -1013,8 +1056,25 @@ class DesktopE2EServer {
     this.releaseGoalRestartResume()
   }
 
-  markGoalRestartResumeRequested() {
-    this.goalRestartResumeRequested = true
+  releaseGoalRestartBlockerResponse() {
+    this.releaseGoalRestartBlocker()
+  }
+
+  releaseFirstGoalRestartResponse() {
+    this.releaseFirstGoalRestartResume()
+  }
+
+  async holdSubsequentGoalRestartResume(scenario) {
+    if (this.firstResumedGoalRestartScenario === null) {
+      this.firstResumedGoalRestartScenario = scenario
+      await this.firstGoalRestartResumeRelease
+      return
+    }
+    if (scenario === 'goal_restart_blocker') {
+      await this.goalRestartBlockerRelease
+      return
+    }
+    await this.goalRestartResumeRelease
   }
 
   releaseCloudInitialResponse() {
@@ -1195,6 +1255,22 @@ class DesktopE2EServer {
         id: 9001,
         user_name: CLOUD_STORED_USER_NAME,
         email: 'desktop-e2e@wework.local',
+        preferences: this.userPreferences,
+      })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname === '/api/users/me') {
+      const body = await readRequestBody(request)
+      this.userPreferences = {
+        ...this.userPreferences,
+        ...(body.preferences ?? {}),
+      }
+      json(response, 200, {
+        id: 9001,
+        user_name: CLOUD_STORED_USER_NAME,
+        email: 'desktop-e2e@wework.local',
+        preferences: this.userPreferences,
       })
       return
     }
@@ -2052,6 +2128,47 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(MULTIMODAL_VISION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'fork_provider_source' || this.scenario === 'fork_provider_follow_up') {
+      const requestKind = codexRequestKind(body)
+      if (requestKind === 'prewarm' || requestKind === 'compaction') {
+        const responseId = `fork-provider-empty-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+        return
+      }
+      const expectedModel = LOCAL_MODEL_CASES.find(model => model.protocol === 'responses')
+      assert.ok(expectedModel, 'Missing the responses local model for fork provider verification')
+      assert.equal(
+        protocol,
+        expectedModel.protocol,
+        'The fork provider regression reached the wrong protocol endpoint'
+      )
+      assert.equal(
+        body.model,
+        expectedModel.modelId,
+        'The forked task did not preserve the source model route'
+      )
+      const isFollowUp = this.scenario === 'fork_provider_follow_up'
+      const expectedPrompt = isFollowUp
+        ? FORK_PROVIDER_FOLLOW_UP_PROMPT
+        : FORK_PROVIDER_SOURCE_PROMPT
+      assert.ok(
+        JSON.stringify(body).includes(expectedPrompt),
+        'The fork provider regression request did not contain its expected prompt'
+      )
+      this.recordScenarioRequest(this.scenario, modelRequest)
+      const responseId = `fork-provider-${this.modelRequests.length}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          isFollowUp
+            ? FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT
+            : FORK_PROVIDER_SOURCE_COMPLETION_TEXT
+        ),
         responseCompleted(responseId),
       ])
       return
@@ -2995,6 +3112,109 @@ class DesktopE2EServer {
       return
     }
 
+    const serializedBody = JSON.stringify(body)
+    const requestThreadId = body.client_metadata?.thread_id
+    const turnMetadata = body.client_metadata?.['x-codex-turn-metadata']
+    let parentThreadId
+    if (typeof turnMetadata === 'string') {
+      try {
+        parentThreadId = JSON.parse(turnMetadata).parent_thread_id
+      } catch {
+        parentThreadId = undefined
+      }
+    }
+    if (
+      typeof requestThreadId === 'string' &&
+      serializedBody.includes(GOAL_RESTART_BLOCKER_PROMPT)
+    ) {
+      this.goalRestartScenarioByThreadId.set(requestThreadId, 'goal_restart_blocker')
+    } else if (
+      typeof requestThreadId === 'string' &&
+      this.scenario === 'goal_restart' &&
+      serializedBody.includes(GOAL_RESTART_PROMPT)
+    ) {
+      this.goalRestartScenarioByThreadId.set(requestThreadId, 'goal_restart')
+    }
+    const taggedThreadId =
+      typeof requestThreadId === 'string' && this.goalRestartScenarioByThreadId.has(requestThreadId)
+        ? requestThreadId
+        : typeof parentThreadId === 'string'
+          ? parentThreadId
+          : undefined
+    const goalRestartScenario =
+      typeof taggedThreadId === 'string'
+        ? this.goalRestartScenarioByThreadId.get(taggedThreadId)
+        : undefined
+
+    if (goalRestartScenario === 'goal_restart_blocker') {
+      this.recordScenarioRequest('goal_restart_blocker', modelRequest)
+      if (this.goalRestartBlockerStage === 'initial') {
+        assert.ok(
+          serializedBody.includes(GOAL_RESTART_BLOCKER_PROMPT),
+          'The real Codex request did not contain the Goal restart blocker prompt'
+        )
+        this.goalRestartBlockerStage = 'continuation'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_RESTART_BLOCKER_INITIAL_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.goalRestartBlockerStage === 'continuation') {
+        this.goalRestartBlockerStage = 'waiting_resume'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await new Promise(resolvePromise => response.once('close', resolvePromise))
+        return
+      }
+      if (this.goalRestartBlockerStage === 'waiting_resume') {
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.goalRestartBlockerStage = 'awaiting_resume_release'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.holdSubsequentGoalRestartResume('goal_restart_blocker')
+        response.end(
+          createSse([
+            ...functionCall(
+              'wework-e2e-goal-restart-blocker-complete',
+              updateGoal.name,
+              updateGoal.arguments
+            ),
+            responseCompleted(responseId),
+          ])
+        )
+        return
+      }
+      assert.equal(
+        this.goalRestartBlockerStage,
+        'awaiting_resume_release',
+        `Unexpected Goal restart blocker model stage: ${this.goalRestartBlockerStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The resumed Goal restart blocker did not return its update_goal output'
+      )
+      this.goalRestartBlockerStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_RESTART_BLOCKER_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'cloud_goal_restart') {
       this.recordScenarioRequest('cloud_goal_restart', modelRequest)
       if (this.cloudGoalRestartStage === 'initial') {
@@ -3044,11 +3264,11 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'goal_restart') {
+    if (goalRestartScenario === 'goal_restart') {
       this.recordScenarioRequest('goal_restart', modelRequest)
       if (this.goalRestartStage === 'initial') {
         assert.ok(
-          JSON.stringify(body).includes(GOAL_RESTART_PROMPT),
+          serializedBody.includes(GOAL_RESTART_PROMPT),
           'The real Codex request did not contain the Goal restart prompt'
         )
         this.goalRestartStage = 'continuation'
@@ -3072,11 +3292,6 @@ class DesktopE2EServer {
         return
       }
       if (this.goalRestartStage === 'waiting_resume') {
-        assert.equal(
-          this.goalRestartResumeRequested,
-          true,
-          'The interrupted Goal resumed without explicit user input'
-        )
         const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
         this.goalRestartStage = 'awaiting_resume_release'
         response.writeHead(200, {
@@ -3086,7 +3301,7 @@ class DesktopE2EServer {
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
         response.write(createSse([responseCreated(responseId)]))
-        await this.goalRestartResumeRelease
+        await this.holdSubsequentGoalRestartResume('goal_restart')
         response.end(
           createSse([
             ...functionCall(
@@ -3194,6 +3409,25 @@ class DesktopE2EServer {
       })
       response.write(createSse(stream.start))
       await this.goalIdleFollowUpRelease
+      response.end(createSse(stream.finish))
+      return
+    }
+
+    if (this.scenario === 'goal_snapshot_reconciliation') {
+      this.recordScenarioRequest('goal_snapshot_reconciliation', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(GOAL_SNAPSHOT_RECONCILIATION_PROMPT),
+        'The real Codex request did not contain the Goal snapshot reconciliation prompt'
+      )
+      const stream = streamingTextEvents(responseId, GOAL_SNAPSHOT_RECONCILIATION_TEXT)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      await this.goalSnapshotReconciliationRelease
       response.end(createSse(stream.finish))
       return
     }
@@ -3693,7 +3927,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
@@ -4184,10 +4418,24 @@ class DesktopE2EServer {
           latestModelInputText(body).includes(RETRY_PROMPT),
           'The initial Codex request did not contain the retry scenario prompt'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          responseFailed(responseId, RETRY_FAILURE_TEXT),
-        ])
+        const processText = '检查失败前的处理状态。'
+        const stream = streamingTextEvents(responseId, processText, 'commentary')
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: processText,
+              offset: 0,
+            },
+          ])
+        )
+        await new Promise(resolve => setTimeout(resolve, 2100))
+        response.end(createSse([responseFailed(responseId, RETRY_FAILURE_TEXT)]))
         return
       }
       const continuationInput = latestModelInputText(body)
@@ -4225,6 +4473,19 @@ class DesktopE2EServer {
         responseCreated(responseId),
         assistantMessage(RATE_LIMIT_COMPLETION_TEXT),
         responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'model_service_connection_error') {
+      this.recordScenarioRequest('model_service_connection_error', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(MODEL_SERVICE_CONNECTION_PROMPT),
+        'The real Codex request did not contain the model-service connection prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, MODEL_SERVICE_CONNECTION_ERROR, 'other'),
       ])
       return
     }
@@ -5440,6 +5701,11 @@ class DesktopE2EServer {
 
   async writeStreamingMarkdown(response, responseId, text) {
     const stream = streamingTextEvents(responseId, text)
+    const chunkDelayMs = readNonNegativeNumber(
+      process.env.WEWORK_E2E_MEMORY_CHUNK_DELAY_MS,
+      5,
+      'WEWORK_E2E_MEMORY_CHUNK_DELAY_MS'
+    )
     response.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache',
@@ -5462,7 +5728,7 @@ class DesktopE2EServer {
         ])
       )
       offset += [...delta].length
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 5))
+      await new Promise(resolvePromise => setTimeout(resolvePromise, chunkDelayMs))
     }
     response.end(createSse(stream.finish))
   }

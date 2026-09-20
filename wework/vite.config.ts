@@ -213,7 +213,7 @@ export default defineConfig({
     globals: true,
     server: {
       deps: {
-        inline: [/@file-viewer/, /@panzoom/],
+        inline: [/@file-viewer/, /@panzoom/, /mermaid/],
       },
     },
     // Keep local and pre-push runs below the resource-contention point where

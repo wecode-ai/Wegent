@@ -26,6 +26,8 @@ Scheduled automations have a **Run** button on both their list card and detail v
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
 
+The Task-page sidebar names this destination **Board**. After it opens, the system-managed personal board is still titled **My tasks**, distinguishing the top-level product area from the specific board being viewed. **My tasks** exposes only board-oriented task tracking, including search, creation, filters, and task details. It does not show the table, files, automation, management, or project-action menus; those advanced capabilities remain available only in ordinary project spaces.
+
 Selecting the fixed top-level **Workspace** tab from another page opens **My tasks**; selecting it again while it is active preserves the current board. Even when both local and cloud storage contain a system-generated `default-work-items` space, the sidebar presents a single logical **My tasks** entry instead of two identically named destinations.
 
 Selecting **New Issue** in a workspace opens a lightweight composer instead of a task form. Choose the destination board and describe the outcome in natural language; the first non-empty line becomes the title and the remaining text becomes the description. The issue is created directly in the selected status column and opens immediately for follow-up details such as participants and execution steps. The board header and every status column expose the same creation flow.
@@ -136,6 +138,12 @@ To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `L
 With the right workspace open, select **Expand panel** in its title bar to let files, previews, or change reviews fill the main workspace. The task composer is hidden while a non-chat workspace is expanded; an expanded temporary chat keeps only its own composer. The expanded state is saved per conversation.
 
 You can still collapse the left sidebar while the workspace is expanded, leaving only the right workspace visible. Select **Restore panel** in the upper-right corner, or **Latest turn** at the bottom when a conversation is available, to return to the side-by-side conversation and workspace layout. Closing the right workspace or its last tab also exits the expanded state.
+
+## View execution progress
+
+While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
+
+After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
 
 ## Navigate long conversations
 

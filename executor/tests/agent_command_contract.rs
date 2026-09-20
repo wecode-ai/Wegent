@@ -833,6 +833,39 @@ fn claude_project_task_uses_global_capability_dirs() {
 }
 
 #[test]
+fn claude_project_task_with_agent_skills_uses_project_scoped_skill_dir() {
+    let _lock = env_lock();
+    let home = unique_dir("claude-project-skill-home");
+    let project_dir = unique_dir("claude-project-skill-workspace");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("work inside the project"),
+        project_workspace_path: Some(project_dir.display().to_string()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["review"]
+        }]),
+        extra: serde_json::Map::from_iter([(
+            "workspace".to_owned(),
+            json!({"project": {"project_id": 42}}),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(
+        spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
+        &home.join(".claude").display().to_string()
+    );
+    assert_eq!(
+        spec.envs().get("SKILLS_DIR").unwrap(),
+        &project_dir.join(".claude/skills").display().to_string()
+    );
+}
+
+#[test]
 fn claude_project_headers_merge_custom_headers_and_default_headers() {
     let _lock = env_lock();
     let home = unique_dir("claude-project-headers-home");

@@ -33,6 +33,7 @@ Bot = Ghost (Soul) + Shell (Body) + Model (Brain)
 ```
 
 **Analogy**:
+
 - **Ghost**: A person's character and expertise
 - **Shell**: A person's body and limbs (ability to perform actions)
 - **Model**: A person's brain (thinking ability)
@@ -40,17 +41,20 @@ Bot = Ghost (Soul) + Shell (Body) + Model (Brain)
 ### Database Relationship
 
 Shell resources are stored in the following database tables:
+
 - `public_shells`: Stores system-provided public Shell configurations (shared across all users)
 - `kinds`: Stores user-defined custom Shell configurations (user_id specific)
 
 ### Shell Resolution Order
 
 When a Bot references a Shell, the system follows this lookup order:
+
 1. **User-defined Shells**: First checks the `kinds` table for user-specific Shells in the specified namespace
 2. **Public Shells**: If not found, falls back to system-provided public Shells in the `public_shells` table
 
 This allows users to:
-- Use preset public Shells (like `ClaudeCode` and `Dify`) without creating them
+
+- Use preset public Shells (such as `Codex`, `ClaudeCode`, and `Dify`) without creating them
 - Override public Shells by creating custom Shells with the same name
 - Define private Shells that only they can access
 
@@ -70,40 +74,65 @@ Shells provide Bots with the following core capabilities:
 
 ## 📊 Runtime Selection Guide
 
-The web configuration flow currently exposes ClaudeCode and Dify for user selection. Chat is available as the direct LLM runtime in agent and bot flows. Agno is no longer offered in the web UI while it is being decommissioned.
+When creating or editing an Agent, the standard settings do not require users to understand Shells. Users first choose how the Agent will be used:
 
-### ClaudeCode Runtime (Recommended)
+- **Everyday chat**: For conversations, knowledge Q&A, and lightweight tasks. Wegent uses Chat.
+- **Complex tasks and coding**: For multi-step work, code changes, files, commands, and connected devices. Users then choose Codex or Claude Code.
+- **Advanced custom**: For advanced users who need a custom Shell.
+
+Agno is being decommissioned and is no longer shown as a preset option in the web UI. Dify and other custom Shells remain available through advanced custom settings.
+
+### Codex Runtime
 
 **Use Cases**:
+
 - Code development and refactoring
 - File operations and management
 - Git branch management and commits
-- Complex tasks requiring tool invocation
+- Agentic coding and tool use with OpenAI models
 
 **Features**:
+
+- ✅ Supports MCP tool invocation
+- ✅ Full filesystem access
+- ✅ Git integration
+- ✅ Workspace and device execution
+
+### Claude Code Runtime
+
+**Use Cases**:
+
+- Code development and refactoring
+- File operations and management
+- Git branch management and commits
+- Coding and tool use with Anthropic models
+
+**Features**:
+
 - ✅ Based on Claude Agent SDK
 - ✅ Supports MCP tool invocation
 - ✅ Full filesystem access
 - ✅ Git integration
-- ✅ Mature and stable
-
-**Recommended for**: Most development tasks
+- ✅ Workspace and device execution
 
 ### Dify Runtime
 
 **Use Cases**:
+
 - Integration with Dify platform applications
 - Workflow automation
 - Multi-turn conversations with external AI services
 - Agent-based chat applications
 
 **Features**:
+
 - ✅ Supports multiple Dify application modes (chat, chatflow, workflow, agent-chat)
 - ✅ Session management for multi-turn conversations
 - ✅ Task cancellation support
 - ✅ Seamless integration with Dify ecosystem
 
 **Environment Variables**:
+
 - `DIFY_API_KEY`: Your Dify API key
 - `DIFY_BASE_URL`: Dify server URL (default: https://api.dify.ai/v1)
 - `DIFY_APP_ID`: Dify application ID
@@ -113,15 +142,12 @@ The web configuration flow currently exposes ClaudeCode and Dify for user select
 
 ### Decision Table
 
-| Feature | ClaudeCode | Dify |
-|---------|------------|------|
-| **Stability** | ⭐⭐⭐⭐⭐ Mature | ⭐⭐⭐⭐ Stable |
-| **Code Development** | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐ Limited |
-| **Tool Invocation** | ⭐⭐⭐⭐⭐ Complete | ⭐⭐⭐ Via Dify |
-| **Git Integration** | ⭐⭐⭐⭐⭐ Complete | ❌ None |
-| **Workflow Support** | ⭐⭐ Basic | ⭐⭐⭐⭐⭐ Excellent |
-| **Learning Curve** | ⭐⭐⭐⭐ Simple | ⭐⭐⭐⭐ Simple |
-| **Recommendation** | ✅ Development | ✅ Workflows |
+| Scenario                                   | Recommended choice                     |
+| ------------------------------------------ | -------------------------------------- |
+| Conversation, Q&A, and knowledge retrieval | Everyday chat                          |
+| Coding with OpenAI models                  | Complex tasks and coding → Codex       |
+| Coding with Anthropic models               | Complex tasks and coding → Claude Code |
+| Dify or a private runtime                  | Advanced custom                        |
 
 ---
 
@@ -129,7 +155,20 @@ The web configuration flow currently exposes ClaudeCode and Dify for user select
 
 Wegent comes with the following preset Shells that can be used immediately:
 
-### 1. ClaudeCode
+### 1. Codex
+
+**Name**: `Codex`
+**Runtime**: `Codex`
+**Status**: ✅ Available by default
+**Namespace**: `default`
+
+**Recommended Scenarios**:
+
+- Code development with OpenAI models
+- Feature implementation and refactoring
+- File, command, and MCP tool operations
+
+### 2. ClaudeCode
 
 **Name**: `ClaudeCode`
 **Runtime**: `ClaudeCode`
@@ -137,12 +176,13 @@ Wegent comes with the following preset Shells that can be used immediately:
 **Namespace**: `default`
 
 **Recommended Scenarios**:
+
 - Daily code development
 - Feature implementation
 - Code refactoring
 - Documentation writing
 
-### 2. Dify
+### 3. Dify
 
 **Name**: `Dify`
 **Runtime**: `Dify`
@@ -150,6 +190,7 @@ Wegent comes with the following preset Shells that can be used immediately:
 **Namespace**: `default`
 
 **Recommended Scenarios**:
+
 - Integration with Dify platform
 - Workflow automation tasks
 - Multi-turn conversation applications
@@ -161,7 +202,9 @@ Wegent comes with the following preset Shells that can be used immediately:
 
 ### Method 1: Use Preset Shells (Recommended for Beginners)
 
-The system already has preset Shells such as `ClaudeCode` and `Dify`. You can directly reference them when creating a Bot:
+In Agent settings, standard users can choose **Complex tasks and coding**, then select **Codex** or **Claude Code**, without creating a Shell manually.
+
+The system also includes preset Shells such as `Codex`, `ClaudeCode`, and `Dify`. You can reference them directly when creating a Bot through YAML:
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -174,7 +217,7 @@ spec:
     name: my-ghost
     namespace: default
   shellRef:
-    name: ClaudeCode  # Use preset Shell directly
+    name: Codex # Use preset Shell directly
     namespace: default
   modelRef:
     name: my-model
@@ -202,8 +245,8 @@ If you need a custom Shell configuration:
 4. Fill in the following fields:
    - **Name**: Unique identifier for the Shell (lowercase letters and hyphens)
    - **Namespace**: Usually use `default`
-   - **Runtime Type**: Select `ClaudeCode` for custom local execution Shells
-   - **Supported Model Types**: (Optional) Specify model types this Shell supports
+   - **Runtime Type**: Select `Codex` or `ClaudeCode` for custom local execution Shells
+   - **Supported Model Providers**: (Optional) Specify model providers this Shell supports
 5. Click **Submit** to create
 
 #### Configure via YAML File
@@ -235,26 +278,27 @@ status:
 
 #### metadata Section
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Yes | Unique identifier for the Shell, use lowercase letters and hyphens |
-| `namespace` | string | Yes | Namespace, usually use `default` |
+| Field       | Type   | Required | Description                                                        |
+| ----------- | ------ | -------- | ------------------------------------------------------------------ |
+| `name`      | string | Yes      | Unique identifier for the Shell, use lowercase letters and hyphens |
+| `namespace` | string | Yes      | Namespace, usually use `default`                                   |
 
 #### spec Section
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `runtime` | string | Yes | Runtime type exposed in the web UI, options: `ClaudeCode`, `Dify` |
-| `supportModel` | array | No | List of supported model types, empty array means all models supported |
+| Field          | Type   | Required | Description                                                           |
+| -------------- | ------ | -------- | --------------------------------------------------------------------- |
+| `runtime`      | string | Yes      | Runtime type. Common values: `Codex`, `ClaudeCode`, `Dify`, `Chat`    |
+| `supportModel` | array  | No       | List of supported model providers, empty array means all models supported |
 
 **supportModel Explanation**:
-- Empty array `[]`: Supports all model types
-- Specified list: Only supports model types in the list, e.g., `["anthropic", "openai"]`
+
+- Omitted or empty array `[]`: Do not filter the model list by provider.
+- Specified list: Match the model’s `spec.modelConfig.env.model`, for example `["claude", "openai"]`; the runtime name does not add restrictions. Blank provider values are invalid.
 
 #### status Section
 
-| Field | Description |
-|-------|-------------|
+| Field   | Description                                                        |
+| ------- | ------------------------------------------------------------------ |
 | `state` | Shell status: `Available` (available), `Unavailable` (unavailable) |
 
 ---
@@ -271,12 +315,13 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: []  # Supports all model types
+  supportModel: [] # Supports all model providers
 status:
   state: "Available"
 ```
 
 **Description**:
+
 - This is the preset ClaudeCode Shell configuration
 - Supports all types of AI models
 - Suitable for most development tasks
@@ -291,12 +336,13 @@ metadata:
   namespace: default
 spec:
   runtime: Dify
-  supportModel: []  # Supports all model types
+  supportModel: [] # Supports all model providers
 status:
   state: "Available"
 ```
 
 **Description**:
+
 - Preset Dify Shell configuration
 - Integrates with Dify platform applications
 - Supports chat, chatflow, workflow, and agent-chat modes
@@ -312,12 +358,13 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: ["anthropic"]  # Only supports Anthropic models
+  supportModel: ["claude"] # Only supports Anthropic models
 status:
   state: "Available"
 ```
 
 **Description**:
+
 - Custom Shell configuration
 - Only supports Anthropic models (Claude series)
 - Suitable for scenarios with specific model restrictions
@@ -338,6 +385,7 @@ status:
 ```
 
 **Description**:
+
 - Development environment dedicated Shell
 - Uses separate namespace `development`
 - Suitable for multi-environment management
@@ -359,7 +407,7 @@ spec:
     name: my-ghost
     namespace: default
   shellRef:
-    name: ClaudeCode  # Reference Shell
+    name: ClaudeCode # Reference Shell
     namespace: default
   modelRef:
     name: my-model
@@ -380,7 +428,7 @@ spec:
     namespace: team-a
   shellRef:
     name: ClaudeCode
-    namespace: default  # Reference Shell from default namespace
+    namespace: default # Reference Shell from default namespace
   modelRef:
     name: my-model
     namespace: team-a
@@ -395,11 +443,13 @@ spec:
 **Answer**: View via the following methods:
 
 **Method 1: Web Interface**
+
 - Log in to Wegent Web interface
 - Navigate to **Resource Management** → **Shell Configuration**
 - View the Shell list
 
 **Method 2: API Query**
+
 - Visit http://localhost:8000/api/docs
 - Use Shell-related API endpoints to query
 
@@ -407,14 +457,15 @@ spec:
 
 **Answer**:
 
-| Feature | ClaudeCode | Dify |
-|---------|------------|------|
-| **Maturity** | Mature and stable | Stable |
-| **Primary Use** | Code development | Workflow automation |
-| **Tool Support** | Complete | Via Dify platform |
-| **Recommendation** | ✅ Recommended | ✅ For workflows |
+| Feature            | ClaudeCode        | Dify                |
+| ------------------ | ----------------- | ------------------- |
+| **Maturity**       | Mature and stable | Stable              |
+| **Primary Use**    | Code development  | Workflow automation |
+| **Tool Support**   | Complete          | Via Dify platform   |
+| **Recommendation** | ✅ Recommended    | ✅ For workflows    |
 
 **Suggestion**:
+
 - For code development tasks, use ClaudeCode
 - For workflow automation and Dify integration, use Dify
 
@@ -423,6 +474,7 @@ spec:
 **Answer**:
 
 View Shell status via Web interface:
+
 1. Navigate to **Resource Management** → **Shell Configuration**
 2. Check the status column for each Shell
 3. `Available` means usable, `Unavailable` means not usable
@@ -432,16 +484,19 @@ View Shell status via Web interface:
 **Answer**: Common errors and solutions:
 
 **Error 1: Shell status is Unavailable**
-- Check if runtime type is correct (`ClaudeCode` or `Dify`)
+
+- Check if runtime type is correct (`Codex`, `ClaudeCode`, or `Dify`)
 - Check if configuration format complies with YAML specification
 - View backend logs: `docker-compose logs backend`
 
 **Error 2: Bot cannot use Shell**
+
 - Check if Bot's Shell reference name and namespace are correct
 - Confirm Shell status is `Available`
-- Check if supportModel configuration restricts model types
+- Check if supportModel configuration restricts model providers
 
 **Error 3: Cross-namespace reference fails**
+
 - Confirm Shell exists in target namespace
 - Check namespace name spelling is correct
 
@@ -450,14 +505,16 @@ View Shell status via Web interface:
 **Answer**:
 
 **Use empty array `[]` (Recommended)**:
-- Supports all model types
+
+- Supports all model providers
 - Maximum flexibility
 - Suitable for most scenarios
 
-**Specify model type list**:
-- Restricts available model types
+**Specify model provider list**:
+
+- Restricts available model providers
 - Suitable for scenarios with strict model requirements
-- Example: `["anthropic"]` only supports Claude models
+- Example: `["claude"]` only supports Claude models
 
 ### Q6: Can I modify preset Shells?
 
@@ -466,6 +523,7 @@ View Shell status via Web interface:
 The preset `ClaudeCode` Shell is a recommended configuration; it's best not to modify it.
 
 If you need custom configuration:
+
 - Create a new Shell resource
 - Use a different name
 - Reference the newly created Shell in your Bot
@@ -482,7 +540,7 @@ metadata:
   name: bot-1
 spec:
   shellRef:
-    name: ClaudeCode  # Shared
+    name: ClaudeCode # Shared
     namespace: default
 ---
 kind: Bot
@@ -490,7 +548,7 @@ metadata:
   name: bot-2
 spec:
   shellRef:
-    name: ClaudeCode  # Shared
+    name: ClaudeCode # Shared
     namespace: default
 ```
 
@@ -499,12 +557,15 @@ spec:
 ## 🔗 Related Resources
 
 ### Related Configuration Guides
+
 - [Model Configuration Guide](./configuring-models.md) - Configure AI model parameters
 
 ### Next Steps
+
 - [Agent Settings](./agent-settings.md) - Configure agents and bots with Shells
 
 ### Reference Documentation
+
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Shell's role in the architecture
 - [YAML Specification](../../reference/yaml-specification.md) - Complete configuration format
 

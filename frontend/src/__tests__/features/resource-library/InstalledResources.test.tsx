@@ -44,6 +44,25 @@ jest.mock('@/features/settings/components/skills/AutoEnabledSkillConfigDialog', 
   }) => (open ? <div data-testid="added-skill-config-dialog" data-skill-id={skill?.id} /> : null),
 }))
 
+jest.mock('@/features/settings/components/TeamApiCallButton', () => ({
+  TeamApiCallButton: ({
+    open,
+    team,
+  }: {
+    open?: boolean
+    team: { id: number; name: string; namespace?: string; displayName?: string | null }
+  }) =>
+    open ? (
+      <div
+        data-testid="installed-agent-api-call-dialog"
+        data-team-id={team.id}
+        data-model={`${team.namespace || 'default'}#${team.name}`}
+      >
+        {team.displayName || team.name}
+      </div>
+    ) : null,
+}))
+
 jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: mockToast }),
 }))
@@ -65,6 +84,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           'actions.more': '更多操作',
           'actions.remove_added_agent': '取消添加',
           'actions.remove_added_skill': '取消添加',
+          'common:teams.api_call.action': 'API 调用',
           'actions.cancel': '取消',
           'actions.retry': '重试',
           'skills.autoSettings.configure': '配置',
@@ -395,7 +415,28 @@ describe('InstalledResources', () => {
     expect(screen.getByTestId('resource-listing-card-92')).toBeInTheDocument()
   })
 
-  it('loads group installs, filters listing fields locally, and deduplicates listings', async () => {
+  it('preserves the same listing installed in two different groups', async () => {
+    mockedListGroupInstallsBatch.mockResolvedValue({
+      items: [
+        makeInstall('skill', {
+          id: 31,
+          installed_reference: { skill_id: 101, namespace: 'engineering' },
+        }),
+        makeInstall('skill', {
+          id: 32,
+          installed_reference: { skill_id: 101, namespace: 'product' },
+        }),
+      ],
+      total: 2,
+      page: 1,
+      limit: 100,
+    })
+    render(<InstalledResources resourceType="skill" groupNamespaces={['engineering', 'product']} />)
+    expect(await screen.findByTestId('view-shared-skill-31-button')).toBeVisible()
+    expect(screen.getByTestId('view-shared-skill-32-button')).toBeVisible()
+  })
+
+  it('loads group installs, filters listing fields locally, and deduplicates installations', async () => {
     const nameMatch = makeInstall('skill', {
       id: 31,
       listing_id: 101,
@@ -438,13 +479,7 @@ describe('InstalledResources', () => {
     })
 
     mockedListGroupInstallsBatch.mockResolvedValue({
-      items: [
-        nameMatch,
-        displayNameMatch,
-        makeInstall('skill', { ...nameMatch, id: 35 }),
-        descriptionMatch,
-        unrelated,
-      ],
+      items: [nameMatch, displayNameMatch, nameMatch, descriptionMatch, unrelated],
       total: 5,
       page: 1,
       limit: 100,
@@ -631,6 +666,31 @@ describe('InstalledResources', () => {
     await waitFor(() => expect(mockedUninstallListing).toHaveBeenCalledWith(92, 'default'))
     expect(screen.queryByTestId('resource-listing-card-92')).not.toBeInTheDocument()
     expect(mockToast).toHaveBeenCalledWith({ title: '已取消添加智能体' })
+  })
+
+  it('opens API call details from an installed agent actions menu', async () => {
+    mockedListMyInstalls.mockResolvedValue({
+      items: [
+        makeInstall('agent', {
+          installed_reference: { team_id: 128, name: 'agent-resource', namespace: 'default' },
+        }),
+      ],
+      total: 1,
+      page: 1,
+      limit: 100,
+    })
+
+    render(<InstalledResources resourceType="agent" />)
+
+    const card = await screen.findByTestId('resource-listing-card-92')
+    const primaryActions = within(card).getByTestId('resource-listing-primary-action-92')
+    fireEvent.click(within(primaryActions).getByTestId('installed-resource-actions-agent-21'))
+    fireEvent.click(await screen.findByTestId('api-call-installed-agent-21-button'))
+
+    const dialog = await screen.findByTestId('installed-agent-api-call-dialog')
+    expect(dialog).toHaveAttribute('data-team-id', '128')
+    expect(dialog).toHaveAttribute('data-model', 'default#agent-resource')
+    expect(dialog).toHaveTextContent('Installed Agent')
   })
 
   it('keeps the installed agent when removal is cancelled', async () => {

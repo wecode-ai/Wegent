@@ -3,12 +3,18 @@ import { useCallback, useEffect, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
 import type { UserProxyConfig } from '@/api/users'
+import {
+  resolveEffectiveLocalCodexProxy,
+  resolveLocalCodexProxyUrl,
+  type EffectiveLocalCodexProxy,
+} from '@/desktop/systemProxy'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
   getLocalProxyConfig,
-  getLocalProxyUrl,
-  saveLocalProxyUrl,
+  maskLocalProxyUrl,
+  saveLocalProxyConfig,
   type LocalProxyConfig,
+  type LocalProxyMode,
 } from '@/features/model-settings/localProxySettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
@@ -57,6 +63,7 @@ export function ProxySettingsPage() {
   const cloudConnection = useOptionalCloudConnection()
   const [config, setConfig] = useState<UserProxyConfig | null>(null)
   const [localConfig, setLocalConfig] = useState<LocalProxyConfig>(() => getLocalProxyConfig())
+  const [localProxyMode, setLocalProxyMode] = useState<LocalProxyMode>(localConfig.mode)
   const [proxyUrl, setProxyUrl] = useState('')
   const [localProxyUrl, setLocalProxyUrl] = useState('')
   const [loading, setLoading] = useState(true)
@@ -64,6 +71,10 @@ export function ProxySettingsPage() {
   const [saving, setSaving] = useState(false)
   const [localSaving, setLocalSaving] = useState(false)
   const [localRestarting, setLocalRestarting] = useState(false)
+  const [localProxyResolving, setLocalProxyResolving] = useState(true)
+  const [effectiveLocalProxy, setEffectiveLocalProxy] = useState<EffectiveLocalCodexProxy | null>(
+    null
+  )
   const [localRestartRequired, setLocalRestartRequired] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -100,6 +111,22 @@ export function ProxySettingsPage() {
     void Promise.resolve().then(() => loadProxyConfig())
   }, [loadProxyConfig])
 
+  const loadEffectiveLocalProxy = useCallback(async () => {
+    setLocalProxyResolving(true)
+    try {
+      setEffectiveLocalProxy(await resolveEffectiveLocalCodexProxy())
+    } catch (loadError) {
+      setEffectiveLocalProxy(null)
+      setLocalError(getErrorMessage(loadError, t('workbench.proxy_config_system_resolve_failed')))
+    } finally {
+      setLocalProxyResolving(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadEffectiveLocalProxy())
+  }, [loadEffectiveLocalProxy])
+
   const handleSaveProxyUrl = async () => {
     if (saving) return
     setSaving(true)
@@ -125,9 +152,10 @@ export function ProxySettingsPage() {
     setLocalError(null)
     setLocalNotice(null)
     try {
-      const nextConfig = saveLocalProxyUrl(localProxyUrl)
+      const nextConfig = saveLocalProxyConfig(localProxyMode, localProxyUrl)
       setLocalConfig(nextConfig)
       setLocalProxyUrl('')
+      await loadEffectiveLocalProxy()
       setLocalRestartRequired(true)
       setLocalNotice(t('workbench.proxy_config_local_save_success'))
     } catch (saveError) {
@@ -143,9 +171,11 @@ export function ProxySettingsPage() {
     setLocalRestarting(true)
     setLocalError(null)
     try {
+      const proxyUrl = await resolveLocalCodexProxyUrl()
       await requestLocalExecutor(RESTART_CODEX_APP_SERVER_METHOD, {
-        proxyUrl: getLocalProxyConfig().configured ? getLocalProxyUrl() : null,
+        proxyUrl,
       })
+      await loadEffectiveLocalProxy()
       setLocalRestartRequired(false)
       setLocalNotice(t('workbench.proxy_config_local_restart_success'))
     } catch (restartError) {
@@ -162,13 +192,49 @@ export function ProxySettingsPage() {
     ? 'bg-primary/10 text-primary'
     : 'bg-muted text-text-muted'
   const updatedAt = formatProxyDate(config?.proxy_updated_at)
-  const localStatusLabel = localConfig.configured
-    ? t('workbench.proxy_config_configured')
-    : t('workbench.proxy_config_not_configured')
-  const localStatusClassName = localConfig.configured
-    ? 'bg-primary/10 text-primary'
-    : 'bg-muted text-text-muted'
+  const localStatusLabel =
+    localConfig.mode === 'system'
+      ? t('workbench.proxy_config_mode_system')
+      : localConfig.mode === 'direct'
+        ? t('workbench.proxy_config_mode_direct')
+        : t('workbench.proxy_config_mode_custom')
   const localUpdatedAt = formatProxyDate(localConfig.updatedAt)
+  const localProxyModes: Array<{
+    mode: LocalProxyMode
+    label: string
+    description: string
+  }> = [
+    {
+      mode: 'system',
+      label: t('workbench.proxy_config_mode_system'),
+      description: t('workbench.proxy_config_mode_system_description'),
+    },
+    {
+      mode: 'direct',
+      label: t('workbench.proxy_config_mode_direct'),
+      description: t('workbench.proxy_config_mode_direct_description'),
+    },
+    {
+      mode: 'custom',
+      label: t('workbench.proxy_config_mode_custom'),
+      description: t('workbench.proxy_config_mode_custom_description'),
+    },
+  ]
+  const effectiveLocalProxyLabel = localProxyResolving
+    ? t('workbench.proxy_config_source_resolving')
+    : !effectiveLocalProxy
+      ? t('workbench.proxy_config_connection_unavailable')
+      : localConfig.mode === 'direct'
+        ? t('workbench.proxy_config_connection_forced_direct')
+        : localConfig.mode === 'custom'
+          ? t('workbench.proxy_config_connection_custom_proxy', {
+              proxy: maskLocalProxyUrl(effectiveLocalProxy.proxyUrl ?? ''),
+            })
+          : effectiveLocalProxy.proxyUrl
+            ? t('workbench.proxy_config_connection_system_proxy', {
+                proxy: maskLocalProxyUrl(effectiveLocalProxy.proxyUrl),
+              })
+            : t('workbench.proxy_config_connection_system_direct')
 
   const renderLocalProxySection = (className = '') => (
     <section
@@ -189,7 +255,7 @@ export function ProxySettingsPage() {
         </div>
         <span
           data-testid="local-proxy-config-status"
-          className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${localStatusClassName}`}
+          className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted"
         >
           {localStatusLabel}
         </span>
@@ -197,28 +263,74 @@ export function ProxySettingsPage() {
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
         <div className="min-w-0">
-          <span className="text-text-muted">{t('workbench.proxy_config_current_proxy')}</span>
-          <span className="ml-2 break-all font-mono text-text-primary">
-            {localConfig.proxyUrlMasked || t('workbench.proxy_config_no_proxy_value')}
+          <span className="text-text-muted">{t('workbench.proxy_config_current_connection')}</span>
+          <span
+            data-testid="local-proxy-effective-url"
+            className="ml-2 break-all font-mono text-text-primary"
+          >
+            {effectiveLocalProxyLabel}
           </span>
         </div>
-        <div>
-          <span className="text-text-muted">{t('workbench.proxy_config_updated_at')}</span>
-          <span className="ml-2 text-text-primary">
-            {localUpdatedAt || t('workbench.proxy_config_never_updated')}
-          </span>
-        </div>
+        {localConfig.updatedAt && (
+          <div>
+            <span className="text-text-muted">{t('workbench.proxy_config_updated_at')}</span>
+            <span className="ml-2 text-text-primary">
+              {localUpdatedAt || t('workbench.proxy_config_never_updated')}
+            </span>
+          </div>
+        )}
       </div>
 
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <input
-          data-testid="local-proxy-config-url-input"
-          value={localProxyUrl}
-          onChange={event => setLocalProxyUrl(event.target.value)}
-          disabled={localSaving}
-          placeholder={t('workbench.proxy_config_placeholder')}
-          className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm text-text-primary placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
-        />
+      <fieldset className="mt-4">
+        <legend className="mb-2 text-xs font-medium text-text-secondary">
+          {t('workbench.proxy_config_mode_label')}
+        </legend>
+        <div className="grid gap-2 sm:grid-cols-3" role="radiogroup">
+          {localProxyModes.map(option => {
+            const selected = localProxyMode === option.mode
+            return (
+              <label
+                key={option.mode}
+                className={`cursor-pointer rounded-lg border p-3 transition-colors ${
+                  selected
+                    ? 'border-text-primary bg-surface'
+                    : 'border-border bg-background hover:bg-surface'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="local-proxy-mode"
+                  value={option.mode}
+                  checked={selected}
+                  onChange={() => {
+                    setLocalProxyMode(option.mode)
+                    setLocalError(null)
+                  }}
+                  disabled={localSaving}
+                  data-testid={`local-proxy-mode-${option.mode}`}
+                  className="sr-only"
+                />
+                <span className="block text-sm font-medium text-text-primary">{option.label}</span>
+                <span className="mt-1 block text-xs leading-5 text-text-muted">
+                  {option.description}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      </fieldset>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        {localProxyMode === 'custom' && (
+          <input
+            data-testid="local-proxy-config-url-input"
+            value={localProxyUrl}
+            onChange={event => setLocalProxyUrl(event.target.value)}
+            disabled={localSaving}
+            placeholder={t('workbench.proxy_config_placeholder')}
+            className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm text-text-primary placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        )}
         <button
           type="button"
           data-testid="local-proxy-config-save-button"
@@ -230,9 +342,6 @@ export function ProxySettingsPage() {
           {localSaving ? t('workbench.proxy_config_saving') : t('workbench.proxy_config_save')}
         </button>
       </div>
-      <p className="mt-2 text-xs leading-5 text-text-muted">
-        {t('workbench.proxy_config_local_clear_hint')}
-      </p>
 
       {localNotice && (
         <div

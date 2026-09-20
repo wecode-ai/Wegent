@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-@import './google-sans-local.css';
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -26,6 +24,7 @@
   --color-text-inverted: 255 255 255;
   --color-primary: 93 94 201;
   --color-primary-contrast: 255 255 255;
+  --color-focus: 93 94 201;
   --color-focus-ring: 93 94 201;
   --color-scrollbar-track: 228 228 228;
   --color-scrollbar-thumb: 200 200 200;
@@ -37,6 +36,20 @@
   --color-popover-foreground: 51 51 51;
   --color-tooltip: 51 51 51;
   --color-tooltip-foreground: 255 255 255;
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-weight-ui: 445;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+  --text-heading-sm: 18px;
+  --text-heading-md: 20px;
+  --text-heading-lg: 24px;
   --shadow-popover: 0 12px 32px rgba(93, 94, 201, 0.12);
   --shadow-sidebar: 0 4px 30px rgba(93, 94, 201, 0.1);
   --radius: 0.5rem;
@@ -58,6 +71,7 @@
   --color-text-inverted: 14 15 15;
   --color-primary: 118 119 218;
   --color-primary-contrast: 255 255 255;
+  --color-focus: 118 119 218;
   --color-focus-ring: 118 119 218;
   --color-scrollbar-track: 42 45 45;
   --color-scrollbar-thumb: 52 53 53;
@@ -80,23 +94,9 @@ body {
   background-image: linear-gradient(to bottom, transparent, rgb(var(--color-bg-base)));
   background-attachment: fixed;
   overflow-x: hidden;
-  font-family:
-    'Google Sans Flex',
-    'Google Sans',
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    'Helvetica Neue',
-    Arial,
-    'PingFang SC',
-    'Hiragino Sans GB',
-    'Microsoft YaHei',
-    sans-serif,
-    'Apple Color Emoji',
-    'Segoe UI Emoji',
-    'Segoe UI Symbol',
-    'Noto Color Emoji';
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-ui);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -114,16 +114,8 @@ body,
   overflow-x: hidden;
 }
 
-/* Ensure all text elements can truncate properly */
-p,
-span,
-div,
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
+/* Collaboration owns its text wrapping through the shared desktop components. */
+:is(p, span, div, h1, h2, h3, h4, h5, h6):where(:not(.collaboration-theme *)) {
   overflow-wrap: break-word;
   word-wrap: break-word;
 }
@@ -259,14 +251,13 @@ body {
 }
 
 /* Remove default blue outline from Headless UI */
-[data-headlessui-state~='open'] {
+[data-headlessui-state~='open']:not(:where(.collaboration-theme, .collaboration-theme *)) {
   outline: none !important;
   box-shadow: none !important;
 }
 
-button:focus,
-button:focus,
-button:focus-visible {
+button:focus:not(:where(.collaboration-theme, .collaboration-theme *)),
+button:focus-visible:not(:where(.collaboration-theme, .collaboration-theme *)) {
   outline: none !important;
   box-shadow: none !important;
 }
@@ -883,8 +874,8 @@ button:focus-visible {
 
 /* Custom scrollbar styles are now in scrollbar.css */
 
-/* Smooth transitions for theme switching */
-* {
+/* The shared workbench owns its focus styles and component motion. */
+*:not(:where(.collaboration-theme, .collaboration-theme *)) {
   transition-property: background-color, border-color, color, fill, stroke;
   transition-duration: 200ms;
   transition-timing-function: ease-in-out;

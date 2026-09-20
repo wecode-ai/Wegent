@@ -15,6 +15,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
+import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
   forwardRef,
   useCallback,
@@ -50,6 +52,10 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import {
+  primaryComposerSubmitOptions,
+  type ComposerFollowUpBehavior,
+} from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import {
@@ -104,6 +110,8 @@ interface CompactChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   projectPhrases?: QuickPhrase[]
+  sendKey?: 'enter' | 'cmd_enter'
+  followUpBehavior?: ComposerFollowUpBehavior
 }
 
 export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactChatComposerProps>(
@@ -155,6 +163,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       isStreaming = false,
       onPause,
       projectPhrases = [],
+      sendKey = 'enter',
+      followUpBehavior = 'queue',
     },
     ref
   ) {
@@ -169,6 +179,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
     const [canExpandInput, setCanExpandInput] = useState(false)
     const [hasText, setHasText] = useState(value.trim().length > 0)
+    const [phraseError, setPhraseError] = useState<string | null>(null)
 
     useImperativeHandle(
       ref,
@@ -191,6 +202,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             : composerRef.current
           return activeHandle?.getValue() ?? value
         },
+        insertReference: reference => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          activeHandle?.insertReference(reference)
+        },
         setValue: (nextValue, selectionOffset) => {
           const activeHandle = fullscreenInputOpen
             ? fullscreenComposerRef.current
@@ -210,8 +227,16 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const activeModelLabel = activeModel?.displayName || activeModel?.name
     const selectedModelLabel =
       selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+    const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+    const primaryBusyLabel =
+      followUpBehavior === 'guide'
+        ? t('workbench.guide_current_turn', '引导当前回复')
+        : t('workbench.send_after_turn', '当前回复结束后发送')
     const canSend =
-      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+      (hasText || attachments.length > 0 || codeComments.length > 0) &&
+      isModelSelectionReady &&
+      !disabled &&
+      !submitDisabled
     const explicitLineCount = value.split('\n').length
 
     useEffect(() => {
@@ -239,28 +264,27 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       window.requestAnimationFrame(() => textareaRef.current?.focus())
     }
     const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
-      onClearPlanMode?.()
-      onCancelGoalDraft?.()
-      if (phrase.mode === 'plan') onSetPlanMode?.()
-      if (phrase.mode === 'goal') onSetGoal?.()
-      const currentValue = getLiveValue()
-      const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
       const activeComposer = fullscreenInputOpen
         ? fullscreenComposerRef.current
         : composerRef.current
-      activeComposer?.setValue(phraseValue, phraseValue.length)
+      if (!activeComposer) return
+      setPhraseError(null)
+      applyQuickPhrase(phrase, activeComposer, {
+        clearPlan: onClearPlanMode,
+        cancelGoal: onCancelGoalDraft,
+        setPlan: onSetPlanMode,
+        setGoal: onSetGoal,
+      })
       if (phrase.attachmentPaths?.length && onFileSelect) {
         void resolveStoredWorkspacePaths(
           phrase.attachmentPaths,
           workspaceTarget?.workspaceSource === 'remote'
-        ).then(transfer =>
-          applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
         )
+          .then(transfer =>
+            applyWorkspacePathTransfer(getLiveValue(), transfer, handleComposerChange, onFileSelect)
+          )
+          .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
       }
-      window.requestAnimationFrame(() => {
-        activeComposer?.setValue(phraseValue, phraseValue.length)
-        ;(fullscreenInputOpen ? fullscreenInputRef.current : textareaRef.current)?.focus()
-      })
     }
 
     const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -294,6 +318,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
 
     return (
       <div className="w-full">
+        <ComposerErrorBanner error={phraseError} />
         <AttachmentBadges
           attachments={attachments}
           uploadingFiles={uploadingFiles}
@@ -355,7 +380,14 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               codeCommentsCount: codeComments.length,
               disabled,
             })
-            if (canSend) onSubmit(submittedValue)
+            if (canSend) {
+              const options = primaryComposerSubmitOptions(isStreaming, followUpBehavior)
+              if (options) {
+                onSubmit(submittedValue, options)
+              } else {
+                onSubmit(submittedValue)
+              }
+            }
           }}
         >
           <button
@@ -421,6 +453,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               onSelectModel={onSelectModel}
               onBlockedModelSelect={onBlockedModelSelect}
               isModelSelectionReady={isModelSelectionReady}
+              sendKey={sendKey}
+              followUpBehavior={followUpBehavior}
+              isStreaming={isStreaming}
             />
             {canExpandInput && (
               <button
@@ -449,7 +484,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   type="submit"
                   data-testid={submitButtonTestId}
                   className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
-                  aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+                  aria-label={primaryBusyLabel}
                 >
                   <ArrowUp className="h-5 w-5" />
                 </button>
@@ -464,7 +499,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                       icon: Clock3,
                       testId: 'send-after-turn-option',
                       onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
-                      shortcut: 'Enter',
+                      shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
                     },
                     {
                       label:
@@ -479,7 +514,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                       testId: 'guide-current-turn-option',
                       onSelect: () =>
                         onSubmit(composerRef.current?.getValue() ?? value, { guideWhenBusy: true }),
-                      shortcut: 'Command+Enter',
+                      shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
                     },
                     {
                       label:
@@ -635,6 +670,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 onSelectModel={onSelectModel}
                 onBlockedModelSelect={onBlockedModelSelect}
                 isModelSelectionReady={isModelSelectionReady}
+                sendKey={sendKey}
+                followUpBehavior={followUpBehavior}
+                isStreaming={isStreaming}
               />
             </div>
           </div>

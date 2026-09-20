@@ -13,7 +13,9 @@ export interface QuickAccessConfig {
 }
 
 export interface UserPreferences {
+  composer_quick_phrases?: import('@wegent/chat-core/composer-quick-phrases').QuickPhrase[] | null
   send_key: 'enter' | 'cmd_enter'
+  follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
@@ -77,6 +79,7 @@ export interface SkillRefMeta {
 
 /** Skill reference with full identification info for backend */
 export interface SkillRef {
+  skill_id?: number
   name: string
   namespace: string
   is_public: boolean

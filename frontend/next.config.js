@@ -34,6 +34,7 @@ const nextConfig = {
     '@replit/codemirror-vim',
     'katex',
     '@wegent/chat-core',
+    '@wegent/collaboration',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used

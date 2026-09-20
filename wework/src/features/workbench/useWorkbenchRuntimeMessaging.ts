@@ -1,3 +1,7 @@
+import {
+  loadRuntimeFileChangesDiff,
+  revertRuntimeFileChanges,
+} from '@wegent/chat-core/runtime-file-changes'
 import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
@@ -69,7 +73,6 @@ import {
   createRuntimeTaskIdFromSeed,
   findProjectDeviceWorkspace,
   findRuntimeTask,
-  getCommandStdoutObject,
   isRecord,
   isSameRuntimeTaskIdentity,
   mergeRuntimeTaskHandles,
@@ -81,6 +84,7 @@ import {
 } from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
+import { prepareRuntimeContinuationModel } from './runtimeContinuationModel'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import {
   inferRuntimeName,
@@ -395,7 +399,10 @@ export function useWorkbenchRuntimeMessaging({
   )
 
   const prepareRuntimeSendRequest = useCallback(
-    async (request: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
+    async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
+      const request = await prepareRuntimeContinuationModel(input, state.runtimeWork, () =>
+        executorClient.runtime.listRuntimeWork()
+      )
       if (!request.attachments?.length) return request
       const prepared = await prepareRuntimeAttachmentsForDevice(
         request.address.deviceId,
@@ -410,7 +417,7 @@ export function useWorkbenchRuntimeMessaging({
         attachments: prepared.attachments,
       }
     },
-    [services.attachmentApi, state.devices]
+    [executorClient, services.attachmentApi, state.devices, state.runtimeWork]
   )
 
   const blockRuntimeSendForUnavailableModel = useCallback(
@@ -946,7 +953,8 @@ export function useWorkbenchRuntimeMessaging({
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      const requestedManagedWorkspace = Boolean(intent.execution?.workspace)
+      const workspaceExecution = options?.sideSource ? undefined : intent.execution
+      const requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -1197,7 +1205,7 @@ export function useWorkbenchRuntimeMessaging({
         additionalSkills: intent.additionalSkills ?? [],
         attachmentIds: preparedAttachments.attachmentIds,
         attachments: preparedAttachments.attachments,
-        execution: intent.execution,
+        execution: workspaceExecution,
         ...(selectedRuntimeProject
           ? {
               ...(selectedRuntimeProject.aiSettings?.instructions?.trim()
@@ -1814,9 +1822,15 @@ export function useWorkbenchRuntimeMessaging({
             modelOptions: taskRequest.modelOptions,
           }
         : options.executionModel
-      const baseIntent = taskRequest
-        ? { ...prepared.intent, execution: taskRequest.execution }
-        : prepared.intent
+      const workspaceExecution = taskRequest
+        ? taskRequest.execution
+        : Object.prototype.hasOwnProperty.call(options, 'workspaceExecution')
+          ? (options.workspaceExecution ?? undefined)
+          : prepared.intent.execution
+      const baseIntent = {
+        ...prepared.intent,
+        execution: workspaceExecution,
+      }
       const intent = executionModel
         ? applyExecutionModelOverride(baseIntent, executionModel)
         : options.modelId
@@ -1869,36 +1883,8 @@ export function useWorkbenchRuntimeMessaging({
       const runtimeFileChanges = runtimeTask
         ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
-      if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
-      if (runtimeFileChanges) {
-        const response = await executorClient.commands.executeCommand(
-          runtimeFileChanges.device_id,
-          {
-            command_key: 'turn_file_changes_review',
-            path: runtimeFileChanges.workspace_path,
-            args: [runtimeFileChanges.artifact_id],
-            timeout_seconds: 30,
-            max_output_bytes: 5 * 1024 * 1024,
-          }
-        )
-        const stdout = getCommandStdoutObject(response.stdout)
-        if (
-          !response.success ||
-          !stdout ||
-          stdout.success !== true ||
-          typeof stdout.diff !== 'string'
-        ) {
-          throw new Error(
-            String(
-              stdout?.error || response.error || response.stderr || 'File changes review failed'
-            )
-          )
-        }
-        return stdout.diff
-      }
-      if (runtimeTask) {
-        throw new Error('Runtime file changes artifact is unavailable')
-      }
+      if (runtimeTask)
+        return loadRuntimeFileChangesDiff(executorClient.commands, runtimeFileChanges)
 
       const loadDiff = services.taskApi.getTurnFileChangesDiff
       if (!loadDiff) throw new Error('File changes review is unavailable')
@@ -1920,47 +1906,25 @@ export function useWorkbenchRuntimeMessaging({
       const runtimeFileChanges = runtimeTask
         ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
-      if (runtimeFileChanges && runtimeTask) {
-        const publishFileChanges = (fileChanges: TurnFileChangesSummary) => {
-          applyRuntimeConversationAction(runtimeTask, {
-            type: 'file_changes_updated',
-            subtaskId,
-            fileChanges,
-          })
-          return fileChanges
-        }
-        try {
-          const response = await executorClient.runtime.revertRuntimeFileChanges({
-            address: runtimeTask,
-            fileChanges: runtimeFileChanges,
-          })
-          const fileChanges = normalizeTurnFileChanges(
-            response.fileChanges ?? response.file_changes
-          )
-          if (!fileChanges) {
-            throw new Error('Invalid file changes response')
-          }
-          return publishFileChanges({
-            ...fileChanges,
-            diff: runtimeFileChanges.diff,
-            revertible: runtimeFileChanges.revertible ?? true,
-          })
-        } catch (error) {
-          if (error instanceof ApiError && isRecord(error.detail)) {
-            const fileChanges = normalizeTurnFileChanges(error.detail.file_changes)
-            if (fileChanges) {
-              return publishFileChanges({
-                ...fileChanges,
-                diff: runtimeFileChanges.diff,
-                revertible: runtimeFileChanges.revertible ?? true,
-              })
-            }
-          }
-          throw error
-        }
-      }
       if (runtimeTask) {
-        throw new Error('Runtime file changes artifact is unavailable')
+        const fileChanges = await revertRuntimeFileChanges(
+          {
+            revertRuntimeFileChanges: request =>
+              executorClient.runtime.revertRuntimeFileChanges(request),
+            errorFileChanges: cause =>
+              cause instanceof ApiError && isRecord(cause.detail)
+                ? cause.detail.file_changes
+                : undefined,
+          },
+          runtimeTask,
+          runtimeFileChanges
+        )
+        applyRuntimeConversationAction(runtimeTask, {
+          type: 'file_changes_updated',
+          subtaskId,
+          fileChanges,
+        })
+        return fileChanges
       }
       const revert = services.taskApi.revertTurnFileChanges
       if (!revert) throw new Error('File changes revert is unavailable')
@@ -2077,6 +2041,7 @@ function buildOptimisticRuntimeTask({
     ...(workspaceKind ? { workspaceKind } : {}),
     createdAt: now,
     updatedAt: now,
+    recencyAt: now,
     running: status === 'creating' || status === 'running',
     status,
     optimistic: true,

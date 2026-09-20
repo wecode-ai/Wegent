@@ -30,6 +30,7 @@ from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
+from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -39,6 +40,7 @@ from app.core.exceptions import (
     validation_exception_handler,
 )
 from app.core.logging import setup_logging
+from app.core.sdk_startup import preload_openai_sdk
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
@@ -173,6 +175,17 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Keep the cache available through startup, channel draining and shutdown.
+    await cache_manager.start()
+    try:
+        async with _application_lifespan(app):
+            yield
+    finally:
+        await cache_manager.aclose()
+
+
+@asynccontextmanager
+async def _application_lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI application.
     Handles startup and shutdown events.
@@ -185,6 +198,8 @@ async def lifespan(app: FastAPI):
 
     # ==================== STARTUP ====================
     require_internal_service_token_configured()
+    # Load SDK resources before IM/background consumers can dispatch requests.
+    await asyncio.to_thread(preload_openai_sdk)
     from app.services.builtin_plugin_service import builtin_plugin_service
 
     # Every Backend process validates any plugins marked as required.
@@ -347,11 +362,6 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
-    from app.core.cache import cache_manager
-
-    await cache_manager.start()
-    logger.info("✓ Redis cache connection pool initialized")
-
     if settings.SCHEDULED_TASKS_ENABLED:
         logger.info("Starting background jobs...")
         start_background_jobs(app)
@@ -387,8 +397,6 @@ async def lifespan(app: FastAPI):
 
     sio = get_sio()
     try:
-        import asyncio
-
         bind_socketio_loop(asyncio.get_running_loop())
     except RuntimeError:
         pass
@@ -608,16 +616,6 @@ async def lifespan(app: FastAPI):
 
         await stop_device_monitor_async()
         logger.info("✓ Device heartbeat monitor stopped")
-
-        # Close the process-owned Redis cache pool after all cache consumers stop.
-        try:
-            await cache_manager.aclose()
-            logger.info("✓ Redis cache connection pools closed")
-        except Exception:
-            logger.warning(
-                "Failed to close Redis cache connection pools",
-                exc_info=True,
-            )
 
         # Step 8: Shutdown OpenTelemetry
         from shared.telemetry.config import get_otel_config
@@ -983,19 +981,20 @@ def create_socketio_asgi_app():
 app = create_socketio_asgi_app()
 
 
+# MIGRATION-CANDIDATE(api="GET /"): remove after final confirmation.
 # Root path (registered on FastAPI app)
-@_fastapi_app.get("/")
-async def root():
-    """
-    Root path, returns API information
-    """
-    return {
-        "name": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "api_prefix": settings.API_PREFIX,
-        "docs_url": f"{settings.API_PREFIX}/docs",
-        "socketio_path": "/socket.io",
-    }
+# @_fastapi_app.get("/")
+# async def root():
+#     """
+#     Root path, returns API information
+#     """
+#     return {
+#         "name": settings.PROJECT_NAME,
+#         "version": settings.VERSION,
+#         "api_prefix": settings.API_PREFIX,
+#         "docs_url": f"{settings.API_PREFIX}/docs",
+#         "socketio_path": "/socket.io",
+#     }
 
 
 # Health check endpoint (registered on FastAPI app)

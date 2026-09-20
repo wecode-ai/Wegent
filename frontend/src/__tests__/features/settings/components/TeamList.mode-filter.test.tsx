@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
@@ -12,16 +12,29 @@ import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import {
   checkTeamRunningTasks,
+  copyTeam,
   deleteTeam,
-  fetchTeamsList,
+  fetchManagedTeamsPage,
 } from '@/features/settings/services/teams'
 import type { Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
 Element.prototype.scrollIntoView = jest.fn()
 
+globalThis.IntersectionObserver = jest.fn(() => ({
+  observe: jest.fn(),
+  unobserve: jest.fn(),
+  disconnect: jest.fn(),
+})) as unknown as typeof IntersectionObserver
+const mockTeams = jest.fn()
+const mockCatalog = jest.fn()
 const mockPush = jest.fn()
+const mockInvalidateTeams = jest.fn()
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({ invalidateTeams: mockInvalidateTeams }),
+}))
 const mockToast = jest.fn()
+let mockUser: { id: number; user_name: string; role: string } | null = null
 const mockT = (key: string, options?: Record<string, unknown>) =>
   ({
     'teams.title': 'Team List',
@@ -87,12 +100,12 @@ jest.mock('@/hooks/use-toast', () => ({
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
-    user: { id: 1, user_name: 'yansheng3', role: 'user' },
+    user: mockUser,
   }),
 }))
 
 jest.mock('@/features/settings/services/teams', () => ({
-  fetchTeamsList: jest.fn(),
+  fetchManagedTeamsPage: jest.fn(),
   deleteTeam: jest.fn(),
   shareTeam: jest.fn(),
   checkTeamRunningTasks: jest.fn(),
@@ -117,9 +130,26 @@ const mockListMyPublished = resourceLibraryApi.listMyPublished as jest.Mock
 
 jest.mock('@/features/settings/components/TeamEditDialog', () => ({
   __esModule: true,
-  default: ({ open, scope, groupName }: { open?: boolean; scope?: string; groupName?: string }) =>
+  default: ({
+    open,
+    scope,
+    groupName,
+    onSaved,
+  }: {
+    open?: boolean
+    scope?: string
+    groupName?: string
+    onSaved?: (team: Team) => Promise<void>
+  }) =>
     open ? (
-      <div data-testid="team-edit-dialog" data-scope={scope} data-group={groupName ?? ''} />
+      <div data-testid="team-edit-dialog" data-scope={scope} data-group={groupName ?? ''}>
+        <button
+          data-testid="save-team-edit"
+          onClick={() => onSaved?.(makeTeam(42, 'saved-agent', ['chat']))}
+        >
+          Save
+        </button>
+      </div>
     ) : null,
 }))
 jest.mock('@/features/settings/components/BotList', () => () => null)
@@ -238,14 +268,190 @@ const groups: Group[] = [
 ]
 
 describe('TeamList mode filter', () => {
+  it.each([true, false])('reports the saved agent with created=%s', async created => {
+    mockTeams.mockResolvedValue([makeTeam(42, 'saved-agent', ['chat'])])
+    const onSaved = jest.fn()
+    const onCreated = jest.fn()
+    render(
+      <TeamList
+        scope="personal"
+        onSaved={onSaved}
+        compact
+        onCreated={onCreated}
+        createRequest={created ? { id: 1, target: { scope: 'personal' } } : undefined}
+      />
+    )
+    if (!created) await userEvent.click(await screen.findByTestId('edit-team-button-42'))
+    await userEvent.click(await screen.findByTestId('save-team-edit'))
+    await waitFor(() =>
+      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), created)
+    )
+    expect(onCreated).toHaveBeenCalledTimes(created ? 1 : 0)
+  })
+  it('requests server search and ignores stale results after the keyword changes', async () => {
+    let resolveOld!: (teams: Team[]) => void
+    ;(mockTeams as jest.Mock)
+      .mockImplementationOnce(
+        () =>
+          new Promise<Team[]>(resolve => {
+            resolveOld = resolve
+          })
+      )
+      .mockResolvedValueOnce([makeTeam(301, 'new-keyword-agent', ['chat'])])
+    const { rerender } = render(
+      <TeamList scope="all" sourceFilter="mine" searchQuery="old-keyword" />
+    )
+    await waitFor(() =>
+      expect(mockTeams).toHaveBeenCalledWith('all', undefined, {
+        keyword: 'old-keyword',
+        ownedOnly: true,
+        signal: expect.any(AbortSignal),
+      })
+    )
+    const previousSignal = (mockTeams as jest.Mock).mock.calls[0][2].signal as AbortSignal
+
+    rerender(<TeamList scope="all" sourceFilter="mine" searchQuery="new-keyword" />)
+    expect(await screen.findByText('new-keyword-agent')).toBeInTheDocument()
+    expect(previousSignal.aborted).toBe(true)
+    await act(async () => resolveOld([makeTeam(302, 'old-keyword-agent', ['chat'])]))
+    expect(screen.getByText('new-keyword-agent')).toBeInTheDocument()
+    expect(screen.queryByText('old-keyword-agent')).not.toBeInTheDocument()
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
+    mockUser = { id: 1, user_name: 'yansheng3', role: 'user' }
+    ;(mockCatalog as jest.Mock).mockImplementation(async (scope, groupName) => ({
+      items: await mockTeams(scope, groupName),
+      complete: true,
+    }))
+    ;(fetchManagedTeamsPage as jest.Mock).mockImplementation(async (params, signal) => {
+      let catalog
+      if (params.keyword) {
+        catalog = {
+          items: await mockTeams(params.scope, params.groupName, {
+            keyword: params.keyword,
+            signal,
+            ...(params.sourceFilter === 'mine' ? { ownedOnly: true } : {}),
+          }),
+          complete: true,
+        }
+      } else if (params.groupNames) {
+        const pages = await Promise.all(
+          params.groupNames.map((name: string) => mockCatalog('group', name))
+        )
+        catalog = {
+          items: [
+            ...new Map(pages.flatMap(page => page.items).map(team => [team.id, team])).values(),
+          ],
+          complete: pages.every(page => page.complete),
+        }
+      } else {
+        catalog = await mockCatalog(params.scope, params.groupName)
+      }
+      return {
+        resource_type: 'agent',
+        items: catalog.items,
+        has_more: !catalog.complete,
+        next: catalog.complete ? null : { page: 2 },
+        limit: 100,
+      }
+    })
     ;(fetchBotsList as jest.Mock).mockResolvedValue([])
     mockListMyPublished.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100 })
   })
 
+  it('waits for the user identity before starting the catalog request', async () => {
+    mockUser = null
+    ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(1, 'loaded-agent', ['chat'])])
+    const { rerender } = render(<TeamList scope="all" />)
+    expect(mockCatalog).not.toHaveBeenCalled()
+    expect(fetchBotsList).not.toHaveBeenCalled()
+
+    mockUser = { id: 1, user_name: 'yansheng3', role: 'user' }
+    rerender(<TeamList scope="all" />)
+    await screen.findByText('loaded-agent')
+    expect(mockCatalog).toHaveBeenCalledTimes(1)
+    expect(fetchBotsList).not.toHaveBeenCalled()
+  })
+
+  it.each([50, 100])('searches all %i loaded agents locally without more requests', async count => {
+    const items = Array.from({ length: count }, (_, index) =>
+      makeTeam(index + 1, `agent-${index + 1}`, ['chat'])
+    )
+    items[count - 1].description = '开发 100%_done'
+    ;(mockTeams as jest.Mock).mockResolvedValue(items)
+    const { rerender } = render(<TeamList scope="all" sourceFilter="mine" />)
+    await screen.findByTestId(`team-card-${count}`)
+
+    rerender(<TeamList scope="all" sourceFilter="mine" searchQuery="开发 100%_done" />)
+    expect(screen.getByTestId(`team-card-${count}`)).toBeInTheDocument()
+    expect(screen.queryByTestId('team-card-1')).not.toBeInTheDocument()
+    rerender(<TeamList scope="all" sourceFilter="mine" searchQuery="no-match" />)
+    expect(screen.queryByTestId(`team-card-${count}`)).not.toBeInTheDocument()
+    rerender(<TeamList scope="all" sourceFilter="mine" searchQuery="" />)
+    expect(screen.getByTestId('team-card-1')).toBeInTheDocument()
+    expect(screen.getByTestId(`team-card-${count}`)).toBeInTheDocument()
+    expect(mockCatalog).toHaveBeenCalledTimes(1)
+    expect(mockTeams).toHaveBeenCalledTimes(1)
+    expect(fetchBotsList).not.toHaveBeenCalled()
+  })
+
+  it('searches remotely when the loaded catalog is incomplete', async () => {
+    ;(mockCatalog as jest.Mock).mockResolvedValueOnce({
+      items: [makeTeam(1, 'first-page-agent', ['chat'])],
+      complete: false,
+    })
+    ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(205, 'older-agent', ['chat'])])
+    const { rerender } = render(<TeamList scope="all" />)
+    await screen.findByText('first-page-agent')
+
+    rerender(<TeamList scope="all" searchQuery="older" />)
+    expect(await screen.findByText('older-agent')).toBeInTheDocument()
+    expect(mockTeams).toHaveBeenCalledWith('all', undefined, {
+      keyword: 'older',
+      signal: expect.any(AbortSignal),
+    })
+  })
+
+  it('does not reuse a complete catalog from another group', async () => {
+    ;(mockTeams as jest.Mock)
+      .mockResolvedValueOnce([makeTeam(1, 'first-group-agent', ['chat'])])
+      .mockResolvedValueOnce([makeTeam(2, 'second-group-agent', ['chat'])])
+    const { rerender } = render(<TeamList scope="group" groupName="first" />)
+    await screen.findByText('first-group-agent')
+
+    rerender(<TeamList scope="group" groupName="second" searchQuery="agent" />)
+    expect(await screen.findByText('second-group-agent')).toBeInTheDocument()
+    expect(screen.queryByText('first-group-agent')).not.toBeInTheDocument()
+    expect(mockTeams).toHaveBeenLastCalledWith('group', 'second', {
+      keyword: 'agent',
+      signal: expect.any(AbortSignal),
+    })
+  })
+
+  it('refreshes the complete catalog after copying during local search', async () => {
+    const original = makeTeam(1, 'original-agent', ['chat'])
+    const copied = makeTeam(2, 'copied-agent', ['chat'])
+    ;(mockTeams as jest.Mock)
+      .mockResolvedValueOnce([original])
+      .mockResolvedValueOnce([original, copied])
+      .mockResolvedValueOnce([copied])
+    ;(copyTeam as jest.Mock).mockResolvedValue(copied)
+    const { rerender } = render(<TeamList scope="personal" />)
+    await screen.findByText('original-agent')
+    rerender(<TeamList scope="personal" searchQuery="original" />)
+    fireEvent.click(screen.getByTestId('copy-team-to-personal-1'))
+    await waitFor(() => expect(fetchManagedTeamsPage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ title: 'teams.copy_success' }))
+
+    rerender(<TeamList scope="personal" searchQuery="copied" />)
+    expect(await screen.findByText('copied-agent')).toBeInTheDocument()
+    expect(fetchManagedTeamsPage).toHaveBeenCalledTimes(3)
+  })
+
   it('shows device teams when the device filter is selected', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       makeTeam(1, 'chat-agent', ['chat']),
       makeTeam(2, 'device-agent', ['task']),
     ])
@@ -263,7 +469,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('deletes an owned agent with name confirmation and no running-task scan', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([makeTeam(1, 'deletable-agent', ['chat'])])
+    ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(1, 'deletable-agent', ['chat'])])
     ;(deleteTeam as jest.Mock).mockResolvedValue(undefined)
 
     render(<TeamList scope="personal" />)
@@ -282,7 +488,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('shows the owning group for group resources when listing all groups', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(3, 'group-agent', ['chat']),
         namespace: 'platform',
@@ -296,7 +502,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('keeps personal and group agents created by me while excluding other creators', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(10, 'personal-mine-agent', ['chat']),
         namespace: 'default',
@@ -320,7 +526,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('uses the marketplace-style card grid in compact capability views', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(8, 'compact-agent', ['chat']),
         namespace: 'platform',
@@ -380,7 +586,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('shows edit on team-shared cards for members with edit permission', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(13, 'editable-team-agent', ['chat']),
         namespace: 'platform',
@@ -401,7 +607,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('keeps team-shared cards read-only for members without edit permission', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(14, 'readonly-team-agent', ['chat']),
         namespace: 'platform',
@@ -422,7 +628,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('links an empty all-agents capability view to the agent marketplace', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([])
+    ;(mockTeams as jest.Mock).mockResolvedValue([])
 
     render(<TeamList scope="all" sourceFilter="all" compact />)
 
@@ -435,33 +641,32 @@ describe('TeamList mode filter', () => {
   })
 
   it('keeps a parent-group agent authorized through the selected child group', async () => {
-    ;(fetchTeamsList as jest.Mock).mockImplementation(
-      (_scope: string, selectedGroupName?: string) =>
-        Promise.resolve(
-          selectedGroupName === 'child-group'
-            ? [
-                {
-                  ...makeTeam(6, 'authorized-agent', ['chat']),
-                  namespace: 'parent-group',
-                  share_status: 2,
-                  access_source: 'namespace_authorization',
-                },
-              ]
-            : []
-        )
+    ;(mockTeams as jest.Mock).mockImplementation((_scope: string, selectedGroupName?: string) =>
+      Promise.resolve(
+        selectedGroupName === 'child-group'
+          ? [
+              {
+                ...makeTeam(6, 'authorized-agent', ['chat']),
+                namespace: 'parent-group',
+                share_status: 2,
+                access_source: 'namespace_authorization',
+              },
+            ]
+          : []
+      )
     )
 
     render(<TeamList scope="group" sourceFilter="group" groupFilter={['child-group']} />)
 
     expect(await screen.findByText('authorized-agent')).toBeInTheDocument()
-    expect(fetchTeamsList).toHaveBeenCalledWith('group', 'child-group')
+    expect(mockTeams).toHaveBeenCalledWith('group', 'child-group')
     const card = screen.getByTestId('team-card-6')
     expect(within(card).getByText('From parent group parent-group')).toBeInTheDocument()
     expect(within(card).queryByText('parent-group', { exact: true })).not.toBeInTheDocument()
   })
 
   it('shows a personal-source agent authorized to a group', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(9, 'bound-personal-agent', ['chat']),
         namespace: 'default',
@@ -480,7 +685,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('hides team removal for a Reporter using a market Agent', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(15, 'reporter-market-agent', ['chat']),
         namespace: 'default',
@@ -504,7 +709,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('shows team removal for a Developer managing a market Agent', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+    ;(mockTeams as jest.Mock).mockResolvedValue([
       {
         ...makeTeam(16, 'developer-market-agent', ['chat']),
         namespace: 'default',
@@ -534,7 +739,7 @@ describe('TeamList mode filter', () => {
       share_status: 2,
       access_source: 'namespace_authorization' as const,
     }
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([sharedAgent])
+    ;(mockTeams as jest.Mock).mockResolvedValue([sharedAgent])
 
     render(
       <TeamList
@@ -546,12 +751,12 @@ describe('TeamList mode filter', () => {
 
     expect(await screen.findByText('shared-authorized-agent')).toBeInTheDocument()
     expect(screen.getAllByText('shared-authorized-agent')).toHaveLength(1)
-    expect(fetchTeamsList).toHaveBeenCalledWith('group', 'child-group-a')
-    expect(fetchTeamsList).toHaveBeenCalledWith('group', 'child-group-b')
+    expect(mockTeams).toHaveBeenCalledWith('group', 'child-group-a')
+    expect(mockTeams).toHaveBeenCalledWith('group', 'child-group-b')
   })
 
   it('keeps source and mode filters in the same toolbar area above the list', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([makeTeam(4, 'flat-agent', ['chat'])])
+    ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(4, 'flat-agent', ['chat'])])
 
     render(<TeamList scope="all" sourceControls={<div data-testid="source-filter">Source</div>} />)
 
@@ -569,7 +774,7 @@ describe('TeamList mode filter', () => {
   })
 
   it('shows creation actions in the page header when the default all source filter is selected', async () => {
-    ;(fetchTeamsList as jest.Mock).mockResolvedValue([makeTeam(5, 'all-agent', ['chat'])])
+    ;(mockTeams as jest.Mock).mockResolvedValue([makeTeam(5, 'all-agent', ['chat'])])
 
     render(<TeamList scope="all" sourceFilter="all" groups={groups} />)
 

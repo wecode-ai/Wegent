@@ -63,7 +63,7 @@ describe('connector OAuth client', () => {
         expect(results).toEqual(
           status === 'declined'
             ? []
-            : [{ key: 'plugin.authorize', outcome: 'failed', failureStage: 'request' }]
+            : [{ key: 'plugin.authorize', outcome: 'failed', failureStage: 'confirm' }]
         )
         return
       }

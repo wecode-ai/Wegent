@@ -218,6 +218,45 @@ def test_runtime_task_create_v2_rejects_materialized_model_config() -> None:
         )
 
 
+def test_runtime_task_create_accepts_plugin_credential_references() -> None:
+    request = RuntimeTaskCreateRequest(
+        schemaVersion=2,
+        runtime="codex",
+        message="Implement the task",
+        projectPlugins=[
+            {
+                "id": "github@openai",
+                "config": {"repository": "wecode-ai/Wegent"},
+                "credentialRefs": [
+                    {"name": "github", "ref": "plugin-connection/github"}
+                ],
+            }
+        ],
+    )
+
+    assert request.project_plugins[0]["credentialRefs"][0]["name"] == "github"
+
+
+@pytest.mark.parametrize(
+    "secret_config",
+    [
+        {"api_key": "plaintext-key"},
+        {"nested": [{"clientSecret": "plaintext-secret"}]},
+        {"material": "-----BEGIN RSA PRIVATE KEY-----\nplaintext"},
+    ],
+)
+def test_runtime_task_create_rejects_plugin_credentials(
+    secret_config: dict,
+) -> None:
+    with pytest.raises(ValidationError, match="use credential_refs"):
+        RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            runtime="codex",
+            message="Implement the task",
+            projectPlugins=[{"id": "github@openai", "config": secret_config}],
+        )
+
+
 def test_runtime_task_create_preserves_cloud_project_id_as_string() -> None:
     request = RuntimeTaskCreateRequest(
         runtime="codex",

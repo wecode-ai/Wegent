@@ -5,11 +5,10 @@
 """Schemas for shared cloud projects and local execution bindings."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     field_validator,
@@ -20,8 +19,12 @@ from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
+from app.schemas.types import SnowflakeId
+from app.schemas.workspace import (
+    ExecutionEnvironmentConfig,
+    ExecutionEnvironmentDefinition,
+)
 
-SnowflakeId = Annotated[str, BeforeValidator(str)]
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
 ProjectVisibility = Literal["private", "public"]
 
@@ -73,6 +76,7 @@ def normalize_provider_config(
 
 
 class CloudProjectCreate(BaseModel):
+    workspace_id: SnowflakeId | None = None
     project_key: str | None = Field(
         default=None, min_length=2, max_length=16, pattern=r"^[A-Za-z0-9]+$"
     )
@@ -192,6 +196,7 @@ class CloudProjectUpdate(BaseModel):
     ai_automation: CloudProjectAiAutomation | None = None
     pull_request_automation: CloudProjectPullRequestAutomation | None = None
     workflow_definition: ProjectWorkflowDefinition | None = None
+    execution_environment: ExecutionEnvironmentDefinition | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
@@ -218,6 +223,7 @@ class CloudProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: SnowflakeId
+    workspace_id: SnowflakeId | None = None
     public_id: str
     project_key: str
     name: str
@@ -244,6 +250,9 @@ class CloudProjectResponse(BaseModel):
         default_factory=ProjectWorkflowDefinition
     )
     workflow_automation_id: str | None = None
+    execution_environment: ExecutionEnvironmentConfig = Field(
+        default_factory=ExecutionEnvironmentConfig
+    )
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -275,6 +284,7 @@ class CloudProjectResponse(BaseModel):
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),
                 "workflow_automation_id": metadata.get("workflow_automation_id"),
+                "execution_environment": metadata.get("execution_environment", {}),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),
@@ -325,3 +335,22 @@ class CloudProjectMemberResponse(BaseModel):
     email: str | None
     role: BaseRole
     capability_description: str = ""
+
+
+class CollaborationMessageImportTarget(BaseModel):
+    kind: Literal["new_issue", "existing_issue"]
+    issue_id: str | None = Field(default=None, max_length=64)
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "CollaborationMessageImportTarget":
+        if self.kind == "existing_issue" and not self.issue_id:
+            raise ValueError("issue_id is required for an existing Issue")
+        return self
+
+
+class CollaborationMessageImportCreate(BaseModel):
+    source_task_id: int = Field(ge=1)
+    subtask_ids: list[int] | None = None
+    target: CollaborationMessageImportTarget
+    note: str | None = Field(default=None, max_length=1_000)

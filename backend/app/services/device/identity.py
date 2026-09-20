@@ -54,6 +54,15 @@ def record_id_from_route(device_id: str) -> int | None:
     return None
 
 
+def device_connection_route_id(device: Kind) -> str:
+    """Return the transport identity used by the device's heartbeat connection."""
+    if device_kind_type(device) == DeviceType.CLOUD:
+        spec = device.json.get("spec", {})
+        cloud_config = spec.get("cloudConfig") or {}
+        return spec.get("deviceId") or cloud_config.get("deviceId") or device.name
+    return record_route_id(device)
+
+
 def device_identity_ids(device: Kind) -> list[str]:
     """Return every persisted identity that refers to one device record."""
 

@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
@@ -30,6 +30,7 @@ use crate::{
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
+    attachments::device_runtime_attachment_task_dir,
     config::device::ConnectionConfig,
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -48,6 +49,8 @@ const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_RESTORE_STARTUP_CONCURRENCY: usize = 2;
 const RESTORE_STARTUP_CONCURRENCY_ENV: &str = "WEGENT_RUNTIME_RESTORE_CONCURRENCY";
 const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
+const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
+const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 enum RestoreStartupState {
@@ -143,13 +146,13 @@ use super::{
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     codex_transcript_page::{
-        load_codex_transcript, CodexTranscriptDirection, CodexTranscriptPage,
-        CodexTranscriptRequest,
+        load_codex_transcript, load_codex_transcript_navigation, CodexTranscriptDirection,
+        CodexTranscriptNavigation, CodexTranscriptPage, CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
     events::{
         emit_response_event, emit_runtime_work_changed, is_context_compaction_request,
-        CodexNotificationEventMapper,
+        next_runtime_event_sequence, CodexNotificationEventMapper,
     },
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
@@ -177,8 +180,8 @@ use super::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
         item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, restore_cloud_project_id, restore_origin,
-        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        normalize_workspace_path, now_ms, prompt_text, raw_string_field, restore_cloud_project_id,
+        restore_origin, runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
         timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
@@ -191,6 +194,8 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL: Duration = Duration::from_secs(30);
+const CODEX_TRANSCRIPT_NAVIGATION_CACHE_MAX_ENTRIES: usize = 64;
 const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
@@ -210,6 +215,7 @@ const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
+const MAX_PENDING_CODEX_NOTIFICATIONS: usize = 256;
 
 fn restore_startup_concurrency(max_concurrent_tasks: usize) -> usize {
     let configured = env::var(RESTORE_STARTUP_CONCURRENCY_ENV)
@@ -550,21 +556,24 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    startup_recovery_deferred: Arc<AtomicBool>,
     bundled_plugin_marketplace_reconciliation: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     restore_startup_semaphore: Arc<Semaphore>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
+    codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
-    thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
+    thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
@@ -607,7 +616,6 @@ struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
-    managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
     codex_turn: Option<ActiveCodexTurn>,
@@ -638,12 +646,37 @@ struct ActiveCodexTranscriptItems {
     items: Vec<Value>,
 }
 
+#[derive(Clone)]
+struct CachedCodexTranscriptNavigation {
+    cached_at: Instant,
+    navigation: CodexTranscriptNavigation,
+}
+
 struct RuntimeThreadEventRoute {
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
     active: bool,
     nested: bool,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct RuntimeThreadEventRouting {
+    routes: HashMap<String, RuntimeThreadEventRoute>,
+    pending_notifications: VecDeque<PendingCodexNotification>,
+    replaying_route_generations: HashMap<String, u64>,
+    next_route_generation: u64,
+}
+
+struct PendingCodexNotification {
+    thread_id: String,
+    message: Value,
+}
+
+struct PendingCodexNotificationReplay {
+    route_generations: HashMap<String, u64>,
+    notifications: Vec<PendingCodexNotification>,
 }
 
 struct ScheduledTurnGuard {
@@ -695,16 +728,23 @@ impl Drop for ScheduledTurnGuard {
 struct SideSourceThread {
     thread_id: String,
     thread_path: Option<String>,
+    workspace_path: String,
 }
 
 impl RuntimeThreadEventRoute {
-    fn new(local_task_id: String, request: ExecutionRequest, active: bool) -> Self {
+    fn new(
+        local_task_id: String,
+        request: ExecutionRequest,
+        active: bool,
+        generation: u64,
+    ) -> Self {
         Self {
             local_task_id,
             request,
             event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
             active,
             nested: false,
+            generation,
         }
     }
 }
@@ -719,11 +759,32 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let mut queued_turns =
-            turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
+        let mut persisted_turns =
+            turns::read_runtime_turn_state(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
-                VecDeque::new()
+                turns::RuntimeTurnQueueState::default()
             });
+        let active_goal_turns = persisted_turns.active_goal_turns.clone();
+        for turn in persisted_turns.active_goal_turns.values_mut() {
+            turn.initial_thread_goal = None;
+            turn.request.prompt = Value::String(String::new());
+            turn.request
+                .extra
+                .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
+        }
+        let mut queued_turns = persisted_turns.queued_turns;
+        queued_turns.extend(
+            persisted_turns
+                .active_goal_turns
+                .into_values()
+                .filter(|turn| {
+                    turn.request
+                        .extra
+                        .get(GOAL_NEEDS_ATTENTION_MARKER)
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                }),
+        );
         for turn in &mut queued_turns {
             turn.request
                 .extra
@@ -760,6 +821,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
@@ -768,16 +830,18 @@ impl RuntimeWorkRpcHandler {
                 runtime_settings.max_concurrent_tasks,
                 queued_turns,
             ))),
+            active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
+            codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
-            thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
+            thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
@@ -792,11 +856,46 @@ impl RuntimeWorkRpcHandler {
             hook_service: HookService::from_env(),
             backend_connection: Arc::new(Mutex::new(None)),
         };
+        for (local_task_id, turn) in handler
+            .active_goal_turns
+            .lock()
+            .expect("active Goal turn map lock should not be poisoned")
+            .iter()
+        {
+            handler.set_goal_execution_status(
+                local_task_id,
+                if turn
+                    .request
+                    .extra
+                    .get(GOAL_NEEDS_ATTENTION_MARKER)
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    Some("needsAttention")
+                } else {
+                    Some("recovering")
+                },
+            );
+        }
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
     }
 
     pub fn with_event_sender(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+    ) -> Self {
+        let handler =
+            Self::with_event_sender_deferred_startup_recovery(device_id, codex_binary, event_tx);
+        handler
+            .startup_recovery_deferred
+            .store(false, Ordering::Release);
+        handler.spawn_startup_worktree_reconciliation();
+        handler
+    }
+
+    pub fn with_event_sender_deferred_startup_recovery(
         device_id: impl Into<String>,
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
@@ -808,7 +907,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
-        handler.spawn_startup_worktree_reconciliation();
+        handler
+            .startup_recovery_deferred
+            .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler
     }
@@ -829,12 +930,32 @@ impl RuntimeWorkRpcHandler {
     /// read cloud project data. This mirrors `normalize_local_task_request`
     /// used by the `task:execute` channel so both paths behave identically
     /// regardless of when the executor process was spawned.
+    pub(super) fn backend_connection_snapshot(
+        &self,
+    ) -> Result<Option<ConnectionConfig>, AppIpcError> {
+        self.backend_connection
+            .lock()
+            .map(|guard| guard.clone())
+            .map_err(|_| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection state is unavailable",
+                )
+            })
+    }
+
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
-        let Ok(guard) = self.backend_connection.lock() else {
-            return;
-        };
-        let Some(connection) = guard.as_ref() else {
-            return;
+        self.rewrite_model_gateway_backend(request);
+        let connection = match self.backend_connection_snapshot() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => return,
+            Err(error) => {
+                log_executor_event(
+                    "backend connection snapshot failed",
+                    &[("error", error.message)],
+                );
+                return;
+            }
         };
         if connection.backend_url.trim().is_empty() || connection.auth_token.trim().is_empty() {
             return;
@@ -855,7 +976,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.auth_token = Some(connection.auth_token.clone());
+            request.auth_token = Some(connection.auth_token);
         }
         if request
             .runtime_auth_token
@@ -865,22 +986,42 @@ impl RuntimeWorkRpcHandler {
             .is_empty()
             && !connection.runtime_auth_token.trim().is_empty()
         {
-            request.runtime_auth_token = Some(connection.runtime_auth_token.clone());
+            request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
     }
 
+    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    ///
+    /// The connection snapshot is unavailable before the device finishes
+    /// connecting, so fall back to the request's own backend URL (environment,
+    /// payload, or task API domain) and leave the gateway untouched when
+    /// neither source yields a reachable address.
+    fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
+        let snapshot_backend_url = self
+            .backend_connection_snapshot()
+            .ok()
+            .flatten()
+            .map(|connection| connection.backend_url)
+            .unwrap_or_default();
+        let backend_url = if snapshot_backend_url.trim().is_empty() {
+            crate::agents::request_backend_url(request).unwrap_or_default()
+        } else {
+            snapshot_backend_url
+        };
+        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
+    }
+
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
-        if !matches!(
-            method,
-            "runtime.tasks.running_count"
-                | "runtime.worktrees.capabilities"
-                | "runtime.worktrees.preflight"
-        ) && self.reconcile_worktrees_once().await
+        let configure_before_startup_recovery = method == "runtime.codex.runtime_config.update";
+        let startup_recovery_deferred = self.startup_recovery_deferred.load(Ordering::Acquire);
+        if !startup_recovery_deferred
+            && !configure_before_startup_recovery
+            && should_resume_persisted_turns_before_rpc(method)
         {
-            self.resume_persisted_turns().await;
+            self.reconcile_and_resume_persisted_turns().await;
         }
-        match method {
-            "runtime.tasks.list" => self.list_tasks().await,
+        let result = match method {
+            "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
@@ -1021,6 +1162,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.projects.upsert_local" => self.upsert_local_project(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.composer.catalog.read" => self.read_composer_catalog(payload).await,
             "runtime.workspace.search" => self.search_workspace(payload).await,
             "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
             "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
@@ -1037,8 +1179,25 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
+        };
+        if configure_before_startup_recovery && result.is_ok() {
+            self.startup_recovery_deferred
+                .store(false, Ordering::Release);
+            self.reconcile_and_resume_persisted_turns().await;
         }
+        result
     }
+}
+
+fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
+    !matches!(
+        method,
+        "runtime.tasks.running_count"
+            | "runtime.composer.catalog.read"
+            | "runtime.worktrees.capabilities"
+            | "runtime.worktrees.preflight"
+            | "runtime.codex.runtime_config.update"
+    )
 }
 
 fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
@@ -1048,6 +1207,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod composer_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{

@@ -151,9 +151,28 @@ export function useLocalConnectorAuthSession({
           onSuccessRef.current(started)
           return
         }
-        if (started.status === 'error' || started.status === 'expired') attempt.fail('confirm')
-        if (started.status === 'cancelled') attempt.cancel()
         const startedAsBrowser = browserMode || isBrowserAuthStatus(started)
+        if (
+          started.status === 'error' ||
+          started.status === 'expired' ||
+          started.status === 'cancelled'
+        ) {
+          if (started.status === 'cancelled') attempt.cancel()
+          else attempt.fail('confirm')
+          setError(
+            started.hint ||
+              (startedAsBrowser
+                ? tRef.current(
+                    'workbench.plugins_local_browser_failed',
+                    '浏览器授权未完成，请重新开始登录'
+                  )
+                : tRef.current(
+                    'workbench.plugins_local_qr_expired',
+                    '二维码已失效，请重新开始登录'
+                  ))
+          )
+          return
+        }
         const tick = async () => {
           if (!isCurrent()) return
           try {

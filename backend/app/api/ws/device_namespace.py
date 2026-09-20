@@ -803,17 +803,30 @@ def _project_execution_workflow_status(
         )
         .first()
     )
-    if binding is None or not binding.workflow_node_id:
+    if binding is None:
         return None
 
     from app.models.delivery import LoopItem
+    from app.services.project_workflow_projection import (
+        update_workflow_plan_task_status,
+    )
 
-    item = update_workflow_task_status(
-        db,
-        user_id=user_id,
-        device_id=device_id,
-        task_id=task_id,
-        execution_status=projected_status,
+    item = (
+        update_workflow_task_status(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
+        if binding.workflow_node_id
+        else update_workflow_plan_task_status(
+            db,
+            child_id=loop_item_id,
+            device_id=binding.device_id,
+            task_id=task_id,
+            execution_status=projected_status,
+        )
     )
     if item is None:
         return None
@@ -2088,16 +2101,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id=user_id,
                     device_id=device_id,
                 )
-                payload = device_capability_sync_service.build_desired_capabilities(
-                    db,
+            result = (
+                await device_capability_sync_service.sync_current_device_capabilities(
                     user_id=user_id,
                     device_id=device_id,
+                    timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
                 )
-            result = await device_capability_sync_service.sync_device_payload(
-                user_id=user_id,
-                device_id=device_id,
-                payload=payload,
-                timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
             )
             with _db_session() as db:
                 plugin_device_installation_service.record_device_sync_result(
