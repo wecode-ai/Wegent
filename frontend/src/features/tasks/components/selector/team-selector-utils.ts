@@ -92,12 +92,10 @@ export function getBindModesTargetPage(
   currentMode: TeamModeFilter
 ): TeamTargetPage {
   const effectiveBindMode = bindMode || ['chat', 'code']
-  const targetMode =
-    effectiveBindMode.length === 1
-      ? effectiveBindMode[0]
-      : currentMode === 'all'
-        ? 'chat'
-        : currentMode
+  const preferredMode = currentMode === 'all' ? 'chat' : currentMode
+  const targetMode = effectiveBindMode.includes(preferredMode)
+    ? preferredMode
+    : effectiveBindMode[0]
 
   switch (targetMode) {
     case 'task':

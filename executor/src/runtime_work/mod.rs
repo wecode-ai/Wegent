@@ -28,6 +28,7 @@ mod util;
 mod worktrees;
 
 pub(crate) use collaboration_projects::sync_local_collaboration_projects;
+pub(crate) use events::CodexNotificationEventMapper;
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;

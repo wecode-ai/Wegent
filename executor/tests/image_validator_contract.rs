@@ -88,6 +88,66 @@ async fn image_validator_runs_claudecode_dependency_checks() {
     assert_eq!(result["checks"][2]["name"], "python");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn image_validator_checks_codex_without_unrelated_runtimes() {
+    let result = validate_codex(Some(
+        "#!/bin/sh\ncase \"$*\" in\n'app-server --help') exit 0;;\n'--version') echo 'codex-cli 0.142.5';;\n*) exit 1;;\nesac\n",
+    ))
+    .await;
+
+    assert_eq!(result["valid"], true);
+    assert_eq!(result["shell_type"], "Codex");
+    assert_eq!(result["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(result["checks"][0]["name"], "codex");
+    assert_eq!(result["checks"][0]["version"], "0.142.5");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn image_validator_rejects_codex_without_app_server() {
+    let result = validate_codex(Some(
+        "#!/bin/sh\ncase \"$*\" in\n'--version') echo 'codex-cli 0.142.5';;\n*) exit 1;;\nesac\n",
+    ))
+    .await;
+
+    assert_eq!(result["valid"], false);
+    assert_eq!(result["checks"][0]["status"], "fail");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn image_validator_rejects_missing_codex() {
+    let result = validate_codex(None).await;
+
+    assert_eq!(result["valid"], false);
+    assert_eq!(result["checks"][0]["name"], "codex");
+    assert_eq!(result["checks"][0]["status"], "fail");
+}
+
+#[cfg(unix)]
+async fn validate_codex(script: Option<&str>) -> Value {
+    let _lock = env_lock().await;
+    let bin_dir = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("/bin/sh", bin_dir.path().join("sh")).unwrap();
+    if let Some(script) = script {
+        write_executable(bin_dir.path(), "codex", script);
+    }
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let request = ExecutionRequest {
+        task_type: Some("validation".to_owned()),
+        validation_params: json!({"shell_type": "Codex"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = ImageValidatorEngine.run(request).await;
+
+    let ExecutionOutcome::Completed { content } = outcome else {
+        panic!("expected completed validation outcome, got {outcome:?}");
+    };
+    serde_json::from_str(&content).unwrap()
+}
+
 #[tokio::test]
 async fn image_validator_rejects_unknown_shell_type() {
     let request = ExecutionRequest {
