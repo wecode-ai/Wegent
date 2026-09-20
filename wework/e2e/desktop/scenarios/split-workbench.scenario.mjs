@@ -268,7 +268,12 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     'The multiline composer did not render exactly one caret'
   )
 
-  const [composerMetrics] = JSON.parse(await control.command('getElementMetrics', COMPOSER))
+  const [composerMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      '[data-testid="desktop-empty-composer-frame"] [data-composer-scroll-container]'
+    )
+  )
   const [caretMetrics] = JSON.parse(
     await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
   )

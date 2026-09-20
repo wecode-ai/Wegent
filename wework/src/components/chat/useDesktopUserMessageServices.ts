@@ -14,6 +14,8 @@ import { navigateTo } from '@/lib/navigation'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useComposerCatalogBinding } from './composer/ComposerCatalogContext'
 import type { LocalDeviceSkill } from '@/types/api'
+import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 
 async function openLocalAttachmentPath(
   path: string,
@@ -36,8 +38,16 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
   const pane = useContext(WorkbenchPaneContext)
   const catalog = useComposerCatalogBinding()
   const listSkills = catalog.listSkills ?? pane?.projectChat.listLocalSkills
+  const getHomeDirectory = pane?.getDeviceHomeDirectory
+  const localDeviceId = resolveLocalWorkbenchDeviceId(
+    pane?.state.devices.filter(device => device.device_type === 'local') ?? [],
+    LOCAL_WORKBENCH_DEVICE_ALIAS
+  )!
   const [loaded, setLoaded] = useState<{
     source: typeof listSkills
+    homeSource: typeof getHomeDirectory
+    deviceId: string
+    homeDirectory?: string
     skills: LocalDeviceSkill[]
   } | null>(null)
   useEffect(() => {
@@ -46,12 +56,32 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
     const refresh = () => {
       const request = ++revision
       setLoaded(null)
-      void listSkills().then(
-        skills => {
-          if (request === revision) setLoaded({ source: listSkills, skills })
+      const home = getHomeDirectory
+        ? resolveHomeRelativeWorkspacePath('~/', localDeviceId, getHomeDirectory).catch(
+            () => undefined
+          )
+        : Promise.resolve(undefined)
+      void Promise.all([listSkills(), home]).then(
+        ([skills, homeDirectory]) => {
+          if (request === revision) {
+            setLoaded({
+              source: listSkills,
+              homeSource: getHomeDirectory,
+              deviceId: localDeviceId,
+              skills,
+              homeDirectory,
+            })
+          }
         },
         () => {
-          if (request === revision) setLoaded({ source: listSkills, skills: [] })
+          if (request === revision) {
+            setLoaded({
+              source: listSkills,
+              homeSource: getHomeDirectory,
+              deviceId: localDeviceId,
+              skills: [],
+            })
+          }
         }
       )
     }
@@ -62,11 +92,25 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
       revision++
       if (event) window.removeEventListener(event, refresh)
     }
-  }, [catalog.catalogEvents.catalogChanged, hasSkillReferences, listSkills])
-  const localSkills = loaded?.source === listSkills ? loaded?.skills : undefined
+  }, [
+    catalog.catalogEvents.catalogChanged,
+    hasSkillReferences,
+    listSkills,
+    getHomeDirectory,
+    localDeviceId,
+  ])
+  const current =
+    loaded?.source === listSkills &&
+    loaded?.homeSource === getHomeDirectory &&
+    loaded?.deviceId === localDeviceId
+      ? loaded
+      : null
+  const localSkills = current?.skills
+  const localSkillHomeDirectory = current?.homeDirectory
   return useMemo(
     () => ({
       localSkills,
+      localSkillHomeDirectory,
       images,
       editor: { ...getDesktopComposerEditorServices(), preserveNativeEmptyCaret: !electron },
       transfers: desktopComposerTransferServices,
@@ -75,6 +119,6 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
       openLocalAttachment: openLocalAttachmentPath,
       getCommentPreviewRightBoundary: getCodeCommentPreviewRightBoundary,
     }),
-    [images, electron, localSkills]
+    [images, electron, localSkills, localSkillHomeDirectory]
   )
 }

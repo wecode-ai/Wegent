@@ -9569,13 +9569,8 @@ describe('DesktopWorkbenchLayout', () => {
       )
 
       const skillLink = await screen.findByTestId('sent-local-skill-token-gmail')
-      if (referencePath.startsWith('~/')) {
-        expect(skillLink).toHaveAttribute('aria-disabled', 'true')
-        await user.click(skillLink)
-        expect(readWorkspaceTextFile).not.toHaveBeenCalled()
-        return
-      }
       await waitFor(() => expect(skillLink).toHaveAttribute('aria-disabled', 'false'))
+      expect(getHome).toHaveBeenCalledWith(localDevice.device_id)
       await user.hover(skillLink)
       expect(screen.getByTestId('sent-local-skill-token-gmail')).toBe(skillLink)
       await user.click(skillLink)

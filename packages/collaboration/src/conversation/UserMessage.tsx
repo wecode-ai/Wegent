@@ -57,6 +57,7 @@ import type { ComposerTransferServices } from '../composer/useComposerTransfers'
 
 export interface UserMessageServices {
   localSkills?: readonly { name: string; path: string }[]
+  localSkillHomeDirectory?: string
   images: AttachmentImageServices<Attachment>
   editor?: ComposerEditorServices
   transfers?: ComposerTransferServices
@@ -629,6 +630,14 @@ function cloudReferenceKind(href: string): 'project' | 'todo' | 'file' | 'delive
   return 'project'
 }
 
+function normalizeRegisteredSkillPath(path: string, homeDirectory?: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  if (homeDirectory && normalized.startsWith('~/')) {
+    return `${homeDirectory.replace(/\\/g, '/').replace(/\/+$/, '')}/${normalized.slice(2)}`
+  }
+  return normalized
+}
+
 function renderUserContent(
   content: string,
   services: UserMessageServices,
@@ -651,7 +660,9 @@ function renderUserContent(
         const pathReference = composerPathReference(reference)
         const matchingSkills = skillFilePath
           ? (services.localSkills?.filter(
-              item => item.path.replace(/\\/g, '/') === skillFilePath.replace(/\\/g, '/')
+              item =>
+                normalizeRegisteredSkillPath(item.path, services.localSkillHomeDirectory) ===
+                normalizeRegisteredSkillPath(skillFilePath, services.localSkillHomeDirectory)
             ) ?? [])
           : []
         const knownSkill = matchingSkills.length === 1 ? matchingSkills[0] : undefined

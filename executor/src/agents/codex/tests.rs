@@ -3541,6 +3541,19 @@ fn turn_input_matches_shared_prompt_reference_cases() {
 }
 
 #[test]
+fn turn_input_preserves_collaboration_references_as_text() {
+    for scheme in [
+        "wework-member",
+        "wework-agent",
+        "wework-group",
+        "wework-issue",
+    ] {
+        let reference = format!("[$test]({scheme}://test)");
+        assert_eq!(turn_input(&json!(reference)), vec![text_input(reference)]);
+    }
+}
+
+#[test]
 fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
     let path = dirs::home_dir()
         .expect("test user has a home directory")

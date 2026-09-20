@@ -86,6 +86,10 @@ pub(crate) fn is_skill_reference(href: &str) -> bool {
             "file://",
             "folder://",
             "cloud://",
+            "wework-member://",
+            "wework-agent://",
+            "wework-group://",
+            "wework-issue://",
             "wework-conversation://",
         ]
         .iter()
