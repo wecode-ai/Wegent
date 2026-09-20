@@ -8,10 +8,13 @@ import {
   type DesktopConversationPresentationProp,
 } from './useDesktopConversationPresentation'
 
-export function ScrollableMessageArea(
-  props: Omit<ScrollableMessageAreaProps, DesktopConversationPresentationProp>
-) {
-  const presentation = useDesktopConversationPresentation(props.messages)
+export function ScrollableMessageArea({
+  workspacePath,
+  ...props
+}: Omit<ScrollableMessageAreaProps, DesktopConversationPresentationProp> & {
+  workspacePath?: string
+}) {
+  const presentation = useDesktopConversationPresentation(props.messages, workspacePath)
   return (
     <DesktopToolServices>
       <SharedScrollableMessageArea {...props} {...presentation} />

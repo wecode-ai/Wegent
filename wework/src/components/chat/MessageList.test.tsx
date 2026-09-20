@@ -4,6 +4,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
+import { ScrollableMessageArea } from './ScrollableMessageArea'
+import { setPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import { clearImagePreviewCache } from './imagePreviewCache'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
@@ -46,6 +48,100 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test.each([
+    { name: 'message list', Conversation: MessageList },
+    { name: 'scrollable conversation', Conversation: ScrollableMessageArea },
+  ])(
+    'opens sent text attachments with the current workspace preference in $name',
+    async ({ Conversation }) => {
+      runtimeMock.electron = true
+      // Supply a mounted viewport before the virtualizer's initial measurement.
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800)
+      vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1000)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      const viewport = document.createElement('div')
+      viewport.scrollTo = vi.fn()
+      document.body.appendChild(viewport)
+      const scrollProps = { externalScrollRef: { current: viewport } }
+      desktopHostMock.invoke.mockImplementation(async command => {
+        if (command === 'workspace.listOpeners') {
+          return [
+            { id: 'vscode', available: true },
+            { id: 'cursor', available: true },
+          ]
+        }
+      })
+      setPreferredWorkspaceOpener('/workspace/first', 'vscode')
+      setPreferredWorkspaceOpener('/workspace/second', 'cursor')
+      const path = '/attachments/sample.md'
+      const onOpenWorkspaceFile = vi.fn()
+      const messages = [
+        {
+          id: 'sent-file',
+          role: 'user' as const,
+          content: '',
+          status: 'done' as const,
+          createdAt: '2026-09-20T00:00:00Z',
+          attachments: [
+            {
+              id: 45,
+              filename: 'sample.md',
+              file_size: 10,
+              mime_type: 'text/markdown',
+              status: 'ready',
+              file_extension: '.md',
+              created_at: '2026-09-20T00:00:00Z',
+              local_path: path,
+            } satisfies Attachment,
+          ],
+        },
+      ]
+      const { rerender } = render(
+        <Conversation
+          {...scrollProps}
+          messages={messages}
+          workspacePath="/workspace/first"
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      )
+      await userEvent.click(screen.getByTestId('message-text-attachment'))
+      await waitFor(() =>
+        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
+          opener: 'vscode',
+          path,
+        })
+      )
+      desktopHostMock.invoke.mockClear()
+      rerender(
+        <Conversation
+          {...scrollProps}
+          messages={messages}
+          workspacePath="/workspace/second"
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      )
+      await userEvent.click(screen.getByTestId('message-text-attachment'))
+      await waitFor(() =>
+        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
+          opener: 'cursor',
+          path,
+        })
+      )
+      desktopHostMock.invoke.mockClear()
+      setPreferredWorkspaceOpener('/workspace/second', 'vscode')
+      await userEvent.click(screen.getByTestId('message-text-attachment'))
+      await waitFor(() =>
+        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
+          opener: 'vscode',
+          path,
+        })
+      )
+      expect(desktopHostMock.invoke).not.toHaveBeenCalledWith('shell.openPath', expect.anything())
+      expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+      viewport.remove()
+    }
+  )
+
   test('renders an ordinary SKILL.md link with its literal label and skill icon after sending', () => {
     const path = '~/worksapce/skills/test-skill/SKILL.md'
     const onOpenWorkspaceFile = vi.fn()

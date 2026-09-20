@@ -8,7 +8,7 @@ import {
   desktopComposerTransferServices,
 } from './composer/desktopComposerServices'
 import { resolveComposerMentionBrandIconUrl } from './composer/composerMentions'
-import { openLocalFile } from '@/lib/local-terminal'
+import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { navigateTo } from '@/lib/navigation'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -19,10 +19,11 @@ import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 
 async function openLocalAttachmentPath(
   path: string,
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string) => void,
+  workspacePath?: string
 ): Promise<void> {
   try {
-    await openLocalFile(path)
+    await openLocalFileInWorkspaceApp(path, workspacePath)
   } catch (error) {
     if (onOpenFile) {
       onOpenFile(path)
@@ -32,7 +33,10 @@ async function openLocalAttachmentPath(
   }
 }
 
-export function useDesktopUserMessageServices(hasSkillReferences = false): UserMessageServices {
+export function useDesktopUserMessageServices(
+  hasSkillReferences = false,
+  workspacePath?: string
+): UserMessageServices {
   const images = useAttachmentImageServices()
   const electron = isElectronRuntime()
   const pane = useContext(WorkbenchPaneContext)
@@ -116,9 +120,10 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
       transfers: desktopComposerTransferServices,
       resolveMentionIconUrl: resolveComposerMentionBrandIconUrl,
       onOpenPlugin: reference => navigateTo(buildPluginDetailRoute(reference)),
-      openLocalAttachment: openLocalAttachmentPath,
+      openLocalAttachment: (path, onOpenFile) =>
+        openLocalAttachmentPath(path, onOpenFile, workspacePath),
       getCommentPreviewRightBoundary: getCodeCommentPreviewRightBoundary,
     }),
-    [images, electron, localSkills, localSkillHomeDirectory]
+    [images, electron, localSkills, localSkillHomeDirectory, workspacePath]
   )
 }

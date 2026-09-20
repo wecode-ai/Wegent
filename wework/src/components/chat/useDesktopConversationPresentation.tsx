@@ -20,7 +20,10 @@ export type DesktopConversationPresentationProp =
   | 'useContentVisibility'
   | 'onVirtualMeasurement'
   | 'renderVisualization'
-export function useDesktopConversationPresentation(messages: WorkbenchMessage[] = []) {
+export function useDesktopConversationPresentation(
+  messages: WorkbenchMessage[] = [],
+  workspacePath?: string
+) {
   const hasSkillReferences = messages.some(
     message =>
       message.role === 'user' &&
@@ -28,7 +31,7 @@ export function useDesktopConversationPresentation(messages: WorkbenchMessage[] 
         mention => composerSkillFilePath(mention.reference) !== null
       )
   )
-  const userMessageServices = useDesktopUserMessageServices(hasSkillReferences)
+  const userMessageServices = useDesktopUserMessageServices(hasSkillReferences, workspacePath)
   return {
     userMessageServices,
     virtualize: isDesktopRuntime(),

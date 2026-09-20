@@ -5062,6 +5062,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
+                    workspacePath={composerWorkspaceTarget?.path}
                     messages={paneMessages}
                     turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
