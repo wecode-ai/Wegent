@@ -9217,6 +9217,63 @@ describe('DesktopWorkbenchLayout', () => {
     }
   )
 
+  test.each(['file', 'skill'] as const)(
+    'reports home-directory lookup failures when opening a %s reference',
+    async kind => {
+      const workspacePanelState = createCloudWorkspacePanelState()
+      const localDevice = createLocalSkillDevice()
+      const devices = [...workspacePanelState.devices, localDevice]
+      const getHome = vi.fn().mockRejectedValue(new Error('test home lookup failed'))
+      const readWorkspaceTextFile = vi.fn()
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onGetDeviceHomeDirectory={getHome}
+          projectChat={{
+            ...baseProps.projectChat,
+            listLocalSkills: async () => [
+              {
+                name: 'test-skill',
+                path: '~/.agents/skills/test/SKILL.md',
+                description: '',
+                source: 'codex',
+              },
+            ],
+          }}
+          workspaceFileApi={{ listWorkspaceEntries: vi.fn(), readWorkspaceTextFile }}
+          state={{ ...baseProps.state, ...workspacePanelState, devices }}
+          messages={[
+            {
+              id: 'test-failed-file-reference',
+              role: kind === 'file' ? 'assistant' : 'user',
+              content:
+                kind === 'file'
+                  ? '[test-file](~/test.md)'
+                  : '[$test-skill](~/.agents/skills/test/SKILL.md)',
+              status: 'completed',
+              createdAt: '2026-07-11T00:00:00.000Z',
+            },
+          ]}
+          projectWork={{
+            ...baseProps.projectWork,
+            projects: workspacePanelState.projects,
+            devices,
+            currentProjectId: workspacePanelState.currentProject.id,
+          }}
+        />
+      )
+      fireEvent.click(
+        await screen.findByTestId(
+          kind === 'file' ? 'assistant-markdown-link' : 'sent-local-skill-token-test-skill'
+        )
+      )
+      expect(await screen.findByTestId('transient-notice')).toHaveTextContent(
+        'test home lookup failed'
+      )
+      expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+    }
+  )
+
   test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()

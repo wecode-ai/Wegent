@@ -92,5 +92,17 @@
     "href": "./skills/test-skill/SKILL.md",
     "kind": null,
     "composerKind": "file"
+  },
+  {
+    "reference": "[$test-skill](C:\\Users\\test\\.agents\\skills\\_test\\SKILL.md)",
+    "name": "test-skill",
+    "href": "C:\\Users\\test\\.agents\\skills\\_test\\SKILL.md",
+    "kind": "skill"
+  },
+  {
+    "reference": "[$test-skill](\\\\server\\share\\.agents\\skills\\test\\SKILL.md)",
+    "name": "test-skill",
+    "href": "\\\\server\\share\\.agents\\skills\\test\\SKILL.md",
+    "kind": "skill"
   }
 ]

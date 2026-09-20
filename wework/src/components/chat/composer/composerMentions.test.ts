@@ -16,6 +16,17 @@ import { createComposerDocument, serializeComposerDocument } from './composerPro
 
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 
+test('recovers after long malformed references without rescanning their prefixes', () => {
+  const malformed = '['.repeat(100_000)
+  const reference = '[$test](~/test/SKILL.md)'
+  for (const prefix of [malformed, `${malformed}](unterminated`, '[]()', '[bad] text']) {
+    const input = `${prefix}\n${reference}`
+    expect(parseComposerMentions(input)).toEqual([
+      expect.objectContaining({ reference, start: prefix.length + 1, end: input.length }),
+    ])
+  }
+})
+
 test('uses distinct file-type icons and preserves a requested skill icon', () => {
   const icon = (reference: string) =>
     createComposerMentionElement(parseComposerMentions(reference)[0]).querySelector('svg')!

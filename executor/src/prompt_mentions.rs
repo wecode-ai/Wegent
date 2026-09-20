@@ -39,10 +39,30 @@ pub(crate) fn prompt_mentions(content: &str) -> Vec<PromptMention> {
                 start: matched.start(),
                 end: matched.end(),
                 label: unescape_markdown(&capture[1]),
-                href: unescape_markdown(&capture[2]),
+                href: unescape_destination(&capture[2]),
             }
         })
         .collect()
+}
+
+fn unescape_destination(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let windows_path = value.starts_with("\\\\")
+        || value.starts_with("~\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\');
+    if !windows_path {
+        return unescape_markdown(value);
+    }
+    // Preserve separators before punctuation such as dot directories.
+    let decoded = value.replace("\\\\", "\\");
+    if value.starts_with("\\\\") && !decoded.starts_with("\\\\") {
+        format!("\\{decoded}")
+    } else {
+        decoded
+    }
 }
 
 fn unescape_markdown(value: &str) -> String {

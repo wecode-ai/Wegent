@@ -57,4 +57,10 @@ describe("collaboration i18n", () => {
     expect(english.join(" ")).not.toMatch(/\p{Script=Han}/u);
     expect(chinese.join(" ")).not.toMatch(/\b(?:todo|common)\./);
   });
+
+  it("localizes the pending pasted-text attachment status", () => {
+    const key = "workbench.adding_pasted_text_attachment";
+    expect(createCollaborationTranslator("en")(key)).toBe("Adding pasted text…");
+    expect(createCollaborationTranslator("zh-CN")(key)).toBe("正在添加粘贴的文本…");
+  });
 });

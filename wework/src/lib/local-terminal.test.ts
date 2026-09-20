@@ -209,7 +209,7 @@ describe('Electron local terminal', () => {
     setPreferredWorkspaceOpener('/project-a', 'cursor')
     setPreferredWorkspaceOpener('/project-b', 'file-manager')
 
-    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-a')
+    await openLocalFileInWorkspaceApp(' /draft/test.md ', '/project-a')
     expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
       opener: 'cursor',
       path: '/draft/test.md',
@@ -224,6 +224,17 @@ describe('Electron local terminal', () => {
       opener: 'file-manager',
       path: '/draft/test.md',
     })
+  })
+
+  test('rejects empty attachment paths before contacting the desktop host', async () => {
+    await expect(openLocalFileInWorkspaceApp('   ')).rejects.toThrow('Local file path is empty')
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
+  test('rejects attachment opening outside the desktop runtime', async () => {
+    mocks.desktop = false
+    await expect(openLocalFileInWorkspaceApp('/draft/test.md')).rejects.toThrow()
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
   })
 
   test('uses the first available opener when a saved app is uninstalled and propagates launch failures', async () => {

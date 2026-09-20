@@ -70,8 +70,13 @@ export function parseComposerReferences(value: string): ComposerReference[] {
         labelEnd++;
       labelEnd++;
     }
-    if (labelEnd === start + 1 || value.slice(labelEnd, labelEnd + 2) !== "](")
+    if (
+      labelEnd === start + 1 ||
+      value.slice(labelEnd, labelEnd + 2) !== "]("
+    ) {
+      start = labelEnd;
       continue;
+    }
     let end = labelEnd + 2;
     while (end < value.length && !/[\r\n)]/.test(value[end])) {
       if (value[end] === "\\" && end + 1 < value.length) {
@@ -80,10 +85,13 @@ export function parseComposerReferences(value: string): ComposerReference[] {
       }
       end++;
     }
-    if (end === labelEnd + 2 || value[end] !== ")") continue;
+    if (end === labelEnd + 2 || value[end] !== ")") {
+      start = end;
+      continue;
+    }
     references.push({
       label: unescapeMarkdownReference(value.slice(start + 1, labelEnd)),
-      href: unescapeMarkdownReference(value.slice(labelEnd + 2, end)),
+      href: unescapeReferenceDestination(value.slice(labelEnd + 2, end)),
       reference: value.slice(start, end + 1),
       start,
       end: end + 1,
@@ -95,6 +103,16 @@ export function parseComposerReferences(value: string): ComposerReference[] {
 
 export function unescapeMarkdownReference(value: string): string {
   return value.replace(/\\([!-/:-@[-`{-~])/g, "$1");
+}
+
+function unescapeReferenceDestination(value: string): string {
+  if (!/^(?:[a-z]:\\|~\\|\\\\)/i.test(value))
+    return unescapeMarkdownReference(value);
+  // Backslashes in Windows paths are separators, including before dot directories.
+  const decoded = value.replace(/\\\\/g, "\\");
+  return value.startsWith("\\\\") && !decoded.startsWith("\\\\")
+    ? "\\" + decoded
+    : decoded;
 }
 
 export function parseComposerReference(
