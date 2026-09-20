@@ -335,6 +335,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
+        await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
+        await control.command(
+          'click',
+          '[data-testid="wework-agent-resource-creator-advanced-toggle"]'
+        )
         await control.command('fill', '[data-testid="wework-agent-mcp"]', { value: '{}' })
         await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
           timeoutMs: uiTimeoutMs,
