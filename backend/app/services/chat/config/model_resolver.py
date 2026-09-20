@@ -707,11 +707,10 @@ def build_agent_config_for_bot(
     if not model_config_dict:
         return raw_agent_config
 
-    # Include protocol if present in the model spec
-    protocol = model_spec.get("protocol")
-    if protocol:
-        model_config_dict = dict(model_config_dict)
-        model_config_dict["protocol"] = protocol
+    # Preserve explicit transport settings for downstream executor adapters.
+    for key in ("protocol", "apiFormat"):
+        if model_spec.get(key):
+            model_config_dict = {**model_config_dict, key: model_spec[key]}
 
     return model_config_dict
 

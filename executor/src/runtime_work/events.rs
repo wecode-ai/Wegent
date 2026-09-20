@@ -380,6 +380,7 @@ impl CodexNotificationEventMapper {
             }
             "item/reasoning/delta"
             | "item/reasoningSummary/delta"
+            | "item/reasoning/textDelta"
             | "item/reasoning/summaryTextDelta" => {
                 if self.is_subagent_delta(notification.params) {
                     self.emit_subagent_text_delta(

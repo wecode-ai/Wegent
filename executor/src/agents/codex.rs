@@ -7,7 +7,6 @@ use std::{
     env, fs,
     future::Future,
     path::{Path, PathBuf},
-    pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -17,14 +16,13 @@ use futures_util::future::BoxFuture;
 use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    io::AsyncWriteExt,
+    process::{Child, ChildStdin, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::{timeout, timeout_at, Instant},
 };
 
 use crate::{
-    agent_session,
     agents::{
         runtime_capabilities,
         task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
@@ -34,7 +32,7 @@ use crate::{
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
-    runner::{AgentEngine, ExecutionOutcome},
+    runner::ExecutionOutcome,
     server::{
         codex_model_catalog, executor_loopback_base_url,
         local_model_proxy::{self, LocalModelProxyUpstream, VisionSidecarUpstream},
@@ -132,6 +130,10 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
+#[path = "codex/coordinate.rs"]
+mod coordinate;
+#[path = "codex/debug_stdout.rs"]
+mod debug_stdout;
 #[path = "codex/diagnostics.rs"]
 mod diagnostics;
 #[path = "codex/home.rs"]
@@ -139,6 +141,7 @@ mod home;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
 
+use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
@@ -164,6 +167,7 @@ pub struct CodexAppServerTurnOptions {
     pub notifications: Option<CodexNotificationSender>,
     pub cancellation: Option<oneshot::Receiver<()>>,
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    pub defer_interactive_forms: bool,
     pub thread_started: Option<CodexThreadStartedCallback>,
     pub active_turn_started: Option<CodexActiveTurnCallback>,
     pub active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
@@ -267,37 +271,9 @@ mod interaction;
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
 
-#[derive(Debug, Clone)]
-pub struct CodexAppServerEngine {
-    binary: String,
-}
-
-impl CodexAppServerEngine {
-    pub fn new(binary: impl Into<String>) -> Self {
-        Self {
-            binary: resolve_codex_binary(&binary.into()),
-        }
-    }
-}
-
-impl AgentEngine for CodexAppServerEngine {
-    type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
-
-    fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
-        let binary = self.binary.clone();
-        Box::pin(async move {
-            let resume_thread_id = agent_session::load_saved_codex_thread_id(&request);
-            let session_request = request.clone();
-            match run_codex_app_server_turn(&binary, request, resume_thread_id, None, None).await {
-                Ok(turn) => {
-                    agent_session::save_codex_thread_id(&session_request, &turn.thread_id);
-                    turn.outcome
-                }
-                Err(message) => ExecutionOutcome::Failed { message },
-            }
-        })
-    }
-}
+#[path = "codex/standard_engine.rs"]
+mod standard_engine;
+pub use standard_engine::CodexAppServerEngine;
 
 #[derive(Clone)]
 pub struct CodexAppServerClient {
@@ -734,8 +710,10 @@ impl CodexAppServerClient {
         last_turn_id: &str,
         request: &ExecutionRequest,
     ) -> Result<Value, String> {
-        let launch_config = build_codex_launch_config_for_fork(request, thread_id)?;
-        let mut params = thread_fork_params(thread_id, thread_path, request, &launch_config);
+        let mut request = request.clone();
+        coordinate::prepare_catalog(&mut request).await?;
+        let launch_config = build_codex_launch_config_for_fork(&request, thread_id)?;
+        let mut params = thread_fork_params(thread_id, thread_path, &request, &launch_config);
         params["lastTurnId"] = Value::String(last_turn_id.to_owned());
         let response = self
             .request_for_launch_config("thread/fork", params, &launch_config)
@@ -1359,7 +1337,7 @@ async fn start_persistent_codex_app_server(
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
-    let result: Result<(ChildStdin, BufReader<ChildStdout>, u64), String> = async {
+    let result: Result<(ChildStdin, CodexStdout, u64), String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = child
             .stdin
@@ -1369,7 +1347,7 @@ async fn start_persistent_codex_app_server(
             .stdout
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let mut rpc = JsonRpcConnection::new_with_next_id(stdin, stdout, next_id);
+        let mut rpc = JsonRpcConnection::new(stdin, CodexStdout::new(stdout, None), next_id);
         with_rpc_timeout(
             "initialize",
             timeout_seconds,
@@ -1481,7 +1459,7 @@ fn windows_codex_router_auth_script() -> String {
 }
 
 async fn read_persistent_codex_app_server_stdout(
-    mut stdout: BufReader<ChildStdout>,
+    mut stdout: CodexStdout,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
 ) {
@@ -1756,6 +1734,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         thread_started,
         active_turn_started,
         active_turn_finished,
+        defer_interactive_forms: _,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
@@ -2074,6 +2053,17 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     ]
 }
 
+struct CodexTurnProcess {
+    child: Child,
+}
+
+impl Drop for CodexTurnProcess {
+    fn drop(&mut self) {
+        // Task cancellation can drop the turn future before async teardown runs.
+        signal_codex_app_server_child(&mut self.child);
+    }
+}
+
 pub async fn run_codex_app_server_turn_with_cancel(
     binary: &str,
     request: ExecutionRequest,
@@ -2088,6 +2078,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         notifications,
         mut cancellation,
         request_user_input_answers,
+        defer_interactive_forms,
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
@@ -2098,10 +2089,10 @@ pub async fn run_codex_app_server_turn_with_cancel(
         fields.push(("cwd", cwd.to_owned()));
     }
     log_executor_event("codex app-server starting", &fields);
-    let mut child = match spawn_codex_app_server(binary, &launch_config) {
+    let mut process = match spawn_codex_app_server(binary, &launch_config) {
         Ok(child) => {
             log_executor_event("codex app-server started", &fields);
-            child
+            CodexTurnProcess { child }
         }
         Err(error) => {
             let mut failed_fields = fields.clone();
@@ -2114,15 +2105,21 @@ pub async fn run_codex_app_server_turn_with_cancel(
 
     let result: Result<CodexAppServerTurn, String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let stdin = child
+        let stdin = process
+            .child
             .stdin
             .take()
             .ok_or_else(|| "codex app-server stdin was not captured".to_owned())?;
-        let stdout = child
+        let stdout = process
+            .child
             .stdout
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let mut rpc = JsonRpcConnection::new(stdin, stdout);
+        let stdout = CodexStdout::new(
+            stdout,
+            Some((&prepared.request.task_id, &prepared.request.subtask_id)),
+        );
+        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1);
         let mut state = CodexRunState::default();
 
         with_rpc_timeout(
@@ -2227,6 +2224,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                     notifications,
                     request_user_input_answers,
                     auto_approve_mcp_tool_calls,
+                    defer_interactive_forms,
                 ) => outcome?,
                 _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
             }
@@ -2237,6 +2235,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 notifications,
                 request_user_input_answers,
                 auto_approve_mcp_tool_calls,
+                defer_interactive_forms,
             )
             .await?
         };
@@ -2265,7 +2264,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
     }
     .await;
 
-    terminate_codex_app_server_child(&mut child).await;
+    terminate_codex_app_server_child(&mut process.child).await;
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
         failed_fields.push(("error", error.clone()));
@@ -2724,7 +2723,7 @@ fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunStat
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return false;
     };
-    if method == "turn/completed" {
+    if matches!(method, "turn/completed" | "mcpServer/elicitation/request") {
         return true;
     }
     if !method.starts_with("item/") {
@@ -3328,6 +3327,9 @@ fn codex_turn_startup_timeout_seconds() -> u64 {
 #[path = "codex/json_rpc.rs"]
 mod json_rpc;
 
+#[path = "codex/mcp_form.rs"]
+mod mcp_form;
+
 use json_rpc::JsonRpcConnection;
 
 #[path = "codex/run_state.rs"]
@@ -3415,7 +3417,7 @@ fn build_codex_launch_config_with_bound_thread(
     let configured_base_url = non_empty_config(&request.model_config, "base_url")
         .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
     let configured_auth_present = api_key(&request.model_config).is_some();
-    let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
+    let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
     let mut launch_config = CodexLaunchConfig {
@@ -3572,6 +3574,8 @@ fn build_codex_launch_config_with_bound_thread(
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
+
+    coordinate::configure(request, &mut launch_config)?;
 
     Ok(launch_config)
 }
@@ -4407,6 +4411,20 @@ struct NormalizedReasoning {
     summary: Option<String>,
 }
 
+fn codex_reasoning_config(model_config: &Value) -> Option<&Value> {
+    // The web backend also copies the provider-native think_config wrapper
+    // into reasoning when no API or UI reasoning override is selected.
+    model_config
+        .get("reasoning")
+        .map(|config| {
+            config
+                .get("reasoning")
+                .filter(|value| value.is_object())
+                .unwrap_or(config)
+        })
+        .or_else(|| model_config.pointer("/think_config/reasoning"))
+}
+
 fn normalize_reasoning(value: Option<&Value>) -> NormalizedReasoning {
     let (effort, summary) = match value {
         Some(Value::String(value)) => (Some(value.as_str()), None),
@@ -4855,14 +4873,19 @@ async fn prepare_codex_execution_request(
     } else {
         ensure_codex_mcp_endpoints().await?;
     }
+    let prepare_request = async {
+        let mut request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
+        coordinate::prepare_catalog(&mut request).await?;
+        Ok::<_, String>(request)
+    };
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;
             _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
-            request = super::runtime_capabilities::prepare_runtime_attachments(request) => request,
+            request = prepare_request => request?,
         }
     } else {
-        super::runtime_capabilities::prepare_runtime_attachments(request).await
+        prepare_request.await?
     };
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
