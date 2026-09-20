@@ -15,10 +15,10 @@ from pydantic import ValidationError
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.schemas.im_channel import IMChannelCreate, IMChannelUpdate
 from app.services.channels.dingtalk import (
-    card_adapter,
     card_binding,
     card_follow_up,
     card_quotes,
+    card_transport,
 )
 from app.services.channels.dingtalk.callback import (
     DingTalkCallbackInfo,
@@ -215,12 +215,12 @@ async def test_http_stream_full_prefixes_same_card_and_binding_ready(
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        card_adapter.httpx,
+        card_transport.httpx,
         "AsyncClient",
         lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs),
     )
     client = SimpleNamespace(
-        get_access_token=lambda: "test-token",
+        _access_token={"accessToken": "test-token", "expireTime": float("inf")},
         credential=SimpleNamespace(client_id="robot-a"),
     )
     message = ChatbotMessage.from_dict(
@@ -273,13 +273,13 @@ async def test_api_rejection_stops_before_delivery(
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        card_adapter.httpx,
+        card_transport.httpx,
         "AsyncClient",
         lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs),
     )
     adapter = TemplateChatCardAdapter(
         SimpleNamespace(
-            get_access_token=lambda: "test-token",
+            _access_token={"accessToken": "test-token", "expireTime": float("inf")},
             credential=SimpleNamespace(client_id="r"),
         ),
         ChatbotMessage.from_dict(binding.incoming_data),
@@ -823,7 +823,9 @@ async def test_runtime_card_round_checks_original_message(
 @pytest.mark.asyncio
 async def test_status_update_preserves_answer_and_other_fields(config, httpx_mock):
     config.follow_up_status_key = "sendState"
-    client = Mock(get_access_token=Mock(return_value="test-token"))
+    client = SimpleNamespace(
+        _access_token={"accessToken": "test-token", "expireTime": float("inf")}
+    )
     adapter = TemplateChatCardAdapter(client, None, config, 77, "card-a")
     httpx_mock.add_response(json={"success": True})
     await adapter.set_follow_up_status("sending")
@@ -842,11 +844,12 @@ def test_status_cannot_overwrite_answer_or_inputs(key):
 
 @pytest.mark.asyncio
 async def test_stream_retry_reuses_guid_and_full_body(config, httpx_mock, monkeypatch):
-    monkeypatch.setattr(card_adapter.asyncio, "sleep", AsyncMock())
     httpx_mock.add_response(status_code=503, json={})
     httpx_mock.add_response(json={"success": True})
     adapter = TemplateChatCardAdapter(
-        Mock(get_access_token=Mock(return_value="test-token")),
+        SimpleNamespace(
+            _access_token={"accessToken": "test-token", "expireTime": float("inf")}
+        ),
         None,
         config,
         77,
