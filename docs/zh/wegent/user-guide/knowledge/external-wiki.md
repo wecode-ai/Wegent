@@ -26,7 +26,8 @@ pdf, doc, docx, ppt, pptx, xls, xlsx, csv, txt, md, markdown
 ```
 
 目录仅用于浏览文件，不会作为文档导入。空文件、不支持的文件类型以及超过知识库
-上传大小限制的文件不能绑定。
+上传大小限制的文件不能绑定。Git LFS 指针文件也不能绑定，因为仓库 API 返回内容
+不包含指针引用的实际二进制文件。
 
 ---
 
@@ -119,7 +120,8 @@ GitLab Wiki 与 GitLab Repo 可以使用同一个 GitLab 实例和 Token，但�
 
 ### 连接管理注意事项
 
-- 编辑连接时 API Key 留空表示保留原凭据。
+- 仅修改连接名称、启用状态等非目标字段时，API Key 留空表示保留原凭据；
+  修改站点地址或连接器时必须重新输入 API Key，系统不会把旧凭据发送到新目标。
 - 停用连接后，系统停止远端读取和同步；最近一次成功同步的本地正文和索引仍可使用。
 - 删除连接前必须先解除引用该连接的全部同步文档。
 - 连接器类型决定已绑定资源的身份和解析方式。需要切换类型时，建议新建连接并重新绑定，
@@ -299,7 +301,7 @@ GitLab 项目 Wiki 由独立的 Wiki API 管理，不按代码仓库分支选择
 | 环境变量                                            | 默认值       | 说明                                   |
 | --------------------------------------------------- | ------------ | -------------------------------------- |
 | `EXTERNAL_DOC_SYNC_ENABLED`                         | `true`       | 外部文档同步总开关                     |
-| `EXTERNAL_DOC_SYNC_CRON`                            | `0 19 * * *` | 巡检调度（UTC crontab）                |
+| `EXTERNAL_DOC_SYNC_CRON`                            | `0 21 * * *` | 巡检调度（UTC crontab）                |
 | `EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE`                 | `500`        | 每批扫描的本地文档数                   |
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`               | `10000`      | 单次运行最多处理文档数                 |
 | `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS`             | `2700`       | 单次运行时间预算（秒）                 |
@@ -307,6 +309,7 @@ GitLab 项目 Wiki 由独立的 Wiki API 管理，不按代码仓库分支选择
 | `WIKI_TREE_MAX_PAGES`                               | `5000`       | Wiki.js 页面选择器的加载上限           |
 | `MAX_UPLOAD_FILE_SIZE_MB`                           | `100`        | GitLab Repo 等知识文档的单文件大小上限 |
 | `REPOSITORY_READ_TIMEOUT_SECONDS`                   | `15`         | GitLab API 单次读取超时（秒）          |
+| `EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS`            | `300`        | 单个 GitLab 文件或 Wiki 页面下载超时   |
 | `KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS`       | `24`         | 孤儿附件删除前的安全保留时间           |
 | `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE`       | `200`        | 每轮孤儿附件扫描上限                   |
 | `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS` | `3600`       | 孤儿附件扫描间隔（秒）                 |

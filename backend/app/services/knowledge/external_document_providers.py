@@ -59,6 +59,17 @@ class ExternalDocumentImportError(Exception):
 class ExternalDocumentFetchError(RuntimeError):
     """Background fetch of external document content failed."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_import_failed",
+        retryable: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.retryable = retryable
+
 
 class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     """The external source no longer exists or the user lost access to it.
@@ -75,8 +86,7 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
         *,
         error_code: str = "external_source_unavailable",
     ) -> None:
-        super().__init__(message)
-        self.error_code = error_code
+        super().__init__(message, error_code=error_code, retryable=True)
 
 
 class ExternalImportLostWriteError(RuntimeError):

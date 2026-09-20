@@ -96,6 +96,11 @@ class GitLabExternalWikiClient:
         page_size = min(max(1, limit), _GITLAB_MAX_PAGE_SIZE)
         return page_size, offset // page_size + 1
 
+    @staticmethod
+    def _download_timeout() -> aiohttp.ClientTimeout:
+        total = settings.EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS
+        return aiohttp.ClientTimeout(total=total, connect=min(10, total))
+
     async def _request(
         self,
         method: str,
@@ -107,6 +112,8 @@ class GitLabExternalWikiClient:
         response_too_large_code: str = "external_response_too_large",
         response_too_large_message: str = "GitLab API 响应过大",
         headers_only: bool = False,
+        timeout: aiohttp.ClientTimeout | None = None,
+        max_attempts: int = _MAX_ATTEMPTS,
     ) -> tuple[Any, Any]:
         url = build_url(self.api_url, path)
         request_params = (
@@ -114,8 +121,10 @@ class GitLabExternalWikiClient:
             if params
             else None
         )
+        attempts = min(max(1, max_attempts), _MAX_ATTEMPTS)
+        request_kwargs = {"timeout": timeout} if timeout is not None else {}
         last_error: WikiApiError | None = None
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(attempts):
             try:
                 async with self._session_scope() as session:
                     async with session.request(
@@ -124,6 +133,7 @@ class GitLabExternalWikiClient:
                         params=request_params,
                         headers=self.headers,
                         allow_redirects=False,
+                        **request_kwargs,
                     ) as response:
                         if response.status in {301, 302, 303, 307, 308}:
                             raise WikiApiError(
@@ -163,7 +173,7 @@ class GitLabExternalWikiClient:
                                 "GitLab API 请求过于频繁，请稍后重试",
                                 retryable=True,
                             )
-                            if attempt == _MAX_ATTEMPTS - 1:
+                            if attempt == attempts - 1:
                                 raise last_error
                             await asyncio.sleep(delay)
                             continue
@@ -215,7 +225,7 @@ class GitLabExternalWikiClient:
                                 retryable=False,
                             ) from exc
             except WikiApiError as exc:
-                if not exc.retryable or attempt == _MAX_ATTEMPTS - 1:
+                if not exc.retryable or attempt == attempts - 1:
                     raise
                 last_error = exc
                 await asyncio.sleep(0.5 * (attempt + 1))
@@ -223,14 +233,14 @@ class GitLabExternalWikiClient:
                 last_error = WikiApiError(
                     "wiki_timeout", "访问 GitLab 超时", retryable=True
                 )
-                if attempt == _MAX_ATTEMPTS - 1:
+                if attempt == attempts - 1:
                     raise last_error
                 await asyncio.sleep(0.5 * (attempt + 1))
             except aiohttp.ClientError:
                 last_error = WikiApiError(
                     "wiki_unreachable", "无法连接 GitLab", retryable=True
                 )
-                if attempt == _MAX_ATTEMPTS - 1:
+                if attempt == attempts - 1:
                     raise last_error
                 await asyncio.sleep(0.5 * (attempt + 1))
         raise last_error or WikiApiError("upstream_error", "GitLab API 请求失败")
@@ -333,6 +343,8 @@ class GitLabExternalWikiClient:
             max_bytes=response_limit,
             response_too_large_code="external_file_too_large",
             response_too_large_message="GitLab 文件超过知识库上传大小限制",
+            timeout=self._download_timeout(),
+            max_attempts=1,
         )
         if not isinstance(payload, dict):
             raise WikiApiError("upstream_error", "GitLab 文件响应格式错误")
@@ -372,6 +384,8 @@ class GitLabExternalWikiClient:
             max_bytes=(content_limit * _MAX_JSON_STRING_EXPANSION + 1024 * 1024),
             response_too_large_code="external_file_too_large",
             response_too_large_message="GitLab Wiki 页面超过知识库上传大小限制",
+            timeout=self._download_timeout(),
+            max_attempts=1,
         )
         if not isinstance(payload, dict):
             raise WikiApiError("upstream_error", "GitLab Wiki 页面响应格式错误")

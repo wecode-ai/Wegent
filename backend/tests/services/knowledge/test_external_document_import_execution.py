@@ -301,6 +301,88 @@ class TestRunExternalDocumentImport:
         assert response.processing_error is not None
         assert response.processing_error.message == "无法连接 Wiki 站点"
 
+    def test_nonretryable_fetch_failure_preserves_error_contract(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalDocumentFetchError(
+                    "该文件由 Git LFS 管理，当前不支持同步",
+                    error_code="unsupported_file_type",
+                    retryable=False,
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
+        error = document.processing_error_payload
+        assert error is not None
+        assert error["code"] == "unsupported_file_type"
+        assert error["message"] == "该文件由 Git LFS 管理，当前不支持同步"
+        assert error["retryable"] is False
+
+    def test_nonretryable_sync_failure_records_failed_remote_version(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.attachment_id = 321
+        document.is_active = True
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "sync": {
+                    "enabled": True,
+                    "connection_id": "conn-primary",
+                    "resource_id": "42",
+                    "observed_version": "blob-lfs",
+                    "content_version": "blob-old",
+                    "indexed_version": "blob-old",
+                },
+            }
+        }
+        test_db.commit()
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalDocumentFetchError(
+                    "该文件由 Git LFS 管理，当前不支持同步",
+                    error_code="unsupported_file_type",
+                    retryable=False,
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        current = test_db.get(KnowledgeDocument, document.id)
+        assert current is not None
+        sync = current.external_source_config["sync"]
+        assert sync["failed_version"] == "blob-lfs"
+        assert sync["last_error_code"] == "unsupported_file_type"
+        assert sync["last_error_retryable"] is False
+
     def test_missing_wiki_source_keeps_existing_successful_index(
         self,
         test_db: Session,

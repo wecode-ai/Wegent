@@ -90,6 +90,7 @@ class PendingExternalRefresh:
     expected_generation: int
     provider_id: str
     connection_report: ConnectionSyncReport
+    adapter_type: str = "wikijs"
 
 
 @dataclass(frozen=True)
@@ -479,6 +480,24 @@ class ExternalDocumentSyncModule:
             return None
 
         sync = get_document_sync_config(document)
+        remote_version = state.remote_version
+        if (
+            remote_version
+            and remote_version == sync.get("failed_version")
+            and sync.get("last_error_retryable") is False
+        ):
+            _merge_sync_config(document, last_checked_at=now)
+            report.skipped += 1
+            connection_report.skipped += 1
+            logger.info(
+                "[External Sync] Skipping unchanged nonretryable failure "
+                "document_id=%s provider=%s remote_version=%r error_code=%s",
+                document.id,
+                document.external_provider,
+                remote_version,
+                sync.get("last_error_code"),
+            )
+            return None
         metadata = dict(state.metadata or {})
         if metadata.get("title"):
             document.name = str(metadata["title"])[:255]
@@ -499,7 +518,6 @@ class ExternalDocumentSyncModule:
             last_error_code=None,
         )
         sync = get_document_sync_config(document)
-        remote_version = state.remote_version
         if (
             remote_version == sync.get("indexed_version")
             and document.index_status == DocumentIndexStatus.SUCCESS
@@ -542,6 +560,7 @@ class ExternalDocumentSyncModule:
                     expected_generation=document.index_generation,
                     provider_id=str(document.external_provider or ""),
                     connection_report=connection_report,
+                    adapter_type=str(sync.get("adapter_type") or "wikijs"),
                 )
             owner = db.get(User, document.user_id)
             if owner is None:
@@ -570,9 +589,15 @@ class ExternalDocumentSyncModule:
         if not refreshes:
             return
         semaphore = asyncio.Semaphore(settings.WIKI_SYNC_DOWNLOAD_CONCURRENCY)
+        gitlab_semaphore = asyncio.Semaphore(1)
 
         async def execute(refresh: PendingExternalRefresh) -> None:
-            async with semaphore:
+            download_semaphore = (
+                gitlab_semaphore
+                if refresh.adapter_type in {"gitlab_repo", "gitlab_wiki"}
+                else semaphore
+            )
+            async with download_semaphore:
                 result = await self._execute_refresh(refresh)
             if result.started:
                 report.refreshed += 1

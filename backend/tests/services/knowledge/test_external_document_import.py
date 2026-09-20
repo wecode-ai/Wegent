@@ -254,6 +254,66 @@ class TestImportDocument:
         assert duplicate.duplicates == [first.created[0]]
         assert len(dispatched) == 1
 
+    def test_gitlab_same_path_in_different_projects_is_not_a_duplicate(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "gitlab-resource-key-identity")
+
+        def resolved(project_path: str) -> ResolvedExternalDocument:
+            resource_key = f'["{project_path}","main","README.md"]'
+            return ResolvedExternalDocument(
+                locator=ExternalSyncLocator(
+                    "wiki",
+                    "conn-gitlab",
+                    resource_key,
+                    resource_kind="file",
+                    identity_version="v2",
+                ),
+                title="README.md",
+                source_url=(
+                    f"https://gitlab.example.com/{project_path}/-/blob/main/README.md"
+                ),
+                remote_version=f"blob-{project_path}",
+                metadata={
+                    "adapter_type": "gitlab_repo",
+                    "site_url": "https://gitlab.example.com",
+                    "resource_kind": "file",
+                    "resource_key": resource_key,
+                    "resource_id": "README.md",
+                    "project_path": project_path,
+                    "branch": "main",
+                    "path": "README.md",
+                },
+            )
+
+        first = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved("group/project-a")],
+        )
+        second = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved("group/project-b")],
+        )
+
+        assert len(first.created) == 1
+        assert len(second.created) == 1
+        assert second.duplicates == []
+        assert (
+            first.created[0].external_resource_id
+            != second.created[0].external_resource_id
+        )
+        assert len(dispatched) == 2
+
     def test_synchronized_wiki_document_name_cannot_be_edited_locally(
         self,
         test_db: Session,

@@ -105,6 +105,17 @@ def test_binding_normalizes_page_ids() -> None:
     assert request.page_ids == ["42", "page-id"]
 
 
+def test_binding_accepts_long_gitlab_repository_path() -> None:
+    path = f"{'nested/' * 100}guide.md"
+
+    request = WikiBindingCreateRequest(
+        page_ids=[path],
+        connection_id="conn-primary",
+    )
+
+    assert request.page_ids == [path]
+
+
 @pytest.mark.asyncio
 async def test_unsaved_connection_values_can_be_tested_without_connection_id(
     monkeypatch,
@@ -204,6 +215,57 @@ async def test_disabled_stored_connection_can_be_tested_without_resending_api_ke
 
 
 @pytest.mark.asyncio
+async def test_stored_api_key_is_not_reused_for_a_different_target(monkeypatch):
+    connector = SimpleNamespace(
+        connector_type="gitlab_repo",
+        test_connection=AsyncMock(),
+    )
+    stored = SimpleNamespace(
+        connection_id="conn-primary",
+        owner_user_id=7,
+        display_name="Primary",
+        adapter_type="gitlab_repo",
+        enabled=True,
+        config={"site_url": "https://gitlab.internal"},
+        credentials={"api_key": "stored-key"},
+        revision=3,
+    )
+    monkeypatch.setattr(
+        "app.services.wiki.service.external_source_connection_service.get_owned",
+        MagicMock(return_value=stored),
+    )
+    monkeypatch.setattr(
+        "app.services.wiki.service.register_builtin_connectors",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.services.wiki.service.WIKI_CONNECTORS",
+        SimpleNamespace(get=lambda connector_type: connector),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.WIKI_CONNECTORS",
+        SimpleNamespace(get=lambda connector_type: connector),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.validate_wiki_site_url",
+        lambda site_url: site_url.rstrip("/"),
+    )
+
+    result = await run_wiki_connection_test(
+        WikiConnectionTestRequest(
+            connection_id="conn-primary",
+            site_url="https://attacker.example",
+        ),
+        db=MagicMock(),
+        current_user=_user(),
+    )
+
+    assert result.ok is False
+    assert "重新输入 API Key" in result.message
+    connector.test_connection.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_named_connection_can_be_tested_with_empty_request_body(monkeypatch):
     test_connection = AsyncMock(
         return_value=WikiConnectionTestResponse(ok=True, message="连接成功")
@@ -292,3 +354,37 @@ async def test_referenced_connection_target_is_immutable(monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert "运维知识库（2 篇文档）" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_unreferenced_connection_target_change_requires_a_new_api_key(
+    monkeypatch,
+):
+    stored = SimpleNamespace(
+        adapter_type="gitlab_repo",
+        config={"site_url": "https://gitlab.internal"},
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.validate_wiki_site_url",
+        lambda url: url.rstrip("/"),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.external_source_connection_service.get_owned",
+        lambda *args, **kwargs: stored,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await update_named_wiki_connection(
+            "conn-primary",
+            WikiNamedConnectionUpdateRequest(
+                display_name="Primary",
+                connector_type="gitlab_repo",
+                site_url="https://other.example.com",
+                enabled=True,
+            ),
+            db=_Session(),
+            current_user=_user(),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "重新输入 API Key" in exc_info.value.detail

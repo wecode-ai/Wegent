@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 WikiPageId = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4096),
 ]
 
 

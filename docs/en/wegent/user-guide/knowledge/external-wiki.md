@@ -29,7 +29,8 @@ pdf, doc, docx, ppt, pptx, xls, xlsx, csv, txt, md, markdown
 
 Directories are used only for browsing and are not imported as documents.
 Empty files, unsupported file types, and files over the knowledge base upload
-size limit cannot be bound.
+size limit cannot be bound. Git LFS pointer files are rejected because the
+repository API response does not contain the referenced binary content.
 
 ---
 
@@ -129,7 +130,10 @@ are separate connections and expose different resources in the picker.
 
 ### Connection Management Notes
 
-- Leave the API key blank while editing to retain the current credential.
+- When changing only non-target fields such as the connection name or enabled
+  state, leave the API key blank to retain it. Changing the site URL or
+  connector requires re-entering the API key; the old credential is never sent
+  to the new target.
 - Disabling a connection stops remote reads and synchronization. The most
   recently synchronized local content and index remain available.
 - All synchronized documents referencing a connection must be unbound before
@@ -336,7 +340,7 @@ Yes. Each knowledge base has an independent synchronized document and index.
 | Environment variable                                | Default      | Description                                                       |
 | --------------------------------------------------- | ------------ | ----------------------------------------------------------------- |
 | `EXTERNAL_DOC_SYNC_ENABLED`                         | `true`       | Master switch for external document synchronization               |
-| `EXTERNAL_DOC_SYNC_CRON`                            | `0 19 * * *` | Inspection schedule in UTC crontab format                         |
+| `EXTERNAL_DOC_SYNC_CRON`                            | `0 21 * * *` | Inspection schedule in UTC crontab format                         |
 | `EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE`                 | `500`        | Local documents scanned per batch                                 |
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`               | `10000`      | Maximum documents processed per run                               |
 | `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS`             | `2700`       | Time budget per run in seconds                                    |
@@ -344,6 +348,7 @@ Yes. Each knowledge base has an independent synchronized document and index.
 | `WIKI_TREE_MAX_PAGES`                               | `5000`       | Wiki.js page picker loading limit                                 |
 | `MAX_UPLOAD_FILE_SIZE_MB`                           | `100`        | Per-file size limit for GitLab Repo and other knowledge documents |
 | `REPOSITORY_READ_TIMEOUT_SECONDS`                   | `15`         | Timeout for one GitLab API read in seconds                        |
+| `EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS`            | `300`        | Timeout for downloading one GitLab file or Wiki page              |
 | `KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS`       | `24`         | Safety retention before an orphaned attachment may be deleted     |
 | `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE`       | `200`        | Maximum orphan candidates per scan                                |
 | `KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS` | `3600`       | Orphan scan interval in seconds                                   |

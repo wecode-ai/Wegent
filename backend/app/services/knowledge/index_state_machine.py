@@ -444,6 +444,8 @@ def _finalize_external_source_on_success(
         sync["indexed_version"] = sync.get("content_version")
         sync["last_synced_at"] = datetime.now(timezone.utc).isoformat()
         sync.pop("last_error_code", None)
+        sync.pop("last_error_retryable", None)
+        sync.pop("failed_version", None)
         updates["sync"] = sync
     document.update_external_source_config(**updates)
 

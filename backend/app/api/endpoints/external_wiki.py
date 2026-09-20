@@ -302,6 +302,12 @@ async def update_named_wiki_connection(
                         "请新建连接，或先删除相关 Wiki 文档"
                     ),
                 )
+            if not body.api_key.strip():
+                raise WikiApiError(
+                    "bad_request",
+                    "修改站点地址或连接器时必须重新输入 API Key",
+                    retryable=False,
+                )
         item = WikiConnectionService.save_named_connection(
             db,
             current_user,
@@ -396,19 +402,35 @@ async def test_wiki_connection(
         return WikiConnectionTestResponse(
             ok=False, message=f"不支持的连接器类型：{connector_type}"
         )
-    api_key = (body.api_key or "").strip() if body else ""
-    if not api_key:
-        api_key = stored_connection.config.api_key if stored_connection else ""
-    if not site_url or not api_key:
+    if not site_url:
         return WikiConnectionTestResponse(
             ok=False, message="请先填写站点地址与 API Key"
         )
     try:
-        await asyncio.to_thread(validate_wiki_site_url, site_url)
+        normalized_site_url = await asyncio.to_thread(validate_wiki_site_url, site_url)
     except WikiApiError as exc:
         return WikiConnectionTestResponse(ok=False, message=exc.message)
+    target_changed = bool(
+        stored_connection
+        and (
+            connector_type != saved["connector_type"]
+            or normalized_site_url != str(saved["site_url"] or "").rstrip("/")
+        )
+    )
+    api_key = (body.api_key or "").strip() if body else ""
+    if not api_key and target_changed:
+        return WikiConnectionTestResponse(
+            ok=False,
+            message="测试新的站点地址或连接器时必须重新输入 API Key",
+        )
+    if not api_key:
+        api_key = stored_connection.config.api_key if stored_connection else ""
+    if not api_key:
+        return WikiConnectionTestResponse(
+            ok=False, message="请先填写站点地址与 API Key"
+        )
     config = WikiSiteConfig(
-        site_url=site_url.rstrip("/"),
+        site_url=normalized_site_url,
         api_key=api_key,
         default_locale=(body.default_locale if body else None)
         or saved["default_locale"],

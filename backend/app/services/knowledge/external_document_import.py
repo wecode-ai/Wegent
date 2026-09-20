@@ -311,7 +311,7 @@ class ExternalDocumentImportService:
         """Classify every item and reject all conflicts before any mutation."""
         plans: list[_ResolvedImportPlan] = []
         duplicates: list[KnowledgeDocument] = []
-        canonical_wiki_documents: dict[tuple[str, str], KnowledgeDocument] = {}
+        canonical_wiki_documents: dict[tuple[str, str, str], KnowledgeDocument] = {}
         if provider.provider_id == WIKI_PROVIDER_ID:
             from app.services.knowledge.external_sync_providers import (
                 get_document_sync_config,
@@ -330,9 +330,14 @@ class ExternalDocumentImportService:
             for document in existing_wiki_documents:
                 sync = get_document_sync_config(document)
                 site_url = str(sync.get("site_url") or "").rstrip("/")
-                resource_id = str(sync.get("resource_id") or "")
-                if site_url and resource_id:
-                    canonical_wiki_documents[(site_url, resource_id)] = document
+                adapter_type = str(sync.get("adapter_type") or "wikijs")
+                canonical_id = str(
+                    sync.get("resource_key") or sync.get("resource_id") or ""
+                )
+                if site_url and canonical_id:
+                    canonical_wiki_documents[(adapter_type, site_url, canonical_id)] = (
+                        document
+                    )
         seen: set[str] = set()
         for resolved in resolved_documents:
             resource_id = resolved.encoded_resource_id
@@ -345,8 +350,13 @@ class ExternalDocumentImportService:
             )
             resolved_sync = dict(metadata.get("sync") or {})
             canonical_key = (
+                str(resolved_sync.get("adapter_type") or "wikijs"),
                 str(resolved_sync.get("site_url") or "").rstrip("/"),
-                str(resolved_sync.get("resource_id") or ""),
+                str(
+                    resolved_sync.get("resource_key")
+                    or resolved_sync.get("resource_id")
+                    or ""
+                ),
             )
             canonical_existing = canonical_wiki_documents.get(canonical_key)
             if existing is None and canonical_existing is not None:
@@ -872,6 +882,14 @@ async def run_external_document_import_async(
         return False
     except Exception as exc:
         db.rollback()
+        error_code = (
+            exc.error_code
+            if isinstance(exc, ExternalDocumentFetchError)
+            else "external_import_failed"
+        )
+        retryable = (
+            exc.retryable if isinstance(exc, ExternalDocumentFetchError) else True
+        )
         _mark_external_import_failed(
             db,
             document_id,
@@ -883,6 +901,8 @@ async def run_external_document_import_async(
                     "The external document could not be imported. Please retry later."
                 ),
             ),
+            error_code=error_code,
+            retryable=retryable,
         )
         logger.error(
             "[External Import] Failed to import document %s: %s",
@@ -931,22 +951,46 @@ def _mark_external_import_failed(
     generation: int,
     *,
     message: str,
+    error_code: str = "external_import_failed",
+    retryable: bool = True,
 ) -> None:
     """Record the fetch failure on the document without deleting it."""
-    mark_document_index_failed(
+    finalized = mark_document_index_failed(
         db=db,
         document_id=document_id,
         generation=generation,
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
-            code="external_import_failed",
+            code=error_code,
             message=message,
-            retryable=True,
+            retryable=retryable,
             generation=generation,
             provider=provider_id,
         ),
         preserve_active_sync_index=True,
     )
+    if not finalized:
+        return
+    document = db.get(KnowledgeDocument, document_id)
+    if document is None:
+        return
+    external = document.external_source_config
+    sync = external.get("sync")
+    if not isinstance(sync, dict) or not sync.get("enabled"):
+        return
+    sync = dict(sync)
+    sync["last_error_code"] = error_code
+    sync["last_error_retryable"] = retryable
+    if retryable:
+        sync.pop("failed_version", None)
+    elif sync.get("observed_version"):
+        sync["failed_version"] = sync["observed_version"]
+    document.update_external_source_config(
+        status="sync_error",
+        last_error=message,
+        sync=sync,
+    )
+    db.commit()
 
 
 def _external_fetch_error_message(exc: Exception, *, fallback: str) -> str:

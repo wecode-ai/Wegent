@@ -4,12 +4,15 @@
 
 """Tests for the bounded GitLab REST client."""
 
+import asyncio
 import json
 import math
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
+from app.core.config import settings
 from app.services.wiki.connector import WikiApiError, WikiSiteConfig
 from app.services.wiki.connectors.gitlab_client import GitLabExternalWikiClient
 
@@ -250,3 +253,49 @@ async def test_repository_file_response_limit_allows_folded_base64(
     folded_crlf_overhead = math.ceil(encoded_limit / 60) * 4
     max_bytes = client._request.await_args.kwargs["max_bytes"]
     assert max_bytes >= encoded_limit + folded_crlf_overhead + 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_content_downloads_use_dedicated_timeout_without_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS", 123)
+    client = GitLabExternalWikiClient(
+        WikiSiteConfig(site_url="https://gitlab.example.com", api_key="test-token")
+    )
+    client._request = AsyncMock(side_effect=[({}, {}), ({}, {})])
+
+    await client.get_repository_file(
+        "group/project",
+        path="large.pdf",
+        ref="main",
+    )
+    await client.get_project_wiki("group/project", slug="runbook")
+
+    for request in client._request.await_args_list:
+        timeout = request.kwargs["timeout"]
+        assert isinstance(timeout, aiohttp.ClientTimeout)
+        assert timeout.total == 123
+        assert request.kwargs["max_attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_request_attempt_limit_prevents_repeated_download_timeouts() -> None:
+    client = GitLabExternalWikiClient(
+        WikiSiteConfig(site_url="https://gitlab.example.com", api_key="test-token")
+    )
+    session = MagicMock()
+    session.request.side_effect = asyncio.TimeoutError
+    manager = MagicMock()
+    manager.__aenter__ = AsyncMock(return_value=session)
+    manager.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "app.services.wiki.connectors.gitlab_client.AsyncSessionManager",
+        return_value=manager,
+    ):
+        with pytest.raises(WikiApiError) as exc_info:
+            await client._request("GET", "/large", max_attempts=1)
+
+    assert exc_info.value.error_code == "wiki_timeout"
+    assert session.request.call_count == 1

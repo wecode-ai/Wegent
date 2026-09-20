@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import re
 from collections.abc import Sequence
 from pathlib import PurePosixPath
+from typing import Any
 from urllib.parse import quote
 
 from app.core.config import settings
@@ -48,6 +50,56 @@ GITLAB_REPO_IMPORT_EXTENSIONS = frozenset(
         "markdown",
     }
 )
+_GIT_LFS_VERSION = "version https://git-lfs.github.com/spec/v1"
+_GIT_LFS_OID_PATTERN = re.compile(r"oid sha256:[0-9a-f]{64}")
+_GIT_LFS_SIZE_PATTERN = re.compile(r"size [0-9]+")
+_GIT_LFS_POINTER_MAX_BYTES = 1024
+
+
+def _is_git_lfs_pointer(content: bytes) -> bool:
+    if not content or len(content) > _GIT_LFS_POINTER_MAX_BYTES:
+        return False
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return False
+    return bool(
+        lines
+        and lines[0] == _GIT_LFS_VERSION
+        and any(_GIT_LFS_OID_PATTERN.fullmatch(line) for line in lines[1:])
+        and any(_GIT_LFS_SIZE_PATTERN.fullmatch(line) for line in lines[1:])
+    )
+
+
+def _decode_repository_file(node: dict[str, Any]) -> bytes:
+    if str(node.get("encoding") or "").lower() != "base64":
+        raise WikiApiError("upstream_error", "GitLab 文件编码不受支持")
+    limit = settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
+    size = int(node.get("size") or 0)
+    if size > limit:
+        raise WikiApiError(
+            "external_file_too_large",
+            "GitLab 文件超过知识库上传大小限制",
+        )
+    try:
+        encoded_content = "".join(str(node.get("content") or "").split())
+        content = base64.b64decode(encoded_content, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise WikiApiError("upstream_error", "GitLab 文件内容无法解码") from exc
+    if not content:
+        raise WikiApiError("external_file_empty", "GitLab 文件为空")
+    if len(content) > limit:
+        raise WikiApiError(
+            "external_file_too_large",
+            "GitLab 文件超过知识库上传大小限制",
+        )
+    if _is_git_lfs_pointer(content):
+        raise WikiApiError(
+            "unsupported_file_type",
+            "该文件由 Git LFS 管理，当前不支持同步",
+            retryable=False,
+        )
+    return content
 
 
 class GitLabRepoConnector(WikiConnector):
@@ -217,20 +269,37 @@ class GitLabRepoConnector(WikiConnector):
         if not decision.importable:
             raise WikiApiError("unsupported_file_type", "该文件类型不支持导入")
         try:
-            node = await GitLabExternalWikiClient(config).get_repository_file(
-                project_path, path=resource_id, ref=branch
-            )
+            headers = await GitLabExternalWikiClient(
+                config
+            ).get_repository_file_metadata(project_path, path=resource_id, ref=branch)
         except WikiApiError as exc:
             if exc.error_code == "external_source_missing":
                 return None
             raise
-        if int(node.get("size") or 0) <= 0:
+        try:
+            size = int(headers.get("x-gitlab-size") or "")
+        except ValueError as exc:
+            raise WikiApiError("upstream_error", "GitLab 文件元数据无效") from exc
+        if size < 0:
+            raise WikiApiError("upstream_error", "GitLab 文件元数据无效")
+        if size == 0:
             raise WikiApiError("external_file_empty", "GitLab 文件为空")
+        if size > settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024:
+            raise WikiApiError(
+                "external_file_too_large",
+                "GitLab 文件超过知识库上传大小限制",
+            )
+        node = {
+            "type": "blob",
+            "path": resource_id,
+            "file_name": headers.get("x-gitlab-file-name", ""),
+            "blob_id": headers.get("x-gitlab-blob-id", ""),
+        }
         return self._meta(
             config,
             project_path,
             branch,
-            {**node, "type": "blob", "path": resource_id},
+            node,
         )
 
     async def inspect_resources(
@@ -331,27 +400,7 @@ class GitLabRepoConnector(WikiConnector):
             if exc.error_code == "external_source_missing":
                 return None
             raise
-        if str(node.get("encoding") or "").lower() != "base64":
-            raise WikiApiError("upstream_error", "GitLab 文件编码不受支持")
-        limit = settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
-        size = int(node.get("size") or 0)
-        if size > limit:
-            raise WikiApiError(
-                "external_file_too_large",
-                "GitLab 文件超过知识库上传大小限制",
-            )
-        try:
-            encoded_content = "".join(str(node.get("content") or "").split())
-            content = base64.b64decode(encoded_content, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise WikiApiError("upstream_error", "GitLab 文件内容无法解码") from exc
-        if not content:
-            raise WikiApiError("external_file_empty", "GitLab 文件为空")
-        if len(content) > limit:
-            raise WikiApiError(
-                "external_file_too_large",
-                "GitLab 文件超过知识库上传大小限制",
-            )
+        content = _decode_repository_file(node)
         meta = self._meta(
             config,
             resource.project_path,

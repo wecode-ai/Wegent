@@ -250,6 +250,64 @@ async def test_daily_sync_queues_changed_remote_document(
 
 
 @pytest.mark.asyncio
+async def test_daily_sync_skips_same_nonretryable_remote_version(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_document(test_db, test_user, remote_version="blob-old")
+    external = document.external_source_config
+    sync = dict(external["sync"])
+    sync.update(
+        {
+            "observed_version": "blob-lfs",
+            "failed_version": "blob-lfs",
+            "last_error_code": "unsupported_file_type",
+            "last_error_retryable": False,
+        }
+    )
+    document.update_external_source_config(
+        status="sync_error",
+        last_error="该文件由 Git LFS 管理，当前不支持同步",
+        sync=sync,
+    )
+    test_db.commit()
+    provider = _provider(
+        {
+            document.id: RemoteDocumentState(
+                True,
+                "blob-lfs",
+                metadata={"title": "Wiki Runbook"},
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.get_external_sync_provider",
+        lambda provider_id: provider if provider_id == "wiki" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.get",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
+    )
+    execute_refresh = AsyncMock()
+    sync_module = ExternalDocumentSyncModule()
+    monkeypatch.setattr(sync_module, "_execute_refresh", execute_refresh)
+
+    report = await sync_module.run_daily_sync(test_db, scan_limit=100)
+
+    assert report.skipped == 1
+    assert report.updates_detected == 0
+    execute_refresh.assert_not_awaited()
+    current = test_db.get(KnowledgeDocument, document.id)
+    assert current is not None
+    assert current.external_source_config["status"] == "sync_error"
+    assert current.external_source_config["sync"]["failed_version"] == "blob-lfs"
+
+
+@pytest.mark.asyncio
 async def test_daily_sync_limits_parallel_source_downloads(
     test_db: Session,
     test_user: User,
@@ -348,6 +406,41 @@ async def test_pending_refresh_failure_does_not_cancel_other_downloads(
 
 
 @pytest.mark.asyncio
+async def test_gitlab_pending_refreshes_are_serialized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection_report = ConnectionSyncReport("wiki", 1, "conn-a", "GitLab")
+    refreshes = [
+        PendingExternalRefresh(
+            document_id=document_id,
+            expected_generation=1,
+            provider_id="wiki",
+            connection_report=connection_report,
+            adapter_type="gitlab_repo",
+        )
+        for document_id in range(1, 5)
+    ]
+    active = 0
+    max_active = 0
+
+    async def execute_refresh(_refresh) -> RefreshExecutionResult:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return RefreshExecutionResult(started=True, failed=False)
+
+    sync_module = ExternalDocumentSyncModule()
+    monkeypatch.setattr(sync_module, "_execute_refresh", execute_refresh)
+    monkeypatch.setattr(settings, "WIKI_SYNC_DOWNLOAD_CONCURRENCY", 8)
+
+    await sync_module._run_pending_refreshes(refreshes, SyncReport())
+
+    assert max_active == 1
+
+
+@pytest.mark.asyncio
 async def test_execute_refresh_claims_generation_before_async_download(
     test_db: Session,
     test_user: User,
@@ -405,18 +498,13 @@ async def test_daily_sync_does_not_count_a_rejected_refresh_as_queued(
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
     )
-    monkeypatch.setattr(
-        "app.services.knowledge.external_document_sync."
-        "external_document_import_service.prepare_source_refresh",
-        MagicMock(
-            return_value=SimpleNamespace(
-                started=False,
-                reason="already_in_progress",
-            )
-        ),
+    execute_refresh = AsyncMock(
+        return_value=RefreshExecutionResult(started=False, failed=False)
     )
+    sync_module = ExternalDocumentSyncModule()
+    monkeypatch.setattr(sync_module, "_execute_refresh", execute_refresh)
 
-    report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
+    report = await sync_module.run_daily_sync(test_db, scan_limit=100)
 
     summary = next(iter(report.connection_summaries.values()))
     assert report.updates_detected == 1
@@ -424,6 +512,7 @@ async def test_daily_sync_does_not_count_a_rejected_refresh_as_queued(
     assert report.skipped == 1
     assert summary.refresh_queued == 0
     assert summary.skipped == 1
+    execute_refresh.assert_awaited_once()
 
 
 @pytest.mark.asyncio

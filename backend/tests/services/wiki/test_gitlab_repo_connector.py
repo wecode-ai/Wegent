@@ -37,6 +37,21 @@ def _resource(path: str = "docs/guide.md") -> StoredWikiResourceRef:
     )
 
 
+def _git_lfs_node() -> dict[str, object]:
+    pointer = (
+        b"version https://git-lfs.github.com/spec/v1\n"
+        b"oid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        b"size 10485760\n"
+    )
+    return {
+        "file_name": "guide.pdf",
+        "blob_id": "blob-lfs",
+        "size": len(pointer),
+        "encoding": "base64",
+        "content": base64.b64encode(pointer).decode(),
+    }
+
+
 def test_directory_is_not_treated_as_an_importable_file() -> None:
     meta = GitLabRepoConnector._meta(
         _config(),
@@ -93,6 +108,50 @@ async def test_fetch_resource_decodes_folded_base64_content() -> None:
 
     assert fetched is not None
     assert fetched.content == content
+
+
+@pytest.mark.asyncio
+async def test_resolve_resource_uses_metadata_without_downloading_body() -> None:
+    client = AsyncMock()
+    client.get_repository_file_metadata.return_value = {
+        "x-gitlab-blob-id": "blob-1",
+        "x-gitlab-file-name": "guide.pdf",
+        "x-gitlab-size": "1024",
+    }
+
+    with patch(
+        "app.services.wiki.connectors.gitlab_repo.GitLabExternalWikiClient",
+        return_value=client,
+    ):
+        resolved = await GitLabRepoConnector().resolve_resource(
+            _config(),
+            "docs/guide.pdf",
+            project_path="group/project",
+            branch="main",
+        )
+
+    assert resolved is not None
+    assert resolved.updated_at == "blob-1"
+    client.get_repository_file_metadata.assert_awaited_once()
+    client.get_repository_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fetch_resource_rejects_git_lfs_pointer() -> None:
+    client = AsyncMock()
+    client.get_repository_file.return_value = _git_lfs_node()
+
+    with patch(
+        "app.services.wiki.connectors.gitlab_repo.GitLabExternalWikiClient",
+        return_value=client,
+    ):
+        with pytest.raises(WikiApiError) as exc_info:
+            await GitLabRepoConnector().fetch_resource(
+                _config(), _resource("docs/guide.pdf")
+            )
+
+    assert exc_info.value.error_code == "unsupported_file_type"
+    assert exc_info.value.retryable is False
 
 
 @pytest.mark.asyncio

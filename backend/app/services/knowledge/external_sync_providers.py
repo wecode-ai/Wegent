@@ -312,7 +312,10 @@ class WikiExternalSyncProvider(
             for resource_id in dict.fromkeys(item.strip() for item in selections)
             if resource_id
         ]
-        semaphore = asyncio.Semaphore(8)
+        adapter_type = connection.connector.connector_type
+        semaphore = asyncio.Semaphore(
+            1 if adapter_type in {"gitlab_repo", "gitlab_wiki"} else 8
+        )
 
         async def resolve_resource(resource_id: str) -> ResolvedExternalDocument:
             try:
@@ -329,7 +332,6 @@ class WikiExternalSyncProvider(
                 raise ExternalDocumentImportError(
                     f"External Wiki resource not found: {resource_id}"
                 )
-            adapter_type = connection.connector.connector_type
             uses_v2_identity = adapter_type != "wikijs"
             locator = ExternalSyncLocator(
                 self.provider_id,
@@ -590,7 +592,11 @@ class WikiExternalSyncProvider(
                 connection.config, resource
             )
         except WikiApiError as exc:
-            raise ExternalDocumentFetchError(exc.message) from exc
+            raise ExternalDocumentFetchError(
+                exc.message,
+                error_code=exc.error_code,
+                retryable=exc.retryable,
+            ) from exc
         if fetched is None:
             raise ExternalSourceUnavailableError(
                 "Wiki 源文档不存在",

@@ -344,7 +344,7 @@ class Settings(BaseSettings):
         default=5000, ge=1
     )  # Tree browse page-list upper bound
     EXTERNAL_DOC_SYNC_ENABLED: bool = True
-    EXTERNAL_DOC_SYNC_CRON: str = "0 19 * * *"
+    EXTERNAL_DOC_SYNC_CRON: str = "0 21 * * *"
     EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE: int = 500
     EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS: int = 10000
     EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS: int = 2700
@@ -655,6 +655,8 @@ class Settings(BaseSettings):
     # provider holds the worker until the OS gives up on the socket. Configurable
     # because the right number depends on how far away the git host is.
     REPOSITORY_READ_TIMEOUT_SECONDS: int = 15
+    # Large GitLab file and Wiki page bodies need a separate request budget.
+    EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS: int = Field(default=300, ge=1)
 
     # Plugin marketplace package storage and controlled publishing.
     PLUGIN_STORAGE_BUCKET: str = "plugins"

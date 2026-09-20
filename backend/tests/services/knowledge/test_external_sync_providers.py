@@ -497,6 +497,64 @@ async def test_wiki_fetch_content_resolves_current_path_by_id(
     assert content.metadata["sync"]["path"] == "ops/renamed-runbook"
 
 
+@pytest.mark.asyncio
+async def test_wiki_fetch_preserves_connector_error_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connector = SimpleNamespace(
+        connector_type="gitlab_repo",
+        fetch_resource=AsyncMock(
+            side_effect=WikiApiError(
+                "unsupported_file_type",
+                "该文件由 Git LFS 管理，当前不支持同步",
+                retryable=False,
+            )
+        ),
+    )
+    connection = SimpleNamespace(
+        config=WikiSiteConfig(site_url="https://gitlab.example.com", api_key="token"),
+        connector=connector,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_sync_providers."
+        "WikiConnectionService.get_user_wiki_connection",
+        lambda *args, **kwargs: connection,
+    )
+
+    resource_key = '["group/project","main","docs/guide.pdf"]'
+    locator = ExternalSyncLocator(
+        "wiki",
+        "conn-primary",
+        resource_key,
+        resource_kind="file",
+        identity_version="v2",
+    )
+    external_resource_id = encode_external_sync_resource_id(locator)
+    sync = {
+        "enabled": True,
+        "connection_id": "conn-primary",
+        "adapter_type": "gitlab_repo",
+        "resource_kind": "file",
+        "resource_id": "docs/guide.pdf",
+        "resource_key": resource_key,
+        "path": "docs/guide.pdf",
+        "project_path": "group/project",
+        "branch": "main",
+    }
+    prepared = wiki_external_sync_provider.prepare_content_fetch(
+        MagicMock(),
+        SimpleNamespace(id=7, is_active=True),
+        external_resource_id,
+        {"sync": sync},
+    )
+
+    with pytest.raises(ExternalDocumentFetchError) as exc_info:
+        await wiki_external_sync_provider.fetch_prepared_content(prepared)
+
+    assert exc_info.value.error_code == "unsupported_file_type"
+    assert exc_info.value.retryable is False
+
+
 def test_wiki_fetch_rejects_inactive_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

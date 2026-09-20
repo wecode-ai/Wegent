@@ -237,7 +237,9 @@ class GitLabWikiConnector(WikiConnector):
                         )
                     else:
                         existing_resources.append(resource)
-                semaphore = asyncio.Semaphore(min(max(1, batch_size), 8))
+                # A page may approach the upload limit and is materialized as
+                # both JSON text and attachment bytes. Keep fallback reads serial.
+                semaphore = asyncio.Semaphore(1)
 
                 async def inspect(resource: StoredWikiResourceRef) -> None:
                     try:
