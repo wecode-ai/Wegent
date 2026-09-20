@@ -1,7 +1,7 @@
 """Boundary tests for buffered card updates and terminal delivery."""
 
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -68,7 +68,7 @@ async def test_callback_keeps_registration_and_recoverable_state_on_failure(
     emitter.MIN_UPDATE_INTERVAL = 3600
     await emitter.emit_start(1, 2)
     await emitter.emit_chunk(1, 2, "buffered", 0)
-    card_factory[0].ai_finish = Mock(side_effect=RuntimeError("delivery failed"))
+    card_factory[0].ai_finish = AsyncMock(side_effect=RuntimeError("delivery failed"))
     service = FakeCallbackService(emitter)
     service._active_emitters[1] = emitter
     service.get_callback_info = AsyncMock(return_value=object())
@@ -123,7 +123,7 @@ async def test_failed_terminal_preserves_answer_for_retry(monkeypatch, card_fact
     await emitter.emit_chunk(1, 2, "buffered", 0)
     card = card_factory[0]
     finish = card.ai_finish
-    card.ai_finish = Mock(side_effect=RuntimeError("delivery failed"))
+    card.ai_finish = AsyncMock(side_effect=RuntimeError("delivery failed"))
 
     with pytest.raises(RuntimeError, match="delivery failed"):
         await emitter.emit_done(1, 2)
@@ -216,45 +216,41 @@ async def test_ambiguous_persistence_requires_authoritative_completion(
 
 
 @pytest.mark.asyncio
-async def test_repeated_cancellation_keeps_lock_until_sdk_request_finishes(
+async def test_cancellation_stops_request_before_releasing_writer_lock(
+    monkeypatch,
     card_factory,
 ):
-    emitter = StreamingResponseEmitter(object(), object())
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    emitter = StreamingResponseEmitter(object(), object(), "card-1")
+    emitter.set_shared_content_key("shared-card")
     await emitter.emit_start(1, 2)
     card = card_factory[0]
-    started, release = block_update(card, asyncio.get_running_loop(), "in flight")
+    started, release = block_update(card, "in flight")
 
     async def write():
-        async with emitter._update_lock:
+        async with emitter._update_lock, emitter._shared_write():
             await emitter._call_card("update", "in flight")
 
     pending = asyncio.create_task(write())
-    terminal = None
     try:
         await asyncio.wait_for(started.wait(), 1)
         pending.cancel()
-        await asyncio.sleep(0)
-        pending.cancel()
-        await asyncio.sleep(0)
-        assert not pending.done()
-        terminal = asyncio.create_task(emitter.emit_done(1, 2, {"value": "final"}))
-        await asyncio.sleep(0)
-        assert not terminal.done()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert not cache.locks[f"{emitter._terminal_key}:writer"].locked()
         release.set()
-        results = await asyncio.gather(pending, terminal, return_exceptions=True)
-        assert isinstance(results[0], asyncio.CancelledError)
-        assert results[1] is None
-        assert card.updates[1:] == ["in flight", "final"]
+        await emitter.emit_done(1, 2, {"value": "final"})
+        assert "in flight" not in card.updates
+        assert card.finished == ["final"]
     finally:
-        release.set()
-        await asyncio.gather(
-            *(task for task in (pending, terminal) if task), return_exceptions=True
-        )
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
         await emitter.close()
 
 
 @pytest.mark.asyncio
-async def test_lost_writer_lease_stops_remaining_terminal_requests(
+async def test_write_deadline_preserves_answer_and_allows_recovery(
     monkeypatch, card_factory
 ):
     cache = FakeCache()
@@ -262,28 +258,23 @@ async def test_lost_writer_lease_stops_remaining_terminal_requests(
     emitter = StreamingResponseEmitter(object(), object(), "card-1")
     emitter.set_shared_content_key("shared-card")
     await emitter.emit_start(1, 2)
-    lost, renewal_failed = asyncio.Event(), asyncio.Event()
-
-    async def renew(_lock):
-        await lost.wait()
-        renewal_failed.set()
-        raise RuntimeError("writer lease lost")
-
-    emitter._renew_writer_lock = renew
+    emitter.WRITE_TIMEOUT_SECONDS = 0.02
     card = card_factory[0]
-    started, release = block_update(card, asyncio.get_running_loop(), "final")
-    terminal = asyncio.create_task(emitter.emit_done(1, 2, {"value": "final"}))
+    started, release = block_update(card, "final")
     try:
-        await asyncio.wait_for(started.wait(), 1)
-        lost.set()
-        await renewal_failed.wait()
-        release.set()
-        with pytest.raises(RuntimeError, match="writer lease lost"):
-            await terminal
+        with pytest.raises(TimeoutError):
+            await emitter.emit_done(1, 2, {"value": "final"})
+        assert started.is_set()
         assert card.finished == []
         assert not emitter._finished
         assert await cache.get(emitter._terminal_key) is None
-    finally:
+        assert not cache.locks[f"{emitter._terminal_key}:writer"].locked()
         release.set()
-        await asyncio.gather(terminal, return_exceptions=True)
+        recovered = StreamingResponseEmitter(object(), object(), "card-1")
+        recovered.set_shared_content_key("shared-card")
+        await recovered.emit_done(1, 2)
+        assert "final" not in card.updates
+        assert card_factory[1].finished == ["final"]
+        await recovered.close()
+    finally:
         await emitter.close()
