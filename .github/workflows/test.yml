@@ -381,13 +381,21 @@ jobs:
           client.close()
           "
 
-      - name: Run real Milvus contract tests
+      - name: Run real Milvus V2 contract suite
         working-directory: ./knowledge_engine
         env:
           MILVUS_CONTRACT_URI: http://localhost:19530
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
-        run: uv run pytest tests/contract -m milvus -v
+        run: uv run pytest tests/contract/milvus -m milvus -v
+
+      - name: Run real Milvus legacy compatibility smoke
+        working-directory: ./knowledge_engine
+        env:
+          MILVUS_CONTRACT_URI: http://localhost:19530
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
+        run: uv run pytest tests/contract/milvus_legacy -m milvus -v
 
       - name: Dump Milvus logs on failure
         if: failure()
