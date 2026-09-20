@@ -9,8 +9,8 @@ delegate to ``llama_index.vector_stores``, while this one talks to the official
 synchronous PyMilvus client itself. Its row layout, index contract, RPC
 surface, deletion path and parent sidecar therefore live in their own package
 beside it instead of in the shared storage namespace. The frozen adapter that
-serves the collections written before this physical contract sits in
-``knowledge_engine.storage.milvus_legacy`` beside it.
+serves the collections written before this physical contract is the historical
+``knowledge_engine.storage.milvus_backend`` module beside it.
 """
 
 from knowledge_engine.storage.milvus.backend import MilvusBackend

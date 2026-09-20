@@ -88,7 +88,9 @@ def test_the_two_milvus_storage_types_build_their_own_adapter() -> None:
         create_storage_backend_from_runtime_config,
     )
     from knowledge_engine.storage.milvus.backend import MilvusBackend
-    from knowledge_engine.storage.milvus_legacy import LegacyMilvusBackend
+    from knowledge_engine.storage.milvus_backend import (
+        MilvusBackend as LegacyMilvusBackend,
+    )
 
     legacy = create_storage_backend_from_runtime_config(
         RuntimeRetrieverConfig(
@@ -115,7 +117,9 @@ def test_a_milvus_storage_type_is_normalized_before_it_is_dispatched() -> None:
         create_storage_backend_from_runtime_config,
     )
     from knowledge_engine.storage.milvus.backend import MilvusBackend
-    from knowledge_engine.storage.milvus_legacy import LegacyMilvusBackend
+    from knowledge_engine.storage.milvus_backend import (
+        MilvusBackend as LegacyMilvusBackend,
+    )
 
     configured_types = (
         ("Milvus", LegacyMilvusBackend),

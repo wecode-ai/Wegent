@@ -4,19 +4,20 @@
 
 """Construction, connection, indexing and naming of the legacy adapter.
 
-The legacy Milvus adapter is frozen: it keeps serving the collections the
-online main branch built, so these are the tests that branch shipped, split by
-behaviour domain instead of one oversized module.
+The legacy Milvus adapter is a frozen snapshot of the module the online main
+branch shipped, so these are the tests that branch shipped - split by behaviour
+domain instead of one oversized module, and importing that module as they
+always did.
 """
 
 from unittest.mock import MagicMock, patch
 
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from knowledge_engine.storage.milvus_legacy import LegacyMilvusBackend
+from knowledge_engine.storage.milvus_backend import MilvusBackend
 
 
-class TestLegacyMilvusBackendInit:
-    """Tests for LegacyMilvusBackend initialization."""
+class TestMilvusBackendInit:
+    """Tests for MilvusBackend initialization."""
 
     def test_init_with_full_config(self):
         """Test initialization with username and password."""
@@ -27,7 +28,7 @@ class TestLegacyMilvusBackendInit:
             "indexStrategy": {"mode": "per_user"},
             "ext": {"dim": 768},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.url == "http://localhost:19530/default"
         assert backend.username == "testuser"
@@ -42,7 +43,7 @@ class TestLegacyMilvusBackendInit:
             "indexStrategy": {"mode": "per_dataset"},
             "ext": {},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.url == "http://localhost:19530/default"
         assert backend.username is None
@@ -57,7 +58,7 @@ class TestLegacyMilvusBackendInit:
             "username": "testuser",
             "indexStrategy": {"mode": "per_dataset"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.token == ""  # Should be empty if password is missing
 
@@ -67,7 +68,7 @@ class TestLegacyMilvusBackendInit:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
         assert backend.dim == 1024
 
     def test_init_db_name_from_url_path(self):
@@ -76,7 +77,7 @@ class TestLegacyMilvusBackendInit:
             "url": "http://localhost:19530/mydb",
             "indexStrategy": {"mode": "per_dataset"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.db_name == "mydb"
         assert backend.base_url == "http://localhost:19530"
@@ -87,7 +88,7 @@ class TestLegacyMilvusBackendInit:
             "url": "http://localhost:19530",
             "indexStrategy": {"mode": "per_dataset"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.db_name == "default"
         assert backend.base_url == "http://localhost:19530"
@@ -99,7 +100,7 @@ class TestLegacyMilvusBackendInit:
             "indexStrategy": {"mode": "per_dataset"},
             "ext": {"db_name": "ext_db"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         # ext.db_name should take priority
         assert backend.db_name == "ext_db"
@@ -107,30 +108,30 @@ class TestLegacyMilvusBackendInit:
         assert backend.base_url == "http://localhost:19530/url_db"
 
 
-class TestLegacyMilvusBackendClassAttributes:
+class TestMilvusBackendClassAttributes:
     """Tests for class-level attributes."""
 
     def test_supported_retrieval_methods(self):
         """Test that all three retrieval methods are supported."""
-        assert "vector" in LegacyMilvusBackend.SUPPORTED_RETRIEVAL_METHODS
-        assert "keyword" in LegacyMilvusBackend.SUPPORTED_RETRIEVAL_METHODS
-        assert "hybrid" in LegacyMilvusBackend.SUPPORTED_RETRIEVAL_METHODS
-        assert len(LegacyMilvusBackend.SUPPORTED_RETRIEVAL_METHODS) == 3
+        assert "vector" in MilvusBackend.SUPPORTED_RETRIEVAL_METHODS
+        assert "keyword" in MilvusBackend.SUPPORTED_RETRIEVAL_METHODS
+        assert "hybrid" in MilvusBackend.SUPPORTED_RETRIEVAL_METHODS
+        assert len(MilvusBackend.SUPPORTED_RETRIEVAL_METHODS) == 3
 
     def test_index_prefix(self):
         """Test that INDEX_PREFIX is 'collection'."""
-        assert LegacyMilvusBackend.INDEX_PREFIX == "collection"
+        assert MilvusBackend.INDEX_PREFIX == "collection"
 
     def test_get_supported_retrieval_methods(self):
         """Test get_supported_retrieval_methods class method."""
-        methods = LegacyMilvusBackend.get_supported_retrieval_methods()
+        methods = MilvusBackend.get_supported_retrieval_methods()
         assert methods == ["vector", "keyword", "hybrid"]
 
 
 class TestTestConnection:
     """Tests for test_connection method."""
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_connection_success(self, mock_client_class):
         """Test successful connection."""
         mock_client = MagicMock()
@@ -141,12 +142,12 @@ class TestTestConnection:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.test_connection() is True
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_connection_failure(self, mock_client_class):
         """Test failed connection."""
         mock_client = MagicMock()
@@ -157,7 +158,7 @@ class TestTestConnection:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.test_connection() is False
         mock_client.close.assert_called_once()
@@ -171,9 +172,9 @@ class TestIndexWithMetadata:
     to nodes - it only uses ChunkMetadata for index name generation.
     """
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.VectorStoreIndex")
-    @patch("knowledge_engine.storage.milvus_legacy.backend.StorageContext")
-    @patch("knowledge_engine.storage.milvus_legacy.backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_index_with_metadata(self, mock_milvus_vs, mock_storage_ctx, mock_vs_index):
         """Test indexing nodes with metadata."""
         mock_store = MagicMock()
@@ -205,7 +206,7 @@ class TestIndexWithMetadata:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         chunk_metadata = ChunkMetadata(
             knowledge_id="kb_1",
@@ -241,7 +242,7 @@ class TestIndexNameGeneration:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "milvus"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         index_name = backend.get_index_name("kb_123")
         assert index_name == "milvus_kb_kb_123"
@@ -252,7 +253,7 @@ class TestIndexNameGeneration:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_user", "prefix": "milvus"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         index_name = backend.get_index_name("kb_123", user_id="user_456")
         assert index_name == "milvus_user_user_456"
@@ -263,7 +264,7 @@ class TestIndexNameGeneration:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "fixed", "fixedName": "my_fixed_collection"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         index_name = backend.get_index_name("kb_123")
         assert index_name == "my_fixed_collection"
@@ -278,7 +279,7 @@ class TestIndexNameGeneration:
                 "rollingStep": 100,
             },
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         assert backend.get_index_name("1") == "milvus_collection_0"
         assert backend.get_index_name("100") == "milvus_collection_0"

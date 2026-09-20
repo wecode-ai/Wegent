@@ -7,21 +7,22 @@
 The legacy adapter owns no document replacement of its own: the business layer
 deletes a document's previous rows before the write, and these are the tests
 the online main branch shipped for the reads, the deletes, the parent sidecar
-and the drop, split by behaviour domain instead of one oversized module.
+and the drop - split by behaviour domain instead of one oversized module, and
+importing that module as they always did.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from knowledge_engine.storage.milvus_legacy import LegacyMilvusBackend
+from knowledge_engine.storage.milvus_backend import MilvusBackend
 
 
 class TestDeleteDocument:
     """Tests for delete_document method."""
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.LazyAsyncMilvusVectorStore")
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_delete_document(self, mock_client_class, mock_milvus_vs):
         """Test deleting a document."""
         mock_client = MagicMock()
@@ -38,7 +39,7 @@ class TestDeleteDocument:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.delete_document(knowledge_id="kb_1", doc_ref="doc_123")
 
@@ -53,8 +54,8 @@ class TestDeleteDocument:
         )
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.LazyAsyncMilvusVectorStore")
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_delete_document_skips_an_absent_parent_sidecar(
         self, mock_client_class, mock_milvus_vs
     ):
@@ -72,7 +73,7 @@ class TestDeleteDocument:
         mock_milvus_vs.return_value = mock_store
         mock_store.get_nodes.return_value = [MagicMock()]
 
-        backend = LegacyMilvusBackend(
+        backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
                 "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
@@ -89,7 +90,7 @@ class TestDeleteDocument:
 
 
 class TestDeleteKnowledge:
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_delete_knowledge_removes_all_chunks_for_one_knowledge_id(
         self, mock_client_class
     ):
@@ -101,7 +102,7 @@ class TestDeleteKnowledge:
             [{"doc_ref": "doc_1"}],
         ]
 
-        backend = LegacyMilvusBackend(
+        backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
                 "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
@@ -126,7 +127,7 @@ class TestDeleteKnowledge:
         )
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_delete_knowledge_reports_nothing_without_the_collections(
         self, mock_client_class
     ):
@@ -135,7 +136,7 @@ class TestDeleteKnowledge:
         mock_client_class.return_value = mock_client
         mock_client.has_collection.return_value = False
 
-        backend = LegacyMilvusBackend(
+        backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
                 "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
@@ -155,7 +156,7 @@ class TestDeleteKnowledge:
 
 class TestDropKnowledgeIndex:
     def test_drop_knowledge_index_rejects_shared_index_strategy(self) -> None:
-        backend = LegacyMilvusBackend(
+        backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
                 "indexStrategy": {"mode": "rolling", "prefix": "test"},
@@ -165,7 +166,7 @@ class TestDropKnowledgeIndex:
         with pytest.raises(ValueError, match="Physical index drop is only allowed"):
             backend.drop_knowledge_index(knowledge_id="kb_1", user_id=7)
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_drop_knowledge_index_drops_dedicated_kb_collection_and_parent_store(
         self, mock_client_class
     ):
@@ -173,7 +174,7 @@ class TestDropKnowledgeIndex:
         mock_client_class.return_value = mock_client
         mock_client.has_collection.side_effect = [True, True]
 
-        backend = LegacyMilvusBackend(
+        backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
                 "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
@@ -194,7 +195,7 @@ class TestDropKnowledgeIndex:
         )
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_drop_knowledge_index_is_idempotent_without_the_collections(
         self, mock_client_class
     ):
@@ -208,7 +209,7 @@ class TestDropKnowledgeIndex:
         mock_client_class.return_value = mock_client
         mock_client.has_collection.return_value = False
 
-        backend = LegacyMilvusBackend(
+        backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
                 "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
@@ -229,7 +230,7 @@ class TestDropKnowledgeIndex:
 class TestSaveParentNodes:
     """Tests for parent-node persistence."""
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_save_parent_nodes_replaces_existing_rows(self, mock_client_class):
         """Test parent-node writes are idempotent for retries."""
         mock_client = MagicMock()
@@ -249,7 +250,7 @@ class TestSaveParentNodes:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         backend.save_parent_nodes(
             knowledge_id="kb_1",
@@ -272,7 +273,7 @@ class TestSaveParentNodes:
 class TestGetDocument:
     """Tests for get_document method."""
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_get_document(self, mock_milvus_vs):
         """Test getting document details."""
         mock_store = MagicMock()
@@ -290,7 +291,7 @@ class TestGetDocument:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.get_document(knowledge_id="kb_1", doc_ref="doc_123")
 
@@ -301,7 +302,7 @@ class TestGetDocument:
         assert result["chunks"][0]["chunk_index"] == 0
         assert result["chunks"][1]["chunk_index"] == 1
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_get_document_not_found(self, mock_milvus_vs):
         """Test getting a document that doesn't exist."""
         mock_store = MagicMock()
@@ -312,7 +313,7 @@ class TestGetDocument:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         with pytest.raises(ValueError, match="not found"):
             backend.get_document(knowledge_id="kb_1", doc_ref="doc_nonexistent")
@@ -321,7 +322,7 @@ class TestGetDocument:
 class TestListDocuments:
     """Tests for list_documents method."""
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_list_documents(self, mock_client_class):
         """Test listing documents with pagination."""
         mock_client = MagicMock()
@@ -350,7 +351,7 @@ class TestListDocuments:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.list_documents(knowledge_id="kb_1", page=1, page_size=10)
 
@@ -364,7 +365,7 @@ class TestListDocuments:
         assert result["documents"][1]["chunk_count"] == 2
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_list_documents_empty_collection(self, mock_client_class):
         """Test listing documents when collection doesn't exist."""
         mock_client = MagicMock()
@@ -375,7 +376,7 @@ class TestListDocuments:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.list_documents(knowledge_id="kb_1", page=1, page_size=10)
 
@@ -387,7 +388,7 @@ class TestListDocuments:
 class TestGetAllChunks:
     """Tests for get_all_chunks method."""
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks(self, mock_client_class):
         """Test getting all chunks."""
         mock_client = MagicMock()
@@ -413,7 +414,7 @@ class TestGetAllChunks:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
@@ -422,7 +423,7 @@ class TestGetAllChunks:
         assert result[1]["chunk_id"] == 1
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_collection_not_exists(self, mock_client_class):
         """Test getting chunks when collection doesn't exist."""
         mock_client = MagicMock()
@@ -433,14 +434,14 @@ class TestGetAllChunks:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
         assert result == []
         mock_client.close.assert_called_once()
 
-    @patch("knowledge_engine.storage.milvus_legacy.backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_applies_metadata_condition(self, mock_client_class):
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
@@ -466,7 +467,7 @@ class TestGetAllChunks:
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
         }
-        backend = LegacyMilvusBackend(config)
+        backend = MilvusBackend(config)
 
         result = backend.get_all_chunks(
             knowledge_id="kb_1",
