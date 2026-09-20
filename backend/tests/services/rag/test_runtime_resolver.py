@@ -309,24 +309,29 @@ def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> No
     assert config.storage_config["indexStrategy"] == {"mode": "per_dataset"}
 
 
-def test_build_resolved_retriever_config_carries_a_milvus_v2_storage_verbatim() -> None:
-    """The second Milvus generation needs no field of its own to be addressed.
+@pytest.mark.parametrize("prefix", ["wegent", "wegent_v2"])
+def test_build_resolved_retriever_config_carries_a_milvus_prefix_verbatim(
+    prefix: str,
+) -> None:
+    """Both generations need no field of their own to be addressed.
 
     The resolved storage config is the Retriever CRD's own storage config, so a
-    ``milvus_v2`` retriever reaches the storage factory with the URL, the
+    ``milvus`` retriever reaches the storage factory with the URL, the
     credentials, the index strategy and the extension config it declared -
-    including the Milvus database it must not share with a legacy retriever.
+    including the prefix that routes it and the Milvus database it must not
+    share with a retriever of the other generation. The resolver that reads
+    the CRD carries the prefix through without interpreting it.
     """
     resolver = RagRuntimeResolver()
     retriever = SimpleNamespace(
         spec=SimpleNamespace(
             storageConfig=SimpleNamespace(
-                type="milvus_v2",
+                type="milvus",
                 url="http://milvus:19530",
                 username="tester",
                 password="s3cret",
                 apiKey="retriever-key",
-                indexStrategy=IndexStrategy(mode="per_dataset", prefix="wegent"),
+                indexStrategy=IndexStrategy(mode="per_dataset", prefix=prefix),
                 ext={"db_name": "wegent_v2", "dim": 1536},
             )
         )
@@ -344,12 +349,12 @@ def test_build_resolved_retriever_config_carries_a_milvus_v2_storage_verbatim() 
         )
 
     assert config.storage_config == {
-        "type": "milvus_v2",
+        "type": "milvus",
         "url": "http://milvus:19530",
         "username": "tester",
         "password": "s3cret",
         "apiKey": "retriever-key",
-        "indexStrategy": {"mode": "per_dataset", "prefix": "wegent"},
+        "indexStrategy": {"mode": "per_dataset", "prefix": prefix},
         "ext": {"db_name": "wegent_v2", "dim": 1536},
     }
 

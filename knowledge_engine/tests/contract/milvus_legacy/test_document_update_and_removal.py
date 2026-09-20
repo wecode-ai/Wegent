@@ -47,7 +47,7 @@ def test_delete_then_write_converges_on_real_milvus(
 
     What this case proves is that order's storage result on the real service:
     the previous version's chunks are gone and the new one is readable and
-    searchable. Which storage types the indexing caller deletes before a write
+    searchable. Which storage configs the indexing caller deletes before a write
     is that caller's decision: the backend indexing tests cover the branch that
     builds the pre-delete, around the capability read below. This smoke reads
     the same capability and then performs the two storage calls it implies.
@@ -57,7 +57,12 @@ def test_delete_then_write_converges_on_real_milvus(
     model = DeterministicEmbedding()
 
     # The capability the indexing caller reads before it decides the order.
-    assert storage_backend_owns_document_replacement("milvus") is False
+    assert (
+        storage_backend_owns_document_replacement(
+            legacy_milvus_env.legacy_storage_config()
+        )
+        is False
+    )
 
     write_document(
         backend,

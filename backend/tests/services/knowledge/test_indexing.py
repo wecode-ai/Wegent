@@ -5,6 +5,8 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.services.knowledge.indexing import run_document_indexing
 from app.services.rag.runtime_specs import DeleteRuntimeSpec, IndexRuntimeSpec
 from shared.models import RuntimeEmbeddingModelConfig, RuntimeRetrieverConfig
@@ -23,29 +25,35 @@ def _kb_record(retriever_name: str) -> SimpleNamespace:
     )
 
 
-def _resolved_retriever_config(storage_type: str) -> RuntimeRetrieverConfig:
+def _resolved_retriever_config(
+    storage_type: str,
+    index_strategy: dict | None = None,
+) -> RuntimeRetrieverConfig:
     return RuntimeRetrieverConfig(
         name="retriever-1",
         namespace="default",
         storage_config={
             "type": storage_type,
             "url": "http://vector-store:19530",
-            "indexStrategy": {"mode": "per_dataset"},
+            "indexStrategy": index_strategy or {"mode": "per_dataset"},
         },
     )
 
 
 def _run_indexing_against_storage(
     *,
-    storage_type: str,
+    storage_type: str = "milvus",
+    index_strategy: dict | None = None,
     retriever_name: str = "retriever-1",
 ) -> tuple[MagicMock, list[str], dict]:
-    """Run the real indexing chain against one resolved storage type.
+    """Run the real indexing chain against one resolved storage config.
 
     Only the resolver's control-plane lookups (the knowledge base row, the
     retriever config and the embedding model config) and the gateway are
     faked: the runtime specs, the storage decision and the index call order are
-    the product's own chain.
+    the product's own chain. Which engine answers the config is the storage
+    factory's decision, so the cases below differ only in the config a Retriever
+    declared - never in its name.
     """
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
@@ -77,7 +85,7 @@ def _run_indexing_against_storage(
         ),
         patch(
             "app.services.rag.runtime_resolver.RagRuntimeResolver._build_resolved_retriever_config",
-            return_value=_resolved_retriever_config(storage_type),
+            return_value=_resolved_retriever_config(storage_type, index_strategy),
         ),
         patch(
             "app.services.rag.runtime_resolver.RagRuntimeResolver._build_resolved_embedding_model_config",
@@ -110,15 +118,19 @@ def _run_indexing_against_storage(
     return gateway, calls, result
 
 
-def test_a_self_replacing_milvus_write_leaves_the_delete_to_the_backend() -> None:
-    """The Milvus V2 write replaces the document, so indexing must not pre-delete.
+def test_the_reserved_prefix_write_leaves_the_delete_to_the_backend() -> None:
+    """The V2 write replaces the document, so indexing must not pre-delete.
 
-    The ``milvus_v2`` adapter deletes the document's previous rows inside its
-    own write, after it confirms the collection contract, so a business
-    pre-delete would delete the same rows twice and race the write that owns
-    them.
+    ``type: milvus`` with the reserved prefix resolves to the adapter that
+    deletes the document's previous rows inside its own write, after it
+    confirms the collection contract, so a business pre-delete would delete the
+    same rows twice and race the write that owns them. The retriever is named
+    like a legacy one, because the name is not what decides this.
     """
-    gateway, calls, result = _run_indexing_against_storage(storage_type="milvus_v2")
+    gateway, calls, result = _run_indexing_against_storage(
+        index_strategy={"mode": "per_dataset", "prefix": "wegent_v2"},
+        retriever_name="legacy-retriever",
+    )
 
     assert result["status"] == "success"
     assert calls == ["index_document"]
@@ -126,14 +138,24 @@ def test_a_self_replacing_milvus_write_leaves_the_delete_to_the_backend() -> Non
     gateway.index_document.assert_awaited_once()
 
 
-def test_the_legacy_milvus_retriever_keeps_its_pre_delete() -> None:
+@pytest.mark.parametrize(
+    "index_strategy",
+    [
+        pytest.param({"mode": "per_dataset"}, id="default-prefix"),
+        pytest.param({"mode": "per_dataset", "prefix": "wegent"}, id="wegent-prefix"),
+    ],
+)
+def test_an_ordinary_prefix_retriever_keeps_its_pre_delete(
+    index_strategy: dict,
+) -> None:
     """The legacy Milvus adapter receives the document's old index deleted.
 
-    ``milvus`` serves the collections the online main branch wrote, and that
-    adapter owns no document replacement of its own, so the business layer must
-    keep deleting a document's previous rows before it indexes the new version.
+    ``milvus`` without the reserved prefix serves the collections the online
+    main branch wrote, and that adapter owns no document replacement of its
+    own, so the business layer must keep deleting a document's previous rows
+    before it indexes the new version.
     """
-    gateway, calls, _ = _run_indexing_against_storage(storage_type="milvus")
+    gateway, calls, _ = _run_indexing_against_storage(index_strategy=index_strategy)
 
     assert calls == ["delete_document_index", "index_document"]
     delete_spec = gateway.delete_document_index.await_args.args[0]

@@ -87,6 +87,55 @@ class TestBuildResolvedRetrieverConfig:
         assert result.storage_config["indexStrategy"] == {"mode": "per_dataset"}
         assert result.storage_config["ext"] == {}
 
+    @pytest.mark.parametrize("prefix", ["wegent", "wegent_v2"])
+    def test_milvus_prefix_is_carried_through_verbatim(
+        self, resolver: ConfigResolver, mock_db: MagicMock, prefix: str
+    ) -> None:
+        """Both Milvus generations ride on the fields the config already has.
+
+        The runtime adds no storage type, database field or transport field for
+        the generation a Retriever selects: it carries the CRD's own storage
+        config - type, url, credentials, database, mode, prefix and ext - to the
+        storage factory, which owns the one routing rule.
+        """
+        storage_config = {
+            "type": "milvus",
+            "url": "http://milvus:19530",
+            "username": "tester",
+            "password": "enc_secret",
+            "apiKey": "enc_key",
+            "indexStrategy": {"mode": "per_dataset", "prefix": prefix},
+            "ext": {"db_name": "wegent_v2", "dim": 1536},
+        }
+        retriever = _make_retriever_kind(storage_config=storage_config)
+
+        with (
+            patch.object(resolver, "_get_retriever_kind", return_value=retriever),
+            patch.object(
+                resolver,
+                "_decrypt_optional_value",
+                side_effect=lambda v: (
+                    f"decrypted_{v}" if v and v.startswith("enc_") else v
+                ),
+            ),
+        ):
+            result = resolver._build_resolved_retriever_config(
+                db=mock_db,
+                user_id=42,
+                name="v2-retriever",
+                namespace="default",
+            )
+
+        assert result.storage_config == {
+            "type": "milvus",
+            "url": "http://milvus:19530",
+            "username": "tester",
+            "password": "decrypted_enc_secret",
+            "apiKey": "decrypted_enc_key",
+            "indexStrategy": {"mode": "per_dataset", "prefix": prefix},
+            "ext": {"db_name": "wegent_v2", "dim": 1536},
+        }
+
     def test_retriever_not_found(
         self, resolver: ConfigResolver, mock_db: MagicMock
     ) -> None:

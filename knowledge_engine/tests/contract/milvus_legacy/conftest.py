@@ -22,9 +22,9 @@ vector, which Milvus 2.5.4 refuses. That refusal is the online main branch's
 own behaviour, and the parent module pins it as a negative contract instead of
 describing the write as compatible.
 
-Legacy and V2 are configured with different Milvus databases, so both
-generations can hold the same knowledge id, the same collection name and the
-same parent sidecar name at once without colliding. The service is the pinned
+Legacy and V2 are configured with different Milvus databases, and the reserved
+prefix names the second generation's collection, so both generations can hold
+the same knowledge id at once without colliding. The service is the pinned
 standalone the V2 contract suite already starts, and the visibility window and
 the parent-removal wait are that suite's own helpers: a smoke that cannot reach
 the service fails instead of skipping, because a skipped compatibility test
@@ -78,6 +78,12 @@ from ..milvus.conftest import (
 from ..milvus.conftest import DeterministicEmbedding as TokenVectors
 
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
+# The prefix each generation is routed and named by. The reserved one is the
+# transition's exact-match routing marker, so it is written out here instead of
+# imported: a smoke that read the constant would follow the rule rather than
+# pin the value the deployment is configured with.
+LEGACY_PREFIX = "wegent"
+V2_RESERVED_PREFIX = "wegent_v2"
 # The production rule the transition's ADR sets: one Milvus database per
 # storage type. It is what keeps the identical collection names, prefixes and
 # parent sidecars of the two generations physically apart.
@@ -171,32 +177,77 @@ class LegacyContractEnv:
         backend = create_storage_backend_from_runtime_config(
             RuntimeRetrieverConfig(
                 name="legacy-contract-retriever",
-                storage_config={
-                    "type": "milvus",
-                    "url": url or self.legacy_url,
-                    "indexStrategy": {"mode": "per_dataset", "prefix": "wegent"},
-                    "ext": {"dim": CONTRACT_DIMENSION, "timeout": 30.0},
-                },
+                storage_config=self.legacy_storage_config(url=url),
             )
         )
         assert isinstance(backend, LegacyMilvusBackend)
         return backend
 
+    def legacy_storage_config(self, *, url: str | None = None) -> dict[str, Any]:
+        """The storage config an ordinary ``milvus`` Retriever declares.
+
+        It is exposed because the capability the indexing caller reads before
+        it decides the delete order is read from this same config.
+        """
+        return {
+            "type": "milvus",
+            "url": url or self.legacy_url,
+            "indexStrategy": {"mode": "per_dataset", "prefix": LEGACY_PREFIX},
+            "ext": {"dim": CONTRACT_DIMENSION, "timeout": 30.0},
+        }
+
     def v2_backend(self, *, url: str | None = None) -> MilvusV2Backend:
-        """Build the V2 adapter the way a ``milvus_v2`` retriever resolves."""
+        """Build the V2 adapter the way a reserved-prefix retriever resolves."""
         backend = create_storage_backend_from_runtime_config(
             RuntimeRetrieverConfig(
                 name="v2-contract-retriever",
                 storage_config={
-                    "type": "milvus_v2",
+                    "type": "milvus",
                     "url": url or self.v2_url,
-                    "indexStrategy": {"mode": "per_dataset", "prefix": "wegent"},
+                    "indexStrategy": {
+                        "mode": "per_dataset",
+                        "prefix": V2_RESERVED_PREFIX,
+                    },
                     "ext": {"timeout": 30.0},
                 },
             )
         )
         assert isinstance(backend, MilvusV2Backend)
         return backend
+
+    def v2_adapter_over_a_legacy_collection(self) -> MilvusV2Backend:
+        """Build the V2 adapter so it names a legacy collection, off the rule.
+
+        The factory only routes the reserved prefix to this generation, and
+        this probe wants the opposite: to aim the adapter at the collection the
+        legacy naming rule creates, so the module can show that the V2 read
+        path refuses that foreign physical format instead of adopting it. It
+        proves the format contract, never the routing rule.
+        """
+        return MilvusV2Backend(
+            {
+                "url": self.legacy_url,
+                "indexStrategy": {"mode": "per_dataset", "prefix": LEGACY_PREFIX},
+                "ext": {"timeout": 30.0},
+            }
+        )
+
+    def legacy_adapter_over_a_v2_collection(self) -> LegacyMilvusBackend:
+        """Build the frozen adapter so it names a V2 collection, off the rule.
+
+        The factory routes this prefix to the other generation, and this probe
+        wants the opposite: to aim the frozen read path at the collection the
+        reserved prefix names, so the module can show that it refuses those
+        rows instead of reading or migrating them. It proves the format
+        contract, never the routing rule.
+        """
+        return LegacyMilvusBackend(
+            {
+                "url": self.v2_url,
+                "indexStrategy": {"mode": "per_dataset", "prefix": V2_RESERVED_PREFIX},
+                "ext": {"dim": CONTRACT_DIMENSION, "timeout": 30.0},
+            }
+        )
 
     def inspector(self, database: str) -> MilvusClient:
         """A client on its own connection, for looking at stored collections.

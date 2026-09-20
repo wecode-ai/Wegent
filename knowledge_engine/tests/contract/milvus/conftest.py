@@ -23,9 +23,16 @@ from pymilvus import MilvusClient
 
 from knowledge_engine.embedding.space import derive_embedding_space_id
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from knowledge_engine.storage.milvus.backend import MilvusBackend
+from shared.models import RuntimeRetrieverConfig
 
 CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
+# The prefix that routes this suite's ``milvus`` retriever to the second
+# generation. It is written out instead of imported: a contract suite that read
+# the constant would follow the routing rule rather than pin the value a
+# deployment is configured with.
+V2_RESERVED_PREFIX = "wegent_v2"
 CONTRACT_DIMENSION = 1536
 CONTRACT_CREATED_AT = "2026-01-01T00:00:00Z"
 CONTRACT_USER_ID = 1
@@ -268,16 +275,31 @@ class MilvusContractEnv:
         return knowledge_id
 
     def backend(self, *, dimension: int | None = None) -> MilvusBackend:
+        """Build the V2 adapter the way a reserved-prefix Retriever resolves.
+
+        The routing rule is the factory's, so this is the config a Retriever
+        declares for the second generation - one public storage type plus the
+        reserved prefix - rather than the adapter constructed by hand.
+        """
         ext = {"timeout": 30.0}
         if dimension is not None:
             ext["dim"] = dimension
-        return MilvusBackend(
-            {
-                "url": self.uri,
-                "indexStrategy": {"mode": "per_dataset", "prefix": "wegent"},
-                "ext": ext,
-            }
+        backend = create_storage_backend_from_runtime_config(
+            RuntimeRetrieverConfig(
+                name="v2-contract-retriever",
+                storage_config={
+                    "type": "milvus",
+                    "url": self.uri,
+                    "indexStrategy": {
+                        "mode": "per_dataset",
+                        "prefix": V2_RESERVED_PREFIX,
+                    },
+                    "ext": ext,
+                },
+            )
         )
+        assert isinstance(backend, MilvusBackend)
+        return backend
 
     def collection_name(self, knowledge_id: str) -> str:
         return self.backend().get_index_name(knowledge_id)

@@ -138,16 +138,15 @@ def _serialize_splitter_config(
 def _storage_owns_document_replacement(runtime_spec: IndexRuntimeSpec) -> bool:
     """Whether this write replaces the document inside the storage backend.
 
-    The engine is read from the storage config the runtime resolved for this
-    request; the retriever's name says nothing about which engine it stores
-    into.
+    The answer is read from the whole storage config the runtime resolved for
+    this request - both its type and its index strategy - because one public
+    type can be served by more than one adapter. The retriever's name says
+    nothing about which engine it stores into.
     """
     retriever_config = runtime_spec.retriever_config
     if retriever_config is None:
         return False
-    return storage_backend_owns_document_replacement(
-        str(retriever_config.storage_config.get("type") or "")
-    )
+    return storage_backend_owns_document_replacement(retriever_config.storage_config)
 
 
 def _build_old_index_delete_spec(
