@@ -9,6 +9,10 @@ export interface ProjectSpaceTaskContextApi {
     task: RuntimeTaskAddress
   ): Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>
 }
+export interface ProjectSpaceTaskContextSource<TApi extends ProjectSpaceTaskContextApi> {
+  api: TApi
+  context: Awaited<ReturnType<TApi['findCloudContextForTask']>>
+}
 export type LocatedProjectSpace = CloudProject & {
   location: 'local' | 'cloud'
 }
@@ -186,22 +190,23 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
   return ['local', 'github', 'gitlab'].includes(project.task_provider)
 }
 
-export async function findProjectSpaceContextForTask(
-  apis: ProjectSpaceTaskContextApi[],
+export async function findProjectSpaceContextSourceForTask<TApi extends ProjectSpaceTaskContextApi>(
+  apis: TApi[],
   task: RuntimeTaskAddress,
   timeoutMs = 5_000
-): ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']> {
-  type TaskContext = Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
-  const results: Array<PromiseSettledResult<TaskContext> | undefined> = new Array(apis.length)
-  let resolveUserContext: ((context: TaskContext) => void) | undefined
-  const userContextFound = new Promise<TaskContext>(resolve => {
+): Promise<ProjectSpaceTaskContextSource<TApi>> {
+  type TaskContextSource = ProjectSpaceTaskContextSource<TApi>
+  const results: Array<PromiseSettledResult<TaskContextSource> | undefined> = new Array(apis.length)
+  let resolveUserContext: ((source: TaskContextSource) => void) | undefined
+  const userContextFound = new Promise<TaskContextSource>(resolve => {
     resolveUserContext = resolve
   })
   const requests = apis.map((api, index) =>
     api.findCloudContextForTask(task).then(
-      value => {
-        results[index] = { status: 'fulfilled', value }
-        if (!isDefaultWorkItemProject(value.project)) resolveUserContext?.(value)
+      context => {
+        const source = { api, context }
+        results[index] = { status: 'fulfilled', value: source }
+        if (!isDefaultWorkItemProject(context.project)) resolveUserContext?.(source)
       },
       reason => {
         results[index] = { status: 'rejected', reason }
@@ -219,12 +224,12 @@ export async function findProjectSpaceContextForTask(
   if (timeoutId !== undefined) clearTimeout(timeoutId)
   if (outcome.kind === 'user-context') return outcome.context
   const settledResults = results.filter(result => result !== undefined)
-  const contexts = settledResults.flatMap(result =>
+  const sources = settledResults.flatMap(result =>
     result.status === 'fulfilled' ? [result.value] : []
   )
-  const userContext = contexts.find(context => !isDefaultWorkItemProject(context.project))
+  const userContext = sources.find(source => !isDefaultWorkItemProject(source.context.project))
   if (userContext) return userContext
-  if (contexts[0]) return contexts[0]
+  if (sources[0]) return sources[0]
   const errors = settledResults.flatMap(result =>
     result.status === 'rejected' ? [result.reason] : []
   )
@@ -232,6 +237,14 @@ export async function findProjectSpaceContextForTask(
     errors.push(new Error(`Project-space context lookup timed out after ${timeoutMs}ms`))
   }
   throw new AggregateError(errors, 'Task is not linked to a project space')
+}
+
+export async function findProjectSpaceContextForTask(
+  apis: ProjectSpaceTaskContextApi[],
+  task: RuntimeTaskAddress,
+  timeoutMs = 5_000
+): ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']> {
+  return (await findProjectSpaceContextSourceForTask(apis, task, timeoutMs)).context
 }
 
 export async function loadProjectSpaceOptions(

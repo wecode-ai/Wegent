@@ -23,6 +23,7 @@ import {
   ArrowLeft,
   Bot,
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   Cloud,
@@ -1041,6 +1042,9 @@ export function CloudTodoWorkspace({
   const [archiveItem, setArchiveItem] = useState<CloudLoopItem | null>(null)
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
+  const [batchConfirmError, setBatchConfirmError] = useState<string | null>(null)
+  const [batchConfirmItems, setBatchConfirmItems] = useState<LocatedLoopItem[] | null>(null)
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
@@ -3277,40 +3281,6 @@ export function CloudTodoWorkspace({
       if (!itemProject || (itemProject.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
         throw new Error('项目空间当前不可用')
       }
-      const updateItem = async (
-        target: LocatedLoopItem,
-        update: WeworkStandardBoardUpdate
-      ): Promise<CloudLoopItem> => {
-        if (itemProject.location === 'local') {
-          return itemApi!.updateLoopItem(target.id, {
-            version: target.version,
-            ...update,
-          })
-        }
-        return cloudWorkspace.commands
-          .updateIssue(
-            target.id,
-            {
-              version: target.version,
-              status: update.status,
-              priority: update.priority as CollaborationIssue['priority'] | undefined,
-              assigneeUserId: update.assignee_user_id,
-              assigneeAgentId: update.assignee_agent_id,
-              assigneeTeamId: update.assignee_team_id,
-              tags: update.tags,
-              workflow: update.workflow as unknown as Record<string, unknown> | undefined,
-              executionConfig: update.execution_config as unknown as
-                | Record<string, unknown>
-                | undefined,
-              automationRuleId: update.automation_rule_id,
-            },
-            { throwOnError: true }
-          )
-          .then(updated => {
-            if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
-            return toCloudLoopItem(updated)
-          })
-      }
       const assignItem =
         itemProject.location === 'cloud' || typeof itemApi!.assignLoopItem === 'function'
           ? async (
@@ -3346,7 +3316,7 @@ export function CloudTodoWorkspace({
           ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
         },
         commands: {
-          update: updateItem,
+          update: updateStandardBoardItem,
           assign: assignItem,
           reorder: isMyTasksBoard
             ? undefined
@@ -3493,6 +3463,105 @@ export function CloudTodoWorkspace({
       track('operation_failed', { operation: 'board_item_move' })
       if (executionResult) throw cause
       return false
+    }
+  }
+
+  async function updateStandardBoardItem(
+    target: LocatedLoopItem,
+    update: WeworkStandardBoardUpdate
+  ): Promise<CloudLoopItem> {
+    const project = projectForItem(target)
+    const itemApi = apiForProject(project)
+    if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
+      throw new Error('项目空间当前不可用')
+    }
+    if (project.location === 'local') {
+      return itemApi!.updateLoopItem(target.id, {
+        version: target.version,
+        ...update,
+      })
+    }
+    return cloudWorkspace.commands
+      .updateIssue(
+        target.id,
+        {
+          version: target.version,
+          status: update.status,
+          priority: update.priority,
+          assigneeUserId: update.assignee_user_id,
+          assigneeAgentId: update.assignee_agent_id,
+          assigneeTeamId: update.assignee_team_id,
+          tags: update.tags,
+          workflow: update.workflow as unknown as Record<string, unknown> | undefined,
+          executionConfig: update.execution_config as unknown as
+            | Record<string, unknown>
+            | undefined,
+          automationRuleId: update.automation_rule_id,
+        },
+        { throwOnError: true }
+      )
+      .then(updated => {
+        if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
+        return toCloudLoopItem(updated)
+      })
+  }
+
+  async function confirmReviewItems(reviewItems: LocatedLoopItem[]) {
+    if (batchConfirmBusy || reviewItems.length === 0) return
+    setBatchConfirmBusy(true)
+    setBatchConfirmError(null)
+    const failedItems: LocatedLoopItem[] = []
+    const updatedItems = new Map<string, LocatedLoopItem>()
+    try {
+      const results = await Promise.allSettled(
+        reviewItems.map(item =>
+          updateStandardBoardItem(item, { status: 'completed' }).then(updated => ({
+            ...updated,
+            project_store: item.project_store,
+          }))
+        )
+      )
+      results.forEach((result, index) => {
+        const source = reviewItems[index]
+        if (result.status === 'fulfilled') {
+          updatedItems.set(`${source.project_store ?? 'backend'}:${source.id}`, result.value)
+          return
+        }
+        failedItems.push(source)
+        console.error('[Wework project board] batch confirmation failed', {
+          itemId: source.id,
+          error: result.reason,
+        })
+      })
+      if (updatedItems.size > 0) {
+        setItems(current =>
+          current.map(candidate => {
+            const updated = updatedItems.get(
+              `${candidate.project_store ?? 'backend'}:${candidate.id}`
+            )
+            return updated ?? candidate
+          })
+        )
+        setSelectedItem(current => {
+          if (!current) return current
+          return updatedItems.get(`${current.project_store ?? 'backend'}:${current.id}`) ?? current
+        })
+        track('feature_action_completed', {
+          domain: 'board_item',
+          action: 'batch_confirm',
+          count: updatedItems.size,
+        })
+      }
+      setBatchConfirmItems(failedItems.length > 0 ? failedItems : null)
+      if (failedItems.length > 0) {
+        setBatchConfirmError(
+          t('todo.batch_confirm_failed', '{{count}} 个事项确认失败，请稍后重试', {
+            count: failedItems.length,
+          })
+        )
+      }
+    } finally {
+      setBatchConfirmBusy(false)
     }
   }
 
@@ -4825,12 +4894,44 @@ export function CloudTodoWorkspace({
                       }}
                       renderColumnHeaderActions={(column, columnItems, state) => {
                         const status = column.status as CloudLoopItem['status']
+                        const editableColumnItems = columnItems.filter(canEditProjectSpaceIssue)
                         const open = () =>
                           !boardParent && status === 'pending'
                             ? openIssueCreation('pending', '', 'popup')
                             : setQuickCreateStatus(status)
                         return (
                           <>
+                            {!isMyTasksBoard &&
+                            !isAITableProject &&
+                            state.groupBy === 'status' &&
+                            status === 'in_review' &&
+                            editableColumnItems.length > 0 ? (
+                              <Tooltip
+                                label={t(
+                                  'todo.batch_confirm_review_items',
+                                  '批量确认完成待确认事项'
+                                )}
+                                side="bottom"
+                                align="end"
+                              >
+                                <button
+                                  type="button"
+                                  data-testid="cloud-todo-batch-confirm-review"
+                                  disabled={batchConfirmBusy}
+                                  onClick={() => {
+                                    setBatchConfirmError(null)
+                                    setBatchConfirmItems([...editableColumnItems])
+                                  }}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
+                                  aria-label={t(
+                                    'todo.batch_confirm_review_items',
+                                    '批量确认完成待确认事项'
+                                  )}
+                                >
+                                  <CheckCheck className="h-3.5 w-3.5" />
+                                </button>
+                              </Tooltip>
+                            ) : null}
                             {isMyTasksBoard &&
                             state.groupBy === 'status' &&
                             status === 'completed' &&
@@ -5814,6 +5915,56 @@ export function CloudTodoWorkspace({
                   {archiveBusy
                     ? t('todo.archiving', '归档中…')
                     : t('todo.confirm_archive', '确认归档')}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+        {batchConfirmItems && (
+          <Modal
+            title={t('todo.batch_confirm_review_title', '确认待确认事项？')}
+            onClose={() => {
+              if (batchConfirmBusy) return
+              setBatchConfirmItems(null)
+              setBatchConfirmError(null)
+            }}
+          >
+            <div className="px-5 pb-5 pt-4" data-testid="cloud-todo-batch-confirm-review-dialog">
+              <p className="text-sm leading-5 text-text-secondary">
+                {t(
+                  'todo.batch_confirm_review_description',
+                  '将当前列中的 {{count}} 个事项标记为已完成。',
+                  { count: batchConfirmItems.length }
+                )}
+              </p>
+              {batchConfirmError ? (
+                <p className="mt-3 text-xs text-destructive" role="alert">
+                  {batchConfirmError}
+                </p>
+              ) : null}
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="cloud-todo-batch-confirm-review-cancel"
+                  disabled={batchConfirmBusy}
+                  onClick={() => {
+                    setBatchConfirmItems(null)
+                    setBatchConfirmError(null)
+                  }}
+                  className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+                >
+                  {t('common.cancel', '取消')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="cloud-todo-batch-confirm-review-confirm"
+                  disabled={batchConfirmBusy}
+                  onClick={() => void confirmReviewItems(batchConfirmItems)}
+                  className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+                >
+                  {batchConfirmBusy
+                    ? t('todo.batch_confirming', '确认中…')
+                    : t('todo.confirm_complete', '确认完成')}
                 </button>
               </div>
             </div>
