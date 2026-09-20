@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import {
+  saveLocalProxyConfig,
+  saveLocalProxyUrl,
+} from '@/features/model-settings/localProxySettings'
 import {
   CODEX_API_URL,
   resolveEffectiveLocalCodexProxy,
@@ -48,6 +51,18 @@ describe('resolveLocalCodexProxyUrl', () => {
     window.weworkElectronNetwork = { resolveProxy }
     await expect(resolveLocalCodexProxyUrl()).resolves.toBe('http://system-proxy:8080')
     await expect(resolveLocalCodexProxyUrl()).resolves.toBeNull()
+  })
+
+  test('does not resolve the system proxy in direct mode', async () => {
+    const resolveProxy = vi.fn().mockResolvedValue('http://system-proxy:8080')
+    window.weworkElectronNetwork = { resolveProxy }
+    saveLocalProxyConfig('direct')
+
+    await expect(resolveEffectiveLocalCodexProxy()).resolves.toEqual({
+      proxyUrl: null,
+      source: 'direct',
+    })
+    expect(resolveProxy).not.toHaveBeenCalled()
   })
 
   test('propagates PAC resolution failures instead of silently connecting directly', async () => {

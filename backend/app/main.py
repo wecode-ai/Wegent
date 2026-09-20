@@ -40,6 +40,7 @@ from app.core.exceptions import (
     validation_exception_handler,
 )
 from app.core.logging import setup_logging
+from app.core.sdk_startup import preload_openai_sdk
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
@@ -197,6 +198,8 @@ async def _application_lifespan(app: FastAPI):
 
     # ==================== STARTUP ====================
     require_internal_service_token_configured()
+    # Load SDK resources before IM/background consumers can dispatch requests.
+    await asyncio.to_thread(preload_openai_sdk)
     from app.services.builtin_plugin_service import builtin_plugin_service
 
     # Every Backend process validates any plugins marked as required.
@@ -394,8 +397,6 @@ async def _application_lifespan(app: FastAPI):
 
     sio = get_sio()
     try:
-        import asyncio
-
         bind_socketio_loop(asyncio.get_running_loop())
     except RuntimeError:
         pass

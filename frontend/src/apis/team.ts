@@ -126,6 +126,15 @@ export interface CopyPreflightResponse {
 const pendingTeamCatalogs = new Map<string, Promise<TeamListResponse>>()
 
 export const teamApis = {
+  async getTeam(id: number): Promise<Team> {
+    return apiClient.get(`/teams/${id}`)
+  },
+  getDefaultTeam(
+    mode: 'chat' | 'code' | 'knowledge' | 'task',
+    signal?: AbortSignal
+  ): Promise<Team | null> {
+    return apiClient.get(`/teams/default?mode=${mode}`, { signal })
+  },
   /** Get the complete catalog for lists and selectors that filter teams locally. */
   async getAllTeams(
     scope?: 'personal' | 'group' | 'all',
