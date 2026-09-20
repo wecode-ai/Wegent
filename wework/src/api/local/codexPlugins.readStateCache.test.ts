@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
+import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
@@ -404,10 +405,19 @@ describe('local codex plugin readState cache', () => {
       }
     )
     const api = createLocalCodexPluginApi()
+    const operationResults: OperationResult[] = []
+    const unsubscribe = subscribeOperationResults(result => operationResults.push(result))
 
-    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
-      'Plugin package installation failed: install rejected'
-    )
+    try {
+      await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+        'Plugin package installation failed: install rejected'
+      )
+    } finally {
+      unsubscribe()
+    }
+    expect(operationResults).toEqual([
+      { failureStage: 'request', key: 'plugin.zip_import', outcome: 'failed' },
+    ])
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'executor.plugins.import_package.rollback',
       {
@@ -466,9 +476,18 @@ describe('local codex plugin readState cache', () => {
     )
 
     const api = createLocalCodexPluginApi()
-    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
-      'local_plugin_commit_timeout'
-    )
+    const operationResults: OperationResult[] = []
+    const unsubscribe = subscribeOperationResults(result => operationResults.push(result))
+    try {
+      await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+        'local_plugin_commit_timeout'
+      )
+    } finally {
+      unsubscribe()
+    }
+    expect(operationResults).toEqual([
+      { failureStage: 'confirm', key: 'plugin.zip_import', outcome: 'failed' },
+    ])
     expect(mocks.requestLocalExecutor).not.toHaveBeenCalledWith(
       'executor.plugins.import_package.rollback',
       expect.anything()

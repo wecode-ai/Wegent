@@ -1,4 +1,4 @@
-import { observeOperation } from '@/telemetry/observeOperation'
+import { beginOperation } from '@/telemetry/operationBus'
 import type {
   CodexPluginMarketplaceEntry,
   CodexPluginSummary,
@@ -2520,7 +2520,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       )
     },
     async importPluginPackage(preview, overwrite) {
-      return observeOperation('plugin.zip_import', async () => {
+      const operation = beginOperation('plugin.zip_import')
+      try {
         if (!isElectronRuntime()) {
           throw new Error('Importing a plugin package requires the Wework desktop app')
         }
@@ -2555,6 +2556,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           }).catch(error => {
             console.warn('[Wework] failed to clear plugin import backup', error)
           })
+          operation.succeed()
           return {
             pluginName: imported.pluginName,
             displayName: imported.displayName,
@@ -2572,9 +2574,13 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             }).catch(() => undefined)
           }
           clearLocalCodexPluginsReadStateCache()
+          operation.fail(commitMayStillBeRunning ? 'confirm' : 'request')
           throw new Error(`Plugin package installation failed: ${message}`, { cause: error })
         }
-      })
+      } catch (error) {
+        operation.fail('request')
+        throw error
+      }
     },
     savePluginExample(destinationPath) {
       if (!isElectronRuntime()) {
