@@ -3,19 +3,17 @@
 
 """Durable receipt of card actions before acknowledging the Stream callback."""
 
-import asyncio
 import json
-import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Literal
+from typing import AsyncIterator, Literal
 
 from pydantic import BaseModel
-from redis.asyncio.lock import Lock
 
 from app.core.cache import cache_manager
 from app.services.channels.dingtalk.card_binding import CARD_BINDING_TTL, CardBinding
 
-logger = logging.getLogger(__name__)
+SUBMISSION_TIMEOUT_SECONDS = 60
+SUBMISSION_LOCK_SECONDS = 90
 
 ENQUEUE = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
@@ -44,8 +42,8 @@ class CardActionRecord(BaseModel):
 class CardActionInbox:
     """Keep outstanding receipts until settled; terminal deduplication lasts 7 days.
 
-    A crashed running action is not automatically replayed: creating an AI turn
-    is not transactional with Redis. Recovery reports the uncertain outcome.
+    Receipts cover submission only. The existing task lifecycle owns execution;
+    recovery checks the persisted source event before reporting uncertainty.
     """
 
     def __init__(self, channel_id: int):
@@ -116,32 +114,17 @@ class CardActionInbox:
     async def claim(self, event_id: str) -> AsyncIterator[bool]:
         client = await cache_manager._get_client()
         lock = client.lock(
-            f"{self.event_key(event_id)}:lock", timeout=90, blocking=False
+            f"{self.event_key(event_id)}:lock",
+            timeout=SUBMISSION_LOCK_SECONDS,
+            blocking=False,
         )
         acquired = False
-        renewal = None
         try:
             acquired = await lock.acquire()
-            if acquired:
-                owner = asyncio.current_task()
-                assert owner is not None
-                renewal = asyncio.create_task(self._renew(lock, owner))
             yield acquired
         finally:
-            if renewal:
-                renewal.cancel()
-                await asyncio.gather(renewal, return_exceptions=True)
             try:
                 if acquired and await lock.owned():
                     await lock.release()
             finally:
                 await client.aclose()
-
-    async def _renew(self, lock: Lock, owner: asyncio.Task[Any]) -> None:
-        try:
-            while True:
-                await asyncio.sleep(30)
-                await lock.extend(90, replace_ttl=True)
-        except Exception:
-            logger.exception("[DingTalkCard] Lost action lease; stopping dispatch")
-            owner.cancel()
