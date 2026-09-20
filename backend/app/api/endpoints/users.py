@@ -62,7 +62,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
-from shared.telemetry.decorators import trace_async
+from shared.telemetry.decorators import trace_async, trace_sync
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
@@ -915,12 +915,13 @@ async def get_user_quick_access(
 
 
 @router.get("/recent-teams", response_model=list[QuickAccessTeam])
-async def get_user_recent_teams(
+@trace_sync("get_user_recent_teams", "users.api")
+def get_user_recent_teams(
     is_code: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
-    """Get five recently used teams for code or non-code tasks."""
+) -> list[QuickAccessTeam]:
+    """Run synchronous recent-team queries in FastAPI's worker pool."""
     teams = team_kinds_service.get_recent_accessible_teams(
         db,
         user_id=current_user.id,

@@ -25,6 +25,17 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const COMPOSER_CONVERSATION_ICON_PATHS = [
   "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z",
 ];
+const COMPOSER_MEMBER_ICON_PATHS = [
+  "M20 21v-2a7 7 0 0 0-14 0v2",
+  "M17 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
+];
+const COMPOSER_ISSUE_ICON_PATHS = ["M4 9h16M3 15h16M10 3 8 21M16 3l-2 18"];
+const COMPOSER_AGENT_ICON_PATHS = [
+  "M12 3v3M8 3h4M5 7h14v14H5ZM2 11v6M22 11v6M9 11v2M15 11v2M9 17h6",
+];
+const COMPOSER_GROUP_ICON_PATHS = [
+  "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M22 21v-2a4 4 0 0 0-3-4M16 3a4 4 0 0 1 0 8",
+];
 
 export interface ComposerMentionPayload {
   name: string;
@@ -109,9 +120,16 @@ export function parseComposerMentions(value: string): ParsedComposerMention[] {
         : referenceKind === null
           ? link.label
           : link.label.replace(/^[@$]/, "");
-    const literalLabel = ["file", "folder", "cloud", "conversation"].includes(
-      kind,
-    );
+    const literalLabel = [
+      "file",
+      "folder",
+      "cloud",
+      "conversation",
+      "member",
+      "agent",
+      "group",
+      "issue",
+    ].includes(kind);
     return [
       {
         name,
@@ -239,7 +257,26 @@ export function createComposerMentionElement(
   const conversationReference = payload.reference.includes(
     "](wework-conversation://",
   );
-  const displayLabel = payload.label;
+  const memberReference = payload.reference.includes("](wework-member://");
+  const agentReference = payload.reference.includes("](wework-agent://");
+  const groupReference = payload.reference.includes("](wework-group://");
+  const issueReference = payload.reference.includes("](wework-issue://");
+  if (memberReference || agentReference || groupReference || issueReference) {
+    element.setAttribute(
+      "data-composer-reference-kind",
+      memberReference
+        ? "member"
+        : agentReference
+          ? "agent"
+          : groupReference
+            ? "group"
+            : "issue",
+    );
+  }
+  const displayLabel =
+    memberReference || agentReference || groupReference || issueReference
+      ? payload.label.replace(issueReference ? /^#/ : /^@/, "")
+      : payload.label;
   element.setAttribute(
     "data-testid",
     pathReference
@@ -294,17 +331,26 @@ export function createComposerMentionElement(
       ? createComposerFolderIcon()
       : conversationReference
         ? createComposerConversationIcon()
-        : brandIcon
-          ? createComposerBrandIcon(brandIcon.url)
-          : createComposerMentionIcon(
-              pathReference
-                ? fileReferenceIconPaths(pathReference.path)
-                : composerSkillName(
-                      parseComposerReference(payload.reference)?.label ?? "",
-                    ).icon === "pencil-sparkle"
-                  ? PENCIL_SKILL_ICON_PATHS
-                  : COMPOSER_SKILL_ICON_PATHS,
-            ),
+        : memberReference
+          ? createComposerMentionIcon(COMPOSER_MEMBER_ICON_PATHS)
+          : agentReference
+            ? createComposerMentionIcon(COMPOSER_AGENT_ICON_PATHS)
+            : groupReference
+              ? createComposerMentionIcon(COMPOSER_GROUP_ICON_PATHS)
+              : issueReference
+                ? createComposerMentionIcon(COMPOSER_ISSUE_ICON_PATHS)
+                : brandIcon
+                  ? createComposerBrandIcon(brandIcon.url)
+                  : createComposerMentionIcon(
+                      pathReference
+                        ? fileReferenceIconPaths(pathReference.path)
+                        : composerSkillName(
+                              parseComposerReference(payload.reference)
+                                ?.label ?? "",
+                            ).icon === "pencil-sparkle"
+                          ? PENCIL_SKILL_ICON_PATHS
+                          : COMPOSER_SKILL_ICON_PATHS,
+                    ),
   );
 
   const label = document.createElement("span");

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { ProcessingBlock, RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import { clearImagePreviewCache } from './imagePreviewCache'
@@ -5405,7 +5405,7 @@ describe('MessageList', () => {
         content: '',
         status: 'streaming',
         createdAt: new Date(start + 2000).toISOString(),
-        runtimeTurnStartedAt: start,
+        turnId: 'reasoning-turn',
         blocks: [
           {
             id: 'thinking-timer',
@@ -5416,7 +5416,13 @@ describe('MessageList', () => {
           },
         ],
       }
-      const first = render(<MessageList messages={[message]} />)
+      const runningTurn: RuntimeConversationTurn = {
+        id: 'reasoning-turn',
+        status: 'streaming',
+        startedAt: start,
+        items: [],
+      }
+      const first = render(<MessageList messages={[message]} turns={[runningTurn]} />)
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
       act(() => vi.advanceTimersByTime(3000))
       const finalMessage: WorkbenchMessage = {
@@ -5425,18 +5431,21 @@ describe('MessageList', () => {
         createdAt: new Date(start + 8000).toISOString(),
         blocks: message.blocks!.map(block => ({ ...block, status: 'done' })),
       }
-      first.rerender(<MessageList messages={[finalMessage]} />)
+      first.rerender(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
       expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
       act(() => vi.advanceTimersByTime(5000))
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
       first.unmount()
-      const restored = render(<MessageList messages={[finalMessage]} />)
+      const restored = render(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
       act(() => vi.advanceTimersByTime(2000))
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 15秒')
       restored.rerender(
-        <MessageList messages={[{ ...finalMessage, status: 'done', completedAt: start + 15000 }]} />
+        <MessageList
+          messages={[{ ...finalMessage, status: 'done' }]}
+          turns={[{ ...runningTurn, status: 'done', durationMs: 15_000 }]}
+        />
       )
       expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 15秒')
       act(() => vi.advanceTimersByTime(5000))
@@ -5460,7 +5469,7 @@ describe('MessageList', () => {
               content: '',
               status: 'streaming',
               createdAt: '2026-05-25T18:46:00.000+08:00',
-              runtimeTurnStartedAt: Date.parse('2026-05-25T18:46:00.000+08:00'),
+              turnId: 'first-process-turn',
               blocks: [
                 {
                   id: 'first-process',
@@ -5470,6 +5479,14 @@ describe('MessageList', () => {
                   createdAt: Date.now(),
                 },
               ],
+            },
+          ]}
+          turns={[
+            {
+              id: 'first-process-turn',
+              status: 'streaming',
+              startedAt: Date.parse('2026-05-25T18:46:00.000+08:00'),
+              items: [],
             },
           ]}
         />

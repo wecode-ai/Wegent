@@ -30,6 +30,20 @@ The preference stays on the current device. Switching modes automatically restar
 Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
 cannot be enabled or disabled separately from the plugin management page.
 
+## Local device proxy
+
+Under **Settings → Proxy**, the local device proxy has three modes:
+
+- **Use system proxy** follows the system proxy or PAC configuration. When the system does not use
+  a proxy for the current address, the page shows **Direct (system proxy not used)**.
+- **Force direct** ignores the system proxy and connects directly to the target service.
+- **Custom proxy** uses the HTTP, HTTPS, or SOCKS5 proxy URL entered by the user.
+
+The status badge shows the saved mode, while **Current connection** shows the connection produced by
+that mode. After saving a change, restart Codex when prompted. Running tasks are not interrupted
+immediately; new chats use the new network settings. Local device proxy settings stay on the current
+device and are not synced to cloud.
+
 Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
 **Agent**. This device-local preference activates the matching top-level tab when the Wework main
 window opens or reloads at the root page. If every tab of that type has been closed, Wework creates

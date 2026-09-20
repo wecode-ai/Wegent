@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import {
   ProjectBoardBody,
+  ProjectBoardScrollArea,
   type ProjectBoardBodyProps,
   type ProjectBoardStatePort,
 } from "./ProjectBoardBody";
@@ -111,8 +112,33 @@ describe("ProjectBoardBody", () => {
       ),
     ).toBeDefined();
     expect(
-      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll"),
+      nodes.find((node) => node.type === ProjectBoardScrollArea),
     ).toBeDefined();
     expect(nodes.find((node) => node.type === KanbanBoard)).toBeDefined();
+  });
+
+  it("owns the horizontal scroll viewport and visible scrollbar", () => {
+    const tree = ProjectBoardScrollArea({
+      children: <div>board</div>,
+      viewportRef: { current: null },
+    });
+    const nodes = descendants(tree);
+
+    expect(
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll"),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] === "cloud-board-horizontal-scrollbar",
+      ),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "cloud-board-horizontal-scrollbar-thumb",
+      ),
+    ).toBeDefined();
   });
 });

@@ -34,11 +34,13 @@ pub struct AuthConfig {
     pub algorithm: String,
 }
 
-/// Database configuration (`settings.DATABASE_URL`).
+/// Database configuration (`DATABASE_URL` and optional `DATABASE_SLAVE_URL`).
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
     /// Raw source-compatible `mysql+pymysql://...` URL.
     pub url: String,
+    /// Optional read-only database URL. Missing and blank values use master.
+    pub slave_url: Option<String>,
 }
 
 /// Errors while resolving configuration.
@@ -221,6 +223,19 @@ pub fn env_or_dotenv(name: &str) -> Option<String> {
     read_dotenv(&content, name)
 }
 
+/// Reads an optional setting while allowing an explicitly blank process value
+/// to disable a value present in the dotenv file.
+#[must_use]
+pub fn optional_env_or_dotenv(name: &str) -> Option<String> {
+    match env::var(name) {
+        Ok(value) => (!value.trim().is_empty()).then(|| value.trim().to_owned()),
+        Err(_) => {
+            let content = std::fs::read_to_string(dotenv_path()).ok()?;
+            read_dotenv(&content, name)
+        }
+    }
+}
+
 /// Splits `JWT_LEGACY_SECRET_KEYS` the way the source does: a
 /// comma-separated list whose blank entries are dropped. Deduplication
 /// against the active key happens in [`crate::auth`].
@@ -262,7 +277,8 @@ impl DatabaseConfig {
     /// process environment nor in the dotenv file.
     pub fn from_env() -> Result<Self, ConfigError> {
         let url = env_or_dotenv("DATABASE_URL").ok_or(ConfigError::Missing("DATABASE_URL"))?;
-        Ok(Self { url })
+        let slave_url = optional_env_or_dotenv("DATABASE_SLAVE_URL");
+        Ok(Self { url, slave_url })
     }
 
     /// Converts the SQLAlchemy `mysql+pymysql://` scheme to the plain
@@ -274,16 +290,26 @@ impl DatabaseConfig {
     /// TLS when the server offers it.
     #[must_use]
     pub fn mysql_url(&self) -> String {
-        let base = if let Some(rest) = self.url.strip_prefix("mysql+pymysql://") {
-            format!("mysql://{rest}")
-        } else {
-            self.url.clone()
-        };
-        match base.split_once('?') {
-            Some((_head, query)) if query.contains("ssl-mode=") => base,
-            Some((head, query)) => format!("{head}?{query}&ssl-mode=disabled"),
-            None => format!("{base}?ssl-mode=disabled"),
-        }
+        mysql_driver_url(&self.url)
+    }
+
+    /// Converts the optional slave URL to SQLx syntax.
+    #[must_use]
+    pub fn mysql_slave_url(&self) -> Option<String> {
+        self.slave_url.as_deref().map(mysql_driver_url)
+    }
+}
+
+fn mysql_driver_url(url: &str) -> String {
+    let base = if let Some(rest) = url.strip_prefix("mysql+pymysql://") {
+        format!("mysql://{rest}")
+    } else {
+        url.to_owned()
+    };
+    match base.split_once('?') {
+        Some((_head, query)) if query.contains("ssl-mode=") => base,
+        Some((head, query)) => format!("{head}?{query}&ssl-mode=disabled"),
+        None => format!("{base}?ssl-mode=disabled"),
     }
 }
 
@@ -299,6 +325,15 @@ pub struct RedisConfig {
     /// Password when the URL carries one.
     #[allow(dead_code)]
     pub password: Option<String>,
+    /// Optional read-only endpoint. Missing and blank values use master.
+    pub slave: Option<RedisSlaveConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RedisSlaveConfig {
+    pub host: String,
+    pub port: u16,
+    pub db: i64,
 }
 
 /// `ACCESS_TOKEN_EXPIRE_MINUTES` default (`app.core.config`: 7 days).
@@ -316,11 +351,30 @@ impl RedisConfig {
     /// (`redis://[:password@]host:port[/db]`).
     pub fn from_env() -> Result<Self, ConfigError> {
         let url = env_or_dotenv("REDIS_URL").ok_or(ConfigError::Missing("REDIS_URL"))?;
-        Self::parse(&url)
+        Self::from_urls(&url, optional_env_or_dotenv("REDIS_SLAVE_URL").as_deref())
     }
 
-    pub(crate) fn parse(url: &str) -> Result<Self, ConfigError> {
-        let invalid = || ConfigError::Invalid("REDIS_URL");
+    pub(crate) fn from_urls(
+        master_url: &str,
+        slave_url: Option<&str>,
+    ) -> Result<Self, ConfigError> {
+        let mut config = Self::parse_named(master_url, "REDIS_URL")?;
+        if let Some(slave_url) = slave_url {
+            let slave = Self::parse_named(slave_url, "REDIS_SLAVE_URL")?;
+            if slave.password != config.password || slave.db != config.db {
+                return Err(ConfigError::Invalid("REDIS_SLAVE_URL"));
+            }
+            config.slave = Some(RedisSlaveConfig {
+                host: slave.host,
+                port: slave.port,
+                db: slave.db,
+            });
+        }
+        Ok(config)
+    }
+
+    fn parse_named(url: &str, name: &'static str) -> Result<Self, ConfigError> {
+        let invalid = || ConfigError::Invalid(name);
         let rest = url.strip_prefix("redis://").ok_or_else(invalid)?;
         // Split the optional path (database index) off the authority.
         let (authority, path) = match rest.split_once('/') {
@@ -355,7 +409,20 @@ impl RedisConfig {
             port,
             db,
             password,
+            slave: None,
         })
+    }
+
+    #[must_use]
+    pub fn endpoint(&self) -> String {
+        format!("{}:{}:{}", self.host, self.port, self.db)
+    }
+
+    #[must_use]
+    pub fn slave_endpoint(&self) -> Option<String> {
+        self.slave
+            .as_ref()
+            .map(|slave| format!("{}:{}:{}", slave.host, slave.port, slave.db))
     }
 }
 
@@ -526,6 +593,7 @@ mod tests {
     fn rewrites_the_sqlalchemy_scheme_and_disables_tls() {
         let config = DatabaseConfig {
             url: "mysql+pymysql://user:pw@host:7831/task_manager".to_string(),
+            slave_url: None,
         };
         assert_eq!(
             config.mysql_url(),
@@ -537,6 +605,7 @@ mod tests {
     fn keeps_an_existing_query_and_an_explicit_ssl_mode() {
         let with_query = DatabaseConfig {
             url: "mysql+pymysql://user:pw@host:7831/db?charset=utf8mb4".to_string(),
+            slave_url: None,
         };
         assert_eq!(
             with_query.mysql_url(),
@@ -545,11 +614,44 @@ mod tests {
 
         let explicit = DatabaseConfig {
             url: "mysql://user:pw@host:7831/db?ssl-mode=required".to_string(),
+            slave_url: Some(
+                "mysql+pymysql://reader:other@slave:7831/db?charset=utf8mb4".to_string(),
+            ),
         };
         assert_eq!(
             explicit.mysql_url(),
             "mysql://user:pw@host:7831/db?ssl-mode=required"
         );
+        assert_eq!(
+            explicit.mysql_slave_url().as_deref(),
+            Some("mysql://reader:other@slave:7831/db?charset=utf8mb4&ssl-mode=disabled")
+        );
+    }
+
+    #[test]
+    fn redis_slave_must_share_password_and_database() {
+        let config = RedisConfig::from_urls(
+            "redis://:secret@master:6379/2",
+            Some("redis://:secret@slave:6380/2"),
+        )
+        .unwrap();
+        assert_eq!(config.endpoint(), "master:6379:2");
+        assert_eq!(config.slave_endpoint().as_deref(), Some("slave:6380:2"));
+
+        assert!(matches!(
+            RedisConfig::from_urls(
+                "redis://:secret@master:6379/2",
+                Some("redis://:other@slave:6379/2")
+            ),
+            Err(ConfigError::Invalid("REDIS_SLAVE_URL"))
+        ));
+        assert!(matches!(
+            RedisConfig::from_urls(
+                "redis://:secret@master:6379/2",
+                Some("redis://:secret@slave:6379/3")
+            ),
+            Err(ConfigError::Invalid("REDIS_SLAVE_URL"))
+        ));
     }
 
     #[test]

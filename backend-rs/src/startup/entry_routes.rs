@@ -25,10 +25,21 @@ struct ShutdownRunning {
     is_shutting_down: bool,
 }
 
+/// Fixed root response matching `root` in the source app.
+const ROOT_BODY: &[u8] = br#"{"name":"Task Manager Backend","version":"1.0.0","api_prefix":"/api","docs_url":"/api/docs","socketio_path":"/socket.io"}"#;
+
 // The main-router endpoints wired inline in the source app factory rather than
-// by a feature module (`startup_check`, `shutdown_status`, internal chat
+// by a feature module (`root`, `startup_check`, `shutdown_status`, internal chat
 // history and the OIDC callback). Each is an async free
 // function in the default group, injecting the shared application state.
+
+/// GET /. Mirrors `root` in source app/main.py: the app-information endpoint,
+/// registered on the FastAPI app rather than under the API prefix.
+#[brz_http_server::get("/", api_log = false)]
+async fn root() -> brz_http_server::Response {
+    brz_http_server::Response::static_bytes(brz_http_server::StatusCode::OK, ROOT_BODY)
+        .content_type("application/json")
+}
 
 /// GET /api/startup.
 #[brz_http_server::get("/api/startup")]
@@ -120,6 +131,15 @@ mod tests {
     fn startup_check_body_matches_source() {
         let body = serde_json::to_string(&StartupStatus { status: "started" }).unwrap();
         assert_eq!(body, r#"{"status":"started"}"#);
+    }
+
+    #[test]
+    fn root_body_matches_source() {
+        assert_eq!(
+            ROOT_BODY,
+            r#"{"name":"Task Manager Backend","version":"1.0.0","api_prefix":"/api","docs_url":"/api/docs","socketio_path":"/socket.io"}"#
+                .as_bytes()
+        );
     }
 
     #[tokio::test]

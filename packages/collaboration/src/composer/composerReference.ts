@@ -5,6 +5,10 @@ export type ComposerReferenceKind =
   | "file"
   | "folder"
   | "cloud"
+  | "member"
+  | "agent"
+  | "group"
+  | "issue"
   | "conversation";
 
 const referenceSchemes: [string, ComposerReferenceKind][] = [
@@ -13,6 +17,10 @@ const referenceSchemes: [string, ComposerReferenceKind][] = [
   ["file://", "file"],
   ["folder://", "folder"],
   ["cloud://", "cloud"],
+  ["wework-member://", "member"],
+  ["wework-agent://", "agent"],
+  ["wework-group://", "group"],
+  ["wework-issue://", "issue"],
   ["wework-conversation://", "conversation"],
 ];
 

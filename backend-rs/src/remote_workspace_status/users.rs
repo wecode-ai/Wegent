@@ -88,15 +88,31 @@ pub async fn get_by_name(
     Ok(row)
 }
 
-/// Public user reader by id.
-///
-/// The open-source reader performs a direct SQL query. The function keeps its
-/// historical name and return shape because task-detail assembly shares the
-/// call site with the internal deployment.
+/// `userReader.get_by_id` as the status task-detail chain performs it. The
+/// status response discards the row, so only the read topology is
+/// observable: a supplied user-cache client serves the read from the
+/// `user:v2:data:{user_id}` document (the deployment's cached reader);
+/// without one the read stays on the public direct SQL path.
 pub(crate) async fn cached_user_get_by_id(
     state: &AppState<impl Mysql, impl brz_redis::Redis>,
     user_id: i64,
 ) -> anyhow::Result<()> {
+    let user_cache_key = format!("user:v2:data:{user_id}");
+    let cached: Option<brz_redis::RedisBytes> = match state.cache.user_cache() {
+        Some(redis) => redis
+            .get(user_cache_key.as_str())
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, key = %user_cache_key, "[user_cache] redis data read failed");
+                error
+            })
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    if cached.is_some() {
+        return Ok(());
+    }
     let _: Option<UserRow> = Mysql::fetch_optional(
         &state.mysql,
         "SELECT users.id AS users_id, users.user_name AS users_user_name, \

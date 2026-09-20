@@ -130,6 +130,8 @@ export interface RuntimeTranscriptTurn {
   messageIndex?: number | null;
   status?: string;
   runtimeStatus?: string | null;
+  startedAt?: string | number | null;
+  durationMs?: number | null;
   completedAt?: string | number | null;
   error?: string | null;
   errorType?: string | null;

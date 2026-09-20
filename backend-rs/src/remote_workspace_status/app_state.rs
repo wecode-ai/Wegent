@@ -20,6 +20,9 @@ pub struct AppState<M: Mysql, R: Redis> {
     pub http: HttpDependencies,
     pub jwt: JwtVerifier,
     pub cache: CacheClients<R>,
+    /// Employee-directory provider for the team redaction check's
+    /// entity-derived membership pass.
+    pub erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
 }
 
 impl<M: Mysql, R: Redis> AppState<M, R> {
@@ -28,6 +31,7 @@ impl<M: Mysql, R: Redis> AppState<M, R> {
         mysql: M,
         http: HttpDependencies,
         cache: CacheClients<R>,
+        erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
     ) -> Self {
         let jwt = JwtVerifier::new(&config);
         Self {
@@ -38,6 +42,7 @@ impl<M: Mysql, R: Redis> AppState<M, R> {
             http,
             jwt,
             cache,
+            erp,
         }
     }
 }

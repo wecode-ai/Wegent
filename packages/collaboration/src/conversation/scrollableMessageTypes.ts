@@ -6,7 +6,11 @@ import type {
   RuntimeTurnNavigationItem,
   TurnFileChangesSummary,
 } from '@wegent/chat-core/runtime'
-import type { SubagentBlock, WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type {
+  RuntimeConversationTurn,
+  SubagentBlock,
+  WorkbenchMessage,
+} from '@wegent/chat-core/runtime-conversation'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { type MessageListProps } from './MessageList'
 
@@ -53,6 +57,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   | 'renderVisualization'
 > {
   messages: WorkbenchMessage[]
+  turns?: RuntimeConversationTurn[]
   loading?: boolean
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
@@ -70,6 +75,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   scrollButtonClassName?: string
   scrollTestId?: string
   externalScrollRef?: RefObject<HTMLDivElement | null>
+  externalScrollInteractionRef?: RefObject<HTMLElement | null>
   turnNavigationPortalTarget?: Element | null
   conversationKey?: string | number | null
   devices?: MessageListProps['devices']
@@ -126,6 +132,7 @@ export function areScrollableMessageAreaPropsEqual(
     previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
     previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
     previous.messages !== next.messages ? 'messages' : null,
+    previous.turns !== next.turns ? 'turns' : null,
     previous.loading !== next.loading ? 'loading' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
     previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,
@@ -147,6 +154,9 @@ export function areScrollableMessageAreaPropsEqual(
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
     previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
+    previous.externalScrollInteractionRef !== next.externalScrollInteractionRef
+      ? 'externalScrollInteractionRef'
+      : null,
     previous.turnNavigationPortalTarget !== next.turnNavigationPortalTarget
       ? 'turnNavigationPortalTarget'
       : null,

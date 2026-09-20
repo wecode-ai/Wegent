@@ -141,6 +141,19 @@ describe('replaceComposerMentionTrigger', () => {
 })
 
 describe('cloud references', () => {
+  test.each(['member', 'agent', 'group', 'issue'])(
+    'preserves %s references alongside skill references',
+    kind => {
+      const label = kind === 'issue' ? '#42 Test issue' : '@Test reference'
+      const reference = `[$${label}](wework-${kind}://test-project/test-id)`
+      const [mention] = parseComposerMentions(reference)
+      expect(mention).toMatchObject({ name: label, label, reference })
+      expect(composerSkillFilePath(reference)).toBeNull()
+      const element = createComposerMentionElement(mention)
+      expect(element).toHaveAttribute('data-composer-reference-kind', kind)
+      expect(element.textContent).toBe(label.slice(1))
+    }
+  )
   test('keeps cloud references atomic in the composer', () => {
     const reference = '[$design.md](cloud://projects/11/files/42)'
 

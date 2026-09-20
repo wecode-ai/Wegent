@@ -105,6 +105,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   cloudMentionCandidates = [],
   conversationMentionCandidates = [],
   externalMentionCandidates = [],
+  mentionScope = 'all',
   cloudProjectCandidates = [],
   cloudSpaceEnabled = false,
   onSelectCloudProject,
@@ -219,13 +220,21 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const filteredExternalMentionCandidates = useMemo(() => {
     if (activeMenu?.kind !== 'mention') return []
     const query = activeMenu.trigger.query.trim().toLocaleLowerCase()
-    if (!query) return externalMentionCandidates
-    return externalMentionCandidates.filter(candidate =>
+    const candidates =
+      mentionScope === 'external'
+        ? externalMentionCandidates.filter(candidate =>
+            (editorRef.current?.getSnapshot().value ?? value)[activeMenu.trigger.start] === '#'
+              ? candidate.type === 'issue'
+              : candidate.type !== 'issue'
+          )
+        : externalMentionCandidates
+    if (!query) return candidates
+    return candidates.filter(candidate =>
       [candidate.title, ...(candidate.searchAliases ?? [])].some(value =>
         value.toLocaleLowerCase().includes(query)
       )
     )
-  }, [activeMenu, externalMentionCandidates])
+  }, [activeMenu, externalMentionCandidates, mentionScope, value])
   const mentionQuery = activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
   useEffect(() => {
     onMentionQueryChange?.(mentionQuery)
@@ -342,25 +351,31 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const showSlashMenu = activeMenu?.kind === 'slash'
   const mentionMenuRows = useMemo<MentionMenuRow[]>(
     () =>
-      createComposerMentionRows<ComposerMentionCandidate, ComposerExternalMentionCandidate>({
-        open: showSkillMenu,
-        mode: activeMenu?.kind,
-        query: activeMenu?.trigger.query ?? '',
-        skillCandidates: filteredSkillCandidates,
-        candidates: filteredMentionCandidates,
-        contributedCandidates: contributedMentionCandidates,
-        externalCandidates: filteredExternalMentionCandidates,
-        cloudProjectsOpen,
-        cloudProjectScopeActive,
-        cloudSpaceEnabled,
-        cloudProjectCandidates,
-        filteredCloudProjectCandidates,
-        canSetGoal: Boolean(onSetGoal),
-        canSetPlanMode: Boolean(onSetPlanMode),
-        planModeActive,
-        workspaceMatches: workspaceSearch.matches,
-      }),
+      mentionScope === 'external'
+        ? filteredExternalMentionCandidates.map(candidate => ({
+            kind: 'external' as const,
+            candidate,
+          }))
+        : createComposerMentionRows<ComposerMentionCandidate, ComposerExternalMentionCandidate>({
+            open: showSkillMenu,
+            mode: activeMenu?.kind,
+            query: activeMenu?.trigger.query ?? '',
+            skillCandidates: filteredSkillCandidates,
+            candidates: filteredMentionCandidates,
+            contributedCandidates: contributedMentionCandidates,
+            externalCandidates: filteredExternalMentionCandidates,
+            cloudProjectsOpen,
+            cloudProjectScopeActive,
+            cloudSpaceEnabled,
+            cloudProjectCandidates,
+            filteredCloudProjectCandidates,
+            canSetGoal: Boolean(onSetGoal),
+            canSetPlanMode: Boolean(onSetPlanMode),
+            planModeActive,
+            workspaceMatches: workspaceSearch.matches,
+          }),
     [
+      mentionScope,
       activeMenu,
       cloudProjectCandidates,
       cloudProjectScopeActive,
@@ -433,13 +448,18 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         valueRef.current = next.value
         editor.setValue(next.value, next.cursor)
         closeAutocompleteMenu()
+        if (mentionScope === 'external' && /(?:^|\s)[@#]$/.test(reference)) {
+          const symbol = reference.endsWith('#') ? '#' : '@'
+          const trigger = findStandaloneTrigger(next.value, next.cursor, symbol, 'mention')
+          if (trigger) setActiveMenu({ kind: 'mention', trigger })
+        }
       },
       setValue: (nextValue, selectionOffset = nextValue.length) => {
         valueRef.current = nextValue
         editorRef.current?.setValue(nextValue, selectionOffset)
       },
     }),
-    [closeAutocompleteMenu]
+    [closeAutocompleteMenu, mentionScope]
   )
 
   const moveHighlightedIndex = useCallback((delta: number) => {
@@ -462,12 +482,15 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       const current = snapshot ?? editor?.getSnapshot()
       if (!current) return
 
-      const { nextTrigger, triggerUnchanged } = resolveComposerAutocompleteTrigger(
+      const { nextTrigger: resolvedTrigger, triggerUnchanged } = resolveComposerAutocompleteTrigger(
         current,
         activeMenuRef.current,
         Boolean(onListLocalSkills),
-        cloudProjectScopeLabelsRef.current
+        cloudProjectScopeLabelsRef.current,
+        mentionScope === 'external'
       )
+      const nextTrigger =
+        mentionScope === 'external' && resolvedTrigger?.kind !== 'mention' ? null : resolvedTrigger
 
       startTransition(() => {
         setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
@@ -481,6 +504,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         }
       })
       if (
+        mentionScope === 'all' &&
         nextTrigger &&
         (nextTrigger.kind === 'skill' ||
           nextTrigger.kind === 'mention' ||
@@ -490,7 +514,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         loadLocalMentions()
       }
     },
-    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete]
+    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete, mentionScope]
   )
 
   const commitEditorValue = useCallback(
@@ -634,6 +658,16 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         return selected
       }
       if (row.kind === 'external') {
+        if (row.candidate.reference) {
+          const snapshot = editor.getSnapshot()
+          const replacement = replaceComposerMentionTrigger(
+            snapshot.value,
+            row.candidate.reference,
+            trigger.start,
+            Math.max(snapshot.selectionEnd, trigger.start + 1 + trigger.query.length)
+          )
+          commitEditorValue(replacement.value, replacement.cursor)
+        }
         onSelectExternalMention?.(row.candidate)
         closeAutocompleteMenu()
         return true

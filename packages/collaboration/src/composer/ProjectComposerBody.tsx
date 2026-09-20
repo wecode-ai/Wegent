@@ -29,10 +29,12 @@ import {
   PROJECT_CHAT_EDITOR_CLASS,
   PROJECT_CHAT_TOOLBAR_CLASS,
   PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
+  DOCUMENT_EDITOR_CLASS,
 } from './ProjectChatComposerSurface'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
+  presentation?: 'chat' | 'document'
   value: string
   onChange(value: string): void
   onSubmit(value: string, options?: ComposerSubmitOptions): void
@@ -81,6 +83,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
   function ProjectComposerBody(
     {
       value,
+      presentation = 'chat',
       onChange,
       onSubmit,
       onBlur,
@@ -195,9 +198,10 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
         <ProjectChatComposerSurface
           footer={renderToolbar({
             canSend,
-            className: PROJECT_CHAT_TOOLBAR_CLASS,
+            className: presentation === 'document' ? 'pt-3' : PROJECT_CHAT_TOOLBAR_CLASS,
             onSubmit: submit,
           })}
+          presentation={presentation}
           workBar={workBar}
           canCollapseInShortPane={canCollapse}
           collapseWhenIdle={collapseWhenIdle}
@@ -283,8 +287,10 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
             nativeEmptyCaret,
             rows: 2,
             onPasteFiles: onFileSelect,
-            className: PROJECT_CHAT_EDITOR_CLASS,
-            scrollContainerClassName: PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
+            className:
+              presentation === 'document' ? DOCUMENT_EDITOR_CLASS : PROJECT_CHAT_EDITOR_CLASS,
+            scrollContainerClassName:
+              presentation === 'document' ? undefined : PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
             sendKey,
             followUpBehavior,
             isStreaming,

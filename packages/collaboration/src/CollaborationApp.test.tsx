@@ -36,6 +36,11 @@ vi.mock("./workspace-controller", () => ({
   useCollaborationWorkspaceController: collaborationAppMocks.useController,
 }));
 
+vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./project-board/projectBoardDnd")>()),
+  useProjectBoardSensors: () => [],
+}));
+
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
 import {
@@ -49,6 +54,7 @@ import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapt
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { ProjectIssueTable } from "./platform";
+import { ProjectBoardBody } from "./project-board";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -506,8 +512,24 @@ describe("CollaborationApp API boundary", () => {
     });
     const shell = findByType(app, CollaborationProjectViewShell);
     const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    const renderedBoard = ProjectBoardAdapter(board?.props);
+    const boardBody = findByType(renderedBoard, ProjectBoardBody);
 
     expect(board?.props.taskBindings).toEqual([binding]);
+    expect(
+      boardBody?.props.getColumnEmptyState({
+        key: "inbox",
+        label: "收集箱",
+        status: "inbox",
+      }).action,
+    ).toBeDefined();
+    expect(
+      boardBody?.props.getColumnEmptyState({
+        key: "pending",
+        label: "待开始",
+        status: "pending",
+      }).action,
+    ).toBeUndefined();
     board?.props.renderIssueCard({ issue, taskBindings: [binding] });
     expect(renderBoardIssueCard).toHaveBeenCalledWith({
       issue,

@@ -9,6 +9,7 @@ import type {
 import type {
   WorkbenchMessage,
   SubagentBlock,
+  RuntimeConversationTurn,
 } from "@wegent/chat-core/runtime-conversation";
 import { getRuntimeMessageActiveThinking } from "@wegent/chat-core/runtime-thinking";
 import { stripPluginWorkspaceResultMarkers } from "@wegent/chat-core/plugin-workspace-result";
@@ -59,6 +60,7 @@ export function AssistantMessage({
   imageServices,
   renderVisualization,
   message,
+  runtimeTurn,
   conversationKey,
   isActiveTurn = false,
   devices,
@@ -80,6 +82,7 @@ export function AssistantMessage({
   imageServices: AttachmentImageServices<Attachment>;
   renderVisualization?: AssistantMarkdownProps["renderVisualization"];
   message: WorkbenchMessage;
+  runtimeTurn?: RuntimeConversationTurn;
   conversationKey?: string | number | null;
   isActiveTurn?: boolean;
   devices: Array<{ device_id: string; status: string }>;
@@ -117,7 +120,7 @@ export function AssistantMessage({
   const isCancelled = isCancelledAssistantMessage(message);
   const stoppedElapsedDuration =
     isCancelled && message.stoppedNotice !== false
-      ? getStoppedElapsedDuration(message)
+      ? getStoppedElapsedDuration(message, runtimeTurn)
       : null;
   const shouldShowStoppedNotice =
     isCancelled && message.stoppedNotice !== false;
@@ -335,21 +338,27 @@ export function AssistantMessage({
       })
     : null;
   const lastProcessingBlock = displayBlocks.at(-1) ?? message.blocks?.at(-1);
-  const processingStartedAt =
-    message.runtimeTurnStartedAt ??
-    getProcessingSummaryStartMs(message, message.blocks ?? [], false);
-  const processingCompletedAt = isAssistantRunning
+  const processingStartedAt = runtimeTurn
+    ? runtimeTurn.startedAt
+    : getProcessingSummaryStartMs(message, message.blocks ?? [], false);
+  const processingCompletedAt = runtimeTurn
     ? undefined
-    : (getMessageTimestampMs(message.completedAt) ??
-      lastProcessingBlock?.completedAt ??
-      lastProcessingBlock?.createdAt);
-  const processingDurationLabel = (
-    <ProcessingDurationLabel
-      startedAt={processingStartedAt}
-      completedAt={processingCompletedAt}
-      isRunning={isAssistantRunning}
-    />
-  );
+    : isAssistantRunning
+      ? undefined
+      : (getMessageTimestampMs(message.completedAt) ??
+        lastProcessingBlock?.completedAt ??
+        lastProcessingBlock?.createdAt);
+  const processingDurationLabel =
+    !isAssistantRunning &&
+    runtimeTurn &&
+    runtimeTurn.durationMs === undefined ? null : (
+      <ProcessingDurationLabel
+        startedAt={processingStartedAt}
+        completedAt={processingCompletedAt}
+        durationMs={isAssistantRunning ? undefined : runtimeTurn?.durationMs}
+        isRunning={isAssistantRunning}
+      />
+    );
 
   return (
     <div className="min-w-0 max-w-full text-chat text-text-primary">

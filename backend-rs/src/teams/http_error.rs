@@ -51,6 +51,23 @@ impl HttpError {
         }
     }
 
+    /// `422` for a query parameter outside its source `Literal` set.
+    ///
+    /// FastAPI renders the expected values as a single quoted list; the
+    /// error body shape here stays the endpoint's `{"detail": <string>}`
+    /// convention.
+    pub fn invalid_literal_parameter(parameter: &str, allowed: &[&str]) -> Self {
+        let expected = allowed
+            .iter()
+            .map(|value| format!("'{value}'"))
+            .collect::<Vec<String>>()
+            .join(", ");
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            detail: format!("Input should be {expected} ({parameter})"),
+        }
+    }
+
     /// `404 "Team not found"` / `403 "Access denied to this team"` mapped
     /// from the source `HTTPException(status_code, detail)` calls in
     /// `team_kinds_service.get_team_skills`.

@@ -6,6 +6,7 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
+import * as ScrollArea from "@radix-ui/react-scroll-area";
 import { Tooltip } from "../issue-detail/Tooltip";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -23,6 +24,41 @@ function classNames(
   ...values: Array<string | false | null | undefined>
 ): string {
   return values.filter(Boolean).join(" ");
+}
+
+export function ProjectBoardScrollArea({
+  children,
+  viewportRef,
+}: {
+  children: ReactNode;
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <ScrollArea.Root
+      type="always"
+      data-testid="cloud-board-scroll-area"
+      className="relative min-h-0 min-w-0 flex-1"
+    >
+      <ScrollArea.Viewport
+        ref={viewportRef}
+        data-testid="cloud-board-scroll"
+        className="h-full w-full [&>div]:!block [&>div]:h-full [&>div]:w-max [&>div]:min-w-full"
+      >
+        {children}
+      </ScrollArea.Viewport>
+      <ScrollArea.Scrollbar
+        forceMount
+        orientation="horizontal"
+        data-testid="cloud-board-horizontal-scrollbar"
+        className="project-board-scrollbar project-board-scrollbar-horizontal"
+      >
+        <ScrollArea.Thumb
+          data-testid="cloud-board-horizontal-scrollbar-thumb"
+          className="project-board-scrollbar-thumb"
+        />
+      </ScrollArea.Scrollbar>
+    </ScrollArea.Root>
+  );
 }
 
 export interface ProjectBoardColumn {
@@ -198,7 +234,7 @@ export function ProjectBoardBody<TItem>({
   return (
     <div
       data-board-cursor-policy="arrow"
-      className="flex min-h-0 flex-1 flex-col pb-6 pt-4"
+      className="flex min-h-0 min-w-0 flex-1 flex-col pt-4"
     >
       {isExternalBoard ? (
         <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
@@ -427,11 +463,7 @@ export function ProjectBoardBody<TItem>({
             {boardError}
           </p>
         ) : null)}
-      <div
-        ref={state.scrollRef}
-        data-testid="cloud-board-scroll"
-        className="min-h-0 flex-1 overflow-x-auto"
-      >
+      <ProjectBoardScrollArea viewportRef={state.scrollRef}>
         {boardItemsLoading ? (
           renderSkeleton()
         ) : (
@@ -468,7 +500,7 @@ export function ProjectBoardBody<TItem>({
             renderDragOverlay={renderDragOverlay}
           />
         )}
-      </div>
+      </ProjectBoardScrollArea>
     </div>
   );
 }

@@ -372,6 +372,7 @@ export function createRuntimeTaskStreamHandlers(
         subtaskId: identity.subtaskId,
         clientUserMessageId: payload.clientUserMessageId,
         shellType: payload.shellType,
+        startedAt: payload.runtimeGeneratedUserMessage?.createdAt ?? Date.now(),
       });
     },
     onChatChunk: (payload) => {
@@ -501,6 +502,20 @@ export function createRuntimeTaskStreamHandlers(
           payload.result.value.trim() && { content: payload.result.value }),
         blocks,
         fileChanges,
+        ...((typeof payload.result.durationMs === "number" ||
+          typeof payload.result.duration_ms === "number") && {
+          durationMs:
+            typeof payload.result.durationMs === "number"
+              ? payload.result.durationMs
+              : (payload.result.duration_ms as number),
+        }),
+        ...((typeof payload.result.startedAt === "number" ||
+          typeof payload.result.started_at === "number") && {
+          startedAt:
+            typeof payload.result.startedAt === "number"
+              ? payload.result.startedAt
+              : (payload.result.started_at as number),
+        }),
       });
       const assistantText =
         typeof payload.result?.value === "string" && payload.result.value.trim()
@@ -549,6 +564,8 @@ export function createRuntimeTaskStreamHandlers(
         handlers.onMessageAction({
           type: "assistant_cancelled",
           subtaskId: identity.subtaskId,
+          startedAt: payload.startedAt,
+          durationMs: payload.durationMs,
         });
       } else {
         handlers.onMessageAction({
@@ -556,6 +573,8 @@ export function createRuntimeTaskStreamHandlers(
           subtaskId: identity.subtaskId,
           error: payload.error,
           errorType: payload.type,
+          startedAt: payload.startedAt,
+          durationMs: payload.durationMs,
         });
       }
       settleAssistantTurn(

@@ -14,6 +14,53 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
+fn spawn_idle_app_server_child() -> Child {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "pause"]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 60"]);
+        command
+    };
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the idle app-server child should start")
+}
+
+#[tokio::test]
+async fn terminating_shared_app_servers_releases_every_registered_process() {
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let state = shared_codex_app_server_state("codex-app-server-termination-test");
+    state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+
+    let terminated = terminate_shared_codex_app_servers().await;
+
+    assert!(
+        terminated >= 1,
+        "the registered app-server process was not terminated"
+    );
+    assert!(
+        state.lock().await.process.is_none(),
+        "the terminated app-server process stayed registered"
+    );
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();
@@ -325,10 +372,18 @@ fn environment_change_diagnostics_report_keys_without_values() {
 #[test]
 fn shared_notification_lag_is_recoverable() {
     let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
             .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
+}
+
+#[test]
+fn closed_notification_stream_reports_executor_shutdown() {
+    assert!(matches!(
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
 }
 
 #[tokio::test]
@@ -4153,6 +4208,58 @@ fn completed_goal_does_not_require_authoritative_reconciliation() {
     state.set_goal_status("complete");
 
     assert!(!state.goal_is_active());
+}
+
+#[test]
+fn codex_run_state_finishes_failed_turn_timing_without_turn_completed() {
+    let mut state = CodexRunState::default();
+    assert!(state
+        .handle_message(&json!({
+            "method": "turn/started",
+            "params": {
+                "turn": {
+                    "startedAt": 1
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "error",
+            "params": {
+                "message": "upstream failed",
+                "willRetry": false
+            }
+        }))
+        .expect("terminal error should fail the turn");
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "upstream failed".to_owned()
+        }
+    );
+
+    state.finish_turn_timing(3_500);
+
+    assert_eq!(state.turn_timing(), (Some(1_000), Some(3_500), Some(2_500)));
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "failed",
+                    "startedAt": 1,
+                    "completedAt": 4,
+                    "durationMs": 3_000
+                }
+            }
+        }))
+        .is_some());
+    state.finish_turn_timing(9_000);
+
+    assert_eq!(state.turn_timing(), (Some(1_000), Some(4_000), Some(3_000)));
 }
 
 #[test]

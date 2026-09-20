@@ -195,9 +195,8 @@ describe('CollaborationApp project collaboration groups', () => {
     fireEvent.change(screen.getByTestId('collaboration-group-description'), {
       target: { value: '持续检查并处理项目 Issue' },
     })
-    fireEvent.change(screen.getByTestId('collaboration-group-leader'), {
-      target: { value: 'agent:agent-binding-1' },
-    })
+    fireEvent.click(screen.getByTestId('collaboration-group-leader'))
+    fireEvent.click(screen.getByTestId('collaboration-group-leader-agent-agent-binding-1'))
     fireEvent.click(screen.getByTestId('collaboration-group-create-next'))
     expect(screen.getByTestId('collaboration-group-create-tab-rules')).toHaveAttribute(
       'aria-selected',

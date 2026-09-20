@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use super::super::auth::get_current_user;
 use super::super::group_membership::{
-    ErpContext, effective_roles, has_permission, user_group_memberships,
+    ErpContext, accessible_authorization_namespaces, effective_roles, user_group_memberships,
 };
 use super::super::http_error::HttpError;
 use super::repository as repo;
@@ -248,15 +248,8 @@ async fn recent_accessible_teams(
             names
         };
         let effective = effective_roles(&resolved.memberships, &group_namespaces);
-        let accessible_namespaces: Vec<String> = group_namespaces
-            .iter()
-            .filter(|name| {
-                effective
-                    .get(*name)
-                    .is_some_and(|role| has_permission(role, "Reporter"))
-            })
-            .cloned()
-            .collect();
+        let accessible_namespaces =
+            accessible_authorization_namespaces(&group_namespaces, &effective);
         let authorized_namespace_ids = super::super::teams_repository::namespace_ids_by_names(
             &state.mysql,
             &accessible_namespaces,

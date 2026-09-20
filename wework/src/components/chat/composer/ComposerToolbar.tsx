@@ -60,6 +60,7 @@ interface ComposerToolbarProps {
   onInsertPluginReference: (reference: string) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
+  sendButtonLabel?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   workspaceTarget?: WorkspaceTarget | null
