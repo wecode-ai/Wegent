@@ -28,6 +28,7 @@ from pymilvus.orm.iterator import QueryIterator
 from knowledge_engine.storage.milvus.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
+    is_missing_collection_error,
     rpc_failure,
 )
 from knowledge_engine.storage.milvus.native import (
@@ -353,18 +354,26 @@ class MilvusDocumentStore:
     ) -> CollectionDescription:
         """Read the collection this writer just created.
 
-        This is the post-create read the contract needs: the collection exists,
-        so the caller can compare the contract in its description with the one
-        this writer asked for. A collection that cannot be read back is a fault,
-        not an empty knowledge base.
+        The create is the answer the store already has, so this is one describe
+        and never a second lookup: asking whether the name is there would be a
+        separate RPC that can disagree with the create it follows, while the
+        description the caller reads the contract and the structure from is the
+        answer itself. A name the server no longer holds answers with the SDK's
+        collection-not-found failure, which is a fault rather than an empty
+        knowledge base; a describe that failed for any other reason keeps that
+        failure.
         """
-        described = self._describe_collection(client, collection_name)
-        if described is None:
+        try:
+            return read_collection_description(
+                client, collection_name, timeout=self.rpc_timeout
+            )
+        except MilvusException as error:
+            if not is_missing_collection_error(error):
+                raise
             raise IndexMissingError(
                 collection_name,
                 "the collection is gone immediately after its creation",
-            )
-        return described
+            ) from error
 
     def _assert_structure(
         self,

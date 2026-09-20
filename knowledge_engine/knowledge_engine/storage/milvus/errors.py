@@ -18,6 +18,7 @@ from pymilvus.client.types import Status as MilvusStatus
 from pymilvus.exceptions import (
     ConnectError,
     ConnectionNotExistException,
+    ErrorCode,
     MilvusUnavailableException,
 )
 
@@ -130,6 +131,18 @@ def is_transient_rpc_failure(error: BaseException) -> bool:
         return True
     code = getattr(error, "code", None)
     return not callable(code) and code in TRANSIENT_RPC_MILVUS_STATUS_CODES
+
+
+def is_missing_collection_error(error: BaseException) -> bool:
+    """Whether the server answered that it holds no collection under that name.
+
+    This is the one RPC failure that describes the state of the name rather
+    than the state of the request: the SDK reports it with its own
+    collection-not-found code, so it is read from the code alone and no message
+    the server wrote is parsed. Every other failure keeps its own
+    classification.
+    """
+    return rpc_status_code(error) == ErrorCode.COLLECTION_NOT_FOUND
 
 
 def rpc_failure(error: BaseException) -> StorageBackendError:

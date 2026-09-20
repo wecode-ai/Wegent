@@ -15,7 +15,10 @@ vocabulary it works with are tested in ``test_native.py``.
 from typing import Any
 
 import pytest
+from grpc import StatusCode
+from pymilvus.exceptions import DescribeCollectionException, ErrorCode, MilvusException
 
+from knowledge_engine.storage.errors import StorageUnavailableError
 from knowledge_engine.storage.milvus.errors import (
     IndexContractIncompatibleError,
     IndexMissingError,
@@ -522,6 +525,7 @@ class _CollectionClient:
         winner_contract: MilvusIndexBinding | None = None,
         fields: list[dict] | None = None,
         functions: list[dict] | None = None,
+        auto_id: bool = False,
         indexes: dict[str, dict] | None = None,
         index_names: list[str] | None = None,
     ) -> None:
@@ -531,18 +535,27 @@ class _CollectionClient:
         self.winner_contract = winner_contract
         self.fields = fields
         self.functions = functions
+        self.auto_id = auto_id
         self.indexes = indexes
         self.index_names = index_names
         self.schemas: list[Any] = []
         self.create_timeouts: list[Any] = []
+        # Every RPC the store sends, in the order the server received it.
+        self.rpcs: list[str] = []
         self.descriptions = 0
         self.index_lookups = 0
         self.queries: list[dict] = []
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
+        self.rpcs.append("has_collection")
+        return self._holds_a_collection()
+
+    def _holds_a_collection(self) -> bool:
+        """The server-side state the stub models, without an RPC of its own."""
         return self.exists or bool(self.schemas)
 
     def create_collection(self, **kwargs) -> None:
+        self.rpcs.append("create_collection")
         self.schemas.append(kwargs["schema"])
         self.create_timeouts.append(kwargs.get("timeout"))
         if self.create_fails:
@@ -557,20 +570,30 @@ class _CollectionClient:
         return _IndexParams()
 
     def describe_collection(self, collection_name: str, **kwargs) -> dict:
+        self.rpcs.append("describe_collection")
         self.descriptions += 1
-        if not self.has_collection(collection_name):
-            raise RuntimeError(f"collection {collection_name} does not exist")
+        if not self._holds_a_collection():
+            # The pinned server answers a name it does not hold with its own
+            # collection-not-found code, not with an empty description.
+            raise DescribeCollectionException(
+                ErrorCode.COLLECTION_NOT_FOUND,
+                f"can't find collection[database=default][collection="
+                f"{collection_name}]",
+            )
         return recorded_description(
             self.contract,
             fields=self.fields,
             functions=self.functions,
+            auto_id=self.auto_id,
         )
 
     def list_indexes(self, collection_name: str, **kwargs) -> list[str]:
+        self.rpcs.append("list_indexes")
         self.index_lookups += 1
         return list(self.index_names or self._indexes())
 
     def describe_index(self, collection_name: str, index_name: str, **kwargs) -> dict:
+        self.rpcs.append("describe_index")
         return self._indexes()[index_name]
 
     def _indexes(self) -> dict[str, dict]:
@@ -644,6 +667,57 @@ def test_ensure_index_creates_a_collection_and_confirms_its_real_structure():
     assert len(client.schemas) == 1
     assert client.descriptions == 1, "the created collection is read back once"
     assert client.index_lookups == 1, "the created indexes are read back"
+
+
+def test_a_created_collection_is_read_back_without_a_second_existence_check():
+    """A successful create is described, never asked for a second time.
+
+    The create is the answer the store already has, so the read-back is one
+    describe on the collection the writer just made. Asking the server whether
+    the name is there would be a second lookup that can disagree with the
+    create it follows, and the description itself is what the contract is read
+    from.
+    """
+    binding = _binding()
+    client = _CollectionClient()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    _ensure(store, client, binding)
+
+    assert client.rpcs == [
+        # The name is checked once, before the create decides to write one.
+        "has_collection",
+        "create_collection",
+        # From here on the created collection is described, never looked up.
+        "describe_collection",
+        "list_indexes",
+        "describe_index",
+        "describe_index",
+    ]
+
+
+def test_a_read_back_that_could_not_answer_keeps_its_own_failure():
+    """A describe the server failed to answer is not a missing collection."""
+
+    class _UnansweringClient(_CollectionClient):
+        def describe_collection(self, collection_name: str, **kwargs) -> dict:
+            self.rpcs.append("describe_collection")
+            raise MilvusException(
+                code=StatusCode.DEADLINE_EXCEEDED, message="deadline exceeded"
+            )
+
+    binding = _binding()
+    client = _UnansweringClient()
+    store = MilvusDocumentStore(
+        uri="http://milvus.test:19530",
+        client_factory=lambda **kwargs: client,
+    )
+
+    with pytest.raises(StorageUnavailableError) as failure:
+        with store.client() as opened:
+            _ensure(store, opened, binding)
+
+    assert failure.value.retryable is True
 
 
 def test_creating_a_collection_hands_the_sdk_an_integer_timeout():
@@ -859,6 +933,27 @@ def test_a_collection_whose_row_layout_differs_is_refused():
     ), failure.value.details
 
 
+def test_a_collection_that_assigns_its_own_primary_keys_is_refused():
+    """A collection that renumbers rows cannot be written the way this does.
+
+    The schema this code writes derives every primary key from the document and
+    the chunk position, so a collection whose rows the server numbers itself
+    makes the write's own key meaningless. The claim is not carried by the
+    contract, so it is read from the structure the collection declares.
+    """
+    binding = _binding()
+    client = _CollectionClient(exists=True, contract=binding, auto_id=True)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        "primary key" in mismatch for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+    assert failure.value.retryable is False
+
+
 @pytest.mark.parametrize(
     ("field_name", "property_name", "value"),
     [
@@ -942,17 +1037,29 @@ def test_a_read_path_reads_the_contract_without_the_index_state():
 
 
 def test_ensure_index_reports_a_collection_that_cannot_be_read_back():
-    """A created collection that cannot be read back is a fault, not empty."""
+    """A created collection that cannot be read back is a fault, not empty.
+
+    The read-back describe is the only lookup after the create, so the answer
+    that the collection is gone is the SDK's own collection-not-found failure
+    and is reported as such instead of being read as a collection that never
+    had a contract.
+    """
     binding = _binding()
     store = MilvusDocumentStore(uri="http://milvus.test:19530")
 
     class _VanishingClient(_CollectionClient):
         def create_collection(self, **kwargs) -> None:
+            self.rpcs.append("create_collection")
             # The create reports success and leaves nothing behind.
             pass
 
-        def has_collection(self, collection_name: str, **kwargs) -> bool:
-            return False
+    client = _VanishingClient()
 
     with pytest.raises(IndexMissingError):
-        _ensure(store, _VanishingClient(), binding)
+        _ensure(store, client, binding)
+
+    assert client.rpcs == [
+        "has_collection",
+        "create_collection",
+        "describe_collection",
+    ]

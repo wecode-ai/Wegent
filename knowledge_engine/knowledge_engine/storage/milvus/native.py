@@ -159,21 +159,29 @@ class MilvusIndexBinding:
 
         A description carrying other fields than the persisted contract was
         written by another version of this code, not by a newer one this reader
-        should guess about, so it is refused instead.
+        should guess about, so it is refused instead. The two numbers are read
+        as the JSON integers the writer stored and never coerced: a float, a
+        digit string or a boolean is a value no writer of this contract
+        produced, so accepting it would serve a collection whose contract was
+        never confirmed.
         """
         if set(payload) != set(cls.PERSISTED_FIELDS):
             raise ValueError(
                 "the persisted index contract does not carry exactly "
                 f"{', '.join(cls.PERSISTED_FIELDS)}"
             )
-        try:
-            return cls(
-                schema_version=int(payload["schema_version"]),
-                dimension=int(payload["dimension"]),
-                embedding_space_id=payload["embedding_space_id"],
+        schema_version = payload["schema_version"]
+        dimension = payload["dimension"]
+        if not _is_json_integer(schema_version) or not _is_json_integer(dimension):
+            raise ValueError(
+                "the persisted index contract does not carry JSON integers for "
+                "its schema version and dimension"
             )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError("the persisted index contract is unreadable") from exc
+        return cls(
+            schema_version=schema_version,
+            dimension=dimension,
+            embedding_space_id=payload["embedding_space_id"],
+        )
 
     def assert_compatible(
         self, other: "MilvusIndexBinding", *, collection_name: str
@@ -189,6 +197,16 @@ class MilvusIndexBinding:
                         "requested": getattr(other, field),
                     },
                 )
+
+
+def _is_json_integer(value: Any) -> bool:
+    """Whether a decoded JSON value is an integer, and not a boolean.
+
+    ``bool`` is an ``int`` subclass in Python while ``true`` and ``1`` are two
+    different JSON values, so the exclusion is what keeps a boolean out of a
+    numeric field of the contract.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def sanitize_filter_value(value: Any) -> str:
@@ -302,6 +320,11 @@ class CollectionDescription:
     fields: Dict[str, Dict[str, Any]]
     functions: List[Dict[str, Any]]
     enable_dynamic_field: bool | None
+    # Whether the server numbers the rows itself. It is a property of the
+    # schema, so it travels with the description instead of with the contract:
+    # a write binds a row to the key it derived, which a collection that
+    # assigns its own keys cannot honour.
+    auto_id: bool | None
 
 
 def read_collection_description(
@@ -321,6 +344,7 @@ def read_collection_description(
         },
         functions=[dict(function) for function in description.get("functions", [])],
         enable_dynamic_field=description.get("enable_dynamic_field"),
+        auto_id=description.get("auto_id"),
     )
 
 
@@ -461,6 +485,10 @@ def _field_mismatches(
         mismatches += _field_property_mismatches(name, expected[name], actual[name])
     if bool(described.enable_dynamic_field) != bool(schema.enable_dynamic_field):
         mismatches.append("the collection accepts dynamic fields, this schema does not")
+    if described.auto_id != schema.auto_id:
+        mismatches.append(
+            "the collection assigns its own primary keys, this schema writes them"
+        )
     return mismatches
 
 

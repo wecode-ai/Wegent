@@ -23,17 +23,19 @@ from knowledge_engine.storage.errors import (
 from knowledge_engine.storage.milvus.backend import MilvusBackend
 from knowledge_engine.storage.milvus.errors import IndexContractIncompatibleError
 from knowledge_engine.storage.milvus.native import (
-    DENSE_VECTOR_FIELD,
     DISPLAY_TEXT_FIELD,
     METADATA_FIELD,
     RETRIEVAL_TEXT_FIELD,
     SCHEMA_VERSION,
     MilvusIndexBinding,
-    index_contract_description,
 )
 from knowledge_engine.storage.milvus.rows import ITERATOR_BATCH_SIZE
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 from shared.models import RetrievalScope
+from tests.storage.milvus.recorded_collection import (
+    recorded_description,
+    recorded_indexes,
+)
 
 _CLAUSE_SEPARATOR = re.compile(r"\s+(and|or)\s+")
 _JSON_CLAUSE = re.compile(
@@ -933,19 +935,28 @@ def test_rewrite_confirms_the_contract_before_it_deletes_the_old_rows():
     assert [row["id"] for row in store.rows] == ["42-0"]
 
 
-class _ForeignSpaceClient:
-    """A collection this code did not create, bound to another vector space."""
+class _RecordedCollectionClient:
+    """A client answering one collection's description with the pinned recording.
 
-    def __init__(self, *, dimension: int, embedding_space_id: str) -> None:
+    The recording is the 2.5.4 answer for the schema this code writes, so a
+    single part of it can be replaced with what another writer's collection
+    declares and the write path's refusal is attributable to that part.
+    """
+
+    def __init__(
+        self,
+        *,
+        dimension: int,
+        embedding_space_id: str,
+        auto_id: bool = False,
+    ) -> None:
         self.binding = MilvusIndexBinding(
             schema_version=SCHEMA_VERSION,
             dimension=dimension,
             embedding_space_id=embedding_space_id,
         )
+        self.auto_id = auto_id
         self.calls: List[str] = []
-
-    def close(self) -> None:
-        pass
 
     def has_collection(self, collection_name: str, **kwargs) -> bool:
         self.calls.append("has_collection")
@@ -953,15 +964,17 @@ class _ForeignSpaceClient:
 
     def describe_collection(self, collection_name: str, **kwargs) -> Dict[str, Any]:
         self.calls.append("describe_collection")
-        return {
-            "description": index_contract_description(self.binding),
-            "fields": [
-                {
-                    "name": DENSE_VECTOR_FIELD,
-                    "params": {"dim": self.binding.dimension},
-                }
-            ],
-        }
+        return recorded_description(self.binding, auto_id=self.auto_id)
+
+    def list_indexes(self, collection_name: str, **kwargs) -> List[str]:
+        self.calls.append("list_indexes")
+        return list(recorded_indexes())
+
+    def describe_index(
+        self, collection_name: str, index_name: str, **kwargs
+    ) -> Dict[str, Any]:
+        self.calls.append("describe_index")
+        return recorded_indexes()[index_name]
 
     def delete(self, **kwargs) -> Dict[str, Any]:
         self.calls.append("delete")
@@ -979,7 +992,37 @@ def test_a_shared_collection_in_another_embedding_space_fails_before_writing():
     on the same client it later writes with, so the refusal happens before the
     old rows are deleted and before any new row is staged.
     """
-    client = _ForeignSpaceClient(dimension=2, embedding_space_id="sha256:other")
+    client = _RecordedCollectionClient(dimension=2, embedding_space_id="sha256:other")
+    backend = _backend()
+    backend._store = MilvusDocumentStore(
+        uri="http://localhost:19530",
+        client_factory=lambda **kwargs: client,
+    )
+
+    with pytest.raises(IndexContractIncompatibleError):
+        backend.index_with_metadata(
+            nodes=_nodes(),
+            chunk_metadata=_chunk_metadata(),
+            embed_model=FakeEmbedModel([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+    assert "delete" not in client.calls
+    assert "upsert" not in client.calls
+
+
+def test_a_collection_that_assigns_its_own_ids_fails_before_writing():
+    """A collection whose rows the server renumbers is refused before the write.
+
+    The structure check runs on the write path, before the previous rows of the
+    document are removed and before any new row is staged, so a shared
+    collection that stores its own primary keys is refused without losing a
+    single stored row.
+    """
+    client = _RecordedCollectionClient(
+        dimension=2,
+        embedding_space_id="sha256:fake-model",
+        auto_id=True,
+    )
     backend = _backend()
     backend._store = MilvusDocumentStore(
         uri="http://localhost:19530",
@@ -2555,7 +2598,9 @@ def test_drop_reads_the_contract_once_and_drops_both_collections() -> None:
     # up by name.
     assert [name for name, *_ in store.calls] == ["read_contract"]
     assert store.has_collection_calls == ["test_kb_1__parents"]
-    assert store.dropped_collections == ["test_kb_1", "test_kb_1__parents"]
+    # The sidecar goes first, so the index that confirms both names is still
+    # there when a half-finished drop is retried.
+    assert store.dropped_collections == ["test_kb_1__parents", "test_kb_1"]
 
 
 def test_get_document_missing_raises_without_creating():

@@ -141,14 +141,16 @@ def recorded_description(
     fields: Optional[List[Dict[str, Any]]] = None,
     functions: Optional[List[Dict[str, Any]]] = None,
     enable_dynamic_field: bool = False,
+    auto_id: bool = False,
 ) -> Dict[str, Any]:
     """One ``describe_collection`` answer, with the recording as the default."""
     if description is None and binding is not None:
         description = index_contract_description(binding)
     return {
         "collection_name": "wegent_kb_1",
-        # The server reports auto_id at the field, never at the collection.
-        "auto_id": False,
+        # The server answers whether it numbers the rows itself, which is the
+        # claim the structure check reads.
+        "auto_id": auto_id,
         "description": description,
         "fields": (
             recorded_fields(

@@ -115,7 +115,14 @@ class MilvusCleanup:
         }
 
     def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
-        """Physically drop the backing collection for a dedicated KB strategy."""
+        """Physically drop the backing collection for a dedicated KB strategy.
+
+        The order is what makes the drop retryable. The index collection's own
+        contract is the only thing that confirms these names belong to this
+        knowledge base, so it is read first and dropped last: a sidecar drop
+        that failed leaves the confirmation in place, and the next attempt
+        repeats the whole sequence instead of finding the confirmation gone.
+        """
         self._ensure_can_drop_physical_index()
         collection_name = self._collection_name_for(knowledge_id, **kwargs)
         parent_collection_name = self._parent_collection_name_for(
@@ -130,11 +137,7 @@ class MilvusCleanup:
             # confirms it.
             index_exists = store.read_contract(client, collection_name) is not None
             parent_exists = store.has_collection(client, parent_collection_name)
-            if index_exists:
-                client.drop_collection(
-                    collection_name=collection_name, timeout=store.rpc_timeout
-                )
-            elif parent_exists:
+            if parent_exists and not index_exists:
                 # The knowledge base still holds parents but its index
                 # collection is gone, so nothing confirms that these names were
                 # ours: refuse instead of dropping data through a name that no
@@ -144,11 +147,19 @@ class MilvusCleanup:
                     "the index collection is gone, so the parent sidecar of "
                     "this knowledge base cannot be identified as its own",
                 )
-            if parent_exists:
+            if index_exists:
+                # The sidecar goes first because it is the step that can be
+                # repeated: the index that confirms both names is still there
+                # for a retry of a drop that stopped here.
+                if parent_exists:
+                    client.drop_collection(
+                        collection_name=parent_collection_name,
+                        timeout=store.rpc_timeout,
+                    )
+                    dropped_parent_collection = True
                 client.drop_collection(
-                    collection_name=parent_collection_name, timeout=store.rpc_timeout
+                    collection_name=collection_name, timeout=store.rpc_timeout
                 )
-                dropped_parent_collection = True
 
         return {
             "knowledge_id": knowledge_id,

@@ -93,6 +93,68 @@ def test_a_contract_without_the_required_fields_is_reported_as_absent():
         assert index_contract_from_description(description) is None
 
 
+def test_the_persisted_contract_reads_back_as_the_one_that_was_written():
+    """The payload the writer stored is the payload the reader accepts."""
+    binding = _binding()
+
+    assert MilvusIndexBinding.from_payload(binding.to_payload()) == binding
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        # A JSON number that is not an integer is a different fact than the
+        # integer the contract was written with, not a value to coerce.
+        ("schema_version", 5.0),
+        ("dimension", 1536.0),
+        # A digit string is text, not the number the contract carries.
+        ("schema_version", "5"),
+        ("dimension", "1536"),
+        # ``True`` is an ``int`` in Python but a boolean in JSON.
+        ("schema_version", True),
+        ("dimension", True),
+    ],
+)
+def test_a_contract_whose_numbers_are_not_json_integers_is_refused(
+    field: str, value: object
+) -> None:
+    """Coercing a stored value would accept a contract no writer produced."""
+    payload = _binding().to_payload()
+    payload[field] = value
+
+    with pytest.raises(ValueError):
+        MilvusIndexBinding.from_payload(payload)
+
+    assert (
+        index_contract_from_description(
+            CONTRACT_DESCRIPTION_PREFIX + json.dumps(payload)
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # A field of the contract is missing.
+        {"schema_version": SCHEMA_VERSION, "dimension": 1536},
+        # A field a later writer added is not part of this contract.
+        {
+            "schema_version": SCHEMA_VERSION,
+            "dimension": 1536,
+            "embedding_space_id": "sha256:abc",
+            "analyzer": "chinese",
+        },
+    ],
+)
+def test_a_contract_that_is_not_exactly_the_written_field_set_is_refused(
+    payload: dict,
+) -> None:
+    """The persisted contract is one exact field set, never a superset."""
+    with pytest.raises(ValueError):
+        MilvusIndexBinding.from_payload(payload)
+
+
 @pytest.mark.parametrize(
     "description",
     [
@@ -128,12 +190,16 @@ def test_describe_collection_reads_the_contract_and_the_dimension_once():
                 "fields": [
                     {"name": DENSE_VECTOR_FIELD, "params": {"dim": binding.dimension}}
                 ],
+                "auto_id": True,
             }
 
     described = read_collection_description(_Client(), "wegent_kb_1", timeout=5.0)
 
     assert described.binding == binding
     assert described.dimension == binding.dimension
+    # Whether the collection assigns its own primary keys is part of what the
+    # description declares, so it is read instead of dropped.
+    assert described.auto_id is True
     assert len(calls) == 1
 
 
