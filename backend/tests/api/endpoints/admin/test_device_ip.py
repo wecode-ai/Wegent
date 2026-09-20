@@ -142,4 +142,4 @@ def test_exact_name_lookup_has_composite_index(test_db: Session) -> None:
         )
     ).fetchall()
 
-    assert "ix_kinds_name_kind_ns_active" in " ".join(str(row) for row in plan)
+    assert "idx_kinds_name_kind_ns_active" in " ".join(str(row) for row in plan)
