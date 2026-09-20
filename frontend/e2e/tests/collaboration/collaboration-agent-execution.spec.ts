@@ -4,6 +4,7 @@
 
 import { APIRequestContext, expect, Page, test, TestInfo } from '@playwright/test'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -42,6 +43,7 @@ const MCP_SERVER_NAME = 'collaboration-evidence'
 const CLAUDE_ARTIFACT_NAME = 'collaboration-claudecode-runtime-evidence.txt'
 const PLUGIN_NAME = `${TEST_PREFIX}-plugin`
 const PLUGIN_MARKER = 'COLLABORATION_AGENT_REAL_PLUGIN'
+const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
 const execFileAsync = promisify(execFile)
 const CREATE_ZIP_SCRIPT = `
 from pathlib import Path
@@ -158,6 +160,7 @@ interface AgentCase {
 
 interface CollaborationPlugin {
   id: string
+  installedId: number
   pluginName: string
   marketplaceId: string
   displayName: string
@@ -190,7 +193,7 @@ test.describe('Collaboration agent execution', () => {
     resources = await createProviderNativeResources(request, TEST_PREFIX)
     skillRef = await resolveProviderNativeSkillRef(request, resources.token, SKILL_NAME)
     await configureBotCapabilities(request, resources.botId, skillRef)
-    plugin = await uploadPlugin(request)
+    plugin = await publishAndInstallPlugin(request)
     claude = await createClaudeResources(request, skillRef)
     workspace = await createWorkspace(request)
     project = await createProject(request, workspace.id)
@@ -204,6 +207,13 @@ test.describe('Collaboration agent execution', () => {
     }
     if (project) await archive(request, `/api/v1/cloud-projects/${project.id}`)
     if (workspace) await archive(request, `/api/v1/workspaces/${workspace.id}`)
+    if (plugin) {
+      await request
+        .delete(`${PROVIDER_NATIVE_API_URL}/api/plugins/installed/${plugin.installedId}`, {
+          headers: authHeaders(resources.token),
+        })
+        .catch(() => null)
+    }
     await cleanupClaudeResources(request, claude).catch(() => null)
     if (resources) await deleteProviderNativeResources(request, resources)
   })
@@ -703,7 +713,7 @@ test.describe('Collaboration agent execution', () => {
     })
   }
 
-  async function uploadPlugin(request: APIRequestContext): Promise<CollaborationPlugin> {
+  async function publishAndInstallPlugin(request: APIRequestContext): Promise<CollaborationPlugin> {
     const root = await mkdtemp(join(tmpdir(), 'wegent-agent-plugin-'))
     const archivePath = `${root}.zip`
     try {
@@ -744,44 +754,95 @@ test.describe('Collaboration agent execution', () => {
         ].join('\n')
       )
       await execFileAsync('python3', ['-c', CREATE_ZIP_SCRIPT, archivePath, root])
-      const response = await request.post(`${PROVIDER_NATIVE_API_URL}/api/plugins/upload`, {
-        headers: {
-          Authorization: `Bearer ${resources.token}`,
-          Connection: 'close',
-        },
-        multipart: {
-          enabled: 'true',
-          file: {
-            name: `${PLUGIN_NAME}.zip`,
-            mimeType: 'application/zip',
-            buffer: await readFile(archivePath),
+      const archive = await readFile(archivePath)
+      const initializedResponse = await request.post(
+        `${PROVIDER_NATIVE_API_URL}/api/plugins/submissions/init`,
+        {
+          headers: authHeaders(resources.token),
+          data: {
+            slug: PLUGIN_NAME,
+            displayName: 'Collaboration Agent E2E Plugin',
+            version: '1.0.0',
+            filename: `${PLUGIN_NAME}.zip`,
+            sha256: createHash('sha256').update(archive).digest('hex'),
+            sizeBytes: archive.byteLength,
+            listingType: 'plugin',
+            purpose: 'restricted_share',
+            visibility: 'personal',
           },
-        },
+        }
+      )
+      const initializedBody = await initializedResponse.text()
+      expect(initializedResponse.status(), initializedBody).toBe(201)
+      const initialized = JSON.parse(initializedBody) as {
+        submissionId: number
+        pluginId: number
+        uploadUrl: string
+      }
+      const uploadResponse = await request.put(
+        new URL(initialized.uploadUrl, PROVIDER_NATIVE_API_URL).toString(),
+        {
+          headers: { 'Content-Type': 'application/zip' },
+          data: archive,
+        }
+      )
+      expect(uploadResponse.status(), await uploadResponse.text()).toBe(204)
+      const completedResponse = await request.post(
+        `${PROVIDER_NATIVE_API_URL}/api/plugins/submissions/${initialized.submissionId}/complete`,
+        {
+          headers: authHeaders(resources.token),
+        }
+      )
+      const completedBody = await completedResponse.text()
+      expect(completedResponse.status(), completedBody).toBe(200)
+      const completed = JSON.parse(completedBody) as {
+        submission: { status: string; pluginId: number }
+      }
+      expect(completed.submission).toMatchObject({
+        status: 'approved',
+        pluginId: initialized.pluginId,
       })
-      expect(response.status(), await response.text()).toBe(201)
-      const installed = (await response.json()) as {
-        spec?: {
-          displayName?: string
-          source?: {
-            pluginKey?: string
-            marketplace?: string
-            providerKey?: string
-            catalogItemId?: string
+      const installResponse = await request.post(
+        `${PROVIDER_NATIVE_API_URL}/api/plugins/marketplace/${
+          initialized.pluginId
+        }/install?device_id=${encodeURIComponent(DEVICE_ID)}`,
+        {
+          headers: authHeaders(resources.token),
+        }
+      )
+      const installBody = await installResponse.text()
+      expect(installResponse.status(), installBody).toBe(200)
+      const installed = JSON.parse(installBody) as {
+        plugin?: {
+          metadata?: { labels?: { id?: string } }
+          spec?: {
+            displayName?: string
+            source?: {
+              pluginKey?: string
+              marketplace?: string
+              providerKey?: string
+              catalogItemId?: string
+            }
           }
         }
+        sync?: { success?: boolean }
       }
-      const pluginName = installed.spec?.source?.pluginKey
+      expect(installed.sync?.success).toBe(true)
+      const installedId = Number(installed.plugin?.metadata?.labels?.id)
+      const pluginName = installed.plugin?.spec?.source?.pluginKey
       const marketplaceId =
-        installed.spec?.source?.marketplace ||
-        installed.spec?.source?.providerKey ||
-        installed.spec?.source?.catalogItemId
+        installed.plugin?.spec?.source?.marketplace ||
+        installed.plugin?.spec?.source?.providerKey ||
+        installed.plugin?.spec?.source?.catalogItemId
+      expect(installedId).toBeGreaterThan(0)
       expect(pluginName).toBe(PLUGIN_NAME)
       expect(marketplaceId).toBeTruthy()
       return {
         id: `${pluginName}@${marketplaceId}`,
+        installedId,
         pluginName: pluginName!,
         marketplaceId: marketplaceId!,
-        displayName: installed.spec?.displayName || PLUGIN_NAME,
+        displayName: installed.plugin?.spec?.displayName || PLUGIN_NAME,
       }
     } finally {
       await Promise.all([
