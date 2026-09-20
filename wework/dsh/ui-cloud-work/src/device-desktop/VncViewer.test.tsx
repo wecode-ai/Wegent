@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { VncClipboardWriteTooLargeError } from '@/lib/vnc-device-clipboard'
+import { VncClipboardWriteTooLargeError } from './vnc-device-clipboard'
 import { VncViewer } from './VncViewer'
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn())

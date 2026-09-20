@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import type { DeviceInfo } from '@/types/devices'
 import DeviceDesktopPage from './DeviceDesktopPage'
-import { deviceDesktopRoute, isDeviceDesktopInternalPageUrl } from './deviceDesktopRoute'
+import { deviceDesktopRoute, isDeviceDesktopInternalPageUrl } from '@/pages/deviceDesktopRoute'
 
 const startDeviceVncMock = vi.hoisted(() => vi.fn())
 const revokeDeviceVncMock = vi.hoisted(() => vi.fn())
@@ -28,7 +28,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
   }),
 }))
 
-vi.mock('@/components/vnc/VncViewer', () => ({
+vi.mock('./VncViewer', () => ({
   VncViewer: ({
     clipboardBridge,
     websocketUrl,

@@ -1,3 +1,3 @@
-import DeviceDesktopPage from '@/pages/DeviceDesktopPage'
+import DeviceDesktopPage from './device-desktop/DeviceDesktopPage'
 
 export default DeviceDesktopPage

@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 import {
   VncClipboardWriteTooLargeError,
   type VncDeviceClipboardBridge,
-} from '@/lib/vnc-device-clipboard'
+} from './vnc-device-clipboard'
 import type { TFunction } from 'i18next'
 
 type VncStatus = 'connecting' | 'connected' | 'disconnected' | 'error'

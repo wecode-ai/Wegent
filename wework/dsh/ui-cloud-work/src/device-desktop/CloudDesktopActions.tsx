@@ -10,7 +10,7 @@ import type {
   CloudDesktopActionProps,
   CloudDesktopLaunchOptions,
   CloudDesktopWorkspaceActionProps,
-} from './cloud-desktop-contract'
+} from '@/extensions/cloud-desktop-contract'
 
 function useOpenDeviceDesktop(deviceId: string, onOpened: () => void) {
   const { t } = useTranslation('common')

@@ -1,15 +1,18 @@
 import { createElement, useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Loader2, Monitor } from 'lucide-react'
 
-import { VncViewer } from '@/components/vnc/VncViewer'
+import { VncViewer } from './VncViewer'
 import { useTranslation } from '@/hooks/useTranslation'
 import { supportsVncDesktop } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { createVncDeviceClipboardBridge } from '@/lib/vnc-device-clipboard'
+import { createVncDeviceClipboardBridge } from './vnc-device-clipboard'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import type { DeviceSessionResponse } from '@/types/devices'
-import { isIsolatedDeviceDesktopSurface, isolatedDeviceDesktopUrl } from './deviceDesktopRoute'
+import {
+  isIsolatedDeviceDesktopSurface,
+  isolatedDeviceDesktopUrl,
+} from '@/pages/deviceDesktopRoute'
 
 type DeviceDesktopPageState =
   | { status: 'loading' }
