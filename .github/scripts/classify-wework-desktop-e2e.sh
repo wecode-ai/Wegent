@@ -7,6 +7,7 @@ core_segments=(
   workspace-tabs
   collaboration-shared-core
   collaboration-settings-matrix
+  collaboration-local-agent-capabilities
   collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
@@ -145,7 +146,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-agent-automation-chain
+  project-automation,collaboration-local-agent-capabilities,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -520,6 +521,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-settings-matrix.scenario.mjs)
       select_target "core:collaboration-settings-matrix"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-local-agent-capabilities.scenario.mjs)
+      select_target "core:collaboration-local-agent-capabilities"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
@@ -927,12 +932,14 @@ classify_path() {
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-settings-matrix"
+      select_target "core:collaboration-local-agent-capabilities"
       select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-settings-matrix"
+      select_target "core:collaboration-local-agent-capabilities"
       select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
