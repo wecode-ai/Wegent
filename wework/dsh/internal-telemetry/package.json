@@ -31,11 +31,9 @@
     "catalog",
     "catalog.js",
     "client.js",
-    "config.js",
     "cordis.patch.yml",
     "identity.js",
     "index.js",
-    "internal-telemetry.env.example",
     "posthog-client.js",
     "projection.js",
     "smart-app-registry.js"
