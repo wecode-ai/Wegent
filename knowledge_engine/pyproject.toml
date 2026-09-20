@@ -19,7 +19,9 @@ dependencies = [
     # was built on, so an existing knowledge base keeps serving its own
     # collection while the V2 adapter serves the new physical contract. The
     # floor is the first release whose store takes the upsert mode that adapter
-    # writes with and the native filter expression scope its reads pass.
+    # writes with and the native filter expression scope its reads pass: the
+    # 0.4-0.8 stores take neither, so an older floor could install a wrapper
+    # the restored adapter cannot construct.
     "llama-index-vector-stores-milvus>=0.9.0",
     # Both Milvus adapters share one PyMilvus version: the range the V2
     # contract tests verified against the production Milvus server 2.5.4.

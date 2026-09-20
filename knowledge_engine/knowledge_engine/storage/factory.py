@@ -22,7 +22,9 @@ STORAGE_BACKEND_REGISTRY: Dict[str, Type[BaseStorageBackend]] = {
     # configures decides which physical contract its knowledge base is read
     # from and written to. Nothing further down the call chain branches on it.
     # ``milvus`` keeps the frozen snapshot of the adapter the online main branch
-    # shipped, which the import above aliases to say which generation it is.
+    # shipped, which the import above aliases to say which generation it is. It
+    # is kept byte-identical, so it is the one file the ticket holds out of the
+    # repository's file size rule.
     "milvus": LegacyMilvusBackend,
     "milvus_v2": MilvusBackend,
 }
