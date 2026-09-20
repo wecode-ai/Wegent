@@ -14,6 +14,7 @@ import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/c
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   getRuntimeConversationTurns,
   subscribeRuntimeConversation,
@@ -30,6 +31,7 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
+import { Archive, CircleCheck } from 'lucide-react'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -122,6 +124,12 @@ interface CloudTodoBoardCardProps {
   archiveDisabled?: boolean
   /** Menu label for the archive action; defaults to the archive wording. */
   archiveLabel?: string
+  cardAction?: {
+    kind: 'confirm' | 'archive'
+    label: string
+    testId: string
+    onClick: () => void
+  }
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
   onContinueChangeRequestRepair?: (
@@ -149,6 +157,7 @@ export function CloudTodoBoardCard({
   previewDisabled = false,
   archiveDisabled = false,
   archiveLabel,
+  cardAction,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
   onContinueChangeRequestRepair,
@@ -207,7 +216,36 @@ export function CloudTodoBoardCard({
           : null
       }
       dragEnabled={editable && !dragDisabled}
+      cardClassName="group/cloud-todo-card"
       onOpen={onClick}
+      childrenAction={
+        cardAction ? (
+          <span className="absolute right-2 top-2 z-20">
+            <Tooltip label={cardAction.label} side="bottom" align="end">
+              <button
+                type="button"
+                data-testid={cardAction.testId}
+                aria-label={cardAction.label}
+                onClick={event => {
+                  event.stopPropagation()
+                  cardAction.onClick()
+                }}
+                className={
+                  cardAction.kind === 'archive'
+                    ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-red-600 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                    : 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                }
+              >
+                {cardAction.kind === 'archive' ? (
+                  <Archive className="h-3.5 w-3.5" />
+                ) : (
+                  <CircleCheck className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </Tooltip>
+          </span>
+        ) : undefined
+      }
       renderTaskSummary={(binding, compact) => (
         <RuntimeTaskProgressSummary
           key={binding.id}

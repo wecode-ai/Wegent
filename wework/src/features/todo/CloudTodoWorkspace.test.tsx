@@ -5863,6 +5863,7 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
       'Stopped task Issue'
     )
+    expect(screen.queryByTestId('cloud-todo-batch-confirm-review')).not.toBeInTheDocument()
     expect(await screen.findByTestId('cloud-todo-card-progress-trigger-WEG-1')).toHaveAttribute(
       'aria-label',
       '查看进展：Stopped task Issue'
@@ -5975,6 +5976,147 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     const card = await screen.findByTestId('cloud-todo-card-WEG-1')
     expect(card).not.toHaveAttribute('draggable')
+  })
+
+  it('confirms every editable item in the review column from one batch action', async () => {
+    const reviewItems = [
+      { ...item, status: 'in_review' as const },
+      {
+        ...item,
+        id: 'WEG-2',
+        sequence_number: 2,
+        title: 'Review the release notes',
+        status: 'in_review' as const,
+        sort_order: 1,
+      },
+    ]
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: reviewItems,
+    })
+    vi.mocked(workbenchServices.deliveryApi!.updateLoopItem).mockImplementation(
+      async (itemId, values) => ({
+        ...reviewItems.find(candidate => candidate.id === itemId)!,
+        ...values,
+        version: 2,
+      })
+    )
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Review the release notes'
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review'))
+    expect(screen.getByTestId('cloud-todo-batch-confirm-review-dialog')).toHaveTextContent(
+      '将当前列中的 2 个事项标记为已完成'
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledTimes(2)
+    )
+    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
+      version: 1,
+      status: 'completed',
+    })
+    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-2', {
+      version: 1,
+      status: 'completed',
+    })
+    await waitFor(() =>
+      expect(screen.queryByTestId('cloud-todo-batch-confirm-review-dialog')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_review')).not.toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Review the release notes'
+    )
+  })
+
+  it('refreshes a failed local item before retrying batch confirmation', async () => {
+    const localProject = {
+      ...project,
+      id: 'local-review',
+      project_key: 'LOCAL',
+      name: 'Local Review',
+      project_store: 'local' as const,
+    }
+    const localReviewItem = {
+      ...item,
+      id: 'LOCAL-1',
+      cloud_project_id: localProject.id,
+      title: 'Confirm local review',
+      status: 'in_review' as const,
+      project_store: 'local' as const,
+    }
+    const workbenchServices = services()
+    const localApi = workbenchServices.deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listLoopItems = vi.fn(async () => ({ items: [localReviewItem] }))
+    localApi.getLoopItem = vi.fn(async () => ({ ...localReviewItem, version: 2 }))
+    localApi.updateLoopItem = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('version conflict'))
+      .mockImplementation(async (_itemId, values) => ({
+        ...localReviewItem,
+        ...values,
+        version: values.version + 1,
+      }))
+    workbenchServices.projectSpaceApis = {
+      local: localApi,
+      defaultLocation: 'local',
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Local Review'))[0])
+    expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Confirm local review'
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review'))
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review-confirm'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 个事项确认失败，请稍后重试')
+    expect(localApi.updateLoopItem).toHaveBeenCalledWith('LOCAL-1', {
+      version: 1,
+      status: 'completed',
+    })
+    expect(localApi.getLoopItem).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review-confirm'))
+
+    await waitFor(() => expect(localApi.getLoopItem).toHaveBeenCalledWith('LOCAL-1'))
+    expect(localApi.updateLoopItem).toHaveBeenLastCalledWith('LOCAL-1', {
+      version: 2,
+      status: 'completed',
+    })
+    expect(screen.queryByTestId('cloud-todo-batch-confirm-review-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Confirm local review'
+    )
   })
 
   it('creates a shared cloud folder from the files view', async () => {
