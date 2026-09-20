@@ -1363,6 +1363,111 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
+  it("uses the selected workspace location in the project creation dialog", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [workspace, localWorkspace],
+      initialProjects: [],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectLocation: "cloud",
+        }}
+      />,
+    );
+
+    await click(byTestId("collaboration-first-project-create"));
+    await click(
+      byTestId(`collaboration-project-workspace-${localWorkspace.id}`),
+    );
+
+    expect(byTestId("cloud-project-location-local")).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="cloud-project-location-cloud"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain(
+      "保存在当前设备，可接入 GitHub 或 GitLab Issues",
+    );
+    expect(container.textContent).not.toContain("项目可见性");
+  });
+
+  it("offers cloud sign-in instead of defaulting the first project to local", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+    });
+    const requestLogin = vi.fn();
+    await render(
+      <PlatformHarness
+        api={api}
+        cloudAccess={{ authenticated: false, requestLogin }}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectLocation: "cloud",
+          workspaceLocations: ["local", "cloud"],
+        }}
+      />,
+    );
+
+    expect(
+      byTestId("collaboration-first-project-create-local").textContent,
+    ).toContain("创建本地项目");
+    expect(
+      byTestId("collaboration-first-project-create-cloud").textContent,
+    ).toContain("登录后创建云端项目");
+    expect(container.textContent).toContain(
+      "先选择本地空间或云端空间，再创建项目。云端空间支持跨设备协作。",
+    );
+    await click(byTestId("collaboration-first-project-create-cloud"));
+    expect(requestLogin).toHaveBeenCalledOnce();
+    expect(
+      container.querySelector('[data-testid="cloud-project-location-local"]'),
+    ).toBeNull();
+
+    await click(byTestId("collaboration-first-project-create-local"));
+    expect(byTestId("cloud-project-location-local")).toBeTruthy();
+  });
+
+  it("continues cloud project creation after creating its workspace", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        cloudAccess={{ authenticated: true, requestLogin: vi.fn() }}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectLocation: "cloud",
+          workspaceLocations: ["local", "cloud"],
+        }}
+      />,
+    );
+
+    expect(
+      byTestId("collaboration-first-project-create-cloud").textContent,
+    ).toContain("创建云端项目");
+    await click(byTestId("collaboration-first-project-create-cloud"));
+    await change(
+      byTestId("collaboration-workspace-name-input") as HTMLInputElement,
+      "云端研发空间",
+    );
+    await click(byTestId("collaboration-workspace-create-confirm"));
+
+    expect(byTestId("cloud-project-location-cloud")).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="cloud-project-location-local"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("云端研发空间 · 归属：个人");
+    expect(container.textContent).toContain("项目可见性");
+  });
+
   it("uses collaboration home as a guided new Issue entry", async () => {
     const { api } = createApi();
     await render(<PlatformHarness api={api} />);

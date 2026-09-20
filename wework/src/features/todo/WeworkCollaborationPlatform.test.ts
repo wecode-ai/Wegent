@@ -83,6 +83,9 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     }: {
       host: {
         location: CollaborationPlatformLocation
+        capabilities: {
+          workspaceLocations?: readonly ('local' | 'cloud')[]
+        }
         navigate(next: CollaborationPlatformLocation): void
       }
       navigationApis?: SharedWorkspaceApi[]
@@ -92,6 +95,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         {
           'data-testid': 'collaboration-platform-root',
           'data-navigation-source-count': navigationApis?.length ?? 0,
+          'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
         },
         createElement(
           'span',
@@ -250,6 +254,29 @@ function deferred<T>() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('keeps the cloud project choice available before cloud login', () => {
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          projectSpaceApis: {
+            local: createLocalDeliveryApi(),
+          },
+        } as never,
+      })
+    )
+
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-workspace-locations',
+      'local,cloud'
+    )
+  })
+
   it('provides local and cloud navigation as independent data sources', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
