@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io::{self, Write};
+use std::sync::OnceLock;
 
+use regex::Regex;
 use serde_json::Value;
 
 const RAW_LOG_PREVIEW_CHARS: usize = 1200;
@@ -66,15 +68,40 @@ fn sanitize_raw_log_value(value: &Value, key: Option<&str>, preview: bool) -> Va
                 .map(|item| sanitize_raw_log_value(item, None, preview))
                 .collect(),
         ),
-        Value::String(text) if preview && should_summarize_raw_log_string(key, text) => {
-            Value::String(format!(
-                "[{} chars omitted; preview: {}]",
-                text.chars().count(),
-                truncate_text(text, RAW_LOG_STRING_PREVIEW_CHARS)
-            ))
+        Value::String(text) => {
+            let sanitized = redact_diagnostic_text(text);
+            if preview && should_summarize_raw_log_string(key, text) {
+                Value::String(format!(
+                    "[{} chars omitted; preview: {}]",
+                    text.chars().count(),
+                    truncate_text(&sanitized, RAW_LOG_STRING_PREVIEW_CHARS)
+                ))
+            } else {
+                Value::String(sanitized)
+            }
         }
         _ => value.clone(),
     }
+}
+
+/// Removes common credential forms embedded in tool output and diagnostic text.
+pub(super) fn redact_diagnostic_text(text: &str) -> String {
+    static AUTHORIZATION: OnceLock<Regex> = OnceLock::new();
+    static CREDENTIAL_FIELD: OnceLock<Regex> = OnceLock::new();
+    let authorization = AUTHORIZATION.get_or_init(|| {
+        Regex::new(r#"(?i)(\b(?:authorization["']?\s*[:=]\s*["']?(?:bearer|basic)|bearer)[ \t]+)[a-z0-9._~+/-]+=*"#)
+            .expect("authorization redaction pattern is valid")
+    });
+    let credential_field = CREDENTIAL_FIELD.get_or_init(|| {
+        Regex::new(
+            r#"(?i)(\b(?:api[_-]?key|(?:access|refresh|auth|bearer|private)[_-]?token|token|password|secret)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)"#,
+        )
+        .expect("credential field redaction pattern is valid")
+    });
+    let sanitized = authorization.replace_all(text, "${1}[redacted]");
+    credential_field
+        .replace_all(&sanitized, "${1}[redacted]")
+        .into_owned()
 }
 
 fn is_sensitive_key(key: &str) -> bool {
@@ -238,5 +265,42 @@ mod tests {
         assert_eq!(sanitized["usage"]["reasoning_tokens"], 42);
         assert_eq!(sanitized["requestId"], "request-123");
         assert!(!sanitized.to_string().contains("private-value"));
+    }
+
+    #[test]
+    fn diagnostic_strings_redact_embedded_credentials_before_previewing() {
+        let output = concat!(
+            "读取日志\nAuthorization: Bearer fake-bearer-value\n",
+            "authorization: Basic ZmFrZTpwYXNzd29yZA==\n",
+            "API_KEY=fake-api-value access_token='fake token value'\n",
+            r#"{"refreshToken":"fake-refresh-value","status":"ok"}"#,
+        );
+        let description = "Basic implementation uses 42 reasoning tokens.";
+        let message = json!({"stdout": output, "nested": [output], "description": description});
+
+        for recorded in [
+            debug_stdout_value(&message).to_string(),
+            raw_log_preview(&message),
+        ] {
+            for secret in [
+                "fake-bearer-value",
+                "ZmFrZTpwYXNzd29yZA==",
+                "fake-api-value",
+                "fake token value",
+                "fake-refresh-value",
+            ] {
+                assert!(
+                    !recorded.contains(secret),
+                    "unredacted credential: {secret}"
+                );
+            }
+            assert!(recorded.contains("读取日志"));
+            assert!(recorded.contains("[redacted]"));
+        }
+        assert!(debug_stdout_value(&message)["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("ok"));
+        assert_eq!(debug_stdout_value(&message)["description"], description);
     }
 }

@@ -12,7 +12,7 @@ use tokio::{
 
 use crate::{logging::log_executor_event, process::debug_stdout};
 
-use super::diagnostics::debug_stdout_value;
+use super::diagnostics::{debug_stdout_value, redact_diagnostic_text};
 
 pub(super) struct CodexStdout {
     reader: BufReader<ChildStdout>,
@@ -79,9 +79,11 @@ fn open_debug_file(path: PathBuf) -> Option<fs::File> {
 }
 
 fn debug_line(line: &str) -> String {
-    let sanitized =
-        serde_json::from_str::<Value>(line).map(|value| debug_stdout_value(&value).to_string());
-    debug_stdout::line(sanitized.as_deref().unwrap_or(line))
+    let sanitized = match serde_json::from_str::<Value>(line) {
+        Ok(value) => debug_stdout_value(&value).to_string(),
+        Err(_) => redact_diagnostic_text(line),
+    };
+    debug_stdout::line(&sanitized)
 }
 
 #[cfg(test)]
@@ -113,6 +115,18 @@ mod tests {
     fn stdout_keeps_malformed_output_for_diagnostics() {
         let recorded: Value = serde_json::from_str(&debug_line("invalid JSON\n")).unwrap();
         assert_eq!(recorded["raw"], "invalid JSON\n");
+    }
+
+    #[test]
+    fn stdout_redacts_credentials_in_malformed_output() {
+        let recorded: Value = serde_json::from_str(&debug_line(
+            "invalid JSON Authorization: Bearer fake-value\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            recorded["raw"],
+            "invalid JSON Authorization: Bearer [redacted]\n"
+        );
     }
 
     #[test]
