@@ -70,6 +70,9 @@ from app.api.endpoints import (
     work_queue,
     workspaces,
 )
+from app.api.endpoints.admin.cloud_device_ip import (
+    router as admin_cloud_device_ip_router,
+)
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
 
@@ -162,6 +165,11 @@ api_router.include_router(
 )
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(
+    admin_cloud_device_ip_router,
+    prefix="/internal/admin/cloud-devices",
+    tags=["internal-admin"],
+)
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
