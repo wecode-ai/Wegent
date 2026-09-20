@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from llama_index.core.schema import TextNode
+from llama_index.core.vector_stores.utils import node_to_metadata_dict
 
 from shared.models import RetrievalScope
 
@@ -90,7 +91,8 @@ class TestRetrieveSearchHints:
         vector_store = MagicMock()
         vector_store.query.return_value = MagicMock(
             nodes=[TextNode(text="high"), TextNode(text="low")],
-            similarities=[0.81, 0.62],
+            # ES knn scores for cosines 0.81 and 0.62.
+            similarities=[0.905, 0.81],
         )
         backend.create_vector_store = MagicMock(return_value=vector_store)
         embed_model = MagicMock()
@@ -103,7 +105,9 @@ class TestRetrieveSearchHints:
             retrieval_setting={"top_k": 5, "retrieval_mode": "vector"},
         )
 
-        assert [record["score"] for record in result["records"]] == [0.81]
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [0.81]
+        )
 
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_an_explicit_zero_threshold_is_not_replaced(
@@ -122,7 +126,8 @@ class TestRetrieveSearchHints:
         vector_store = MagicMock()
         vector_store.query.return_value = MagicMock(
             nodes=[TextNode(text="high"), TextNode(text="low")],
-            similarities=[0.62, 0.11],
+            # ES knn scores for cosines 0.81 and 0.62.
+            similarities=[0.905, 0.81],
         )
         backend.create_vector_store = MagicMock(return_value=vector_store)
         embed_model = MagicMock()
@@ -139,7 +144,9 @@ class TestRetrieveSearchHints:
             },
         )
 
-        assert [record["score"] for record in result["records"]] == [0.62, 0.11]
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [0.81, 0.62]
+        )
 
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_process_query_results_returns_display_text(self, mock_client_class):
@@ -599,23 +606,180 @@ class TestRelativeScoreProcessing:
         assert [record["score"] for record in result["records"]] == pytest.approx([1.0])
 
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
-    def test_vector_scores_keep_their_raw_cosine_value(
+    def test_vector_scores_are_the_cosine_behind_the_knn_score(
         self, mock_client_class: MagicMock
     ) -> None:
+        """The store reports the knn score; the backend inverts it to cosine."""
         backend = self._backend(mock_client_class)
 
         result = backend._process_query_results(
-            MagicMock(
-                nodes=[TextNode(text="top hit"), TextNode(text="weak hit")],
-                similarities=[0.68, 0.11],
-            ),
+            MagicMock(nodes=[TextNode(text="top hit")], similarities=[0.9]),
             score_threshold=0.0,
             retrieval_mode="vector",
         )
 
-        assert [record["score"] for record in result["records"]] == pytest.approx(
-            [0.68, 0.11]
+        # ES computes the knn score as (1 + cosine) / 2.
+        assert [record["score"] for record in result["records"]] == pytest.approx([0.8])
+
+
+class _FakeElasticsearch:
+    """Stands in for the external Elasticsearch service only.
+
+    The real LlamaIndex store and its retrieval strategies run on top of it, so
+    the tests below exercise the whole adapter chain instead of a hand-built
+    ``VectorStoreQueryResult``.
+    """
+
+    def __init__(self, hits: list[dict]) -> None:
+        self.hits = hits
+
+    def options(self, **kwargs: object) -> "_FakeElasticsearch":
+        return self
+
+    async def search(self, **kwargs: object) -> dict:
+        return {"hits": {"hits": self.hits}}
+
+    async def close(self) -> None:
+        return None
+
+
+def _es_hits(scored_texts: list[tuple[float, str]]) -> list[dict]:
+    """Build the hits one Elasticsearch response carries, scores included."""
+    hits: list[dict] = []
+    for position, (score, text) in enumerate(scored_texts):
+        node = TextNode(text=text)
+        hits.append(
+            {
+                "_index": "index_kb_1",
+                "_id": f"node-{position}",
+                "_score": score,
+                "_source": {
+                    "content": text,
+                    "metadata": node_to_metadata_dict(node, remove_text=True),
+                },
+            }
         )
+    return hits
+
+
+def _retrieve_through_store(
+    hits: list[dict], retrieval_mode: str, *, score_threshold: float
+) -> dict:
+    """Drive one query through production wiring with only ES itself faked."""
+    from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+    backend = ElasticsearchBackend(
+        {
+            "url": "http://localhost:9200",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+    )
+    embed_model = MagicMock()
+    embed_model.get_query_embedding.return_value = [0.1, 0.2]
+
+    with patch(
+        "llama_index.vector_stores.elasticsearch.base.get_elasticsearch_client",
+        return_value=_FakeElasticsearch(hits),
+    ):
+        return backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "retrieval_mode": retrieval_mode,
+                "score_threshold": score_threshold,
+            },
+        )
+
+
+class TestRawScoreChain:
+    """Score semantics through the real Elasticsearch adapter chain."""
+
+    def test_keyword_chain_keeps_the_raw_bm25_ratio(self) -> None:
+        """Raw [6.0, 4.2] must survive the adapter as [1.0, 0.7]."""
+        result = _retrieve_through_store(
+            _es_hits([(6.0, "relevant"), (4.2, "boundary")]),
+            "keyword",
+            score_threshold=0.7,
+        )
+
+        assert [record["content"] for record in result["records"]] == [
+            "relevant",
+            "boundary",
+        ]
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [1.0, 0.7]
+        )
+
+    def test_hybrid_chain_keeps_the_raw_fused_ratio(self) -> None:
+        result = _retrieve_through_store(
+            _es_hits([(6.0, "relevant"), (4.2, "boundary")]),
+            "hybrid",
+            score_threshold=0.7,
+        )
+
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [1.0, 0.7]
+        )
+
+    def test_keyword_single_hit_normalizes_to_one(self) -> None:
+        result = _retrieve_through_store(
+            _es_hits([(6.0, "only")]),
+            "keyword",
+            score_threshold=0.7,
+        )
+
+        assert [record["score"] for record in result["records"]] == pytest.approx([1.0])
+
+    def test_vector_chain_reports_raw_cosine_instead_of_the_knn_score(self) -> None:
+        """ES knn scores 0.9 and 0.55 are cosines 0.8 and 0.1."""
+        result = _retrieve_through_store(
+            _es_hits([(0.9, "high"), (0.55, "low")]),
+            "vector",
+            score_threshold=0.0,
+        )
+
+        assert [record["score"] for record in result["records"]] == pytest.approx(
+            [0.8, 0.1]
+        )
+
+    def test_vector_threshold_compares_raw_cosine(self) -> None:
+        result = _retrieve_through_store(
+            _es_hits([(0.9, "high"), (0.7, "low")]),
+            "vector",
+            score_threshold=0.5,
+        )
+
+        assert [record["content"] for record in result["records"]] == ["high"]
+        assert result["records"][0]["score"] == pytest.approx(0.8)
+
+    def test_vector_scores_do_not_scale_with_the_candidate_set(self) -> None:
+        alone = _retrieve_through_store(
+            _es_hits([(0.9, "high")]),
+            "vector",
+            score_threshold=0.0,
+        )
+        with_companion = _retrieve_through_store(
+            _es_hits([(0.9, "high"), (0.55, "low")]),
+            "vector",
+            score_threshold=0.0,
+        )
+
+        assert alone["records"][0]["score"] == pytest.approx(
+            with_companion["records"][0]["score"]
+        )
+
+    def test_recording_store_forwards_vendor_attribute_writes(self) -> None:
+        """The vendor add path sets num_dimensions through the wrapper."""
+        from knowledge_engine.storage.elasticsearch_store import _HitScoreRecorder
+
+        inner = MagicMock()
+        recorder = _HitScoreRecorder(inner, [])
+
+        recorder.num_dimensions = 3
+
+        assert inner.num_dimensions == 3
 
 
 class TestGetAllChunks:
@@ -771,7 +935,7 @@ class TestListDocuments:
 
 
 class TestDeleteDocument:
-    @patch("knowledge_engine.storage.elasticsearch_backend.ElasticsearchStore")
+    @patch("knowledge_engine.storage.elasticsearch_backend.RawScoreElasticsearchStore")
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_delete_document_removes_parent_nodes(
         self, mock_es_class, mock_store_class

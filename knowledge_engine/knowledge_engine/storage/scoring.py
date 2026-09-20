@@ -15,6 +15,12 @@ The rescaling happens before the threshold runs, so one ``score_threshold``
 means "at least this share of the top hit" on every backend and in the modes
 that share the relative scale. The fusion algorithms themselves are not
 unified: this module fixes what a reported score means, not how it is ranked.
+
+The input must still be the score the engine returned. An adapter that
+pre-scales the batch before this rule runs destroys the ratio: the
+Elasticsearch store therefore keeps the raw ``_score``
+(``knowledge_engine.storage.elasticsearch_store``) and recovers the absolute
+cosine of a vector hit from the knn score before the threshold sees it.
 """
 
 from __future__ import annotations

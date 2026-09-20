@@ -26,7 +26,6 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQuery,
     VectorStoreQueryMode,
 )
-from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
 from knowledge_engine.retrieval.filters import (
     build_elasticsearch_filters,
@@ -39,6 +38,7 @@ from knowledge_engine.retrieval.search_hints import (
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.elasticsearch_store import RawScoreElasticsearchStore
 from knowledge_engine.storage.scoring import (
     RELATIVE_SCORE_RETRIEVAL_MODES,
     normalize_scores_to_max,
@@ -94,7 +94,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
     def create_vector_store(
         self, index_name: str, retrieval_mode: str = "vector"
-    ) -> ElasticsearchStore:
+    ) -> RawScoreElasticsearchStore:
         """
         Create Elasticsearch vector store with appropriate retrieval strategy.
 
@@ -106,7 +106,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                 - 'hybrid': Combined vector + BM25 search
 
         Returns:
-            ElasticsearchStore instance configured for the specified mode
+            Raw-score Elasticsearch store configured for the specified mode
         """
         # Select retrieval strategy based on mode
         if retrieval_mode == "keyword":
@@ -123,7 +123,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             # Default: Pure vector search
             retrieval_strategy = AsyncDenseVectorStrategy(hybrid=False)
 
-        return ElasticsearchStore(
+        return RawScoreElasticsearchStore(
             index_name=index_name,
             es_url=self.url,
             retrieval_strategy=retrieval_strategy,
@@ -241,6 +241,13 @@ class ElasticsearchBackend(BaseStorageBackend):
                 - alpha: Optional weight for hybrid search (0=keyword only, 1=vector only, default: 0.7)
             metadata_condition: Optional metadata filtering
             **kwargs: Additional parameters
+
+        Score semantics:
+            The store keeps the raw ``_score`` Elasticsearch returned, so
+            ``vector`` reports the absolute COSINE similarity recovered from
+            the knn score (``2 * _score - 1``) and ``keyword`` / ``hybrid``
+            report the result-set-relative score the shared scoring rule
+            defines.
 
         Returns:
             Retrieval result dict
@@ -493,7 +500,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             retrieval_mode: The mode that produced the result set. Keyword and
                 hybrid scores are only comparable inside their own result set,
                 so they are rescaled before the threshold runs; vector keeps
-                the raw COSINE value.
+                the absolute COSINE value, recovered from the knn score.
 
         Returns:
             Dict with 'records' list in Dify-compatible format
@@ -511,7 +518,12 @@ class ElasticsearchBackend(BaseStorageBackend):
             )
             for i in range(len(result.nodes))
         ]
-        if retrieval_mode in RELATIVE_SCORE_RETRIEVAL_MODES:
+        if retrieval_mode == "vector":
+            # Elasticsearch scores a knn cosine hit as (1 + cosine) / 2, so
+            # the absolute similarity is 2 * _score - 1. Reporting it keeps
+            # one COSINE threshold meaning the same thing on every engine.
+            scores = [2.0 * score - 1.0 for score in scores]
+        elif retrieval_mode in RELATIVE_SCORE_RETRIEVAL_MODES:
             scores = normalize_scores_to_max(scores)
 
         # Process results (Dify-compatible format)
