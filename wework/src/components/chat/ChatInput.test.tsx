@@ -825,6 +825,65 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
   })
 
+  test('continues in a new referenced conversation when switching Codex providers', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT 5.6 Sol',
+      isActive: true,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const targetModel: UnifiedModel = {
+      name: 'router-model',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'Router Model',
+      isActive: true,
+      config: {
+        weworkModelKind: 'codex-provider',
+        codexProviderId: 'wecode-openai',
+      },
+    }
+    const setSelectedModel = vi.fn()
+    const continueInNewConversation = vi.fn()
+
+    render(
+      <ChatInput
+        value="继续排查"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [activeModel, targetModel],
+          activeModel,
+          selectedModel: activeModel,
+          setSelectedModel,
+          continueInNewConversation,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-router-model'))
+
+    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+      'Router Model uses a different model provider'
+    )
+    expect(screen.getByTestId('model-switch-warning-confirm-button')).toHaveTextContent(
+      'Continue in new conversation'
+    )
+
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+    expect(continueInNewConversation).toHaveBeenCalledWith(targetModel, undefined, {
+      draft: '继续排查',
+    })
+    expect(setSelectedModel).not.toHaveBeenCalled()
+  })
+
   test('does not warn when selecting a model before a conversation has an active model', async () => {
     const targetModel: UnifiedModel = {
       name: 'local-model:first',

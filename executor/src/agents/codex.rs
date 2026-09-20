@@ -518,39 +518,6 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn restart_if_no_competing_work(
-        &self,
-        active_thread_id: &str,
-    ) -> Result<(), (usize, usize)> {
-        let process = {
-            let mut state = self.state.lock().await;
-            let active_turn_count = state.active_threads.values().sum::<usize>();
-            let Some(process) = state.process.as_ref() else {
-                state
-                    .thread_generations
-                    .retain(|thread_id, _| thread_id == active_thread_id);
-                state.idle_thread_generations.clear();
-                return Ok(());
-            };
-            let pending_request_count = process.pending.lock().await.len();
-            let current_thread_is_only_active = state.active_threads.len() == 1
-                && state.active_threads.get(active_thread_id) == Some(&1);
-            if !current_thread_is_only_active || pending_request_count > 0 {
-                return Err((active_turn_count, pending_request_count));
-            }
-            state
-                .thread_generations
-                .retain(|thread_id, _| thread_id == active_thread_id);
-            state.idle_thread_generations.clear();
-            state.process_environment.clear();
-            state.process.take()
-        };
-        if let Some(process) = process {
-            drop(process);
-        }
-        Ok(())
-    }
-
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
         let process = {
             let mut state = self.state.lock().await;
@@ -1789,15 +1756,12 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_fields.push(("operation", operation.to_owned()));
                 thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
-                let thread_id = request_shared_thread_id_with_provider_recovery(
-                    client,
+                let response = client.request(operation, params).await?;
+                let thread_id = thread_id_from_response(
                     operation,
-                    params,
-                    &launch_config,
-                    &request.task_id,
-                    &request.subtask_id,
-                )
-                .await?;
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
                 thread_id
@@ -5546,75 +5510,6 @@ fn validate_codex_model_provider(
         // Codex builds return it, so reject an explicit mismatch without breaking those clients.
         None => Ok(()),
     }
-}
-
-async fn request_shared_thread_id_with_provider_recovery(
-    client: &CodexAppServerClient,
-    operation: &'static str,
-    params: Value,
-    launch_config: &CodexLaunchConfig,
-    task_id: &str,
-    subtask_id: &str,
-) -> Result<String, String> {
-    let response = client.request(operation, params.clone()).await?;
-    let provider_error = match thread_id_from_response(
-        operation,
-        &response,
-        launch_config.model_provider.as_deref(),
-    ) {
-        Ok(thread_id) => return Ok(thread_id),
-        Err(error) => error,
-    };
-    if operation != "thread/resume"
-        || validate_codex_model_provider(
-            operation,
-            &response,
-            launch_config.model_provider.as_deref(),
-        )
-        .is_ok()
-    {
-        return Err(provider_error);
-    }
-    let active_thread_id = params
-        .get("threadId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "codex app-server thread/resume params missing threadId".to_owned())?;
-
-    let mut fields = task_fields(task_id, subtask_id);
-    fields.push(("operation", operation.to_owned()));
-    fields.push(("error", provider_error.clone()));
-    match client.restart_if_no_competing_work(active_thread_id).await {
-        Ok(()) => {
-            log_executor_event(
-                "codex shared stale thread provider recovery restarting",
-                &fields,
-            );
-        }
-        Err((active_turn_count, pending_request_count)) => {
-            fields.push(("active_turn_count", active_turn_count.to_string()));
-            fields.push(("pending_request_count", pending_request_count.to_string()));
-            log_executor_event(
-                "codex shared stale thread provider recovery unavailable",
-                &fields,
-            );
-            return Err(provider_error);
-        }
-    }
-
-    client
-        .ensure_process_for_launch_config(launch_config)
-        .await?;
-    let response = client.request(operation, params).await?;
-    let thread_id = thread_id_from_response(
-        operation,
-        &response,
-        launch_config.model_provider.as_deref(),
-    )?;
-    log_executor_event(
-        "codex shared stale thread provider recovery completed",
-        &fields,
-    );
-    Ok(thread_id)
 }
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
