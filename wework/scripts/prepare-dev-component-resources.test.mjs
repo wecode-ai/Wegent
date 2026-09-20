@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 
-import { CORE_PLUGIN_DIRECTORIES, corePluginTarget } from './lib/core-plugin-resources.mjs'
+import {
+  CORE_PLUGIN_DIRECTORIES,
+  corePluginSource,
+  corePluginTarget,
+} from './lib/core-plugin-resources.mjs'
 import { prepareDevelopmentComponentResources } from './prepare-dev-component-resources.mjs'
 
 let fixtureRoot
@@ -33,7 +37,7 @@ describe('prepare development component resources', () => {
     })
     await directory(join(weworkRoot, 'resources', 'bundled-plugins'))
     for (const directoryName of CORE_PLUGIN_DIRECTORIES) {
-      await json(join(weworkRoot, 'dsh', directoryName, 'package.json'), {
+      await json(join(corePluginSource(weworkRoot, directoryName), 'package.json'), {
         name: directoryName,
       })
     }
