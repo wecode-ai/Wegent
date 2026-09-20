@@ -139,6 +139,9 @@ const platformMessages = {
     searchTeams: "搜索协作小组",
     searchDevices: "搜索设备",
     available: "可用",
+    agentAvailableHint: "配置完整，成员角色、执行方式和模型均可正常解析。",
+    agentUnavailableHint:
+      "智能体已停用，或成员角色、执行方式、模型配置缺失或失效。",
     offline: "离线",
     online: "在线",
     provisioning: "准备中",
@@ -341,6 +344,10 @@ const platformMessages = {
     searchTeams: "Search teams",
     searchDevices: "Search devices",
     available: "Available",
+    agentAvailableHint:
+      "The agent is active and its members, execution method, and models can all be resolved.",
+    agentUnavailableHint:
+      "The agent is inactive, or a member, execution method, or model configuration is missing or invalid.",
     offline: "Offline",
     online: "Online",
     provisioning: "Preparing",
@@ -1662,6 +1669,11 @@ function ResourceCatalogPage({
                   <span
                     className="collaboration-resource-row-status"
                     data-tone={row.statusTone}
+                    title={
+                      row.statusTone === "available"
+                        ? messages.agentAvailableHint
+                        : messages.agentUnavailableHint
+                    }
                   >
                     {row.status}
                   </span>

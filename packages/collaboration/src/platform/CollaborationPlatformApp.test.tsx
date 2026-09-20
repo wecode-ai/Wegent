@@ -195,10 +195,15 @@ function createApi({
   initialWorkspaces = [workspace],
   initialProjects = [project],
   initialIssues = [issue],
+  initialResources,
 }: {
   initialWorkspaces?: CollaborationWorkspace[];
   initialProjects?: CollaborationProject[];
   initialIssues?: CollaborationIssue[];
+  initialResources?: {
+    agents: CollaborationOwnedAgent[];
+    execution_environments: CollaborationExecutionEnvironment[];
+  };
 } = {}) {
   const workspaces = [...initialWorkspaces];
   const projects = [...initialProjects];
@@ -206,7 +211,7 @@ function createApi({
   const workspaceAgents = [agent];
   const collaborationGroups: import("../types").CollaborationGroup[] = [];
   const workspaceEnvironments = [environment];
-  const personalResources = {
+  const personalResources = initialResources ?? {
     agents: [agent, availableAgent],
     execution_environments: [environment, availableEnvironment],
   };
@@ -932,6 +937,35 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(page.textContent?.toLowerCase()).not.toContain("runtime");
     },
   );
+  it("explains how agent availability is determined", async () => {
+    const unavailableAgent = {
+      ...agent,
+      id: "agent-unavailable",
+      team_id: 13,
+      name: "配置失效智能体",
+      status: "unavailable" as const,
+    };
+    const { api } = createApi({
+      initialResources: {
+        agents: [agent, unavailableAgent],
+        execution_environments: [environment],
+      },
+    });
+    await render(<PlatformHarness api={api} />);
+
+    await click(byTestId("collaboration-primary-agents"));
+
+    expect(
+      byTestId(`collaboration-agents-row-${agent.id}`)
+        .querySelector(".collaboration-resource-row-status")
+        ?.getAttribute("title"),
+    ).toBe("配置完整，成员角色、执行方式和模型均可正常解析。");
+    expect(
+      byTestId(`collaboration-agents-row-${unavailableAgent.id}`)
+        .querySelector(".collaboration-resource-row-status")
+        ?.getAttribute("title"),
+    ).toBe("智能体已停用，或成员角色、执行方式、模型配置缺失或失效。");
+  });
   it("tracks the selected workspace when navigating between spaces and root pages", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace, workspace],
