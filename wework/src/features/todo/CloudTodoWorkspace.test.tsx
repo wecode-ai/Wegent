@@ -614,6 +614,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       listDevices: vi.fn(async () => [
         { device_id: 'local-device', device_type: 'local', status: 'online' },
       ]),
+      listSkills: vi.fn(async () => []),
     },
     modelApi: {
       listModels: vi.fn(async () => ({
