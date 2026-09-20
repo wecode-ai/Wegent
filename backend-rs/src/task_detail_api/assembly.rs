@@ -374,6 +374,10 @@ pub(crate) async fn build_task_detail(
 
     // `get_bots_for_subtasks`: bot ids through the public reader, then each
     // bot's model/shell refs (resolved with the bot owner's user id).
+    // `all_bot_ids` is a Python `set`; small-int sets iterate in hash order
+    // (`hash(int) == int`, table slot `id % table_size`), so the probe order
+    // is the ascending id order for the small id sets this endpoint sees
+    // (verified against the recorded `kind:v2:data:Bot:{id}` probe order).
     let mut bot_ids: Vec<i64> = Vec::new();
     for subtask in &subtasks {
         if let Some(ids) = subtask.bot_ids.project::<Vec<Option<i64>>>() {
@@ -384,11 +388,18 @@ pub(crate) async fn build_task_detail(
             }
         }
     }
+    bot_ids.sort_unstable();
     let bots = kinds
         .get_by_ids("Bot", &bot_ids)
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let mut bot_summaries = Vec::new();
+    // `model_cache` / `shell_type_cache`: per-call memoization keyed by
+    // `(bot.user_id, namespace, name)`; a repeated ref resolves once.
+    let mut model_cache: std::collections::HashMap<(i64, String, String), i64> =
+        std::collections::HashMap::new();
+    let mut shell_type_cache: std::collections::HashMap<(i64, String, String), String> =
+        std::collections::HashMap::new();
     for bot in &bots {
         let bot_crd = CrdDocument::project(&bot.json.0);
         let bot_spec = bot_crd.spec.as_ref();
@@ -402,29 +413,42 @@ pub(crate) async fn build_task_detail(
             .and_then(|spec| spec.model_ref.as_ref())
             .and_then(|reference| reference.nonempty_parts())
         {
-            let model = kinds
-                .get_by_name_and_namespace(bot.user_id, "Model", &namespace, &name)
-                .await
-                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+            let key = (bot.user_id, namespace.clone(), name.clone());
+            let model_user_id = match model_cache.get(&key) {
+                Some(owner) => *owner,
+                None => {
+                    let model = kinds
+                        .get_by_name_and_namespace(bot.user_id, "Model", &namespace, &name)
+                        .await
+                        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+                    let owner = model.as_ref().map_or(0, |model| model.user_id);
+                    model_cache.insert(key, owner);
+                    owner
+                }
+            };
             agent_config.bind_model = Some(name);
-            agent_config.bind_model_type =
-                Some(if model.as_ref().is_some_and(|model| model.user_id == 0) {
-                    "public"
-                } else {
-                    "user"
-                });
+            agent_config.bind_model_type = Some(if model_user_id == 0 { "public" } else { "user" });
         }
         let mut shell_type = String::new();
         if let Some((name, namespace)) = bot_spec
             .and_then(|spec| spec.shell_ref.as_ref())
             .and_then(|reference| reference.nonempty_parts())
         {
-            let shell = kinds
-                .get_by_name_and_namespace(bot.user_id, "Shell", &namespace, &name)
-                .await
-                .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-            if let Some(shell_type_value) = shell.as_ref().and_then(shell_type_of) {
-                shell_type = shell_type_value.to_owned();
+            let key = (bot.user_id, namespace.clone(), name.clone());
+            if let Some(cached) = shell_type_cache.get(&key) {
+                shell_type = cached.clone();
+            } else {
+                let shell = kinds
+                    .get_by_name_and_namespace(bot.user_id, "Shell", &namespace, &name)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+                let resolved = shell
+                    .as_ref()
+                    .and_then(shell_type_of)
+                    .unwrap_or_default()
+                    .to_owned();
+                shell_type_cache.insert(key, resolved.clone());
+                shell_type = resolved;
             }
         }
         bot_summaries.push(SubtaskBotResponse {

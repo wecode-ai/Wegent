@@ -7,8 +7,8 @@ live in `brz-http-gateway`.
 
 The route configuration selects the migrated public APIs. Requests without a
 matching method and path continue to the Python backend. The checked-in
-`config/routes.toml` ships with no active rules, so a default checkout forwards
-every request to Python.
+`config/routes.toml` activates only the APIs that have completed cutover, so
+every other request is forwarded to Python.
 
 ## Run
 

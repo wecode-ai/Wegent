@@ -994,21 +994,8 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id = match self.start_local_task_execution(
-            local_task_id.clone(),
-            request
-                .project_workspace_path
-                .as_deref()
-                .or_else(|| request.cwd()),
-            cancel_tx,
-            stopped_rx,
-        ) {
-            Ok(execution_id) => execution_id,
-            Err(error) => {
-                self.fail_local_task_execution_start(&local_task_id, &error);
-                return;
-            }
-        };
+        let execution_id =
+            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
         if let Some(restore_startup) = restore_startup.as_ref() {
             self.schedule_restore_startup_timeout(
                 local_task_id.clone(),

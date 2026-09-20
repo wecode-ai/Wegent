@@ -75,13 +75,35 @@ pub(crate) struct GitAccountEntry {
     pub(crate) user_name: Option<String>,
 }
 
-/// `UserReader.get_by_id`: direct SQL user lookup. The intermediate document
-/// type is retained because the response builder applies the same projection
-/// and preference normalization to database rows.
+/// `user:v2:data:{user_id}` cache read with the MySQL fallback
+/// (`CachedUserReader.get_by_id`): the Redis document first, then the
+/// SQLAlchemy user query on a miss (failures degrade to misses).
 pub(crate) async fn cached_user(
     state: &AppState,
     user_id: i64,
 ) -> anyhow::Result<Option<CachedUserResponse>> {
+    use brz_redis::Redis;
+    let cached: Option<brz_redis::RedisBytes> = match state.redis.as_ref() {
+        Some(redis) => redis
+            .get(format!("user:v2:data:{user_id}").as_str())
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, %user_id, "[task_detail] user cache read failed");
+                error
+            })
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    if let Some(bytes) = cached
+        && let Ok(document) =
+            serde_json::from_str::<UserCacheDocument>(&String::from_utf8_lossy(bytes.as_ref()))
+    {
+        let extra = state
+            .user_profile
+            .cached_user_ext(document.preferences.as_deref());
+        return Ok(Some(render_cached_user(document, extra)));
+    }
     // `UserReader.get_by_id`: the same labeled projection the auth path
     // renders (`db.query(User)`).
     let row: Option<brz_mysql::MysqlRow> = brz_mysql::Mysql::fetch_optional(
@@ -158,6 +180,7 @@ pub(crate) struct CachedUserResponse {
 struct CachedPreferencesInput {
     employee_id: Option<OpaqueJson>,
     send_key: Option<OpaqueJson>,
+    follow_up_behavior: Option<OpaqueJson>,
     search_key: Option<OpaqueJson>,
     memory_enabled: Option<OpaqueJson>,
     chat_status_items: Option<OpaqueJson>,
@@ -182,6 +205,7 @@ enum CachedPreferencesDocument {
 struct CachedPreferencesResponse {
     employee_id: Option<OpaqueJson>,
     send_key: Option<OpaqueJson>,
+    follow_up_behavior: Option<OpaqueJson>,
     search_key: Option<OpaqueJson>,
     memory_enabled: Option<OpaqueJson>,
     chat_status_items: Option<OpaqueJson>,
@@ -229,6 +253,9 @@ fn cached_preferences(
     };
     input.send_key.get_or_insert_with(|| json!("enter").into());
     input
+        .follow_up_behavior
+        .get_or_insert_with(|| json!("queue").into());
+    input
         .search_key
         .get_or_insert_with(|| json!("cmd_k").into());
     input
@@ -249,6 +276,7 @@ fn cached_preferences(
     Some(CachedPreferencesResponse {
         employee_id: input.employee_id,
         send_key: input.send_key,
+        follow_up_behavior: input.follow_up_behavior,
         search_key: input.search_key,
         memory_enabled: input.memory_enabled,
         chat_status_items: input.chat_status_items,

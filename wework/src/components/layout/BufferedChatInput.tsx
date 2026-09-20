@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useImperativeHandle,
+  type Ref,
+} from 'react'
 import {
   ChatInput,
   type ChatInputHandle,
@@ -20,6 +29,7 @@ export interface BufferedChatInputInsertion {
 }
 
 interface BufferedChatInputProps extends ChatInputProps {
+  inputRef?: Ref<ChatInputHandle>
   autoFocus?: boolean
   insertion?: BufferedChatInputInsertion | null
   onDraftEdit?: () => void
@@ -34,6 +44,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   autoFocus,
   insertion,
   onDraftEdit,
+  inputRef,
   onCompositionStart: onParentCompositionStart,
   onCompositionEnd: onParentCompositionEnd,
   ...props
@@ -51,6 +62,19 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
+  useImperativeHandle(
+    inputRef,
+    () => ({
+      get element() {
+        return composerRef.current?.element ?? null
+      },
+      focus: () => composerRef.current?.focus(),
+      getValue: () => composerRef.current?.getValue() ?? draftRef.current,
+      insertReference: reference => composerRef.current?.insertReference(reference),
+      setValue: (value, offset) => composerRef.current?.setValue(value, offset),
+    }),
+    []
+  )
   const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
   const publishedDraftRevisionRef = useRef(0)

@@ -36,8 +36,9 @@ route. An API is migrated only when both of these are true:
 2. An active `WEGENT_RS_ROUTES_FILE` rule selects its method and path for Rust
    (the repository default is `backend-rs/config/routes.toml`).
 
-The checked-in default route table is currently empty, so it selects no Rust
-APIs. Use the following ownership rules for every API change:
+The checked-in default route table activates only the APIs that have completed
+cutover; every other request is forwarded to Python. Use the following ownership
+rules for every API change:
 
 | Change | Where to implement it |
 | --- | --- |

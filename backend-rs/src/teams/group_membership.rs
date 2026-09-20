@@ -44,6 +44,28 @@ pub fn has_permission(user_role: &str, required_role: &str) -> bool {
     }
 }
 
+/// `TEAM_USE_ROLE` (`app.services.team_access_policy`): the least privileged
+/// role that may use a team through a group namespace, so every recognised
+/// group role qualifies.
+pub const TEAM_USE_ROLE: &str = "RestrictedAnalyst";
+
+/// `_get_accessible_authorization_namespace_ids`: the group namespaces whose
+/// effective role grants team use, in the caller's order.
+pub fn accessible_authorization_namespaces(
+    group_namespaces: &[String],
+    effective: &HashMap<String, String>,
+) -> Vec<String> {
+    group_namespaces
+        .iter()
+        .filter(|name| {
+            effective
+                .get(*name)
+                .is_some_and(|role| has_permission(role, TEAM_USE_ROLE))
+        })
+        .cloned()
+        .collect()
+}
+
 /// `get_highest_role`: the most privileged role among the candidates.
 fn highest_role(roles: &[String]) -> Option<String> {
     roles
@@ -338,6 +360,27 @@ mod tests {
         assert!(!has_permission("Reporter", "Developer"));
         assert!(has_permission("Reporter", "RestrictedAnalyst"));
         assert!(!has_permission("Unknown", "Reporter"));
+    }
+
+    #[test]
+    fn team_use_role_admits_every_recognised_group_role() {
+        // `TEAM_USE_ROLE` is the least privileged role, so a
+        // `RestrictedAnalyst` group namespace still authorises team access
+        // (`_get_accessible_authorization_namespace_ids`).
+        let groups = vec![
+            "open".to_string(),
+            "restricted".to_string(),
+            "foreign".to_string(),
+        ];
+        let effective = HashMap::from([
+            ("open".to_string(), "Reporter".to_string()),
+            ("restricted".to_string(), "RestrictedAnalyst".to_string()),
+        ]);
+        assert_eq!(
+            accessible_authorization_namespaces(&groups, &effective),
+            vec!["open".to_string(), "restricted".to_string()]
+        );
+        assert_eq!(TEAM_USE_ROLE, "RestrictedAnalyst");
     }
 
     #[test]

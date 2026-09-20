@@ -82,6 +82,20 @@ interface TeamDetailResponse {
   bots?: { bot: TeamDetailBot; role?: string | null }[] | null
 }
 
+export interface AgentResourceOwnerGroup {
+  name: string
+  displayName: string
+  role: string
+}
+
+interface GroupListResponse {
+  items?: Array<{
+    name?: string | null
+    display_name?: string | null
+    my_role?: string | null
+  }>
+}
+
 function agentConfig(spec: UnifiedAgentSpec): Record<string, unknown> {
   return {
     bind_model: spec.model.name,
@@ -165,6 +179,21 @@ export function createAgentResourceApi(client: HttpClient) {
       const query = new URLSearchParams()
       query.set('scope', 'all')
       return client.get(`/v1/kinds/skills/unified?${query.toString()}`)
+    },
+    async listOwnerGroups(): Promise<AgentResourceOwnerGroup[]> {
+      const response = await client.get<GroupListResponse>('/groups?page=1&limit=100')
+      return (response.items ?? []).flatMap(group => {
+        if (!group.name || !['Owner', 'Maintainer', 'Developer'].includes(group.my_role ?? '')) {
+          return []
+        }
+        return [
+          {
+            name: group.name,
+            displayName: group.display_name || group.name,
+            role: group.my_role || '',
+          },
+        ]
+      })
     },
     async createAgent(spec: UnifiedAgentSpec): Promise<CreatedAgentResource> {
       const bot = await client.post<CreatedBot>('/bots', {

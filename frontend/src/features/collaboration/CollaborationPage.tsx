@@ -45,7 +45,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationContextSidebar } from '@/features/collaboration/CollaborationContextSidebar'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
-import { collaborationLocationPath } from '@/features/collaboration/routes'
+import {
+  collaborationLocationPath,
+  collaborationRootViewForPath,
+} from '@/features/collaboration/routes'
 import { ResizableSidebar } from '@/features/tasks/components/sidebar'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -217,15 +220,11 @@ export function CollaborationPage() {
   const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
   const issueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
-  const myWorkRoute = pathname === '/collaboration/my-work'
-  const inboxRoute = pathname === '/collaboration/inbox'
-  const runsRoute = pathname === '/collaboration/runs'
   const removedResourcesRoute = pathname === '/collaboration/resources'
-  const rootView = myWorkRoute ? 'my-work' : inboxRoute ? 'inbox' : runsRoute ? 'runs' : 'home'
+  const parsedRootView = collaborationRootViewForPath(pathname)
+  const rootView = parsedRootView ?? 'home'
   const legacyProjectId =
-    !workspaceRoute &&
-    segments[1] &&
-    !['resources', 'my-work', 'inbox', 'runs'].includes(segments[1])
+    !workspaceRoute && segments[1] && !parsedRootView && segments[1] !== 'resources'
       ? decodeURIComponent(segments[1])
       : null
   const legacyIssueId =

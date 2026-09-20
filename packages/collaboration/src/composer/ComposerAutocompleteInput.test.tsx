@@ -86,6 +86,66 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(element(id)).not.toBeNull()
     await act(async () => element(id).click())
   }
+  it('restricts Issue autocomplete to members and Issues and treats slash as plain text', async () => {
+    const plan = vi.fn()
+    await mount({
+      mentionScope: 'external',
+      onListLocalSkills: listSkills,
+      onSetPlanMode: plan,
+      externalMentionCandidates: [
+        {
+          id: 'u1',
+          type: 'user',
+          title: 'Alice',
+          metaLabel: 'Member',
+          reference: '[$@Alice](wework-member://p/1)',
+          testId: 'member-alice',
+        },
+        {
+          id: 'a1',
+          type: 'agent',
+          title: 'Engineer',
+          metaLabel: 'Agent',
+          reference: '[$@Engineer](wework-agent://p/a1)',
+          testId: 'agent-engineer',
+        },
+        {
+          id: 'g1',
+          type: 'group',
+          title: 'Delivery',
+          metaLabel: 'Team',
+          reference: '[$@Delivery](wework-group://p/g1)',
+          testId: 'group-delivery',
+        },
+        {
+          id: 'i1',
+          type: 'issue',
+          title: '#1 Fix login',
+          metaLabel: 'Issue',
+          reference: '[$#1 Fix login](wework-issue://p/i1)',
+          testId: 'issue-login',
+        },
+      ],
+    })
+    await type('@')
+    expect(element('member-alice')).not.toBeNull()
+    expect(element('agent-engineer')).not.toBeNull()
+    expect(element('group-delivery')).not.toBeNull()
+    expect(element('issue-login')).toBeNull()
+    expect(container.textContent).not.toContain('文件和文件夹')
+    expect(container.textContent).not.toContain('计划模式')
+    expect(container.textContent).not.toContain('Gmail')
+    await type('#login')
+    expect(element('agent-engineer')).toBeNull()
+    expect(element('group-delivery')).toBeNull()
+    expect(element('member-alice')).toBeNull()
+    await click('issue-login')
+    expect(input.current!.getValue()).toContain('wework-issue://p/i1')
+    await type('/plan')
+    expect(container.querySelector('[data-testid^="slash-command-option-"]')).toBeNull()
+    expect(input.current!.getValue()).toBe('/plan')
+    expect(plan).not.toHaveBeenCalled()
+  })
   it('inserts a picker reference at the live caret without overwriting following text', async () => {
     await mount()
     await act(async () => {
@@ -110,14 +170,22 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(element('local-skill-option-gmail').textContent).toContain('个人')
     await act(async () =>
       element('editor').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
     expect(input.current!.getValue()).toBe('[$gmail](/skills/gmail/SKILL.md) ')
     expect(element('local-skill-autocomplete')).toBeNull()
   })
   it('opens the native slash model menu and selects the original model', async () => {
-    const model = { name: 'model-a', displayName: 'Model A', type: 'user' as const }
+    const model = {
+      name: 'model-a',
+      displayName: 'Model A',
+      type: 'user' as const,
+    }
     const onSelectModel = vi.fn()
     await mount({ models: [model], onSelectModel })
     await type('/model')
@@ -139,7 +207,11 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(files.disabled).toBe(true)
     await act(async () =>
       element('editor').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
     expect(input.current!.getValue()).toBe('@')
@@ -172,7 +244,13 @@ describe('shared autocomplete controller in a browser host', () => {
   it('inserts a path returned by the addressed workspace search', async () => {
     const searchWorkspaceEntries = vi.fn().mockResolvedValue({
       files: [
-        { root: '/repo', path: 'README.md', fileName: 'README.md', matchType: 'file', score: 1 },
+        {
+          root: '/repo',
+          path: 'README.md',
+          fileName: 'README.md',
+          matchType: 'file',
+          score: 1,
+        },
       ],
     })
     await mount({

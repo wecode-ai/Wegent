@@ -13,8 +13,9 @@ import type { SlashCommand } from './composerAutocomplete'
 
 export type ComposerCatalogCommand = SlashCommand<LocalDeviceApp, LocalDeviceSkill>
 export interface ComposerExternalMentionCandidate {
+  reference?: string
   id: string
-  type: 'agent' | 'user'
+  type: 'agent' | 'user' | 'group' | 'issue'
   title: string
   metaLabel: string
   searchAliases?: string[]
@@ -61,6 +62,7 @@ export interface ComposerAutocompleteInputProps<
   >[]
   cloudSpaceEnabled?: boolean
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  mentionScope?: 'all' | 'external'
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: Project) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>

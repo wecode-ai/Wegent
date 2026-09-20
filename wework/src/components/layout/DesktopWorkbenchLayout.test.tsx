@@ -148,6 +148,14 @@ const sharedWorkspaceApiMock = {
     },
   },
   issues: {
+    async list(projectId: string) {
+      const response = await deliveryApiMock.listLoopItems(projectId)
+      return response.items.map(item => ({
+        ...item,
+        id: String(item.id),
+        cloud_project_id: String(item.cloud_project_id),
+      }))
+    },
     async getBoardSnapshot(projectId: string) {
       const response = await deliveryApiMock.listLoopItems(projectId)
       return {

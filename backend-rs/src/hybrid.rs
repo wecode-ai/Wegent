@@ -8,17 +8,13 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
-use http::{Method, Request, Uri};
-use hyper::body::Incoming;
+use http::{Method, Uri};
 use tracing::info;
 
-use crate::{
-    Application, BoxError, Gateway, GatewayResponse, OriginService, PathMatch, RouteRule,
-    RouteTable, RoutesConfig, RustApi, bind, serve,
-};
+use crate::{Application, BoxError, Gateway, OriginService, RouteTable, RustApi, bind, serve};
 
 mod routes;
-use routes::TemplateRoutes;
+use routes::load as load_routes;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
@@ -31,7 +27,6 @@ pub struct HybridConfig {
     pub listen_address: SocketAddr,
     pub python_upstream: Uri,
     pub routes: RouteTable,
-    templates: TemplateRoutes,
     pub shutdown_grace: Duration,
 }
 
@@ -54,15 +49,14 @@ impl HybridConfig {
         let python_upstream = env::var("WEGENT_PYTHON_UPSTREAM_URL")
             .unwrap_or_else(|_| DEFAULT_PYTHON_UPSTREAM.to_owned())
             .parse()?;
-        let (routes, templates) = match env::var_os("WEGENT_RS_ROUTES_FILE") {
-            Some(path) => TemplateRoutes::load(Path::new(&path))?,
-            None => (RouteTable::empty(), TemplateRoutes::default()),
+        let routes = match env::var_os("WEGENT_RS_ROUTES_FILE") {
+            Some(path) => load_routes(Path::new(&path))?,
+            None => RouteTable::empty(),
         };
         Ok(Self {
             listen_address: SocketAddr::new(host, port),
             python_upstream,
             routes,
-            templates,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
         })
     }
@@ -74,7 +68,6 @@ impl HybridConfig {
             listen_address,
             python_upstream,
             routes,
-            templates: TemplateRoutes::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
         }
     }
@@ -90,36 +83,14 @@ impl HybridConfig {
     /// # Errors
     /// Returns an error when a route file cannot be read or has an invalid rule.
     pub fn with_routes_file(mut self, path: &Path) -> Result<Self, BoxError> {
-        (self.routes, self.templates) = TemplateRoutes::load(path)?;
+        self.routes = load_routes(path)?;
         Ok(self)
     }
 
     /// Reports whether a request is selected for the Rust API listener.
     #[must_use]
     pub fn selects_rust(&self, method: &Method, path: &str) -> bool {
-        self.routes.matches(method, path) || self.templates.matches(method, path)
-    }
-}
-
-#[derive(Clone)]
-struct SelectedOrigin<S> {
-    routes: RouteTable,
-    templates: TemplateRoutes,
-    rust: S,
-    python: OriginService,
-}
-
-impl<S: RustApi> RustApi for SelectedOrigin<S> {
-    async fn call(&self, request: Request<Incoming>, peer_addr: SocketAddr) -> GatewayResponse {
-        if self.routes.matches(request.method(), request.uri().path())
-            || self
-                .templates
-                .matches(request.method(), request.uri().path())
-        {
-            self.rust.call(request, peer_addr).await
-        } else {
-            self.python.call(request, peer_addr).await
-        }
+        self.routes.matches(method, path)
     }
 }
 
@@ -134,28 +105,15 @@ where
     S: RustApi,
     F: Future<Output = ()>,
 {
-    let selected = SelectedOrigin {
-        routes: config.routes.clone(),
-        templates: config.templates.clone(),
-        rust: api,
-        python: OriginService::new(&config.python_upstream)?,
-    };
-    // The outer gateway accepts every request; the selected service applies
-    // both legacy exact/prefix rules and template rules before proxying.
-    let catch_all = RouteTable::compile(RoutesConfig {
-        routes: vec![RouteRule {
-            methods: Vec::new(),
-            path: "/".to_owned(),
-            match_kind: PathMatch::Prefix,
-        }],
-    })?;
-    let gateway = Gateway::new(catch_all, selected, &config.python_upstream)?;
+    // The gateway selects the Rust origin once. Requests not in the table are
+    // forwarded to Python and are the only ones written to fallback.log.
+    let gateway = Gateway::new(config.routes.clone(), api, &config.python_upstream)?;
     let listener = bind(config.listen_address).await?;
 
     info!(
         listen = %listener.local_addr()?,
         python_upstream = %config.python_upstream,
-        rust_routes = config.routes.len() + config.templates.len(),
+        rust_routes = config.routes.len(),
         "Wegent migration gateway started"
     );
 
