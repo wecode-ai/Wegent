@@ -64,8 +64,11 @@ WORKDIR /app
 # Configure npm registry for China.
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.247 @openai/codex@0.137.0 \
-    --registry=https://registry.npmmirror.com
+RUN npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.142.5 \
+    --registry=https://registry.npmmirror.com \
+    && codex --version \
+    && codex app-server --help >/dev/null \
+    && npm cache clean --force
 
 # Keep uv available for skills that invoke Python tooling at runtime.
 RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com \
@@ -84,11 +87,13 @@ ENV CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# Install system packages for document generation.
+# Install system packages for Codex sandboxing and document generation.
 RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
+    ca-certificates bubblewrap \
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
     poppler-utils pandoc tesseract \
     jq zip \
+    && bwrap --version \
     && dnf clean all && rm -rf /var/cache/dnf/*
 
 # Install npm packages for document generation using China mirror.

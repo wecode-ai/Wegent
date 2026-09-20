@@ -22,7 +22,9 @@ RUN yum install -y almalinux-release almalinux-release-devel almalinux-repos epe
     \
     dnf upgrade -y && \
     dnf install -y \
-        curl-minimal gcc make git wget gnupg which \
+        curl-minimal ca-certificates gcc make git wget gnupg which \
+        # Codex Linux sandbox helper
+        bubblewrap \
         python3.12 python3.12-devel python3.12-pip \
         java-1.8.0-openjdk-devel.x86_64 maven-openjdk8.noarch \
         gh yq jq procps procps-ng net-tools psmisc lsof tree&& \
@@ -39,7 +41,12 @@ RUN yum install -y almalinux-release almalinux-release-devel almalinux-repos epe
 RUN dnf module disable -y nodejs && \
     dnf remove -y nodejs npm || true && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - && \
     dnf install -y nodejs && \
-    npm install -g @anthropic-ai/claude-code@2.1.142
+    npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.142.5 \
+        --registry=https://registry.npmmirror.com && \
+    codex --version && \
+    codex app-server --help >/dev/null && \
+    bwrap --version && \
+    npm cache clean --force
 
 RUN wget -O glab_1.74.0_linux_amd64.rpm "https://gitlab.com/gitlab-org/cli/-/releases/v1.74.0/downloads/glab_1.74.0_linux_amd64.rpm" \
  && dnf install -y glab_1.74.0_linux_amd64.rpm \
