@@ -351,6 +351,62 @@ describe('TaskActivityView', () => {
     expect(await screen.findByText('机器人已接收')).toBeInTheDocument()
   })
 
+  it('sends a structured project member mention from the parent comment composer', async () => {
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        members={[
+          {
+            id: 3,
+            user_id: 4,
+            user_name: 'hajimi',
+            email: null,
+            role: 'Developer',
+          },
+        ]}
+        linear
+      />
+    )
+
+    const input = screen.getByTestId('cloud-task-activity-composer')
+    await user.type(input, '@ha')
+    expect(await screen.findByTestId('task-comment-mention-popup')).toBeInTheDocument()
+    await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
+    expect(input).toHaveValue('@hajimi ')
+    await user.type(input, '请确认{Enter}')
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '@hajimi 请确认',
+        mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
+      })
+    )
+  })
+
   it('defaults the parent comment execution project to the task page project', async () => {
     runtimeWorkMock.value = {
       projects: [
@@ -2826,6 +2882,73 @@ describe('TaskActivityView', () => {
     expect(
       screen.queryByTestId(`cloud-task-activity-reply-chip-${rootMessage.messageId}`)
     ).not.toBeInTheDocument()
+  })
+
+  it('sends a structured project member mention from the card reply composer', async () => {
+    const user = userEvent.setup()
+    const rootMessage: ProjectChatMessage = {
+      ...userMessage,
+      rootMessageId: null,
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [rootMessage],
+          latestSequence: 1,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        members={[
+          {
+            id: 3,
+            user_id: 4,
+            user_name: 'hajimi',
+            email: null,
+            role: 'Developer',
+          },
+        ]}
+        linear
+      />
+    )
+
+    const input = await screen.findByTestId(
+      `cloud-task-activity-card-composer-${rootMessage.messageId}`
+    )
+    await user.type(input, '@ha')
+    expect(
+      await screen.findByTestId(`collaboration-chat-reply-mentions-${rootMessage.messageId}`)
+    ).toBeInTheDocument()
+    await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
+    await user.type(input, '看一下{Enter}')
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: rootMessage.messageId,
+        mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
+      })
+    )
   })
 
   it('keeps the reply send button disabled until there is a draft', async () => {

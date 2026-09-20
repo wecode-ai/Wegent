@@ -192,6 +192,8 @@ export function TodoEditor(props: TodoEditorProps) {
           taskBindings={context.tasks as LoopItemTaskBinding[]}
           onOpenTask={props.onOpenTaskConversation}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
+          members={context.members}
+          agents={context.agents}
           linear
         />
       ) : null,

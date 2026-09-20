@@ -64,12 +64,12 @@ export function IssueMainCommentComposer({
   onSelectFiles,
   settings,
   mentionGroups = [],
-  onMentionsChange,
   testIds = desktopTestIds,
 }: {
   value: string;
   onChange(value: string): void;
-  onSubmit(): void;
+  /** The structured targets still present in the draft being submitted. */
+  onSubmit(mentions: IssueMentionOption[]): void;
   disabled: boolean;
   sending: boolean;
   uploading: boolean;
@@ -85,8 +85,6 @@ export function IssueMainCommentComposer({
   onSelectFiles?(files: File[]): void | Promise<void>;
   settings?: ReactNode;
   mentionGroups?: IssueMentionGroup[];
-  /** Reports the structured mentions currently present in the draft. */
-  onMentionsChange?(mentions: IssueMentionOption[]): void;
   testIds?: IssueMainCommentTestIds;
 }) {
   const settingsId = useId();
@@ -118,13 +116,10 @@ export function IssueMainCommentComposer({
   const mentionsOpen = mentionQuery !== null && mentionCandidates.length > 0;
 
   function syncMentionSelections(nextValue: string) {
-    const pruned = pruneIssueMentionSelections(
+    mentionSelections.current = pruneIssueMentionSelections(
       nextValue,
       mentionSelections.current,
     );
-    if (pruned.length === mentionSelections.current.length) return;
-    mentionSelections.current = pruned;
-    onMentionsChange?.(pruned.map((selection) => selection.mention));
   }
 
   useLayoutEffect(() => {
@@ -159,18 +154,15 @@ export function IssueMainCommentComposer({
     caret.current = inserted.cursor;
     setMentionQuery(null);
     onChange(inserted.value);
-    onMentionsChange?.(nextSelections.map((selection) => selection.mention));
   }
 
   function submitComment() {
     setMentionQuery(null);
-    const mentions = pruneIssueMentionSelections(
+    mentionSelections.current = pruneIssueMentionSelections(
       value,
       mentionSelections.current,
-    ).map((selection) => selection.mention);
-    mentionSelections.current = [];
-    onMentionsChange?.(mentions);
-    onSubmit();
+    );
+    onSubmit(mentionSelections.current.map((selection) => selection.mention));
   }
 
   return (

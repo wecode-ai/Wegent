@@ -4,7 +4,6 @@ import {
   findIssueMentionQuery,
   insertIssueMentionText,
   pruneIssueMentionSelections,
-  type IssueMentionOption,
   type IssueMentionQuery,
   type IssueMentionSelection,
 } from './issueCommentMentions'
@@ -14,14 +13,12 @@ import type { IssueMentionGroup } from './IssueMainCommentComposer'
  * Shared "@"-mention behavior for the issue comment and reply composers.
  *
  * The composers render the popup from `groups`; the hook owns query detection,
- * insertion bookkeeping and the structured mentions reported on submit.
+ * insertion bookkeeping and the structured mentions returned on submit.
  */
 export function useIssueCommentMentions({
   mentionGroups,
-  onMentionsChange,
 }: {
   mentionGroups?: IssueMentionGroup[]
-  onMentionsChange?(mentions: IssueMentionOption[]): void
 }) {
   const selections = useRef<IssueMentionSelection[]>([])
   const [query, setQuery] = useState<IssueMentionQuery | null>(null)
@@ -43,14 +40,12 @@ export function useIssueCommentMentions({
     [options, query]
   )
 
-  const emit = (next: IssueMentionSelection[]) => {
-    selections.current = next
-    onMentionsChange?.(next.map(selection => selection.mention))
-  }
-
-  const syncValue = (nextValue: string) => {
-    const pruned = pruneIssueMentionSelections(nextValue, selections.current)
-    if (pruned.length !== selections.current.length) emit(pruned)
+  /** Drop targets whose "@label" text the draft no longer contains. */
+  const prune = (nextValue: string) => {
+    selections.current = pruneIssueMentionSelections(
+      nextValue,
+      selections.current
+    )
   }
 
   return {
@@ -71,7 +66,7 @@ export function useIssueCommentMentions({
     /** Update the active query from the caret after an input change. */
     handleChange(nextValue: string, caret: number | null) {
       setQuery(findIssueMentionQuery(nextValue, caret))
-      syncValue(nextValue)
+      prune(nextValue)
     },
     /** Keep the query in sync with caret movement. */
     handleCaret(nextValue: string, caret: number | null) {
@@ -86,21 +81,20 @@ export function useIssueCommentMentions({
       if (!target) return null
       const activeQuery = query ?? { start: caret, query: '' }
       const inserted = insertIssueMentionText(currentValue, activeQuery, target, selectionEnd)
-      emit([
+      selections.current = [
         ...selections.current.filter(
           selection =>
             !(selection.mention.type === target.type && selection.mention.id === target.id)
         ),
         inserted.selection,
-      ])
+      ]
       setQuery(null)
       return { value: inserted.value, cursor: inserted.cursor }
     },
-    /** Report and return the mentions still present on submit. */
+    /** The mentions still present in the draft at submit time. */
     submit(nextValue: string) {
-      const pruned = pruneIssueMentionSelections(nextValue, selections.current)
-      emit(pruned)
-      return pruned.map(selection => selection.mention)
+      prune(nextValue)
+      return selections.current.map(selection => selection.mention)
     },
   }
 }

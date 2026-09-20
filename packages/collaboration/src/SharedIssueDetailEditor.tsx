@@ -131,6 +131,8 @@ export interface SharedIssueDetailExtensionContext {
   editable: boolean;
   tasks: SharedIssueDetailTaskBinding[];
   deliveries: SharedIssueDetailDelivery[];
+  members: CollaborationMember[];
+  agents: SharedIssueDetailAgent[];
   selectedTaskId?: string | null;
   workflowManagerRunId?: string;
   onExecutionArtifactsChange(): Promise<void>;
@@ -1812,6 +1814,8 @@ export function TodoEditor(props: TodoEditorProps) {
           editable,
           tasks: effectiveTasks,
           deliveries,
+          members: projectMembers,
+          agents: projectAgents,
           selectedTaskId: props.selectedTaskId,
           workflowManagerRunId:
             typeof workflowPlan?.manager_run === "object" &&

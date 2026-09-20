@@ -7,6 +7,7 @@ import type { CollaborationAgent, CollaborationComment, CollaborationMember } fr
 import type { AttachmentImageServices } from './AttachmentImageView'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
 import { IssueMainCommentComposer } from './IssueMainCommentComposer'
+import type { IssueMentionOption } from './issueCommentMentions'
 import {
   issueCommentBody,
   useIssueCommentAttachments,
@@ -59,7 +60,6 @@ export function IssueWebCommentComposer({
   settings?: ComponentProps<typeof IssueMainCommentComposer>['settings']
 }) {
   const [draft, setDraft] = useState('')
-  const [mentions, setMentions] = useState<ProjectChatMention[]>([])
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const active = useRef(true)
@@ -76,7 +76,7 @@ export function IssueWebCommentComposer({
   }, [])
   const mentionGroups = useIssueMentionGroups(members, agents, translate)
 
-  async function submit() {
+  async function submit(mentions: IssueMentionOption[]) {
     if (
       !canComment ||
       loading ||
@@ -111,7 +111,7 @@ export function IssueWebCommentComposer({
     <IssueMainCommentComposer
       value={draft}
       onChange={setDraft}
-      onSubmit={() => void submit()}
+      onSubmit={mentions => void submit(mentions)}
       disabled={!canComment || loading}
       sending={sending}
       uploading={!selection.isAttachmentReadyToSend}
@@ -138,7 +138,6 @@ export function IssueWebCommentComposer({
       }
       settings={settings}
       mentionGroups={mentionGroups}
-      onMentionsChange={setMentions}
       testIds={{
         form: 'collaboration-issue-comment-form',
         input: 'collaboration-issue-comment',

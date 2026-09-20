@@ -1,6 +1,6 @@
 import { useIssueMentionGroups } from './useIssueMentionGroups'
 import { useEffect, useMemo, useState } from 'react'
-import type { ProjectChatClient, ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
+import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import {
   RUNTIME_PERMISSION_MODE_OPTION,
@@ -24,6 +24,7 @@ import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
+import type { IssueMentionOption } from './issueCommentMentions'
 import type { AttachmentImageServices } from './AttachmentImageView'
 import { issueCommentBody } from './useIssueCommentAttachments'
 
@@ -64,7 +65,6 @@ export function BrowserIssueCommentComposer({
   onTaskUpdated?(issue: CollaborationIssue): void
 }) {
   const mentionGroups = useIssueMentionGroups(members, agents, t)
-  const [mentions, setMentions] = useState<ProjectChatMention[]>([])
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const [isMobile, setIsMobile] = useState(false)
@@ -104,7 +104,7 @@ export function BrowserIssueCommentComposer({
       model: selectedModel,
       options: { ...options, [id]: value },
     })
-  async function submit() {
+  async function submit(mentions: IssueMentionOption[]) {
     const text = draft.draft.trim()
     if (
       !canComment ||
@@ -202,10 +202,9 @@ export function BrowserIssueCommentComposer({
       )}
       <IssueMainCommentComposer
         mentionGroups={mentionGroups}
-        onMentionsChange={setMentions}
         value={draft.draft}
         onChange={draft.setDraft}
-        onSubmit={() => void submit()}
+        onSubmit={mentions => void submit(mentions)}
         disabled={!canComment || loading}
         sending={draft.busy}
         uploading={!draft.attachments.isAttachmentReadyToSend}

@@ -60,7 +60,6 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   aiError,
   onSend,
   mentionGroups,
-  onMentionsChange,
   testIds = issueReplyTestIds(rootId),
 }: {
   rootId: string;
@@ -73,11 +72,10 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     mentions: IssueMentionOption[],
   ): Promise<{ ok: boolean; error?: string }>;
   mentionGroups?: IssueMentionGroup[];
-  /** Reports the structured mentions currently present in the draft. */
-  onMentionsChange?(mentions: IssueMentionOption[]): void;
   testIds?: IssueReplyTestIds;
 }) {
-  const input = useRef<HTMLInputElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const caretRef = useRef<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -87,10 +85,7 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     null,
   );
   const attachmentReady = attachments?.isAttachmentReadyToSend ?? true;
-  const mention = useIssueCommentMentions({
-    mentionGroups,
-    onMentionsChange,
-  });
+  const mention = useIssueCommentMentions({ mentionGroups });
   const mentionRows = mention.groups.flatMap((group) =>
     group.items.map((item) => ({ item })),
   );
@@ -104,13 +99,13 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     const caret = caretRef.current;
     if (caret === null) return;
     caretRef.current = null;
-    input.current?.focus();
-    input.current?.setSelectionRange(caret, caret);
+    composerInput.current?.focus();
+    composerInput.current?.setSelectionRange(caret, caret);
   }, [draft]);
 
   function insertMention(itemId: string) {
-    const start = input.current?.selectionStart ?? draft.length;
-    const end = input.current?.selectionEnd ?? start;
+    const start = composerInput.current?.selectionStart ?? draft.length;
+    const end = composerInput.current?.selectionEnd ?? start;
     const inserted = mention.insert(itemId, draft, start, end);
     if (!inserted) return;
     caretRef.current = inserted.cursor;
@@ -201,14 +196,14 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
               type="button"
               data-testid={testIds.attach}
               disabled={disabled || submitting}
-              onClick={() => input.current?.click()}
+              onClick={() => fileInput.current?.click()}
               aria-label={labels.attach}
               className="task-detail-reply-attach"
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
             <input
-              ref={input}
+              ref={fileInput}
               type="file"
               multiple
               hidden
@@ -223,6 +218,7 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           </>
         ) : null}
         <textarea
+          ref={composerInput}
           rows={1}
           data-testid={testIds.input}
           value={draft}

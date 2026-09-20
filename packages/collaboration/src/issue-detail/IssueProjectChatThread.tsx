@@ -6,7 +6,7 @@ import {
   type RuntimeExecutionTarget,
 } from './runtimeExecutionTarget'
 import { IssueChatMessage } from './IssueChatMessage'
-import { useState, type ComponentProps } from 'react'
+import type { ComponentProps } from 'react'
 import { useIssueActivityExecutionStatus } from './useIssueActivityExecutionStatus'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useIssueCommentAttachments, issueCommentBody } from './useIssueCommentAttachments'
@@ -67,7 +67,6 @@ export function IssueProjectChatThread({
     agents ?? [],
     translate
   )
-  const [mentions, setMentions] = useState<ProjectChatMention[]>([])
   const rootId = thread.root.messageId
   const runs = [thread.root, ...thread.replies].filter(message => message.sender.type === 'agent')
   function renderMessage(message: ProjectChatMessage, eventOnly = false) {
@@ -119,7 +118,6 @@ export function IssueProjectChatThread({
             canAttach={Boolean(upload)}
             translate={translate}
             mentionGroups={mentionGroups}
-            onMentionsChange={setMentions}
           />
         ) : canComment ? (
           <IssueThreadReplyComposer
@@ -127,8 +125,7 @@ export function IssueProjectChatThread({
             disabled={!canComment}
             attachments={upload ? attachments : undefined}
             mentionGroups={mentionGroups}
-            onMentionsChange={setMentions}
-            onSend={async text => {
+            onSend={async (text, mentions) => {
               await send(
                 issueCommentBody(text, attachments.attachments),
                 rootId,

@@ -1,6 +1,7 @@
-import { IssueMainCommentComposer } from '@wegent/collaboration'
+import { type IssueMentionGroup, IssueMainCommentComposer } from '@wegent/collaboration'
 import { useContext } from 'react'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import type { ProjectChatMention } from '@/api/backend/projectChatSocket'
 import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
@@ -19,15 +20,17 @@ export function TaskCommentComposer({
   disabled,
   sending,
   error,
+  mentionGroups,
   controls,
   projectWork,
 }: {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (mentions: ProjectChatMention[]) => void
   disabled: boolean
   sending: boolean
   error: string | null
+  mentionGroups?: IssueMentionGroup[]
   controls: ProjectChatControls
   projectWork: ProjectWorkControls
 }) {
@@ -44,6 +47,7 @@ export function TaskCommentComposer({
       uploading={controls.uploadingFiles.size > 0}
       error={error}
       sendKey={sendKey}
+      mentionGroups={mentionGroups}
       labels={{
         placeholder: t('workbench.task_activity_placeholder'),
         send: t('workbench.send_message'),

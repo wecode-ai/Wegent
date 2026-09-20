@@ -39,6 +39,7 @@ export * from './executionStatus'
 export * from './activityMessageUtils'
 
 export * from './IssueMainCommentComposer'
+export * from './useIssueMentionGroups'
 export * from './AttachmentImageView'
 export * from './ComposerAttachmentBadges'
 export * from './attachmentPresentation'

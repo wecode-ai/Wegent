@@ -336,4 +336,61 @@ describe("shared desktop reply composer", () => {
 
     expect(send).toHaveBeenCalledWith("hello there", []);
   });
+
+  it("inserts a mention into the textarea while attachments are available", async () => {
+    const selection: IssueReplyAttachments = {
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+      isAttachmentReadyToSend: true,
+      handleFileSelect: vi.fn(),
+      removeAttachment: vi.fn(),
+      resetAttachments: vi.fn(),
+    };
+    const send = vi.fn().mockResolvedValue({ ok: true });
+    act(() =>
+      root.render(
+        <IssueThreadReplyComposer
+          rootId="root"
+          disabled={false}
+          labels={labels}
+          attachments={selection}
+          onSend={send}
+          mentionGroups={[
+            {
+              label: "Members",
+              items: [
+                {
+                  id: "member-8",
+                  name: "bob",
+                  mention: { type: "user", id: "8", label: "bob" },
+                },
+              ],
+            },
+          ]}
+        />,
+      ),
+    );
+
+    const input = write("@bo");
+    Object.defineProperty(input, "selectionStart", {
+      value: 3,
+      configurable: true,
+    });
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { bubbles: true, key: "o" }),
+      );
+    });
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="issue-comment-mention-member-8"]',
+        )!
+        .click(),
+    );
+
+    expect(input.value).toBe("@bob ");
+    expect(document.activeElement).toBe(input);
+  });
 });

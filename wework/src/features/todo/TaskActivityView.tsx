@@ -16,18 +16,23 @@ import {
 import { useTaskReplyQueue } from '@wegent/collaboration/execution/useTaskReplyQueue'
 import { taskReplyQueueStore } from './taskReplyQueue'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
-import { issueTaskSummaryForMessage } from '@wegent/collaboration'
+import { issueTaskSummaryForMessage, useIssueMentionGroups } from '@wegent/collaboration'
 import {
   IssueActivityFeed,
   IssueActivityThread,
   groupIssueActivityThreads,
   createCollaborationTranslator,
 } from '@wegent/collaboration'
+import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
+import type {
+  ProjectChatClient,
+  ProjectChatMention,
+  ProjectChatMessage,
+} from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import { projectChatAgentWorkspaceBinding } from '@/api/projectChatAgents'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -91,6 +96,9 @@ interface TaskActivityViewProps {
   taskBindings?: LoopItemTaskBinding[]
   onOpenTask?: (task: LoopItemTaskBinding) => void
   onRefreshExecutionArtifacts?: () => void | Promise<void>
+  /** Project members and robots that the comment composers can mention. */
+  members?: CollaborationMember[]
+  agents?: CollaborationAgent[]
 }
 
 type TaskCardQueuedReply = RuntimePaneQueuedMessage
@@ -112,11 +120,14 @@ export function TaskActivityView({
   taskBindings = [],
   onOpenTask,
   onRefreshExecutionArtifacts,
+  members = [],
+  agents = [],
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
   const activityTranslate = createCollaborationTranslator(
     i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
   )
+  const mentionGroups = useIssueMentionGroups(members, agents, activityTranslate)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
     useWorkbenchPaneContext()
@@ -160,10 +171,13 @@ export function TaskActivityView({
     task.ai_state?.runtime_task_id,
   ])
   const [executionDetail, setExecutionDetail] = useState<ActivityExecutionDetail | null>(null)
-  const [agents, setAgents] = useState<ProjectChatAgent[]>([])
+  const [projectChatAgents, setProjectChatAgents] = useState<ProjectChatAgent[]>([])
   const assignedAgent = useMemo(
-    () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
-    [agents, task.assignee_agent_id]
+    () =>
+      projectChatAgents.find(
+        agent => agent.id === task.assignee_agent_id && agent.status === 'active'
+      ),
+    [projectChatAgents, task.assignee_agent_id]
   )
   // Continuing the conversation reuses the assigned robot's own model, so the
   // composer inherits its configured selection until the user picks another
@@ -314,7 +328,7 @@ export function TaskActivityView({
     if (!agentApi) return
     void agentApi
       .list(project.id)
-      .then(setAgents)
+      .then(setProjectChatAgents)
       .catch(cause => {
         setError(
           cause instanceof Error ? cause.message : t('workbench.project_chat_agents_load_failed')
@@ -599,6 +613,7 @@ export function TaskActivityView({
   async function sendCardReply(
     card: TaskReplyCard,
     text: string,
+    mentions: ProjectChatMention[],
     attachments: Attachment[]
   ): Promise<CardCommentSendResult> {
     if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
@@ -607,10 +622,10 @@ export function TaskActivityView({
       (!client.continueAutomationManager || !cardSessionAddress(card))
     )
       return { ok: false, error: t('workbench.project_chat_agent_start_failed') }
-    return replyQueue.enqueue(card.root.messageId, text, attachments)
+    return replyQueue.enqueue(card.root.messageId, text, attachments, mentions)
   }
 
-  async function sendNewComment(): Promise<boolean> {
+  async function sendNewComment(mentions: ProjectChatMention[]): Promise<boolean> {
     const text = newCommentDraft.trim()
     const attachments = attachmentSelection.attachments
     if (!client || !text || sending) return false
@@ -622,9 +637,12 @@ export function TaskActivityView({
     setError(null)
     try {
       const executionProject = effectiveCommentProject
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const activeMentions: ProjectChatMention[] = [
+        ...(assignedAgent
+          ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+          : []),
+        ...mentions.filter(mention => mention.type === 'user'),
+      ]
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
@@ -751,10 +769,11 @@ export function TaskActivityView({
                 key={task.id}
                 value={newCommentDraft}
                 onChange={setNewCommentDraft}
-                onSubmit={() => void sendNewComment()}
+                onSubmit={mentions => void sendNewComment(mentions)}
                 disabled={!client}
                 sending={sending}
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+                mentionGroups={mentionGroups}
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
               />
@@ -764,7 +783,7 @@ export function TaskActivityView({
                   value={newCommentDraft}
                   disabled={!client}
                   onChange={setNewCommentDraft}
-                  onSubmit={() => void sendNewComment()}
+                  onSubmit={() => void sendNewComment([])}
                   submitDisabled={!newCommentDraft.trim() || sending}
                   error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
                   placeholder={
@@ -822,7 +841,10 @@ export function TaskActivityView({
                         disabled={!client}
                         placeholder={t('workbench.task_activity_inline_placeholder')}
                         aiError={replyQueue.error(rootId)}
-                        onSend={(text, attachments) => sendCardReply(card, text, attachments)}
+                        mentionGroups={mentionGroups}
+                        onSend={(text, mentions, attachments) =>
+                          sendCardReply(card, text, mentions, attachments)
+                        }
                       />
                     </>
                   }
