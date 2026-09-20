@@ -23,6 +23,7 @@ from knowledge_engine.storage.milvus.errors import (
 from knowledge_engine.storage.milvus.native import (
     DEFAULT_RPC_TIMEOUT_SECONDS,
     DENSE_VECTOR_FIELD,
+    HEAVY_RPC_TIMEOUT_SECONDS,
     METRIC_TYPE,
     ROW_OUTPUT_FIELDS,
     SCHEMA_VERSION,
@@ -533,6 +534,7 @@ class _CollectionClient:
         self.indexes = indexes
         self.index_names = index_names
         self.schemas: list[Any] = []
+        self.create_timeouts: list[Any] = []
         self.descriptions = 0
         self.index_lookups = 0
         self.queries: list[dict] = []
@@ -542,6 +544,7 @@ class _CollectionClient:
 
     def create_collection(self, **kwargs) -> None:
         self.schemas.append(kwargs["schema"])
+        self.create_timeouts.append(kwargs.get("timeout"))
         if self.create_fails:
             # Another writer took the name first; this collection is theirs.
             self.exists = True
@@ -641,6 +644,25 @@ def test_ensure_index_creates_a_collection_and_confirms_its_real_structure():
     assert len(client.schemas) == 1
     assert client.descriptions == 1, "the created collection is read back once"
     assert client.index_lookups == 1, "the created indexes are read back"
+
+
+def test_creating_a_collection_hands_the_sdk_an_integer_timeout():
+    """The create budget is an int because the SDK only bounds int timeouts.
+
+    ``MilvusClient.create_collection`` builds the index and waits for it in the
+    same call, and PyMilvus enforces that wait loop's own total budget only
+    when the timeout is an int. A float budget would leave the loop bounded by
+    its per-RPC deadline alone, so the type is part of the contract.
+    """
+    binding = _binding()
+    client = _CollectionClient()
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    _ensure(store, client, binding)
+
+    [timeout] = client.create_timeouts
+    assert timeout == HEAVY_RPC_TIMEOUT_SECONDS
+    assert isinstance(timeout, int), "the wait loop is bounded only for an int"
 
 
 def test_ensure_index_adopts_a_collection_that_declares_this_contract():

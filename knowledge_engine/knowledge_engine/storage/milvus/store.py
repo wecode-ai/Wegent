@@ -173,8 +173,11 @@ class MilvusDocumentStore:
 
         The PyMilvus client constructor only bounds the initial connection: the
         SDK retries a per-call RPC until that call gets its own ``timeout``
-        kwarg. Passing this value to every RPC is what makes an operation
-        bounded, so it is the single source of truth for the per-call deadline.
+        kwarg. Passing this value to every RPC is what bounds each call, so it
+        is the single source of truth for the per-call deadline. It bounds a
+        call, not a wait loop the SDK runs inside one: creating a collection
+        carries its own integer budget for that loop
+        (``HEAVY_RPC_TIMEOUT_SECONDS``).
         """
         return self.timeout or DEFAULT_RPC_TIMEOUT_SECONDS
 

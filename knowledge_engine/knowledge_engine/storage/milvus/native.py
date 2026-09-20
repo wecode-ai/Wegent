@@ -77,8 +77,12 @@ WRITE_CONSISTENCY_LEVEL = "Strong"
 # Fallback deadline for one RPC when a store was constructed without one.
 DEFAULT_RPC_TIMEOUT_SECONDS = 10.0
 # Creating a collection and writing its contract are heavy server operations,
-# so they get a wider - but still bounded - budget than a query or mutation.
-HEAVY_RPC_TIMEOUT_SECONDS = 30.0
+# so they get a wider budget than a query or mutation. The value stays an int
+# on purpose: ``MilvusClient.create_collection`` also runs the index-build wait
+# loop, and PyMilvus only enforces that loop's own total budget when the
+# timeout is an int (``GrpcHandler.wait_for_creating_index``). A float here
+# leaves the loop bounded by nothing but its per-RPC deadline.
+HEAVY_RPC_TIMEOUT_SECONDS = 30
 
 # The physical columns of a stored row. Everything else a row carries lives in
 # the metadata column, the one place a condition can name.

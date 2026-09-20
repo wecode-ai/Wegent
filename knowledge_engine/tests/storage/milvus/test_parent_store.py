@@ -18,6 +18,7 @@ from typing import Any, Dict, List
 
 from llama_index.core.schema import TextNode
 
+from knowledge_engine.storage.milvus.native import HEAVY_RPC_TIMEOUT_SECONDS
 from knowledge_engine.storage.milvus.parent_store import MilvusParentStore
 
 
@@ -28,6 +29,10 @@ class FakeParentClient:
         self.records = list(records)
         self.queries: List[Dict[str, Any]] = []
         self.inserted: List[Dict[str, Any]] = []
+        self.created: List[Dict[str, Any]] = []
+
+    def create_collection(self, **kwargs: Any) -> None:
+        self.created.append(kwargs)
 
     def has_collection(
         self, collection_name: str, timeout: float | None = None
@@ -45,13 +50,14 @@ class FakeParentClient:
 
 
 class FakeParentStore:
-    def __init__(self, client: FakeParentClient) -> None:
+    def __init__(self, client: FakeParentClient, *, exists: bool = True) -> None:
         self.client_instance = client
+        self.exists = exists
         self.rpc_timeout = 10.0
         self.deletes: List[Dict[str, Any]] = []
 
     def has_collection(self, client: FakeParentClient, collection_name: str) -> bool:
-        return True
+        return self.exists
 
     def delete_rows(
         self,
@@ -77,8 +83,10 @@ class FakeParentStore:
 
 def _parent_store_with_backing(
     client: FakeParentClient,
+    *,
+    exists: bool = True,
 ) -> tuple[MilvusParentStore, FakeParentStore]:
-    backing = FakeParentStore(client)
+    backing = FakeParentStore(client, exists=exists)
     return (
         MilvusParentStore(
             store=backing,
@@ -131,6 +139,24 @@ def test_a_parent_write_ignores_nodes_that_name_no_document() -> None:
 
     assert result == {"stored_count": 1}
     assert backing.deletes == []
+
+
+def test_creating_the_sidecar_collection_hands_the_sdk_an_integer_timeout() -> None:
+    """The sidecar create is the same SDK call, so it needs the same int budget.
+
+    ``MilvusClient.create_collection`` declares the index and waits for it in
+    one call, and PyMilvus bounds that wait loop only for an int timeout: the
+    per-call deadline of a plain RPC would leave the loop unbounded.
+    """
+    client = FakeParentClient([])
+    parent_store, _ = _parent_store_with_backing(client, exists=False)
+
+    parent_store.save("1", [_parent_node("parent-a", doc_ref="doc_1")])
+
+    [created] = client.created
+    assert created["collection_name"] == "wegent_kb_1__parents"
+    assert created["timeout"] == HEAVY_RPC_TIMEOUT_SECONDS
+    assert isinstance(created["timeout"], int)
 
 
 def _record(doc_ref: str, parent_node_id: str, content: str) -> Dict[str, Any]:

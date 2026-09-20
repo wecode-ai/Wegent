@@ -18,7 +18,10 @@ from typing import Any, Callable, Dict, List
 
 from llama_index.core.schema import BaseNode
 
-from knowledge_engine.storage.milvus.native import sanitize_filter_value
+from knowledge_engine.storage.milvus.native import (
+    HEAVY_RPC_TIMEOUT_SECONDS,
+    sanitize_filter_value,
+)
 from knowledge_engine.storage.milvus.store import MilvusDocumentStore
 
 logger = logging.getLogger(__name__)
@@ -94,7 +97,10 @@ class MilvusParentStore:
                     dimension=PARENT_STORE_VECTOR_DIM,
                     auto_id=True,
                     enable_dynamic_field=True,
-                    timeout=store.rpc_timeout,
+                    # Creating this collection is the same heavy SDK call as
+                    # creating the index collection, including the index-build
+                    # wait loop inside it, so it takes the same budget.
+                    timeout=HEAVY_RPC_TIMEOUT_SECONDS,
                 )
             else:
                 # The lookup above already settled existence, so the removal of
