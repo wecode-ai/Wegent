@@ -2,6 +2,19 @@
   contain: paint;
 }
 
+.composer-prosemirror-editor a[href],
+.composer-prosemirror-editor .composer-text-link {
+  color: rgb(var(--color-link, var(--color-focus)));
+  text-decoration-line: underline;
+  text-decoration-color: currentcolor;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.composer-prosemirror-editor a[href]:has(.composer-text-link) {
+  text-decoration-line: none;
+}
+
 .composer-prosemirror-editor table {
   width: 100%;
   border-collapse: collapse;

@@ -828,34 +828,14 @@ fn presentation_belongs_to_transcript_page(
 }
 
 fn local_presentation_reference_descriptors(content: &str) -> Vec<Value> {
-    let mut references = Vec::new();
-    let mut offset = 0;
-
-    while let Some(relative_start) = content[offset..].find("[$") {
-        let name_start = offset + relative_start + 2;
-        let Some(relative_name_end) = content[name_start..].find("](") else {
-            break;
-        };
-        let name_end = name_start + relative_name_end;
-        let href_start = name_end + 2;
-        let Some(relative_href_end) = content[href_start..].find(')') else {
-            break;
-        };
-        let href_end = href_start + relative_href_end;
-        offset = href_end + 1;
-
-        let name = &content[name_start..name_end];
-        let href = &content[href_start..href_end];
-        let Some(token) = local_presentation_reference_token(name, href) else {
-            continue;
-        };
-        references.push(json!({
-            "token": token,
-            "href": href,
-        }));
-    }
-
-    references
+    crate::prompt_mentions::prompt_mentions(content)
+        .into_iter()
+        .filter_map(|reference| {
+            let name = reference.name()?;
+            let token = local_presentation_reference_token(name, &reference.href)?;
+            Some(json!({ "token": token, "href": reference.href }))
+        })
+        .collect()
 }
 
 fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Value> {
@@ -910,11 +890,6 @@ fn is_presentation_token_continuation(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '-' | '_' | ':')
 }
 
-fn is_local_skill_reference(href: &str) -> bool {
-    let path = href.strip_prefix("skill://").unwrap_or(href);
-    path.starts_with('/') && path.ends_with("/SKILL.md")
-}
-
 fn is_local_path_reference(href: &str) -> bool {
     href.starts_with("file://") || href.starts_with("folder://")
 }
@@ -923,7 +898,10 @@ fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> 
     if name.is_empty() {
         return None;
     }
-    if is_local_skill_reference(href) || is_local_path_reference(href) {
+    if crate::prompt_mentions::is_skill_reference(href) {
+        return Some(format!("${}", crate::prompt_mentions::skill_name(name)));
+    }
+    if is_local_path_reference(href) {
         return Some(format!("${name}"));
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))

@@ -3456,6 +3456,55 @@ fn codex_model_provider_validation_accepts_requested_provider() {
 }
 
 #[test]
+fn turn_input_matches_shared_prompt_reference_cases() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for case in cases {
+        let reference = case["reference"].as_str().unwrap();
+        let input = turn_input(&json!(reference));
+        if case["kind"].is_null() {
+            assert_eq!(input, vec![text_input(reference.to_owned())], "{reference}");
+            continue;
+        }
+        let expected = if case["kind"] == "skill" {
+            skill_input(
+                case["name"].as_str().unwrap(),
+                case["href"].as_str().unwrap(),
+            )
+        } else {
+            mention_input(
+                case["name"].as_str().unwrap(),
+                case["href"].as_str().unwrap(),
+            )
+        };
+        assert_eq!(input.len(), 2, "{reference}");
+        assert_eq!(input[1], expected, "{reference}");
+    }
+}
+
+#[test]
+fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
+    let path = dirs::home_dir()
+        .expect("test user has a home directory")
+        .join(".agents/skills/test-skill/SKILL.md");
+    let input = turn_input(&Value::String(format!(
+        "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
+        path.display()
+    )));
+
+    assert_eq!(
+        input,
+        vec![
+            json!({"type": "text", "text": "$test-skill then $test-skill", "text_elements": []}),
+            json!({"type": "skill", "name": "test-skill", "path": path.to_string_lossy()}),
+        ]
+    );
+}
+
+#[test]
 fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
     let input = turn_input(&Value::String(
         "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),

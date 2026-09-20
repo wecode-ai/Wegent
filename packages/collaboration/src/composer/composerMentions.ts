@@ -1,10 +1,22 @@
 import { parsePluginMentionReference } from "@wegent/chat-core/plugin-reference";
 import { encodeUriComponentStrict } from "@wegent/chat-core/uri-component";
 import { COMPOSER_SKILL_ICON_PATHS } from "./composerSkillIconPaths";
+import {
+  fileReferenceIconPaths,
+  PENCIL_SKILL_ICON_PATHS,
+} from "./fileReferenceIcons";
 
-const LOCAL_MENTION_REFERENCE_PATTERN =
-  /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g;
-const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/;
+import {
+  classifyComposerReference,
+  composerSkillName,
+  parseComposerReference,
+  parseComposerReferences,
+} from "./composerReference";
+export {
+  classifyComposerReference,
+  composerSkillName,
+} from "./composerReference";
+
 const composerMentionIcons = new Map<
   string,
   { url: string; contrastPad: boolean }
@@ -34,7 +46,7 @@ export function registerComposerMentionIcon(
   reference: string,
   icon?: string | ComposerMentionIconRegistration | null,
 ): void {
-  const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1];
+  const href = parseComposerReference(reference)?.href;
   if (!href || !icon) return;
   const entry =
     typeof icon === "string"
@@ -85,48 +97,63 @@ export function displaySkillNameFromName(name: string): string {
 }
 
 export function parseComposerMentions(value: string): ParsedComposerMention[] {
-  return Array.from(value.matchAll(LOCAL_MENTION_REFERENCE_PATTERN)).map(
-    (match) => {
-      const start = match.index ?? 0;
-      const reference = match[0];
-      const name = match[1];
-      const uri = match[2];
-      const isPathReference =
-        uri.startsWith("file://") || uri.startsWith("folder://");
-      const isConversationReference = uri.startsWith("wework-conversation://");
-      return {
+  return parseComposerReferences(value).flatMap((link) => {
+    const referenceKind = classifyComposerReference(link.label, link.href);
+    const kind =
+      referenceKind ?? (composerPathReference(link.reference) ? "file" : null);
+    if (!kind) return [];
+    const skill = composerSkillName(link.label);
+    const name =
+      kind === "skill"
+        ? skill.name
+        : referenceKind === null
+          ? link.label
+          : link.label.replace(/^[@$]/, "");
+    const literalLabel = ["file", "folder", "cloud", "conversation"].includes(
+      kind,
+    );
+    return [
+      {
         name,
-        label:
-          isPathReference || isConversationReference
-            ? name
-            : displaySkillNameFromName(name),
-        reference,
-        start,
-        end: start + reference.length,
-      };
-    },
-  );
+        label: literalLabel
+          ? name
+          : (skill.displayLabel ?? displaySkillNameFromName(name)),
+        reference: link.reference,
+        start: link.start,
+        end: link.end,
+      },
+    ];
+  });
 }
 
 export function composerSkillFilePath(reference: string): string | null {
-  const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1];
-  if (!href) return null;
-  const filePath = href.startsWith("skill://")
-    ? href.slice("skill://".length)
-    : href;
-  return filePath.startsWith("/") && filePath.endsWith("/SKILL.md")
-    ? filePath
-    : null;
+  const link = parseComposerReference(reference);
+  if (!link || classifyComposerReference(link.label, link.href) !== "skill")
+    return null;
+  return link.href.startsWith("skill://")
+    ? link.href.slice("skill://".length)
+    : link.href;
 }
 
 export function composerPathReference(reference: string): {
   path: string;
   directory: boolean;
 } | null {
-  const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1];
-  if (!href) return null;
+  const link = parseComposerReference(reference);
+  if (!link?.href) return null;
+  const href = link.href;
   const directory = href.startsWith("folder://");
-  if (!directory && !href.startsWith("file://")) return null;
+  if (!directory && !href.startsWith("file://")) {
+    // Ordinary Markdown path links become file mentions, independently of skill invocations.
+    if (classifyComposerReference(link.label, href) !== null) return null;
+    if (
+      !/^[A-Za-z]:[\\/]/.test(href) &&
+      /^(?:[A-Za-z][A-Za-z0-9+.-]*:|www\.|#)/.test(href)
+    ) {
+      return null;
+    }
+    return { path: href, directory: /[\\/]$/.test(href) };
+  }
   const encodedPath = href.slice(
     directory ? "folder://".length : "file://".length,
   );
@@ -212,9 +239,7 @@ export function createComposerMentionElement(
   const conversationReference = payload.reference.includes(
     "](wework-conversation://",
   );
-  const displayLabel = pathReference
-    ? composerPathDisplayName(pathReference.path)
-    : payload.label;
+  const displayLabel = payload.label;
   element.setAttribute(
     "data-testid",
     pathReference
@@ -257,7 +282,7 @@ export function createComposerMentionElement(
   const iconSlot = document.createElement("span");
   iconSlot.className = "composer-mention-icon-slot";
   iconSlot.setAttribute("aria-hidden", "true");
-  const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1];
+  const mentionHref = parseComposerReference(payload.reference)?.href;
   const brandIcon = mentionHref
     ? resolveComposerMentionBrandIcon(mentionHref, resolveIcon)
     : null;
@@ -271,7 +296,15 @@ export function createComposerMentionElement(
         ? createComposerConversationIcon()
         : brandIcon
           ? createComposerBrandIcon(brandIcon.url)
-          : createComposerMentionIcon(),
+          : createComposerMentionIcon(
+              pathReference
+                ? fileReferenceIconPaths(pathReference.path)
+                : composerSkillName(
+                      parseComposerReference(payload.reference)?.label ?? "",
+                    ).icon === "pencil-sparkle"
+                  ? PENCIL_SKILL_ICON_PATHS
+                  : COMPOSER_SKILL_ICON_PATHS,
+            ),
   );
 
   const label = document.createElement("span");
@@ -288,11 +321,6 @@ function createComposerBrandIcon(iconUrl: string): HTMLImageElement {
   icon.src = iconUrl;
   icon.alt = "";
   return icon;
-}
-
-function composerPathDisplayName(path: string): string {
-  const normalized = path.replaceAll("\\", "/").replace(/\/$/, "");
-  return normalized.split("/").filter(Boolean).at(-1) ?? path;
 }
 
 function createComposerFolderIcon(): SVGSVGElement {
@@ -313,7 +341,7 @@ function createComposerFolderIcon(): SVGSVGElement {
   return icon;
 }
 
-function createComposerMentionIcon(): SVGSVGElement {
+function createComposerMentionIcon(paths: readonly string[]): SVGSVGElement {
   const icon = document.createElementNS(SVG_NAMESPACE, "svg");
   icon.classList.add("composer-mention-icon");
   icon.setAttribute("viewBox", "0 0 24 24");
@@ -322,7 +350,7 @@ function createComposerMentionIcon(): SVGSVGElement {
   icon.setAttribute("stroke-width", "2");
   icon.setAttribute("stroke-linecap", "round");
   icon.setAttribute("stroke-linejoin", "round");
-  COMPOSER_SKILL_ICON_PATHS.forEach((pathData) => {
+  paths.forEach((pathData) => {
     const path = document.createElementNS(SVG_NAMESPACE, "path");
     path.setAttribute("d", pathData);
     icon.append(path);

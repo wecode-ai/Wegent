@@ -33,6 +33,7 @@ use crate::{
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
+    prompt_mentions::{is_skill_reference, skill_name},
     protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     runner::{AgentEngine, ExecutionOutcome},
     server::{
@@ -5881,6 +5882,7 @@ fn text_input(text: String) -> Value {
 }
 
 fn skill_input(name: &str, path: &str) -> Value {
+    let name = skill_name(name);
     json!({"type": "skill", "name": name, "path": normalize_skill_path(path)})
 }
 
@@ -5907,18 +5909,13 @@ fn extract_structured_mentions(
     let mut seen_paths = std::collections::BTreeSet::new();
     let mut cursor = 0;
 
-    while let Some(relative_start) = text[cursor..].find("[$") {
-        let start = cursor + relative_start;
-        let Some(label_end) = text[start + 2..].find("](").map(|index| start + 2 + index) else {
-            break;
+    for reference in crate::prompt_mentions::prompt_mentions(text) {
+        let Some(name) = reference.name() else {
+            continue;
         };
-        let uri_start = label_end + 2;
-        let Some(uri_end) = text[uri_start..].find(')').map(|index| uri_start + index) else {
-            break;
-        };
-
-        let name = &text[start + 2..label_end];
-        let uri = &text[uri_start..uri_end];
+        let start = reference.start;
+        let uri_end = reference.end - 1;
+        let uri = reference.href.as_str();
         if let Some(path) = composer_file_reference_path(uri) {
             output.push_str(&text[cursor..start]);
             if path.chars().any(char::is_whitespace) && !path.contains('"') {
@@ -6004,25 +6001,20 @@ fn structured_mention_dedup_key(uri: &str) -> String {
     }
 }
 
-fn is_skill_reference(uri: &str) -> bool {
-    uri.starts_with("skill://") || is_absolute_skill_path(uri)
-}
-
-fn is_absolute_skill_path(path: &str) -> bool {
-    let path = std::path::Path::new(path);
-    path.is_absolute() && path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
-}
-
 fn visible_mention_text(name: &str, uri: &str) -> String {
     if uri.starts_with("plugin://") {
         format!("@{name}")
+    } else if is_skill_reference(uri) {
+        format!("${}", skill_name(name))
     } else {
         format!("${name}")
     }
 }
 
 fn normalize_skill_path(path: &str) -> String {
-    path.strip_prefix("skill://").unwrap_or(path).to_owned()
+    super::git_workspace::expand_tilde(path.strip_prefix("skill://").unwrap_or(path))
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn response_id(message: &Value) -> Option<u64> {

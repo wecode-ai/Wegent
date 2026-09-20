@@ -9,7 +9,7 @@ import {
 } from './useDesktopConversationPresentation'
 export { AssistantMessage } from './AssistantMessage'
 export function MessageList(props: Omit<MessageListProps, DesktopConversationPresentationProp>) {
-  const presentation = useDesktopConversationPresentation()
+  const presentation = useDesktopConversationPresentation(props.messages)
   return (
     <DesktopToolServices>
       <SharedMessageList {...props} {...presentation} />

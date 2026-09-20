@@ -3,15 +3,17 @@ import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import styles from './ProjectChatComposer.module.css'
 
 export const PROJECT_CHAT_EDITOR_CLASS = cn(
-  'max-h-[112px] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
+  'min-h-12 w-full resize-none bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
   styles.input
 )
 export const PROJECT_CHAT_TOOLBAR_CLASS = styles.toolbar
+export const PROJECT_CHAT_SCROLL_CONTAINER_CLASS = styles.inputViewport
 
 /** One PC composer surface; host adapters own draft and runtime effects. */
 export function ProjectChatComposerSurface({
   workBar,
   children,
+  footer,
   formProps,
   canCollapseInShortPane = false,
   collapseWhenIdle = false,
@@ -19,6 +21,7 @@ export function ProjectChatComposerSurface({
 }: {
   workBar?: ReactNode
   children: ReactNode
+  footer?: ReactNode
   formProps: Omit<FormHTMLAttributes<HTMLFormElement>, 'className' | 'children'>
   canCollapseInShortPane?: boolean
   collapseWhenIdle?: boolean
@@ -61,7 +64,10 @@ export function ProjectChatComposerSurface({
           isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
         )}
       >
-        {children}
+        <div data-testid="project-chat-composer-content" className="min-w-0 w-full">
+          {children}
+        </div>
+        {footer}
       </form>
     </div>
   )

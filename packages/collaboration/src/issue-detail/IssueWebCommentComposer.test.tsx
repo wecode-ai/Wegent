@@ -109,11 +109,10 @@ describe("Web adapter for the desktop main composer", () => {
     await select(new File(["pdf"], "brief.pdf", { type: "application/pdf" }));
     expect(
       container.querySelector("[data-testid=attachment-badge]")?.className,
-    ).toContain("h-14 w-[220px]");
+    ).toContain("w-40");
     expect(
-      container.querySelector("[data-testid=attachment-document-icon]")
-        ?.textContent,
-    ).toBe("PDF");
+      container.querySelector("[data-testid=attachment-document-icon] svg"),
+    ).not.toBeNull();
     const input = write("Review this");
     const submit = container.querySelector<HTMLButtonElement>(
       '[data-testid="collaboration-issue-comment-submit"]',

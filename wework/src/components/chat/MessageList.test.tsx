@@ -8,6 +8,9 @@ import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import { clearImagePreviewCache } from './imagePreviewCache'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
+import { ComposerCatalogContext } from './composer/ComposerCatalogContext'
+import { desktopComposerCatalogStore } from './composer/desktopComposerCatalog'
+import references from '../../../../packages/chat-core/test-fixtures/prompt-mentions.json'
 import '@/i18n'
 
 const desktopHostMock = vi.hoisted(() => ({
@@ -43,6 +46,150 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('renders an ordinary SKILL.md link with its literal label and skill icon after sending', () => {
+    const path = '~/worksapce/skills/test-skill/SKILL.md'
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'plain-skill-file',
+            role: 'user',
+            content: `[test-label](${path}) sent text`,
+            status: 'done',
+            createdAt: '2026-09-19T00:00:00Z',
+          },
+        ]}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+    const link = screen.getByTestId('assistant-markdown-link')
+    expect(link).toHaveTextContent(/^test-label$/)
+    expect(screen.getByTestId('assistant-markdown-link-icon').querySelector('path')).not.toBeNull()
+    expect(screen.queryByTestId('sent-local-skill-token-test-label')).not.toBeInTheDocument()
+    fireEvent.click(link)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(path)
+    expect(screen.getByTestId('message-user')).toHaveTextContent('test-label sent text')
+  })
+
+  test('disables unknown skills after catalog failure and enables them after refresh', async () => {
+    const path = '/Users/me/.agents/skills/test-skill/SKILL.md'
+    const listSkills = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([{ name: 'test-skill', path, description: '', source: 'codex' }])
+    const onOpenLocalSkillFile = vi.fn()
+    render(
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: desktopComposerCatalogStore,
+          catalogEvents: { catalogChanged: 'test-skill-refresh' },
+          prefetchLocalAuth: false,
+          listSkills,
+        }}
+      >
+        <MessageList
+          messages={[
+            {
+              id: 'skill',
+              role: 'user',
+              content: `[$test-skill](${path})`,
+              status: 'done',
+              createdAt: '2026-09-18T00:00:00Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      </ComposerCatalogContext.Provider>
+    )
+    const token = screen.getByTestId('sent-local-skill-token-test-skill')
+    await waitFor(() => expect(listSkills).toHaveBeenCalledTimes(1))
+    expect(token).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(token)
+    expect(onOpenLocalSkillFile).not.toHaveBeenCalled()
+    act(() => window.dispatchEvent(new Event('test-skill-refresh')))
+    await waitFor(() => expect(token).toHaveAttribute('aria-disabled', 'false'))
+    fireEvent.click(token)
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(path)
+  })
+
+  test('ignores a stale skill catalog after switching conversations', async () => {
+    const path = '/Users/me/.agents/skills/test-skill/SKILL.md'
+    let resolveOld!: (
+      skills: { name: string; path: string; source: string; description: string }[]
+    ) => void
+    const oldSource = vi.fn(
+      () =>
+        new Promise<{ name: string; path: string; source: string; description: string }[]>(
+          resolve => {
+            resolveOld = resolve
+          }
+        )
+    )
+    const newSource = vi.fn().mockResolvedValue([])
+    const onOpenLocalSkillFile = vi.fn()
+    const content = (listSkills: typeof oldSource) => (
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: desktopComposerCatalogStore,
+          catalogEvents: {},
+          prefetchLocalAuth: false,
+          listSkills,
+        }}
+      >
+        <MessageList
+          messages={[
+            {
+              id: 'skill',
+              role: 'user',
+              content: `[$test-skill](${path})`,
+              status: 'done',
+              createdAt: '2026-09-18T00:00:00Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      </ComposerCatalogContext.Provider>
+    )
+    const { rerender } = render(content(oldSource))
+    await waitFor(() => expect(oldSource).toHaveBeenCalledOnce())
+    rerender(content(newSource))
+    await waitFor(() => expect(newSource).toHaveBeenCalledOnce())
+    await act(async () => {
+      resolveOld([{ name: 'test-skill', path, description: '', source: 'codex' }])
+    })
+    const token = screen.getByTestId('sent-local-skill-token-test-skill')
+    expect(token).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(token)
+    expect(onOpenLocalSkillFile).not.toHaveBeenCalled()
+  })
+
+  test.each(references.filter(item => item.kind === 'skill'))(
+    'renders an unregistered skill without enabling file access: $reference',
+    fixture => {
+      const onOpenLocalSkillFile = vi.fn()
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'unknown-skill',
+              role: 'user',
+              content: fixture.reference,
+              status: 'done',
+              createdAt: '2026-09-18T00:00:00Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      )
+      const token = screen.getByTestId('sent-local-skill-token-test-skill')
+      expect(token).toHaveAttribute('aria-disabled', 'true')
+      expect(token).toHaveAttribute('tabindex', '-1')
+      fireEvent.click(token)
+      expect(onOpenLocalSkillFile).not.toHaveBeenCalled()
+    }
+  )
+
   test('keeps appended text outside the sent link and opens only the original URL', () => {
     const url = 'https://example.com/1192966660/Riodm8zUo'
     openExternalUrlMock.mockClear()
@@ -3182,8 +3329,8 @@ describe('MessageList', () => {
     const links = screen.getAllByTestId('assistant-markdown-link')
     const icons = screen.getAllByTestId('assistant-markdown-link-icon')
 
-    expect(icons[0]).toHaveTextContent('$')
-    expect(icons[1]).toHaveTextContent('{}')
+    expect(icons.every(icon => icon.tagName.toLowerCase() === 'svg')).toBe(true)
+    expect(icons[0].innerHTML).not.toBe(icons[1].innerHTML)
     expect(links[0]).toHaveClass('[&_code]:!bg-transparent', '[&_code]:!rounded-none')
     expect(links[0]).toHaveTextContent('scripts/build-mac-app.sh(line 49)')
     expect(links[1]).toHaveTextContent('package.json(line 15)')
@@ -3674,7 +3821,7 @@ describe('MessageList', () => {
     )
 
     const token = screen.getByTestId('sent-local-skill-token-browser')
-    expect(token).toHaveTextContent('Browser')
+    expect(token).toHaveTextContent('$browser')
     expect(screen.getByTestId('sent-local-skill-icon-browser')).toBeInTheDocument()
     expect(token).toHaveClass(
       'composer-mention-node',
@@ -6118,31 +6265,45 @@ describe('MessageList', () => {
     expect(code).toHaveClass('select-text')
   })
 
-  test('renders local skill markdown links in user messages', () => {
+  test.each([
+    '/Users/crystal/.codex/skills/env-context/SKILL.md',
+    'C:/Users/me/.agents/skills/env-context/SKILL.md',
+    'C:\\Users\\me\\.agents\\skills\\env-context\\SKILL.md',
+    'skills/test(draft)/instructions.md',
+  ])('renders local skill markdown links in user messages: %s', async skillPath => {
     const onOpenLocalSkillFile = vi.fn()
     render(
-      <MessageList
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content:
-              'hello [$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md) context',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:00.000Z',
-          },
-        ]}
-        onOpenLocalSkillFile={onOpenLocalSkillFile}
-      />
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: desktopComposerCatalogStore,
+          catalogEvents: {},
+          prefetchLocalAuth: false,
+          listSkills: async () => [
+            { name: 'env-context', path: skillPath, description: '', source: 'codex' },
+          ],
+        }}
+      >
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: `hello [$env-context](${skillPath.replace(/[\\()]/g, '\\$&')}) context`,
+              status: 'done',
+              createdAt: '2026-05-25T00:00:00.000Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      </ComposerCatalogContext.Provider>
     )
 
     const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
 
-    expect(skillLink).toHaveAttribute('href', '/Users/crystal/.codex/skills/env-context/SKILL.md')
+    expect(skillLink).toHaveAttribute('href', skillPath)
+    await waitFor(() => expect(skillLink).toHaveAttribute('aria-disabled', 'false'))
     fireEvent.click(skillLink)
-    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(
-      '/Users/crystal/.codex/skills/env-context/SKILL.md'
-    )
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(skillPath)
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })
 

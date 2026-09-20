@@ -1,3 +1,4 @@
+import { FileReferenceIcon } from '../composer/FileReferenceIcon'
 import { MessageHoverActions } from './MessageHoverActions'
 import { useMemo, useState } from 'react'
 import {
@@ -44,12 +45,18 @@ import {
 } from '../issue-detail/AttachmentImageView'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
-import { composerPathReference, composerSkillFilePath } from '../composer/composerMentions'
+import {
+  classifyComposerReference,
+  composerSkillName,
+  composerPathReference,
+} from '../composer/composerMentions'
+import { parseComposerReferences } from '../composer/composerReference'
 
 import type { ComposerEditorServices } from '../composer/ComposerEditorServices'
 import type { ComposerTransferServices } from '../composer/useComposerTransfers'
 
 export interface UserMessageServices {
+  localSkills?: readonly { name: string; path: string }[]
   images: AttachmentImageServices<Attachment>
   editor?: ComposerEditorServices
   transfers?: ComposerTransferServices
@@ -140,7 +147,13 @@ export function UserMessage({
   )
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
-  const collapseText = displayContent.replace(CODEX_MENTION_LINK_PATTERN, '$2')
+  const collapseText = parseComposerReferences(displayContent).reduceRight(
+    (text, link) =>
+      classifyComposerReference(link.label, link.href)
+        ? text.slice(0, link.start) + link.label.replace(/^[@$]/, '') + text.slice(link.end)
+        : text,
+    displayContent
+  )
   const shouldCollapse =
     message.runtimeGuidance !== true &&
     (collapseText.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
@@ -597,9 +610,6 @@ function MessageImageAttachmentPreview({
   )
 }
 
-const CODEX_MENTION_LINK_PATTERN =
-  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
@@ -610,18 +620,6 @@ function displayCodexMentionName(name: string): string {
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
-}
-
-function codexMentionKind(
-  href: string
-): 'skill' | 'app' | 'plugin' | 'file' | 'folder' | 'cloud' | 'conversation' {
-  if (href.startsWith('app://')) return 'app'
-  if (href.startsWith('plugin://')) return 'plugin'
-  if (href.startsWith('file://')) return 'file'
-  if (href.startsWith('folder://')) return 'folder'
-  if (href.startsWith('cloud://')) return 'cloud'
-  if (href.startsWith('wework-conversation://')) return 'conversation'
-  return 'skill'
 }
 
 function cloudReferenceKind(href: string): 'project' | 'todo' | 'file' | 'delivery' {
@@ -644,13 +642,20 @@ function renderUserContent(
       onOpenFile={onOpenWorkspaceFile}
       renderLink={(linkHref, text) => {
         const reference = '[' + text + '](' + linkHref + ')'
-        const match = Array.from(reference.matchAll(CODEX_MENTION_LINK_PATTERN))[0]
-        if (!match) return undefined
-        const mentionName = match[2]
-        const href = match[3]
-        const skillFilePath = composerSkillFilePath(match[0])
-        const pathReference = composerPathReference(match[0])
-        const mentionKind = codexMentionKind(href)
+        const mentionKind = classifyComposerReference(text, linkHref)
+        if (!mentionKind) return undefined
+        const skill = composerSkillName(text)
+        const mentionName = mentionKind === 'skill' ? skill.name : text.replace(/^[@$]/, '')
+        const href = linkHref
+        const skillFilePath = mentionKind === 'skill' ? linkHref.replace(/^skill:\/\//, '') : null
+        const pathReference = composerPathReference(reference)
+        const matchingSkills = skillFilePath
+          ? (services.localSkills?.filter(
+              item => item.path.replace(/\\/g, '/') === skillFilePath.replace(/\\/g, '/')
+            ) ?? [])
+          : []
+        const knownSkill = matchingSkills.length === 1 ? matchingSkills[0] : undefined
+        const canOpenSkill = Boolean(knownSkill && onOpenLocalSkillFile)
         const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
         const brandIconUrl =
           mentionKind === 'plugin' || mentionKind === 'app'
@@ -666,7 +671,7 @@ function renderUserContent(
             ? `sent-local-skill-icon-${tokenTestId}`
             : `sent-${mentionKind}-icon-${tokenTestId}`
         const canOpen = Boolean(
-          (skillFilePath && onOpenLocalSkillFile) ||
+          canOpenSkill ||
           (pathReference && onOpenWorkspaceFile) ||
           (parsePluginUri(href) && services.onOpenPlugin)
         )
@@ -680,7 +685,7 @@ function renderUserContent(
             className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
             onClick={event => {
               event.preventDefault()
-              if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+              if (canOpenSkill && knownSkill) onOpenLocalSkillFile?.(knownSkill.path)
               if (pathReference) {
                 onOpenWorkspaceFile?.(
                   pathReference.path,
@@ -694,7 +699,7 @@ function renderUserContent(
             {mentionKind === 'folder' ? (
               <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
             ) : mentionKind === 'file' ? (
-              <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              <FileReferenceIcon path={pathReference?.path ?? href} data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
             ) : mentionKind === 'cloud' ? (
               cloudKind === 'todo' ? (
                 <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
@@ -734,12 +739,15 @@ function renderUserContent(
               <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
             )}
             <span className="min-w-0 truncate">
-              {mentionKind === 'file' ||
-              mentionKind === 'folder' ||
-              mentionKind === 'cloud' ||
-              mentionKind === 'conversation'
-                ? mentionName
-                : displayCodexMentionName(mentionName)}
+              {mentionKind === 'skill'
+                ? skill.displayLabel ??
+                  (knownSkill ? displayCodexMentionName(knownSkill.name) : `$${skill.name}`)
+                : mentionKind === 'file' ||
+                    mentionKind === 'folder' ||
+                    mentionKind === 'cloud' ||
+                    mentionKind === 'conversation'
+                  ? mentionName
+                  : displayCodexMentionName(mentionName)}
             </span>
           </a>
         )

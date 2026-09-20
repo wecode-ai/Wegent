@@ -28,8 +28,8 @@ import {
   ProjectChatComposerSurface,
   PROJECT_CHAT_EDITOR_CLASS,
   PROJECT_CHAT_TOOLBAR_CLASS,
+  PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
 } from './ProjectChatComposerSurface'
-import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
@@ -121,7 +121,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
     ref
   ) {
     const editorRef = useRef<ComposerInputHandle>(null)
-    const textareaRef = useAutoResizeTextarea(value, 112)
+    const textareaRef = useRef<HTMLElement>(null)
     const [hasText, setHasText] = useState(Boolean(value.trim()))
     const [isDraggingFiles, setDraggingFiles] = useState(false)
     const [transferError, setTransferError] = useState<string | null>(null)
@@ -193,6 +193,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       <>
         <ComposerErrorBanner error={transferError} />
         <ProjectChatComposerSurface
+          footer={renderToolbar({
+            canSend,
+            className: PROJECT_CHAT_TOOLBAR_CLASS,
+            onSubmit: submit,
+          })}
           workBar={workBar}
           canCollapseInShortPane={canCollapse}
           collapseWhenIdle={collapseWhenIdle}
@@ -279,6 +284,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
             rows: 2,
             onPasteFiles: onFileSelect,
             className: PROJECT_CHAT_EDITOR_CLASS,
+            scrollContainerClassName: PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
             sendKey,
             followUpBehavior,
             isStreaming,
@@ -299,7 +305,6 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
               return true
             },
           })}
-          {renderToolbar({ canSend, className: PROJECT_CHAT_TOOLBAR_CLASS, onSubmit: submit })}
         </ProjectChatComposerSurface>
       </>
     )

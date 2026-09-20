@@ -11,7 +11,7 @@ import {
 export function ScrollableMessageArea(
   props: Omit<ScrollableMessageAreaProps, DesktopConversationPresentationProp>
 ) {
-  const presentation = useDesktopConversationPresentation()
+  const presentation = useDesktopConversationPresentation(props.messages)
   return (
     <DesktopToolServices>
       <SharedScrollableMessageArea {...props} {...presentation} />

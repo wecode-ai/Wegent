@@ -27,6 +27,7 @@ pub mod plugin_workspace_cli;
 pub mod process;
 pub mod process_environment;
 pub mod prompt_enrichment;
+mod prompt_mentions;
 pub mod protocol;
 pub mod runner;
 pub mod runtime_work;

@@ -10,6 +10,7 @@ import type { ComposerCatalogStore, ComposerCatalogEvents } from './useComposerC
 import type { ComposerMentionCandidate } from './composerMentionCandidates'
 import type { WorkspaceMentionSearchApi, WorkspaceMentionTarget } from './workspaceMentionTypes'
 import type { SlashCommand } from './composerAutocomplete'
+import type { ComposerPathTransfer } from './useComposerTransfers'
 
 export type ComposerCatalogCommand = SlashCommand<LocalDeviceApp, LocalDeviceSkill>
 export interface ComposerExternalMentionCandidate {
@@ -86,7 +87,7 @@ export interface ComposerAutocompleteInputProps<
   onOpenMarketplace?: () => void
   renderAppIcon?: (command: ComposerCatalogCommand) => ReactNode
   onOpenMentionPlugin?: (reference: PluginReference) => void
-  onPickWorkspacePaths?: (path?: string) => Promise<Array<{ path: string; isDirectory: boolean }>>
+  onPickWorkspacePaths?: (path?: string) => Promise<ComposerPathTransfer>
   contributedMentionCandidates?: ComposerMentionCandidate<Project, Conversation>[]
   contributedSlashCommands?: ComposerCatalogCommand[]
   onMentionQueryChange?: (query: string) => void

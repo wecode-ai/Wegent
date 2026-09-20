@@ -7868,10 +7868,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await within(sideChat).findByTestId('attachment-badge')).toBeInTheDocument()
-    expect(within(sideChat).getByTestId('attachment-text-preview')).toHaveAttribute(
-      'title',
-      'side chat'
-    )
+    expect(within(sideChat).getByTestId('attachment-document-icon')).toBeInTheDocument()
+    expect(within(sideChat).getByTitle('side-chat.txt')).toBeInTheDocument()
+    expect(within(sideChat).queryByTestId('attachment-text-preview')).not.toBeInTheDocument()
     expect(baseProps.projectChat.handleFileSelect).not.toHaveBeenCalled()
     expect(screen.getAllByTestId('attachment-badge')).toHaveLength(1)
 
@@ -8155,7 +8154,9 @@ describe('DesktopWorkbenchLayout', () => {
       within(sideChat).getByTestId('attachment-file-input'),
       new File(['queued attachment'], 'queued-attachment.txt', { type: 'text/plain' })
     )
-    expect(await within(sideChat).findByTitle('queued attachment')).toBeInTheDocument()
+    expect(
+      await within(sideChat).findByTestId('attachment-document-preview-button')
+    ).toHaveAccessibleName('queued-attachment.txt')
     await userEvent.type(sideChatInput, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toBeInTheDocument()
@@ -8164,15 +8165,17 @@ describe('DesktopWorkbenchLayout', () => {
       within(sideChat).getByTestId('attachment-file-input'),
       new File(['draft attachment'], 'draft-attachment.txt', { type: 'text/plain' })
     )
-    expect(await within(sideChat).findByTitle('draft attachment')).toBeInTheDocument()
+    expect(
+      await within(sideChat).findByTestId('attachment-document-preview-button')
+    ).toHaveAccessibleName('draft-attachment.txt')
 
     await userEvent.click(within(sideChat).getByTestId(/queue-more-button-/))
     await userEvent.click(await screen.findByTestId(/queue-edit-button-/))
 
     await waitFor(() => expect(sideChatInput).toHaveValue('queued follow-up'))
     expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
-    expect(within(sideChat).getByTitle('queued attachment')).toBeInTheDocument()
-    expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
+    expect(within(sideChat).getByTitle('queued-attachment.txt')).toBeInTheDocument()
+    expect(within(sideChat).queryByTitle('draft-attachment.txt')).not.toBeInTheDocument()
   }, 30_000)
 
   test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
@@ -9041,64 +9044,74 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('decodes an encoded assistant file path before opening it in the workspace panel', async () => {
-    const user = userEvent.setup()
-    const workspacePanelState = createCloudWorkspacePanelState()
-    const filePath = '/workspace/project/README file.md'
-    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
-      path: filePath,
-      name: 'README file.md',
-      content: 'opened encoded file path',
-      truncated: false,
-      size: 24,
-      modifiedAt: null,
-    })
-    const listWorkspaceEntries = vi.fn().mockResolvedValue({
-      path: '/workspace/project',
-      entries: [],
-    })
+  test.each(['/workspace/project/README%2520file.md', '~/README%2520file.md'])(
+    'decodes and resolves an assistant file path before opening it: %s',
+    async referencePath => {
+      const user = userEvent.setup()
+      const getHome = vi.fn().mockResolvedValue('/workspace/project')
+      const workspacePanelState = createCloudWorkspacePanelState()
+      const filePath = '/workspace/project/README file.md'
+      const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+        path: filePath,
+        name: 'README file.md',
+        content: 'opened encoded file path',
+        truncated: false,
+        size: 24,
+        modifiedAt: null,
+      })
+      const listWorkspaceEntries = vi.fn().mockResolvedValue({
+        path: '/workspace/project',
+        entries: [],
+      })
 
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        workspaceFileApi={{
-          listWorkspaceEntries,
-          readWorkspaceTextFile,
-        }}
-        state={{
-          ...baseProps.state,
-          ...workspacePanelState,
-        }}
-        messages={[
-          {
-            id: 'assistant-encoded-file-link',
-            role: 'assistant',
-            content: '[README file.md](/workspace/project/README%2520file.md)',
-            status: 'done',
-            createdAt: '2026-08-25T08:00:00.000Z',
-          },
-        ]}
-        projectWork={{
-          ...baseProps.projectWork,
-          projects: workspacePanelState.projects,
-          devices: workspacePanelState.devices,
-          currentProjectId: workspacePanelState.currentProject.id,
-        }}
-      />
-    )
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onGetDeviceHomeDirectory={getHome}
+          workspaceFileApi={{
+            listWorkspaceEntries,
+            readWorkspaceTextFile,
+          }}
+          state={{
+            ...baseProps.state,
+            ...workspacePanelState,
+          }}
+          messages={[
+            {
+              id: 'assistant-encoded-file-link',
+              role: 'assistant',
+              content: `[README file.md](${referencePath})`,
+              status: 'done',
+              createdAt: '2026-08-25T08:00:00.000Z',
+            },
+          ]}
+          projectWork={{
+            ...baseProps.projectWork,
+            projects: workspacePanelState.projects,
+            devices: workspacePanelState.devices,
+            currentProjectId: workspacePanelState.currentProject.id,
+          }}
+        />
+      )
 
-    await user.click(screen.getByTestId('assistant-markdown-link'))
+      await user.click(screen.getByTestId('assistant-markdown-link'))
 
-    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
-      'opened encoded file path'
-    )
-    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
-      'workspace-cloud-device',
-      filePath,
-      '/workspace/project'
-    )
-    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(filePath)
-  })
+      expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'opened encoded file path'
+      )
+      expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        filePath,
+        '/workspace/project'
+      )
+      expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(filePath)
+      if (referencePath.startsWith('~/')) {
+        expect(getHome).toHaveBeenCalledWith('workspace-cloud-device')
+      } else {
+        expect(getHome).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
     const user = userEvent.setup()
@@ -9237,122 +9250,196 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens a skill from the empty composer on the real local device', async () => {
-    const user = userEvent.setup()
-    const localDevice = createLocalSkillDevice()
-    const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
-    const listWorkspaceEntries = vi.fn().mockResolvedValue({
-      path: '/Users/me/.agents/skills/gmail',
-      entries: [],
-    })
+  test('opens a relative skill from the composer in its bound workspace', async () => {
+    const workspace = createCloudWorkspacePanelState()
     const readWorkspaceTextFile = vi.fn().mockResolvedValue({
-      path: skillPath,
-      name: 'SKILL.md',
-      content: '# Gmail',
+      path: '/workspace/project/skills/instructions.md',
+      name: 'instructions.md',
+      content: '# Relative skill',
       truncated: false,
-      size: 7,
+      size: 16,
       modifiedAt: null,
     })
-
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
-        state={{
-          ...baseProps.state,
-          devices: [localDevice],
-          input: `[$gmail](${skillPath}) `,
+        workspaceFileApi={{
+          listWorkspaceEntries: vi
+            .fn()
+            .mockResolvedValue({ path: '/workspace/project', entries: [] }),
+          readWorkspaceTextFile,
         }}
+        state={{ ...baseProps.state, ...workspace, input: '[$gmail](./skills/instructions.md) ' }}
         projectWork={{
           ...baseProps.projectWork,
-          devices: [localDevice],
+          ...workspace,
+          currentProjectId: workspace.currentProject.id,
         }}
       />
     )
-
-    await user.click(await screen.findByTestId('local-skill-chip-gmail'))
-
-    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
-    expect(listWorkspaceEntries).toHaveBeenCalledWith(
-      localDevice.device_id,
-      '/Users/me/.agents/skills/gmail',
-      '/Users/me/.agents/skills/gmail'
+    await userEvent.setup().click(await screen.findByTestId('local-skill-chip-gmail'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'Relative skill'
     )
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
-      localDevice.device_id,
-      skillPath,
-      '/Users/me/.agents/skills/gmail'
+      'workspace-cloud-device',
+      '/workspace/project/skills/instructions.md',
+      '/workspace/project'
     )
   })
 
-  test('opens a sent skill on the local device while the project workspace is remote', async () => {
-    const user = userEvent.setup()
-    const workspacePanelState = createCloudWorkspacePanelState()
-    const localDevice = createLocalSkillDevice()
-    const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
-    const listWorkspaceEntries = vi.fn().mockResolvedValue({
-      path: '/Users/me/.agents/skills/gmail',
-      entries: [],
-    })
-    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
-      path: skillPath,
-      name: 'SKILL.md',
-      content: '# Gmail',
-      truncated: false,
-      size: 7,
-      modifiedAt: null,
-    })
+  test.each(
+    ['/Users/me/.agents/skills/gmail/SKILL.md', '~/.agents/skills/gmail/SKILL.md'].flatMap(
+      referencePath => ['$gmail', 'test-label'].map(label => ({ referencePath, label }))
+    )
+  )(
+    'opens a skill from the empty composer on the real local device: $label ($referencePath)',
+    async ({ referencePath, label }) => {
+      const user = userEvent.setup()
+      const localDevice = createLocalSkillDevice()
+      const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
+      const listWorkspaceEntries = vi.fn().mockResolvedValue({
+        path: '/Users/me/.agents/skills/gmail',
+        entries: [],
+      })
+      const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+        path: skillPath,
+        name: 'SKILL.md',
+        content: '# Gmail',
+        truncated: false,
+        size: 7,
+        modifiedAt: null,
+      })
 
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
-        state={{
-          ...baseProps.state,
-          ...workspacePanelState,
-          devices: [...workspacePanelState.devices, localDevice],
-        }}
-        messages={[
-          {
-            id: 'user-skill-link',
-            role: 'user',
-            content: `[$gmail](${skillPath})`,
-            status: 'completed',
-            createdAt: '2026-07-11T00:00:00.000Z',
-          },
-        ]}
-        projectWork={{
-          ...baseProps.projectWork,
-          projects: workspacePanelState.projects,
-          devices: [...workspacePanelState.devices, localDevice],
-          currentProjectId: workspacePanelState.currentProject.id,
-        }}
-      />
-    )
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+          onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/Users/me')}
+          state={{
+            ...baseProps.state,
+            devices: [localDevice],
+            input: `[${label}](${referencePath}) `,
+          }}
+          projectWork={{
+            ...baseProps.projectWork,
+            devices: [localDevice],
+          }}
+        />
+      )
 
-    const skillLink = await screen.findByTestId('sent-local-skill-token-gmail')
-    await user.hover(skillLink)
-    expect(screen.getByTestId('sent-local-skill-token-gmail')).toBe(skillLink)
-    await user.click(skillLink)
+      await user.click(
+        await screen.findByTestId(
+          label === '$gmail' ? 'local-skill-chip-gmail' : 'composer-path-chip-test-label'
+        )
+      )
 
-    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
-    expect(listWorkspaceEntries).toHaveBeenCalledWith(
-      localDevice.device_id,
-      '/Users/me/.agents/skills/gmail',
-      '/Users/me/.agents/skills/gmail'
-    )
-    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
-      localDevice.device_id,
-      skillPath,
-      '/Users/me/.agents/skills/gmail'
-    )
-    expect(readWorkspaceTextFile).not.toHaveBeenCalledWith(
-      workspacePanelState.devices[0].device_id,
-      skillPath
-    )
-  })
+      expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
+      expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(listWorkspaceEntries).toHaveBeenCalledWith(
+        localDevice.device_id,
+        '/Users/me/.agents/skills/gmail',
+        '/Users/me/.agents/skills/gmail'
+      )
+      expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+        localDevice.device_id,
+        skillPath,
+        '/Users/me/.agents/skills/gmail'
+      )
+    }
+  )
+
+  test.each(['/Users/me/.agents/skills/gmail/SKILL.md', '~/.agents/skills/gmail/SKILL.md'])(
+    'opens only registered sent skills on the local device while the project workspace is remote: %s',
+    async referencePath => {
+      const user = userEvent.setup()
+      const getHome = vi.fn().mockResolvedValue('/Users/me')
+      const workspacePanelState = createCloudWorkspacePanelState()
+      const localDevice = createLocalSkillDevice()
+      const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
+      const listWorkspaceEntries = vi.fn().mockResolvedValue({
+        path: '/Users/me/.agents/skills/gmail',
+        entries: [],
+      })
+      const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+        path: skillPath,
+        name: 'SKILL.md',
+        content: '# Gmail',
+        truncated: false,
+        size: 7,
+        modifiedAt: null,
+      })
+
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onGetDeviceHomeDirectory={getHome}
+          projectChat={{
+            ...baseProps.projectChat,
+            listLocalSkills: async () => [
+              { name: 'gmail', path: skillPath, description: '', source: 'codex' },
+            ],
+          }}
+          workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+          state={{
+            ...baseProps.state,
+            ...workspacePanelState,
+            devices: [...workspacePanelState.devices, localDevice],
+          }}
+          messages={[
+            {
+              id: 'user-skill-link',
+              role: 'user',
+              content: `[$gmail](${referencePath})`,
+              status: 'completed',
+              createdAt: '2026-07-11T00:00:00.000Z',
+            },
+          ]}
+          projectWork={{
+            ...baseProps.projectWork,
+            projects: workspacePanelState.projects,
+            devices: [...workspacePanelState.devices, localDevice],
+            currentProjectId: workspacePanelState.currentProject.id,
+          }}
+        />
+      )
+
+      const skillLink = await screen.findByTestId('sent-local-skill-token-gmail')
+      if (referencePath.startsWith('~/')) {
+        expect(skillLink).toHaveAttribute('aria-disabled', 'true')
+        await user.click(skillLink)
+        expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+        return
+      }
+      await waitFor(() => expect(skillLink).toHaveAttribute('aria-disabled', 'false'))
+      await user.hover(skillLink)
+      expect(screen.getByTestId('sent-local-skill-token-gmail')).toBe(skillLink)
+      await user.click(skillLink)
+
+      expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
+      expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(listWorkspaceEntries).toHaveBeenCalledWith(
+        localDevice.device_id,
+        '/Users/me/.agents/skills/gmail',
+        '/Users/me/.agents/skills/gmail'
+      )
+      expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+        localDevice.device_id,
+        skillPath,
+        '/Users/me/.agents/skills/gmail'
+      )
+      expect(readWorkspaceTextFile).not.toHaveBeenCalledWith(
+        workspacePanelState.devices[0].device_id,
+        skillPath
+      )
+    }
+  )
 
   test('right workspace panel renders nested directories as an expanded tree', async () => {
     const user = userEvent.setup()

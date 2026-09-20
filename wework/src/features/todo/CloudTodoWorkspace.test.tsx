@@ -5191,10 +5191,10 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(screen.getByTestId('cloud-todo-column-empty-add-inbox'))
-    await userEvent.type(
-      screen.getByTestId('cloud-todo-column-quick-create-input-inbox'),
-      'Issue with details'
-    )
+    // This scenario verifies title handoff, not per-character keyboard behavior.
+    fireEvent.change(screen.getByTestId('cloud-todo-column-quick-create-input-inbox'), {
+      target: { value: 'Issue with details' },
+    })
     await userEvent.click(screen.getByTestId('cloud-todo-column-quick-create-full-inbox'))
 
     expect(screen.getByTestId('workspace-issue-composer')).toBeVisible()
