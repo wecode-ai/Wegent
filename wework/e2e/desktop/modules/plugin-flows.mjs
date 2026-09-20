@@ -1349,7 +1349,7 @@ async function verifySkillMentionRendering({ control, fixture }) {
   )
   await control.command(
     'waitFor',
-    '[data-testid="message-user"] [data-testid="assistant-markdown-link-icon"].lucide-package',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"] svg[data-testid="assistant-markdown-link-icon"]',
     {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
