@@ -149,7 +149,7 @@ export function PluginPickerMenu({
               }
             }}
             data-testid="composer-plugin-picker"
-            className={`${portalTheme.className} fixed z-system-popover flex flex-col w-[min(460px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border/30 bg-popover p-2 shadow-xl`}
+            className={`${portalTheme.className} fixed z-system-popover flex flex-col w-[min(460px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border/30 bg-popover p-2 text-text-primary shadow-xl`}
           >
             {appsLoadError && (
               <div
