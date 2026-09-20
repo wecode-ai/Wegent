@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { CaptureResult, PostHog } from 'posthog-js'
+import { telemetryPolicy } from '@extensions/telemetry-policy'
+import type { TelemetryIdentity } from '@extensions/telemetry-policy-contract'
 import {
   ANALYTICS_EVENT_PROPERTY_KEYS,
   ANALYTICS_EVENT_VALUE_CONSTRAINTS,
@@ -38,6 +40,17 @@ const POSTHOG_TRANSPORT_PROPERTY_KEYS = [
   'distinct_id',
   'token',
 ] as const
+// posthog-js emits its own identity events: `$identify` links the stored
+// anonymous id to the signed-in account and `$set` updates person properties.
+// They are not product events, so the catalog allowlist below would drop them;
+// they pass only while the active policy installs person profiles, which is
+// also what makes PostHog create the profile.
+const IDENTITY_CAPTURE_EVENTS = new Set(['$identify', '$set'])
+const IDENTITY_CAPTURE_PROPERTY_KEYS = [
+  ...POSTHOG_TRANSPORT_PROPERTY_KEYS,
+  // Names the anonymous person that `$identify` merges into the account.
+  '$anon_distinct_id',
+] as const
 
 type SentryModule = typeof import('@sentry/react')
 type SentryEvent = Parameters<NonNullable<Parameters<SentryModule['init']>[0]['beforeSend']>>[0]
@@ -58,6 +71,7 @@ let pendingCaptures: QueuedAnalyticsEvent[] = []
 let captureFlushScheduled = false
 let cachedCommonProperties: CommonTelemetryProperties | null = null
 let pendingTransition: Promise<void> = Promise.resolve()
+let identity: TelemetryIdentity | null = null
 
 const telemetryEnabledListeners = new Set<() => void>()
 
@@ -83,11 +97,29 @@ function commonTelemetryProperties(): CommonTelemetryProperties {
   return cachedCommonProperties
 }
 
+function sanitizeIdentityCapture(capture: CaptureResult): CaptureResult {
+  const allowedPropertyKeys = new Set<string>(IDENTITY_CAPTURE_PROPERTY_KEYS)
+  const sanitized: CaptureResult = {
+    event: capture.event,
+    properties: Object.fromEntries(
+      Object.entries(capture.properties).filter(([key]) => allowedPropertyKeys.has(key))
+    ),
+    timestamp: capture.timestamp,
+    uuid: capture.uuid,
+  }
+  // Person properties live outside `properties`; they are the payload PostHog
+  // stores on the account profile.
+  if (capture.$set) sanitized.$set = capture.$set
+  if (capture.$set_once) sanitized.$set_once = capture.$set_once
+  return sanitized
+}
+
 function sanitizePostHogCapture(capture: CaptureResult | null): CaptureResult | null {
-  if (
-    !capture ||
-    !Object.prototype.hasOwnProperty.call(ANALYTICS_EVENT_PROPERTY_KEYS, capture.event)
-  ) {
+  if (!capture) return null
+  if (telemetryPolicy.personProfiles !== 'never' && IDENTITY_CAPTURE_EVENTS.has(capture.event)) {
+    return sanitizeIdentityCapture(capture)
+  }
+  if (!Object.prototype.hasOwnProperty.call(ANALYTICS_EVENT_PROPERTY_KEYS, capture.event)) {
     return null
   }
   const eventName = capture.event as AnalyticsEventName
@@ -126,12 +158,13 @@ async function initPostHog(): Promise<void> {
     advanced_disable_feature_flags: true,
     opt_out_persistence_by_default: true,
     persistence: 'localStorage',
-    person_profiles: 'never',
+    person_profiles: telemetryPolicy.personProfiles,
     // Batch sends so each capture does not immediately run the full
     // send pipeline (compression, persistence, request) on the caller's stack.
     request_batching: true,
     before_send: sanitizePostHogCapture,
   })
+  if (identity) posthog.identify(identity.distinctId, identity.properties)
 }
 
 function sanitizeSentryTags(tags: SentryEvent['tags']): SentryEvent['tags'] {
@@ -377,6 +410,21 @@ export async function installTelemetry(initiallyEnabled: boolean): Promise<void>
   await initialize()
 }
 
+/**
+ * Attaches the signed-in account to PostHog when the distribution policy
+ * provides one, and detaches it on sign-out. Anonymous policies always pass
+ * `null`, and a `null` without a previous identity is ignored so the generated
+ * distinct id stays stable for the whole installation.
+ */
+export function applyTelemetryIdentity(nextIdentity: TelemetryIdentity | null): void {
+  if (!enabled) return
+  if (!nextIdentity && !identity) return
+  identity = nextIdentity
+  if (!posthog) return
+  if (nextIdentity) posthog.identify(nextIdentity.distinctId, nextIdentity.properties)
+  else posthog.reset(true)
+}
+
 export function track<EventName extends AnalyticsEventName>(
   name: EventName,
   properties: AnalyticsEventMap[EventName]
@@ -455,6 +503,7 @@ async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   posthog?.opt_out_capturing()
   sentry?.setUser(null)
   await sentry?.close(0)
+  identity = null
   posthog = null
   sentry = null
   localStorage.removeItem(INSTALLATION_ID_KEY)
@@ -473,4 +522,5 @@ export function resetTelemetryForTests(): void {
   pendingCaptures = []
   captureFlushScheduled = false
   cachedCommonProperties = null
+  identity = null
 }

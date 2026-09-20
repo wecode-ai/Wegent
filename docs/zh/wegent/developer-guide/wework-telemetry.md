@@ -18,7 +18,19 @@ Wework 首次启动时会明确询问用户是否允许共享匿名使用情况�
 
 PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Electron 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、原始异常文本、源码片段、本机文件路径和局部变量。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
 
-Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStorage 中保存的 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用 SDK 自生成的 `distinct_id` 和 `$session_id`。这些标识都是匿名的、与登录账户无关，并在用户关闭遥测时旋转，避免重新开启后继续关联关闭前的数据。
+公共 Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStorage 中保存的 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用 SDK 自生成的 `distinct_id` 和 `$session_id`。这些标识都是匿名的、与登录账户无关，并在用户关闭遥测时旋转，避免重新开启后继续关联关闭前的数据。需要实名分析的产品发行版通过遥测策略提供账户身份与客户端 IP，见下文。
+
+## 发行版遥测策略
+
+公共 Wework 只提供匿名策略：不创建 person profile、不发送客户端 IP、不附带账户身份。需要实名分析的产品发行版在构建时替换 `@extensions/telemetry-policy`（契约见 `wework/src/extensions/telemetry-policy-contract.ts`），由发行版自己的 `TelemetryPolicy` 决定这三件事：
+
+| 字段 | 作用 |
+| --- | --- |
+| `personProfiles` | PostHog person profile 模式；`never` 表示所有事件保持匿名 |
+| `sendClientIp` | 是否发送客户端 IP，由 PostHog 保存并做地理位置富化 |
+| `identityFor` | 登录用户的账户身份（distinct id 与 person 属性）；返回 `null` 时保持匿名 |
+
+策略只覆盖身份与客户端 IP 两类数据：事件目录、属性白名单和脱敏逻辑对所有发行版一致，聊天、提示词、模型回复、代码、文件内容、文件路径、终端输出和屏幕截图在任何发行版中都不得上报。发行版策略开启 person profile 后，还必须在 PostHog 项目里把 Person 显示名指到对应的 person 属性，否则列表仍显示 distinct id。
 
 ## 事件目录
 
@@ -136,8 +148,8 @@ PostHog 项目应：
 
 - 正确设置 `VITE_WEWORK_POSTHOG_HOST`。默认值为 `https://us.i.posthog.com`；欧盟托管项目使用 `https://eu.i.posthog.com`；私有化部署使用对应接收地址。
 - 在项目级别关闭 Session Replay 与 autocapture，作为客户端开关的兜底；Wework 不会发送回放数据或自动采集事件。
-- 保持 person profiles 关闭；Wework 已设置 `person_profiles: 'never'` 与 `$process_person_profile: false`，PostHog 不会基于匿名事件构建用户画像。
-- 将项目级 IP 匿名化或 `$_` 采集设置作为 `$geoip_disable: true` 的兜底，Wework 已在每个事件上发送该属性。
+- 公共发行版保持 person profiles 关闭：`person_profiles: 'never'` 与 `$process_person_profile: false` 让 PostHog 不会基于匿名事件构建用户画像。
+- 将项目级 IP 匿名化或 `$_` 采集设置作为 `$geoip_disable: true` 的兜底；公共发行版已在每个事件上发送该属性，发行版策略开启客户端 IP 时应改用项目级 IP 采集设置。
 
 ## 指标基数
 

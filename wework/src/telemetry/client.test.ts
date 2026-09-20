@@ -3,10 +3,18 @@ import { telemetryTraceId } from '@/telemetry/traceId'
 
 const posthogMocks = vi.hoisted(() => ({
   capture: vi.fn(),
+  identify: vi.fn(),
   init: vi.fn(),
   optIn: vi.fn(),
   optOut: vi.fn(),
   reset: vi.fn(),
+}))
+const policyMocks = vi.hoisted(() => ({
+  policy: {
+    personProfiles: 'never' as 'never' | 'identified_only' | 'always',
+    sendClientIp: false,
+    identityFor: () => null as { distinctId: string; properties: Record<string, string> } | null,
+  },
 }))
 const sentryMocks = vi.hoisted(() => ({
   browserTracingIntegration: vi.fn(() => ({ name: 'browser-tracing' })),
@@ -25,6 +33,8 @@ vi.mock('posthog-js', () => ({
 
 vi.mock('@sentry/react', () => sentryMocks)
 
+vi.mock('@extensions/telemetry-policy', () => ({ telemetryPolicy: policyMocks.policy }))
+
 // track() defers the capture to a microtask, so tests must let the flush run
 // before asserting on the capture mock.
 const flushPostHogCaptures = () => new Promise<void>(resolve => setTimeout(resolve, 0))
@@ -37,10 +47,13 @@ describe('telemetry client', () => {
     Object.values(sentryMocks).forEach(mock => mock.mockReset())
     posthogMocks.init.mockReturnValue({
       capture: posthogMocks.capture,
+      identify: posthogMocks.identify,
       opt_in_capturing: posthogMocks.optIn,
       opt_out_capturing: posthogMocks.optOut,
       reset: posthogMocks.reset,
     })
+    policyMocks.policy.personProfiles = 'never'
+    policyMocks.policy.sendClientIp = false
     sentryMocks.close.mockResolvedValue(true)
     vi.stubEnv('VITE_WEWORK_POSTHOG_KEY', 'project-key')
     vi.stubEnv('VITE_WEWORK_SENTRY_DSN', 'https://public@example.invalid/1')
@@ -291,6 +304,77 @@ describe('telemetry client', () => {
         },
       })
     ).toBeNull()
+  })
+
+  test('attaches the account identity when the policy installs person profiles', async () => {
+    policyMocks.policy.personProfiles = 'identified_only'
+    policyMocks.policy.sendClientIp = true
+    const { applyTelemetryIdentity, installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    expect(posthogMocks.init.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ person_profiles: 'identified_only' })
+    )
+
+    applyTelemetryIdentity({ distinctId: 'jiaqi62', properties: { username: 'jiaqi62' } })
+    expect(posthogMocks.identify).toHaveBeenCalledWith('jiaqi62', { username: 'jiaqi62' })
+
+    track('task_started', { execution_target: 'local' })
+    await flushPostHogCaptures()
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      'task_started',
+      expect.objectContaining({ $geoip_disable: false })
+    )
+  })
+
+  test('forwards identity events and their person properties under an identified policy', async () => {
+    policyMocks.policy.personProfiles = 'identified_only'
+    const { installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    const beforeSend = posthogMocks.init.mock.calls[0]?.[1]?.before_send
+    const sanitized = beforeSend({
+      uuid: 'identify-uuid',
+      event: '$identify',
+      properties: {
+        distinct_id: 'jiaqi62',
+        $anon_distinct_id: 'previous-anonymous-id',
+        $current_url: 'http://localhost/private/project/42',
+      },
+      $set: { username: 'jiaqi62' },
+    })
+
+    expect(sanitized).toEqual({
+      uuid: 'identify-uuid',
+      event: '$identify',
+      properties: {
+        distinct_id: 'jiaqi62',
+        $anon_distinct_id: 'previous-anonymous-id',
+      },
+      $set: { username: 'jiaqi62' },
+    })
+  })
+
+  test('detaches the account identity on sign-out', async () => {
+    policyMocks.policy.personProfiles = 'identified_only'
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    applyTelemetryIdentity({ distinctId: 'jiaqi62', properties: {} })
+    applyTelemetryIdentity(null)
+
+    expect(posthogMocks.reset).toHaveBeenCalledWith(true)
+  })
+
+  test('ignores an anonymous identity so the generated distinct id stays stable', async () => {
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    applyTelemetryIdentity(null)
+
+    expect(posthogMocks.identify).not.toHaveBeenCalled()
+    expect(posthogMocks.reset).not.toHaveBeenCalled()
   })
 
   test('removes request, breadcrumb, message, context and source paths from Sentry events', async () => {
