@@ -57,6 +57,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-settings-matrix': './scenarios/collaboration-settings-matrix.scenario.mjs',
+  'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-local-agent-capabilities':
     './scenarios/collaboration-local-agent-capabilities.scenario.mjs',
   'collaboration-agent-automation-chain':
@@ -84,6 +85,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-context-resilience',
   'collaboration-shared-core',
   'collaboration-settings-matrix',
+  'collaboration-first-use',
   'collaboration-local-agent-capabilities',
   'collaboration-agent-automation-chain',
   'plugin-development',

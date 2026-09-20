@@ -674,6 +674,7 @@ function PlatformHarness({
   renderDeviceCreator,
   renderProject,
   workspaceOwnerOptions,
+  defaultAssistant,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
   api: SharedWorkspaceApi;
@@ -687,6 +688,7 @@ function PlatformHarness({
   renderDeviceCreator?: CollaborationPlatformHostAdapter["renderDeviceCreator"];
   renderProject?(context: CollaborationProjectRendererContext): ReactNode;
   workspaceOwnerOptions?: CollaborationPlatformHostAdapter["workspaceOwnerOptions"];
+  defaultAssistant?: CollaborationPlatformHostAdapter["defaultAssistant"];
   capabilities?: CollaborationPlatformHostAdapter["capabilities"];
 }) {
   const [location, setLocation] = useState(start);
@@ -699,6 +701,7 @@ function PlatformHarness({
     renderDeviceCreator,
     notify,
     workspaceOwnerOptions,
+    defaultAssistant,
   };
   return (
     <>
@@ -1723,22 +1726,28 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
-    expect(
-      byTestId("collaboration-first-project-create-local").textContent,
-    ).toContain("创建本地项目");
-    expect(
-      byTestId("collaboration-first-project-create-cloud").textContent,
-    ).toContain("登录后创建云端项目");
+    expect(container.textContent).not.toContain("今天要推进什么？");
     expect(container.textContent).toContain(
-      "先选择本地空间或云端空间，再创建项目。云端空间支持跨设备协作。",
+      "把一个目标交给成员和智能体，并持续看到推进过程。",
     );
-    await click(byTestId("collaboration-first-project-create-cloud"));
+    expect(container.textContent).toContain("记录目标分配协作跟踪结果");
+    expect(
+      byTestId("collaboration-first-project-create").textContent,
+    ).toContain("创建项目");
+
+    await click(byTestId("collaboration-first-project-create"));
+    expect(
+      byTestId(`collaboration-project-workspace-${localWorkspace.id}`),
+    ).toBeTruthy();
+    await click(byTestId("collaboration-project-workspace-cloud-login"));
     expect(requestLogin).toHaveBeenCalledOnce();
     expect(
       container.querySelector('[data-testid="cloud-project-location-local"]'),
     ).toBeNull();
 
-    await click(byTestId("collaboration-first-project-create-local"));
+    await click(
+      byTestId(`collaboration-project-workspace-${localWorkspace.id}`),
+    );
     expect(byTestId("cloud-project-location-local")).toBeTruthy();
   });
 
@@ -1760,10 +1769,8 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
-    expect(
-      byTestId("collaboration-first-project-create-cloud").textContent,
-    ).toContain("创建云端项目");
-    await click(byTestId("collaboration-first-project-create-cloud"));
+    await click(byTestId("collaboration-first-project-create"));
+    await click(byTestId("collaboration-project-workspace-cloud-create"));
     await change(
       byTestId("collaboration-workspace-name-input") as HTMLInputElement,
       "云端研发空间",

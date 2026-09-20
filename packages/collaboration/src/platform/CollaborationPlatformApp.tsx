@@ -224,15 +224,13 @@ const platformMessages = {
     projects: "项目",
     workspaceManagement: "空间管理",
     createProject: "创建项目",
-    createCollaborationProject: "新建协作项目",
-    firstProjectHomeTitle: "创建第一个协作项目",
-    firstProjectHomeHint:
-      "用项目组织 Issue、成员和智能体。创建后即可开始分配和自动处理工作。",
-    firstProjectHomeLocationHint:
-      "先选择本地空间或云端空间，再创建项目。云端空间支持跨设备协作。",
-    chooseProjectLocation: "选择创建位置",
-    createLocalProject: "创建本地项目",
-    createCloudProject: "创建云端项目",
+    createCollaborationProject: "创建项目",
+    firstProjectHomeTitle: "开始第一个协作项目",
+    firstProjectHomeHint: "把一个目标交给成员和智能体，并持续看到推进过程。",
+    firstProjectGuideCapture: "记录目标",
+    firstProjectGuideAssign: "分配协作",
+    firstProjectGuideTrack: "跟踪结果",
+    firstProjectLocationHint: "下一步再选择保存在本地或云端",
     chooseProjectWorkspace: "选择项目所属空间",
     chooseProjectWorkspaceHint: "项目创建后不可移动到其他协作空间。",
     loginForCloudProject: "登录后创建云端项目",
@@ -439,15 +437,14 @@ const platformMessages = {
     projects: "Projects",
     workspaceManagement: "Space management",
     createProject: "Create project",
-    createCollaborationProject: "New collaboration project",
-    firstProjectHomeTitle: "Create your first collaboration project",
+    createCollaborationProject: "Create project",
+    firstProjectHomeTitle: "Start your first collaboration project",
     firstProjectHomeHint:
-      "Use projects to organize issues, members, and agents. Once created, you can start assigning and automating work.",
-    firstProjectHomeLocationHint:
-      "Choose a local or cloud workspace before creating the project. Cloud workspaces support cross-device collaboration.",
-    chooseProjectLocation: "Choose where to create",
-    createLocalProject: "Create local project",
-    createCloudProject: "Create cloud project",
+      "Give a goal to members and agents, then follow its progress through delivery.",
+    firstProjectGuideCapture: "Capture the goal",
+    firstProjectGuideAssign: "Assign collaborators",
+    firstProjectGuideTrack: "Track the result",
+    firstProjectLocationHint: "Choose local or cloud storage in the next step",
     chooseProjectWorkspace: "Choose a workspace",
     chooseProjectWorkspaceHint:
       "The project cannot be moved to another collaboration workspace after creation.",
@@ -2332,64 +2329,54 @@ function WorkItemRow({
 
 function FirstProjectStarter({
   messages,
-  chooseLocation,
-  cloudLoginRequired,
   onCreate,
-  onCreateCloud,
-  onCreateLocal,
 }: {
   messages: PlatformMessages;
-  chooseLocation: boolean;
-  cloudLoginRequired: boolean;
   onCreate(): void;
-  onCreateCloud(): void;
-  onCreateLocal(): void;
 }) {
   return (
     <section
       className="collaboration-first-project-starter"
       data-testid="collaboration-first-project-starter"
     >
-      <span className="collaboration-project-card-mark">01</span>
-      <div>
+      <span className="collaboration-first-project-icon">
+        <FolderPlus aria-hidden="true" />
+      </span>
+      <div className="collaboration-first-project-copy">
         <h2>{messages.firstProjectHomeTitle}</h2>
-        <p>
-          {chooseLocation
-            ? messages.firstProjectHomeLocationHint
-            : messages.firstProjectHomeHint}
-        </p>
+        <p>{messages.firstProjectHomeHint}</p>
       </div>
-      {chooseLocation ? (
-        <div className="collaboration-first-project-actions">
-          <button
-            type="button"
-            data-testid="collaboration-first-project-create-local"
-            onClick={onCreateLocal}
-          >
-            <Laptop aria-hidden="true" />
-            {messages.createLocalProject}
-          </button>
-          <button
-            type="button"
-            data-testid="collaboration-first-project-create-cloud"
-            onClick={onCreateCloud}
-          >
-            <Cloud aria-hidden="true" />
-            {cloudLoginRequired
-              ? messages.loginForCloudProject
-              : messages.createCloudProject}
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="collaboration-primary-button"
-          data-testid="collaboration-first-project-create"
-          onClick={onCreate}
-        >
-          {messages.createCollaborationProject}
-        </button>
-      )}
+      <div
+        className="collaboration-first-project-guide"
+        aria-label={messages.firstProjectHomeTitle}
+      >
+        <span>
+          <SquarePen aria-hidden="true" />
+          {messages.firstProjectGuideCapture}
+        </span>
+        <ChevronRight aria-hidden="true" />
+        <span>
+          <UsersRound aria-hidden="true" />
+          {messages.firstProjectGuideAssign}
+        </span>
+        <ChevronRight aria-hidden="true" />
+        <span>
+          <CircleCheck aria-hidden="true" />
+          {messages.firstProjectGuideTrack}
+        </span>
+      </div>
+      <button
+        type="button"
+        className="collaboration-primary-button collaboration-first-project-create"
+        data-testid="collaboration-first-project-create"
+        onClick={onCreate}
+      >
+        <Plus aria-hidden="true" />
+        {messages.createCollaborationProject}
+      </button>
+      <small className="collaboration-first-project-location-hint">
+        {messages.firstProjectLocationHint}
+      </small>
     </section>
   );
 }
@@ -2944,9 +2931,6 @@ export function CollaborationPlatformApp({
     null,
   );
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
-  const [workspacePickerLocation, setWorkspacePickerLocation] = useState<
-    "local" | "cloud" | null
-  >(null);
   const [createProjectAfterWorkspace, setCreateProjectAfterWorkspace] =
     useState(false);
   const [rootAgentForm, setRootAgentForm] = useState<{
@@ -3063,35 +3047,6 @@ export function CollaborationPlatformApp({
       projectView: "board",
       issueId: null,
     });
-  const openProjectCreationForLocation = (location: "local" | "cloud") => {
-    if (
-      location === "cloud" &&
-      host.cloudAccess &&
-      !host.cloudAccess.authenticated
-    ) {
-      host.cloudAccess.requestLogin();
-      return;
-    }
-    const workspaces = state.workspaces.filter(
-      (workspace) => workspace.location === location,
-    );
-    if (workspaces.length === 1) {
-      setProjectWorkspaceId(workspaces[0].id);
-      setProjectDialogOpen(true);
-      return;
-    }
-    if (
-      location === "cloud" &&
-      workspaces.length === 0 &&
-      canCreateCloudWorkspace
-    ) {
-      setCreateProjectAfterWorkspace(true);
-      setWorkspaceDialogOpen(true);
-      return;
-    }
-    setWorkspacePickerLocation(location);
-    setWorkspacePickerOpen(true);
-  };
   const startProjectCreation = () => {
     if (host.location.workspaceId && state.workspace) {
       setProjectWorkspaceId(state.workspace.id);
@@ -3109,7 +3064,6 @@ export function CollaborationPlatformApp({
       setProjectDialogOpen(true);
       return;
     }
-    setWorkspacePickerLocation(null);
     setWorkspacePickerOpen(true);
   };
   const startRootIssueCreation = async (
@@ -3367,6 +3321,7 @@ export function CollaborationPlatformApp({
                   ? workspaceContext!.namespace
                   : "default",
             },
+            defaultAssistant: host.defaultAssistant,
           }}
           onCreateTask={onCreateTask}
         />
@@ -3478,22 +3433,10 @@ export function CollaborationPlatformApp({
               />
             </>
           ) : !state.projects.length ? (
-            <>
-              <PageHeader
-                title={messages.issueHomeTitle}
-                subtitle={messages.issueHomeHint}
-              />
-              <FirstProjectStarter
-                messages={messages}
-                chooseLocation={new Set(workspaceLocations).size > 1}
-                cloudLoginRequired={Boolean(
-                  host.cloudAccess && !host.cloudAccess.authenticated,
-                )}
-                onCreate={startProjectCreation}
-                onCreateCloud={() => openProjectCreationForLocation("cloud")}
-                onCreateLocal={() => openProjectCreationForLocation("local")}
-              />
-            </>
+            <FirstProjectStarter
+              messages={messages}
+              onCreate={startProjectCreation}
+            />
           ) : (
             <IssueHomeLauncher
               renderTaskComposer={host.renderIssueComposer}
@@ -3883,30 +3826,17 @@ export function CollaborationPlatformApp({
       {workspacePickerOpen ? (
         <WorkspaceProjectPicker
           messages={messages}
-          workspaces={
-            workspacePickerLocation
-              ? state.workspaces.filter(
-                  (workspace) => workspace.location === workspacePickerLocation,
-                )
-              : state.workspaces
-          }
+          workspaces={state.workspaces}
           cloudAccess={host.cloudAccess}
-          canCreateCloudWorkspace={
-            canCreateCloudWorkspace && workspacePickerLocation !== "local"
-          }
-          onClose={() => {
-            setWorkspacePickerOpen(false);
-            setWorkspacePickerLocation(null);
-          }}
+          canCreateCloudWorkspace={canCreateCloudWorkspace}
+          onClose={() => setWorkspacePickerOpen(false)}
           onCreateCloudWorkspace={() => {
             setWorkspacePickerOpen(false);
-            setWorkspacePickerLocation(null);
             setCreateProjectAfterWorkspace(true);
             setWorkspaceDialogOpen(true);
           }}
           onSelect={(workspaceId) => {
             setWorkspacePickerOpen(false);
-            setWorkspacePickerLocation(null);
             setProjectWorkspaceId(workspaceId);
             setProjectDialogOpen(true);
           }}
