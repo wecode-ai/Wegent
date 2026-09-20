@@ -49,10 +49,10 @@
 #methods = ["GET"]
 #path = "/api/knowledge/documents"
 #match_kind = "exact"
-[[routes]]
-methods = ["GET"]
-path = "/api/quota/*path"
-match_kind = "template"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/quota/*path"
+#match_kind = "template"
 [[routes]]
 methods = ["GET"]
 path = "/api/quota"

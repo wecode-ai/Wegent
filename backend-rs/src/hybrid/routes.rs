@@ -280,7 +280,7 @@ mod tests {
         // implement.
         assert!(selected.is_subset(&registered));
         assert!(selected.contains(&("GET".to_owned(), "/api/quota".to_owned())));
-        assert!(selected.contains(&("GET".to_owned(), "/api/quota/*path".to_owned())));
+        assert!(!selected.contains(&("GET".to_owned(), "/api/quota/*path".to_owned())));
 
         let (regular, templates) = TemplateRoutes::load(&path).unwrap();
         for (method, path) in &selected {

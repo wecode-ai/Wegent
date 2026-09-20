@@ -59,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn private_cutover_inherits_public_quota_and_keeps_other_routes_in_python() {
+    fn private_cutover_keeps_nested_quota_and_other_routes_in_python() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = wegent_backend_rs::HybridConfig::new(
             "127.0.0.1:0".parse().unwrap(),
@@ -69,7 +69,7 @@ mod tests {
         .with_routes_file(&path)
         .unwrap();
         assert!(config.selects_rust(&Method::GET, "/api/quota"));
-        assert!(config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
+        assert!(!config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
         // The four intra cutovers below are not active yet: their `[[routes]]`
         // entries in `config/routes.toml` stay commented out, so Python keeps
         // serving them.
