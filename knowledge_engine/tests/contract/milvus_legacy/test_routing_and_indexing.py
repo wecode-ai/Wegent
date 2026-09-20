@@ -44,7 +44,7 @@ def test_type_milvus_resolves_to_the_frozen_legacy_adapter(
 
     assert type(backend) is LegacyMilvusBackend
     assert not isinstance(backend, MilvusV2Backend)
-    assert backend.db_name == legacy_milvus_env.legacy_database
+    assert backend.db_name == legacy_milvus_env.shared_database
 
 
 def test_a_written_document_is_stored_in_a_legacy_shaped_collection(
@@ -64,7 +64,7 @@ def test_a_written_document_is_stored_in_a_legacy_shaped_collection(
     )
 
     collection_name = backend.get_index_name(knowledge_id)
-    client = legacy_milvus_env.inspector(legacy_milvus_env.legacy_database)
+    client = legacy_milvus_env.inspector(legacy_milvus_env.shared_database)
     try:
         assert client.has_collection(collection_name)
         fields = collection_fields(client, collection_name)

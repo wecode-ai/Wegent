@@ -224,7 +224,7 @@ def test_creating_a_parent_sidecar_on_the_pinned_server_is_refused(
         )
 
     sidecar = legacy_milvus_env.parent_sidecar_name(knowledge_id)
-    client = legacy_milvus_env.inspector(legacy_milvus_env.legacy_database)
+    client = legacy_milvus_env.inspector(legacy_milvus_env.shared_database)
     try:
         assert not client.has_collection(sidecar), "a refused create leaves none"
     finally:

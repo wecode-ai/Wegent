@@ -202,7 +202,7 @@ def test_purging_a_knowledge_base_clears_its_rows_but_keeps_the_collection(
             )
             == []
         )
-    client = legacy_milvus_env.inspector(legacy_milvus_env.legacy_database)
+    client = legacy_milvus_env.inspector(legacy_milvus_env.shared_database)
     try:
         assert client.has_collection(backend.get_index_name(knowledge_id))
     finally:
@@ -242,7 +242,7 @@ def test_dropping_a_knowledge_base_removes_only_its_own_collections(
             )
         ],
     )
-    client = legacy_milvus_env.inspector(legacy_milvus_env.legacy_database)
+    client = legacy_milvus_env.inspector(legacy_milvus_env.shared_database)
     try:
         assert client.has_collection(backend.get_index_name(knowledge_id))
         assert client.has_collection(backend.get_parent_store_name(knowledge_id))

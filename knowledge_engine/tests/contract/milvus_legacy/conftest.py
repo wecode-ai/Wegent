@@ -22,9 +22,9 @@ vector, which Milvus 2.5.4 refuses. That refusal is the online main branch's
 own behaviour, and the parent module pins it as a negative contract instead of
 describing the write as compatible.
 
-Legacy and V2 are configured with different Milvus databases, and the reserved
-prefix names the second generation's collection, so both generations can hold
-the same knowledge id at once without colliding. The service is the pinned
+Legacy and V2 are configured in the same Milvus database, and their exact
+prefixes name different collections, so both generations can hold the same
+knowledge id at once without colliding. The service is the pinned
 standalone the V2 contract suite already starts, and the visibility window and
 the parent-removal wait are that suite's own helpers: a smoke that cannot reach
 the service fails instead of skipping, because a skipped compatibility test
@@ -84,11 +84,9 @@ CONTRACT_URI_ENV = "MILVUS_CONTRACT_URI"
 # pin the value the deployment is configured with.
 LEGACY_PREFIX = "wegent"
 V2_RESERVED_PREFIX = "wegent_v2"
-# The production rule the transition's ADR sets: one Milvus database per
-# storage type. It is what keeps the identical collection names, prefixes and
-# parent sidecars of the two generations physically apart.
-LEGACY_DATABASE = "wegent_legacy_contract"
-V2_DATABASE = "default"
+# Both generations deliberately share this database. Exact collection prefixes
+# are the production isolation boundary the transition contract exercises.
+SHARED_DATABASE = "wegent_transition_contract"
 # Milvus 2.5.4 refuses vector dimensions below 2, so a legacy parent sidecar is
 # reproduced with the smallest vector the pinned server accepts. The legacy
 # implementation stores this field as a placeholder and never searches it.
@@ -153,8 +151,7 @@ class LegacyContractEnv:
     """Builds both generations through the factory and cleans up after itself."""
 
     uri: str
-    legacy_database: str = LEGACY_DATABASE
-    v2_database: str = V2_DATABASE
+    shared_database: str = SHARED_DATABASE
     knowledge_ids: list[str] = field(default_factory=list)
 
     def new_knowledge_id(self) -> str:
@@ -163,14 +160,9 @@ class LegacyContractEnv:
         return knowledge_id
 
     @property
-    def legacy_url(self) -> str:
-        """The retriever URL of the legacy generation, database included."""
-        return f"{self.uri}/{self.legacy_database}"
-
-    @property
-    def v2_url(self) -> str:
-        """The retriever URL of the V2 generation, which owns the default db."""
-        return f"{self.uri}/{self.v2_database}"
+    def database_url(self) -> str:
+        """The shared database URL configured on both Retriever generations."""
+        return f"{self.uri}/{self.shared_database}"
 
     def legacy_backend(self, *, url: str | None = None) -> LegacyMilvusBackend:
         """Build the frozen adapter the way a ``milvus`` retriever resolves."""
@@ -191,7 +183,7 @@ class LegacyContractEnv:
         """
         return {
             "type": "milvus",
-            "url": url or self.legacy_url,
+            "url": url or self.database_url,
             "indexStrategy": {"mode": "per_dataset", "prefix": LEGACY_PREFIX},
             "ext": {"dim": CONTRACT_DIMENSION, "timeout": 30.0},
         }
@@ -203,7 +195,7 @@ class LegacyContractEnv:
                 name="v2-contract-retriever",
                 storage_config={
                     "type": "milvus",
-                    "url": url or self.v2_url,
+                    "url": url or self.database_url,
                     "indexStrategy": {
                         "mode": "per_dataset",
                         "prefix": V2_RESERVED_PREFIX,
@@ -226,7 +218,7 @@ class LegacyContractEnv:
         """
         return MilvusV2Backend(
             {
-                "url": self.legacy_url,
+                "url": self.database_url,
                 "indexStrategy": {"mode": "per_dataset", "prefix": LEGACY_PREFIX},
                 "ext": {"timeout": 30.0},
             }
@@ -243,7 +235,7 @@ class LegacyContractEnv:
         """
         return LegacyMilvusBackend(
             {
-                "url": self.v2_url,
+                "url": self.database_url,
                 "indexStrategy": {"mode": "per_dataset", "prefix": V2_RESERVED_PREFIX},
                 "ext": {"dim": CONTRACT_DIMENSION, "timeout": 30.0},
             }
@@ -280,7 +272,7 @@ class LegacyContractEnv:
         if not parent_nodes:
             return
         collection_name = self.parent_sidecar_name(knowledge_id)
-        client = self.inspector(self.legacy_database)
+        client = self.inspector(self.shared_database)
         try:
             if not client.has_collection(collection_name):
                 client.create_collection(
@@ -331,27 +323,29 @@ class LegacyContractEnv:
     def cleanup(self) -> None:
         """Drop the collections this run created, and nothing else.
 
-        Only the two databases this environment owns are addressed, and only
-        the collection names derived from the knowledge ids the tests minted.
+        Only the shared contract database is addressed, and only the collection
+        names derived from the knowledge ids the tests minted.
         """
-        for database in (self.legacy_database, self.v2_database):
-            names = {
-                name
-                for knowledge_id in self.knowledge_ids
-                for name in (
-                    self.collection_name(knowledge_id),
-                    self.parent_sidecar_name(knowledge_id),
-                )
-            }
-            if not names:
-                continue
-            client = self.inspector(database)
-            try:
-                for name in sorted(names):
-                    if client.has_collection(name):
-                        client.drop_collection(name)
-            finally:
-                client.close()
+        legacy = self.legacy_backend()
+        v2 = self.v2_backend()
+        names = {
+            name
+            for knowledge_id in self.knowledge_ids
+            for backend in (legacy, v2)
+            for name in (
+                backend.get_index_name(knowledge_id),
+                backend.get_parent_store_name(knowledge_id),
+            )
+        }
+        if not names:
+            return
+        client = self.inspector(self.shared_database)
+        try:
+            for name in sorted(names):
+                if client.has_collection(name):
+                    client.drop_collection(name)
+        finally:
+            client.close()
 
 
 def chunk_metadata_for(*, knowledge_id: str, doc_ref: str) -> ChunkMetadata:
@@ -554,28 +548,27 @@ def milvus_uri() -> str:
 
 
 @pytest.fixture(scope="session")
-def legacy_database(milvus_uri: str) -> str:
-    """The legacy generation's database, created once and left in place.
+def shared_database(milvus_uri: str) -> str:
+    """The transition database shared by both generations.
 
-    The database is the physical separation the two generations rely on, so
-    the smoke creates it the way a deployment would. It is not this suite's to
-    remove; the collections the tests store inside it are.
+    Exact prefixes isolate the two generations inside it. The database is not
+    this suite's to remove; the collections the tests store inside it are.
     """
     client = MilvusClient(uri=milvus_uri, alias="legacy-contract-database")
     try:
-        if LEGACY_DATABASE not in client.list_databases():
-            client.create_database(LEGACY_DATABASE)
+        if SHARED_DATABASE not in client.list_databases():
+            client.create_database(SHARED_DATABASE)
     finally:
         client.close()
-    return LEGACY_DATABASE
+    return SHARED_DATABASE
 
 
 @pytest.fixture
 def legacy_milvus_env(
     milvus_uri: str,
-    legacy_database: str,
+    shared_database: str,
 ) -> Iterator[LegacyContractEnv]:
-    env = LegacyContractEnv(uri=milvus_uri, legacy_database=legacy_database)
+    env = LegacyContractEnv(uri=milvus_uri, shared_database=shared_database)
     try:
         yield env
     finally:

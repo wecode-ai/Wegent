@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Physical isolation of the two generations, and no fallback between them.
+"""Prefix isolation of the two generations, and no fallback between them.
 
-Both generations name collections identically, so the deployment rule that
-gives each its own Milvus database is what keeps them apart. These cases hold
-the same knowledge id in both databases at once, and then point each adapter
-at the other generation's physical format: neither one adopts, rewrites or
-reads the other's rows, and neither falls back to the other adapter.
+Both generations share one Milvus database and name their collections with
+different exact prefixes. These cases hold the same knowledge id in both
+formats at once, and then point each adapter at the other generation's physical
+format: neither one adopts, rewrites or reads the other's rows, and neither
+falls back to the other adapter.
 """
 
 from __future__ import annotations
@@ -40,23 +40,20 @@ V2_MARKER = "v2isolationmarker"
 DOC_REF = "770"
 
 
-def test_each_generation_names_its_collection_in_its_own_database(
+def test_each_generation_names_its_collection_in_the_shared_database(
     legacy_milvus_env: LegacyContractEnv,
 ) -> None:
-    """The one public type reaches two prefixes and never one physical space.
+    """The one public type reaches two collection namespaces in one database.
 
     A retriever is routed by its prefix and its collection carries that same
-    prefix, so the two generations differ by name as well as by database. The
-    reserved prefix is the routing marker first and the second layer of
-    physical separation second.
+    prefix, so the two generations differ by exact physical name. The reserved
+    prefix is both the routing marker and the collection isolation boundary.
     """
     knowledge_id = legacy_milvus_env.new_knowledge_id()
     legacy = legacy_milvus_env.legacy_backend()
     v2 = legacy_milvus_env.v2_backend()
 
-    assert legacy.db_name != v2.db_name
-    assert legacy.db_name == legacy_milvus_env.legacy_database
-    assert v2.db_name == legacy_milvus_env.v2_database
+    assert legacy.db_name == v2.db_name == legacy_milvus_env.shared_database
     assert legacy.get_index_name(knowledge_id) == f"{LEGACY_PREFIX}_kb_{knowledge_id}"
     assert v2.get_index_name(knowledge_id) == f"{V2_RESERVED_PREFIX}_kb_{knowledge_id}"
     assert legacy.get_parent_store_name(knowledge_id) == (
@@ -70,7 +67,7 @@ def test_each_generation_names_its_collection_in_its_own_database(
 def test_the_same_knowledge_id_keeps_both_generations_apart(
     legacy_milvus_env: LegacyContractEnv,
 ) -> None:
-    """One knowledge id, two databases, two documents, no shared rows."""
+    """One database and knowledge id, two prefixes, no shared rows."""
     knowledge_id = legacy_milvus_env.new_knowledge_id()
     legacy = legacy_milvus_env.legacy_backend()
     v2 = legacy_milvus_env.v2_backend()
@@ -90,14 +87,12 @@ def test_the_same_knowledge_id_keeps_both_generations_apart(
         model=model,
     )
 
-    legacy_client = legacy_milvus_env.inspector(legacy_milvus_env.legacy_database)
-    v2_client = legacy_milvus_env.inspector(legacy_milvus_env.v2_database)
+    client = legacy_milvus_env.inspector(legacy_milvus_env.shared_database)
     try:
-        assert legacy_client.has_collection(legacy.get_index_name(knowledge_id))
-        assert v2_client.has_collection(v2.get_index_name(knowledge_id))
+        assert client.has_collection(legacy.get_index_name(knowledge_id))
+        assert client.has_collection(v2.get_index_name(knowledge_id))
     finally:
-        legacy_client.close()
-        v2_client.close()
+        client.close()
 
     legacy_document = legacy.get_document(
         knowledge_id, DOC_REF, user_id=CONTRACT_USER_ID
