@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     MCP_ENABLE_DNS_REBINDING_PROTECTION: bool = False
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
+    # Browser origins allowed to consume one-time VNC connect tickets. Values
+    # are exact except the explicit loopback form http(s)://127.0.0.1:* used by
+    # Wework's random-port local DSH server.
+    VNC_ALLOWED_ORIGINS: list[str] = []
 
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development

@@ -18,6 +18,7 @@ import {
   webContents,
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
+  type Session,
   type WebContents,
 } from 'electron'
 import electronUpdater from 'electron-updater'
@@ -103,6 +104,7 @@ import {
 } from './runtime/brand-runtime-environment.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
+import { isTrustedVncSurfaceAttachment } from './host/vnc-surface-security.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
@@ -140,6 +142,7 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
+const vncSurfacePreloadPath = resolve(packageRoot, 'dist/vnc-surface-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
@@ -275,7 +278,10 @@ const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspa
   : []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
-  Array<{ label: string; partition: string }>
+  Array<
+    | { kind: 'browser'; label: string; partition: string }
+    | { kind: 'vnc-surface'; partition: Session }
+  >
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
@@ -408,15 +414,17 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     void shell.openExternal(url)
   })
   contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const vncSurface = isTrustedVncSurfaceAttachment(params as Record<string, unknown>, dshUrl)
     const route = embeddedBrowserRouteFromParams(params as Record<string, unknown>)
-    console.log('[embedded-browser] webview attachment requested', {
+    console.log('[webview] attachment requested', {
       ownerId: contents.id,
       partition: params.partition ?? null,
       routeLabel: route?.label ?? null,
       src: params.src ?? null,
+      type: vncSurface ? 'vnc-surface' : 'browser',
     })
-    if (!route) {
-      console.warn('[embedded-browser] rejected unknown webview attachment', {
+    if (!route && !vncSurface) {
+      console.warn('[webview] rejected unknown attachment', {
         ownerId: contents.id,
         partition: params.partition ?? null,
         src: params.src ?? null,
@@ -425,11 +433,22 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       return
     }
     const queue = pendingEmbeddedBrowserAttachments.get(contents.id) ?? []
-    queue.push({ label: route.label, partition: route.routePartition })
+    queue.push(
+      vncSurface
+        ? { kind: 'vnc-surface', partition: contents.session }
+        : { kind: 'browser', label: route!.label, partition: route!.routePartition }
+    )
     pendingEmbeddedBrowserAttachments.set(contents.id, queue)
-    params.partition = EMBEDDED_BROWSER_PARTITION
-    webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    webPreferences.preload = browserAnnotationPreloadPath
+    if (vncSurface) {
+      delete params.partition
+      webPreferences.session = contents.session
+      webPreferences.preload = vncSurfacePreloadPath
+      webPreferences.backgroundThrottling = false
+    } else {
+      params.partition = EMBEDDED_BROWSER_PARTITION
+      webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+      webPreferences.preload = browserAnnotationPreloadPath
+    }
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -447,6 +466,22 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     const queue = pendingEmbeddedBrowserAttachments.get(contents.id)
     const pending = queue?.shift()
     if (queue?.length === 0) pendingEmbeddedBrowserAttachments.delete(contents.id)
+    if (pending?.kind === 'vnc-surface') {
+      if (guestContents.session !== pending.partition) {
+        console.warn('[vnc-surface] rejected attached webview with an unexpected session', {
+          guestId: guestContents.id,
+          ownerId: contents.id,
+        })
+        guestContents.close()
+        return
+      }
+      console.log('[vnc-surface] isolated Chromium renderer attached', {
+        guestId: guestContents.id,
+        ownerId: contents.id,
+      })
+      secureDshContents(guestContents, dshUrl)
+      return
+    }
     if (
       !pending ||
       !embeddedBrowser ||
@@ -456,7 +491,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
         guestId: guestContents.id,
         hasBrowserManager: Boolean(embeddedBrowser),
         ownerId: contents.id,
-        pendingLabel: pending?.label ?? null,
+        pendingLabel: pending?.kind === 'browser' ? pending.label : null,
         sessionMatches: guestContents.session === session.fromPartition(EMBEDDED_BROWSER_PARTITION),
       })
       guestContents.close()

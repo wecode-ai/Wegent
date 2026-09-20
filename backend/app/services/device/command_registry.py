@@ -11,6 +11,10 @@ from typing import Any, Mapping
 from app.services.device.git_credentials_command import (
     SYNC_GIT_CREDENTIALS_COMMAND,
 )
+from app.services.device.vnc_clipboard_commands import (
+    VNC_CLIPBOARD_READ_COMMAND,
+    VNC_CLIPBOARD_WRITE_COMMAND,
+)
 
 
 class CommandRegistryError(ValueError):
@@ -1781,6 +1785,12 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "read_runtime_auth_file": LocalDeviceCommandDefinition(
         command=READ_RUNTIME_AUTH_FILE_COMMAND,
         post_processor="json",
+    ),
+    "vnc_clipboard_read": LocalDeviceCommandDefinition(
+        command=VNC_CLIPBOARD_READ_COMMAND,
+    ),
+    "vnc_clipboard_write": LocalDeviceCommandDefinition(
+        command=VNC_CLIPBOARD_WRITE_COMMAND,
     ),
     "turn_file_changes_review": LocalDeviceCommandDefinition(
         command=TURN_FILE_CHANGES_REVIEW_COMMAND,

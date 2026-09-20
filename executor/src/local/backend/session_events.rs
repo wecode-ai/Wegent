@@ -30,6 +30,9 @@ fn configured_session_handler(
     let gateway_enabled = env_bool("DEVICE_SESSION_GATEWAY_ENABLED", gateway_enabled_default);
     let code_server_enabled = gateway_enabled && env_bool("DEVICE_CODE_SERVER_ENABLED", true);
     let terminal_enabled = env_bool("DEVICE_TERMINAL_ENABLED", true);
+    let vnc_port = vnc_desktop_port();
+    let vnc_enabled =
+        gateway_enabled && env_bool("DEVICE_VNC_DESKTOP_ENABLED", false) && vnc_port.is_some();
     let public_base_url = env::var("DEVICE_PUBLIC_BASE_URL")
         .ok()
         .map(|value| value.trim().to_owned())
@@ -49,6 +52,18 @@ fn configured_session_handler(
         Arc::new(UnixSessionPtyManager),
     )
     .with_interactive_sessions(code_server_enabled, terminal_enabled)
+    .with_vnc_desktop(vnc_enabled, vnc_port.unwrap_or(5901))
+}
+
+fn vnc_desktop_port() -> Option<u16> {
+    let address = env::var("DEVICE_VNC_RFB_ADDR")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "127.0.0.1:5901".to_owned())
+        .parse::<std::net::SocketAddr>()
+        .ok()?;
+    address.ip().is_loopback().then_some(address.port())
 }
 
 fn default_workspace_root() -> PathBuf {
@@ -113,6 +128,7 @@ pub(super) fn session_result_payload(result: SessionResult) -> Value {
         payload["type"] = json!(match session_type {
             SessionType::Terminal => "terminal",
             SessionType::CodeServer => "code_server",
+            SessionType::Vnc => "vnc",
         });
     }
     if let Some(path) = result.path {

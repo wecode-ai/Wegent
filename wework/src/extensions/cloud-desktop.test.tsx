@@ -1,30 +1,31 @@
-import { render } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
 
 import { cloudDesktopExtension } from './cloud-desktop'
 
-describe('cloud desktop fallback extension', () => {
-  test('keeps cloud desktop capabilities unavailable without an internal overlay', () => {
-    const unsupportedInternalPageFixture = 'internal-app://localhost/extension-page.html'
-    const DeviceAction = cloudDesktopExtension.DeviceAction
-    const deviceActionView = render(
-      <DeviceAction deviceId="device-1" disabled={false} onOpened={() => undefined} />
-    )
-    const WorkspaceAction = cloudDesktopExtension.WorkspaceAction
-    const workspaceActionView = render(
-      <WorkspaceAction
-        contextKey="project-1"
-        deviceId="device-1"
-        disabled={false}
-        onBusyChange={() => undefined}
-        onErrorChange={() => undefined}
-        onOpened={() => undefined}
-      />
-    )
+const navigateToMock = vi.hoisted(() => vi.fn())
 
-    expect(cloudDesktopExtension.available).toBe(false)
-    expect(deviceActionView.container).toBeEmptyDOMElement()
-    expect(workspaceActionView.container).toBeEmptyDOMElement()
-    expect(cloudDesktopExtension.isInternalPageUrl(unsupportedInternalPageFixture)).toBe(false)
+vi.mock('@/lib/navigation', () => ({
+  navigateTo: navigateToMock,
+}))
+
+describe('cloud desktop extension', () => {
+  test('opens the generic VNC desktop route without embedding a session token', () => {
+    const onOpened = vi.fn()
+    const DeviceAction = cloudDesktopExtension.DeviceAction
+
+    render(<DeviceAction deviceId="device-1" disabled={false} onOpened={onOpened} />)
+    fireEvent.click(screen.getByTestId('connection-vnc-desktop-button-device-1'))
+
+    expect(cloudDesktopExtension.available).toBe(true)
+    expect(navigateToMock).toHaveBeenCalledWith('/device-desktop?deviceId=device-1')
+    expect(onOpened).toHaveBeenCalledOnce()
+  })
+
+  test('recognizes only the internal device desktop page', () => {
+    expect(cloudDesktopExtension.isInternalPageUrl('/device-desktop?deviceId=device-1')).toBe(true)
+    expect(
+      cloudDesktopExtension.isInternalPageUrl('internal-app://localhost/extension-page.html')
+    ).toBe(false)
   })
 })

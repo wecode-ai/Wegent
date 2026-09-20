@@ -12,6 +12,7 @@ Online status is managed via Redis with heartbeat mechanism.
 import logging
 import os
 import posixpath
+from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -869,15 +870,19 @@ class DeviceSessionResponse(BaseModel):
 
     session_id: str = Field(..., description="Unique session identifier")
     device_id: str = Field(..., description="Target device ID")
-    type: Literal["terminal", "code_server"] = Field(
+    type: Literal["terminal", "code_server", "vnc"] = Field(
         ...,
         description="Session type",
     )
     path: str = Field(..., description="Working directory path")
     url: str = Field(default="", description="Browser-accessible session URL")
-    transport: Literal["url", "socketio"] = Field(
+    transport: Literal["url", "socketio", "websocket"] = Field(
         default="url",
         description="Browser transport for the interactive session",
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="UTC expiration time for the interactive session",
     )
 
 
@@ -888,6 +893,12 @@ class DeviceSessionCreate(BaseModel):
         default=None,
         description="Optional working directory path",
     )
+
+
+class DeviceVncSessionCreate(BaseModel):
+    """Optional owner override for an administrator opening a device."""
+
+    owner_user_id: int | None = Field(default=None, ge=1)
 
 
 @router.post("/{device_id}/terminal", response_model=DeviceSessionResponse)
@@ -980,3 +991,85 @@ async def start_device_code_server(
         url=result.get("url", ""),
         transport=result.get("transport", "url"),
     )
+
+
+@router.post("/{device_id}/vnc", response_model=DeviceSessionResponse)
+async def start_device_vnc(
+    device_id: str,
+    payload: DeviceVncSessionCreate | None = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a short-lived VNC desktop WebSocket session on a device."""
+    from app.services.device.session_service import (
+        DeviceSessionError,
+        DeviceSessionNotFoundError,
+    )
+    from app.services.device.vnc_session_service import vnc_session_service
+
+    owner_user_id = payload.owner_user_id if payload else None
+    if owner_user_id is None:
+        owner_user_id = current_user.id
+    if (
+        owner_user_id != current_user.id
+        and getattr(current_user, "role", "user") != "admin"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can access another user's device desktop",
+        )
+
+    try:
+        result = await vnc_session_service.start_session(
+            db=db,
+            actor_user_id=current_user.id,
+            owner_user_id=owner_user_id,
+            device_id=device_id,
+        )
+    except DeviceSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except DeviceSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return DeviceSessionResponse(
+        session_id=result.get("session_id", ""),
+        device_id=result.get("device_id", device_id),
+        type="vnc",
+        path="",
+        url=result.get("url", ""),
+        transport=result.get("transport", "websocket"),
+        expires_at=result.get("expires_at"),
+    )
+
+
+@router.delete("/vnc-sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_device_vnc_session(
+    session_id: str,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Revoke a VNC session; connected proxies observe the exact Redis key."""
+    from app.services.device.session_service import DeviceSessionNotFoundError
+    from app.services.device.vnc_session_service import vnc_session_service
+
+    try:
+        revoked = await vnc_session_service.revoke_session(
+            session_id=session_id,
+            user_id=current_user.id,
+            allow_admin=getattr(current_user, "role", "user") == "admin",
+        )
+    except DeviceSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    if not revoked:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="VNC session not found or expired",
+        )

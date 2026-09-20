@@ -280,6 +280,7 @@ export function createElectronCapabilityRouter(
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
+  let activeVncClipboardLease: string | null = null
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -484,7 +485,35 @@ export function createElectronCapabilityRouter(
       ...fallbackPaths,
     ])
   })
-  router.register('clipboard.writeText', params => clipboard.writeText(stringParam(params, 'text')))
+  router.register('clipboard.writeText', params =>
+    clipboard.writeText(rawStringParam(params, 'text'))
+  )
+  router.register('vncClipboard.activate', params => {
+    const leaseId = stringParam(params, 'leaseId')
+    const targetWindow = requiredWindow(window)
+    if (!targetWindow.isFocused()) {
+      throw new HostCapabilityError(
+        'window_not_focused',
+        'The VNC clipboard is available only while the Wework window is focused'
+      )
+    }
+    activeVncClipboardLease = leaseId
+    return { active: true }
+  })
+  router.register('vncClipboard.deactivate', params => {
+    const leaseId = stringParam(params, 'leaseId')
+    if (activeVncClipboardLease === leaseId) activeVncClipboardLease = null
+    return { active: false }
+  })
+  router.register('vncClipboard.readText', params => {
+    requireActiveVncClipboardLease(activeVncClipboardLease, params, window)
+    return clipboard.readText()
+  })
+  router.register('vncClipboard.writeText', params => {
+    requireActiveVncClipboardLease(activeVncClipboardLease, params, window)
+    clipboard.writeText(rawStringParam(params, 'text'))
+    return { written: true }
+  })
   router.register('computerUse.status', () => computerUse.status())
   router.register('computerUse.setEnabled', async params => {
     const enabled = booleanParam(params, 'enabled') ?? false
@@ -1320,12 +1349,40 @@ function requiredWindow(resolveWindow: () => BrowserWindow | null): BrowserWindo
   return target
 }
 
+function requireActiveVncClipboardLease(
+  activeLease: string | null,
+  params: Record<string, unknown>,
+  resolveWindow: () => BrowserWindow | null
+): void {
+  const leaseId = stringParam(params, 'leaseId')
+  if (activeLease !== leaseId) {
+    throw new HostCapabilityError(
+      'vnc_clipboard_inactive',
+      'The VNC clipboard lease is no longer active'
+    )
+  }
+  if (!requiredWindow(resolveWindow).isFocused()) {
+    throw new HostCapabilityError(
+      'window_not_focused',
+      'The VNC clipboard is available only while the Wework window is focused'
+    )
+  }
+}
+
 function stringParam(params: Record<string, unknown>, key: string): string {
   const value = params[key]
   if (typeof value !== 'string' || !value.trim()) {
     throw new HostCapabilityError('invalid_params', `${key} is required`)
   }
   return value.trim()
+}
+
+function rawStringParam(params: Record<string, unknown>, key: string): string {
+  const value = params[key]
+  if (typeof value !== 'string') {
+    throw new HostCapabilityError('invalid_params', `${key} must be a string`)
+  }
+  return value
 }
 
 function messageBoxOptions(params: Record<string, unknown>): MessageBoxOptions {
