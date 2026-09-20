@@ -90,6 +90,8 @@ REMOTE_DEVICE_COMMAND_KEYS = (
     | REMOTE_MUTATING_COMMAND_KEYS
     | RUNTIME_AUTH_COMMAND_KEYS
 )
+CLOUD_ONLY_COMMAND_KEYS = frozenset({"vnc_clipboard_read", "vnc_clipboard_write"})
+CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | CLOUD_ONLY_COMMAND_KEYS
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 INTERNAL_DEVICE_COMMAND_KEYS = frozenset(
     {"environment_prepare", "sync_git_credentials"}
@@ -142,6 +144,12 @@ async def _resolve_dispatch_device_id(
     if not allow_app_device and not remote_control_is_enabled(device_type):
         raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
+    if command_key in CLOUD_ONLY_COMMAND_KEYS and device_type != DeviceType.CLOUD:
+        raise DeviceCommandError(
+            f"Device command key '{command_key}' is not supported for "
+            f"{device_type.value} devices"
+        )
+
     if device_type in LOCAL_COMMAND_DEVICE_TYPES:
         if device_type == DeviceType.APP:
             from app.services.device.identity import record_route_id
@@ -154,7 +162,12 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    if command_key not in REMOTE_DEVICE_COMMAND_KEYS:
+    allowed_keys = (
+        CLOUD_DEVICE_COMMAND_KEYS
+        if device_type == DeviceType.CLOUD
+        else REMOTE_DEVICE_COMMAND_KEYS
+    )
+    if command_key not in allowed_keys:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"

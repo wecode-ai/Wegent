@@ -969,10 +969,15 @@ def create_socketio_asgi_app():
 
     socketio_app = create_socketio_app(sio)
 
+    # VNC WebSockets must be intercepted before FastAPI handles other paths.
+    from app.api.vnc_websocket_middleware import create_vnc_interceptor_app
+
+    vnc_interceptor_app = create_vnc_interceptor_app(_fastapi_app)
+
     # Create combined ASGI app
     return socketio.ASGIApp(
         sio,
-        other_asgi_app=_fastapi_app,
+        other_asgi_app=vnc_interceptor_app,
         socketio_path="/socket.io",
     )
 

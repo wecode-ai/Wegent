@@ -10,6 +10,7 @@ import {
   supportsLocalTerminalLaunch,
   supportsRemoteCodeServerSessions,
   supportsRemoteTerminalSessions,
+  supportsVncDesktop,
 } from './device-capabilities'
 
 describe('device-capabilities', () => {
@@ -163,5 +164,82 @@ describe('device-capabilities', () => {
       })
     ).toBe(false)
     expect(supportsRemoteCodeServerSessions({ ...remoteDevice, status: 'offline' })).toBe(false)
+  })
+
+  test('does not enable VNC for remote devices even when they advertise desktop support', () => {
+    const remoteDevice = {
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      status: 'online',
+      runtime_features: {
+        schemaVersion: 4,
+        desktop: {
+          version: 1,
+          available: true,
+          protocol: 'rfb',
+          transport: 'websocket',
+          clipboard: 'extended-text',
+        },
+      },
+    } as const
+
+    expect(supportsVncDesktop(remoteDevice)).toBe(false)
+    expect(supportsVncDesktop({ ...remoteDevice, status: 'offline' })).toBe(false)
+    expect(
+      supportsVncDesktop(
+        {
+          ...remoteDevice,
+          runtime_routes: [
+            {
+              kind: 'cloud-relay',
+              device_id: 'remote-1',
+              runtime_device_id: 'remote-1',
+              status: 'online',
+            },
+          ],
+        },
+        'remote-1'
+      )
+    ).toBe(false)
+  })
+
+  test('requires an advertised VNC capability on cloud devices', () => {
+    const cloudDevice = {
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      status: 'online',
+    } as const
+
+    expect(supportsVncDesktop(cloudDevice)).toBe(false)
+    expect(
+      supportsVncDesktop({
+        ...cloudDevice,
+        runtime_features: {
+          schemaVersion: 4,
+          desktop: {
+            version: 1,
+            available: true,
+            protocol: 'rfb',
+            transport: 'websocket',
+            clipboard: 'text',
+          },
+        },
+      })
+    ).toBe(true)
+    expect(
+      supportsVncDesktop({
+        ...cloudDevice,
+        runtime_features: {
+          schemaVersion: 4,
+          desktop: {
+            version: 1,
+            available: false,
+            protocol: 'rfb',
+            transport: 'websocket',
+            clipboard: 'text',
+          },
+        },
+      })
+    ).toBe(false)
   })
 })

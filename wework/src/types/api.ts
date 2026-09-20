@@ -43,6 +43,7 @@ export type {
   ProjectWithTasks,
   RuntimeWorktreeCapability,
   RuntimeInteractiveSessionCapability,
+  RuntimeDesktopCapability,
   RuntimeFeatureSet,
   DeviceRuntimeRouteKind,
 } from '@wegent/chat-core/execution-project'

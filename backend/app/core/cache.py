@@ -331,14 +331,18 @@ class RedisCache:
     async def pop(self, key: str) -> Optional[Any]:
         """Atomically return and delete one cache value."""
         try:
-            async with self._client_context() as client:
-                data = await client.eval(ATOMIC_POP_SCRIPT, 1, key)
-            if data is None:
-                return None
-            return self._decode(data)
+            return await self.pop_or_raise(key)
         except Exception as e:
             logger.error("Error popping cache key %s: %s", key, e)
             return None
+
+    async def pop_or_raise(self, key: str) -> Optional[Any]:
+        """Atomically return and delete one value without hiding Redis errors."""
+        async with self._client_context() as client:
+            data = await client.eval(ATOMIC_POP_SCRIPT, 1, key)
+        if data is None:
+            return None
+        return self._decode(data)
 
     async def cleanup_expired(self):
         """No-op: Redis handles expiration via TTL."""
