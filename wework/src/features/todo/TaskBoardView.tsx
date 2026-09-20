@@ -276,6 +276,7 @@ export function TaskBoardView({
       defaultWorkItemSources ??= loadDefaultWorkItemSources(projectSpaceApis)
       return trackDefaultWorkItem(await defaultWorkItemSources, item)
     }
+    const localContextKeys = new Set<string>()
     const results = await Promise.allSettled(
       reviewItemsToConfirm.map(async item => {
         const key = runtimeTaskKey(item.runtime_address)
@@ -295,6 +296,7 @@ export function TaskBoardView({
         }
         const trackedItem = source.context.loop_item
         if (!trackedItem) throw new Error('Task could not be linked to My Tasks')
+        if (source.context.project.project_store === 'local') localContextKeys.add(key)
         const updated =
           trackedItem.status === 'completed'
             ? trackedItem
@@ -326,6 +328,16 @@ export function TaskBoardView({
       setTaskContexts(current => {
         const next = new Map(current)
         for (const result of succeeded) next.set(result.key, result.source)
+        return next
+      })
+    }
+    if (failed.some(item => localContextKeys.has(runtimeTaskKey(item.runtime_address)))) {
+      setTaskContexts(current => {
+        const next = new Map(current)
+        for (const item of failed) {
+          const key = runtimeTaskKey(item.runtime_address)
+          if (localContextKeys.has(key)) next.delete(key)
+        }
         return next
       })
     }

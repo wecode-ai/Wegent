@@ -215,4 +215,75 @@ describe('TaskBoardView', () => {
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent('Review one')
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent('Review two')
   })
+
+  it('refreshes a failed local task context before retrying confirmation', async () => {
+    const work = runtimeWork()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-refresh-local-context')
+    lifecycleStore.syncRuntimeWork(work)
+    let reviewItemVersion = 1
+    const findCloudContextForTask = vi.fn(async ({ taskId }: { taskId: string }) => ({
+      project: {
+        id: 'default-work-items',
+        project_key: 'WORK',
+        project_store: 'local',
+      },
+      loop_item: {
+        id: taskId,
+        status: 'in_review',
+        version: taskId === 'review-1' ? reviewItemVersion : 1,
+      },
+    }))
+    const updateLoopItem = vi.fn(
+      async (itemId: string, values: { version: number; status?: string }) => {
+        if (itemId === 'review-1' && values.version === 1) {
+          reviewItemVersion = 2
+          throw new Error('version conflict')
+        }
+        return {
+          id: itemId,
+          status: values.status,
+          version: values.version + 1,
+        }
+      }
+    )
+    const projectSpaceApi = {
+      findCloudContextForTask,
+      updateLoopItem,
+    } as unknown as ProjectSpaceApi
+
+    render(
+      <TaskBoardView
+        runtimeWork={work}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        unreadRuntimeTaskKeys={new Set()}
+        onCreateTask={vi.fn()}
+        projectSpaceApis={[projectSpaceApi]}
+        onArchiveRuntimeTasks={vi.fn()}
+        onMarkRuntimeTaskRead={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledTimes(2))
+    await userEvent.click(screen.getByTestId('task-board-card-confirm-runtime:device-1:review-1'))
+    await userEvent.click(screen.getByTestId('task-board-batch-confirm-review-confirm'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 个任务确认失败，请稍后重试')
+    expect(updateLoopItem).toHaveBeenCalledWith('review-1', {
+      version: 1,
+      status: 'completed',
+    })
+
+    await userEvent.click(screen.getByTestId('task-board-batch-confirm-review-confirm'))
+
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenLastCalledWith('review-1', {
+        version: 2,
+        status: 'completed',
+      })
+    )
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(3)
+    expect(screen.queryByTestId('task-board-batch-confirm-review-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent('Review one')
+  })
 })

@@ -1045,6 +1045,9 @@ export function CloudTodoWorkspace({
   const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
   const [batchConfirmError, setBatchConfirmError] = useState<string | null>(null)
   const [batchConfirmItems, setBatchConfirmItems] = useState<LocatedLoopItem[] | null>(null)
+  const [batchConfirmRetryItemKeys, setBatchConfirmRetryItemKeys] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
@@ -3514,12 +3517,22 @@ export function CloudTodoWorkspace({
     const updatedItems = new Map<string, LocatedLoopItem>()
     try {
       const results = await Promise.allSettled(
-        reviewItems.map(item =>
-          updateStandardBoardItem(item, { status: 'completed' }).then(updated => ({
+        reviewItems.map(async item => {
+          const itemKey = `${item.project_store ?? 'backend'}:${item.id}`
+          const project = projectForItem(item)
+          const api = apiForProject(project)
+          const target =
+            batchConfirmRetryItemKeys.has(itemKey) && project?.location === 'local' && api
+              ? {
+                  ...(await api.getLoopItem(item.id)),
+                  project_store: item.project_store,
+                }
+              : item
+          return updateStandardBoardItem(target, { status: 'completed' }).then(updated => ({
             ...updated,
             project_store: item.project_store,
           }))
-        )
+        })
       )
       results.forEach((result, index) => {
         const source = reviewItems[index]
@@ -3552,6 +3565,15 @@ export function CloudTodoWorkspace({
         })
       }
       setBatchConfirmItems(failedItems.length > 0 ? failedItems : null)
+      setBatchConfirmRetryItemKeys(
+        new Set(
+          failedItems.flatMap(item =>
+            projectForItem(item)?.location === 'local'
+              ? [`${item.project_store ?? 'backend'}:${item.id}`]
+              : []
+          )
+        )
+      )
       if (failedItems.length > 0) {
         setBatchConfirmError(
           t('todo.batch_confirm_failed', '{{count}} 个事项确认失败，请稍后重试', {
@@ -4919,6 +4941,7 @@ export function CloudTodoWorkspace({
                                   disabled={batchConfirmBusy}
                                   onClick={() => {
                                     setBatchConfirmError(null)
+                                    setBatchConfirmRetryItemKeys(new Set())
                                     setBatchConfirmItems([...editableColumnItems])
                                   }}
                                   className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
@@ -5926,6 +5949,7 @@ export function CloudTodoWorkspace({
               if (batchConfirmBusy) return
               setBatchConfirmItems(null)
               setBatchConfirmError(null)
+              setBatchConfirmRetryItemKeys(new Set())
             }}
           >
             <div className="px-5 pb-5 pt-4" data-testid="cloud-todo-batch-confirm-review-dialog">
@@ -5949,6 +5973,7 @@ export function CloudTodoWorkspace({
                   onClick={() => {
                     setBatchConfirmItems(null)
                     setBatchConfirmError(null)
+                    setBatchConfirmRetryItemKeys(new Set())
                   }}
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
