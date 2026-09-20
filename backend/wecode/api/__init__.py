@@ -63,6 +63,7 @@ import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch  # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 import wecode.api.outbound_token_service_patch  # noqa: F401  inject employee_id claim into issued outbound tokens
+
 # MIGRATION-CANDIDATE(api="GET /api/quota/claude/quota"): remove after final confirmation.
 # The AIGC quota proxy now runs in Rust (backend-rs-intra), which owns this
 # route through the hybrid gateway route table.
@@ -88,6 +89,7 @@ import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 sto
 from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from app.core.config import settings
+from wecode.api.admin_cloud_device_ip import router as admin_cloud_device_ip_router
 from wecode.api.admin_published_apps import router as admin_published_apps_router
 from wecode.api.agent_usage import router as agent_usage_router
 from wecode.api.apikey import router as apikey_router
@@ -234,6 +236,11 @@ api_router.include_router(
 api_router.include_router(
     cloud_device_ip_index_router,
     prefix="/internal/admin/cloud-device-ip-index",
+    tags=["internal-admin"],
+)
+api_router.include_router(
+    admin_cloud_device_ip_router,
+    prefix="/internal/admin/cloud-devices",
     tags=["internal-admin"],
 )
 api_router.include_router(
