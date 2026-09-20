@@ -468,14 +468,22 @@ export function useCollaborationPlatformController({
               navigationApis?.length ? navigationApis : [api],
             );
         if (revision !== loadRevisionRef.current) return;
-        if (navigationCollections.successfulLoads === 0) {
-          throw new Error(loadFailedMessage);
-        }
         const {
           workspaces,
           projects: navigationProjects,
           complete,
         } = navigationCollections;
+        const targetProjectLoaded =
+          !location.projectId ||
+          navigationProjects.some(
+            (project) => project.id === location.projectId,
+          );
+        if (
+          navigationCollections.successfulLoads === 0 ||
+          (!complete && !targetProjectLoaded)
+        ) {
+          throw new Error(loadFailedMessage);
+        }
         navigationCacheRef.current = {
           workspaces,
           projects: navigationProjects,
@@ -662,7 +670,14 @@ export function useCollaborationPlatformController({
       async archiveProject(project: CollaborationProject) {
         await api.projects.archive(project.id, project.version);
         navigationCacheRef.current = {
-          ...navigationCacheRef.current,
+          workspaces: navigationCacheRef.current.workspaces.map((workspace) =>
+            workspace.id === project.workspace_id
+              ? {
+                  ...workspace,
+                  project_count: Math.max(0, workspace.project_count - 1),
+                }
+              : workspace,
+          ),
           projects: navigationCacheRef.current.projects.filter(
             (item) => item.id !== project.id,
           ),

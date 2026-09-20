@@ -1268,6 +1268,56 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(cloudApi.projects.list).toHaveBeenCalled();
   });
 
+  it("reports an incomplete deep-link load when the target project is missing", async () => {
+    const localWorkspace = {
+      ...workspace,
+      id: "local-workspace",
+      location: "local" as const,
+    };
+    const localProject = {
+      ...project,
+      id: "local-project",
+      workspace_id: localWorkspace.id,
+      project_store: "local" as const,
+    };
+    const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
+    const cloudProject = {
+      ...project,
+      id: "cloud-project",
+      workspace_id: cloudWorkspace.id,
+    };
+    const { api: localApi } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [localProject],
+    });
+    const { api: cloudApi } = createApi({
+      initialWorkspaces: [cloudWorkspace],
+      initialProjects: [cloudProject],
+    });
+    cloudApi.projects.list = vi
+      .fn()
+      .mockRejectedValue(new Error("cloud projects unavailable"));
+
+    await render(
+      <PlatformControllerHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+        location={{
+          ...initialLocation,
+          workspaceId: cloudWorkspace.id,
+          projectId: cloudProject.id,
+        }}
+      />,
+    );
+
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: "加载协作空间失败",
+    });
+  });
+
   it("keeps successful workspaces when projects from the same source fail", async () => {
     const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
     const { api } = createApi({
@@ -1353,6 +1403,81 @@ describe("CollaborationPlatformApp real component flow", () => {
       error: null,
       workspaceIds: [localWorkspace.id],
       projectIds: [localProject.id],
+    });
+  });
+
+  it("keeps an emptied local workspace covered after archiving its final project", async () => {
+    const cachedLocalWorkspace = {
+      ...localWorkspace,
+      project_count: 1,
+    };
+    const otherLocalWorkspace = {
+      ...localWorkspace,
+      id: "other-local-workspace",
+      name: "另一个本地空间",
+    };
+    const localProject = {
+      ...project,
+      id: "local-project",
+      workspace_id: cachedLocalWorkspace.id,
+      project_store: "local" as const,
+    };
+    const { api: localApi, projects } = createApi({
+      initialWorkspaces: [cachedLocalWorkspace, otherLocalWorkspace],
+      initialProjects: [localProject],
+    });
+    localApi.projects.archive = vi.fn(async () => {
+      projects.splice(0, 1);
+    });
+    const { api: cloudApi } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [],
+    });
+    cloudApi.workspaces!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("cloud unavailable"));
+    cloudApi.projects.list = vi
+      .fn()
+      .mockRejectedValue(new Error("cloud unavailable"));
+
+    await render(
+      <PlatformHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+        start={{
+          ...initialLocation,
+          workspaceId: cachedLocalWorkspace.id,
+          projectId: localProject.id,
+        }}
+        renderProject={() => <div>Project board</div>}
+      />,
+    );
+    expect(cloudApi.workspaces.list).toHaveBeenCalledOnce();
+    expect(cloudApi.projects.list).toHaveBeenCalledOnce();
+    await click(byTestId(`collaboration-project-menu-${localProject.id}`));
+    await click(
+      portalByTestId(`collaboration-project-archive-${localProject.id}`),
+    );
+    await click(byTestId("collaboration-project-archive-confirm"));
+    await flush();
+    expect(cloudApi.workspaces.list).toHaveBeenCalledOnce();
+    expect(cloudApi.projects.list).toHaveBeenCalledOnce();
+    await click(
+      byTestId(`collaboration-workspace-home-${otherLocalWorkspace.id}`),
+    );
+    expect(cloudApi.workspaces.list).toHaveBeenCalledOnce();
+    expect(cloudApi.projects.list).toHaveBeenCalledOnce();
+    await click(
+      byTestId(`collaboration-workspace-home-${cachedLocalWorkspace.id}`),
+    );
+
+    expect(cloudApi.workspaces.list).toHaveBeenCalledOnce();
+    expect(cloudApi.projects.list).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(byTestId("test-location").textContent ?? "{}"),
+    ).toMatchObject({
+      workspaceId: cachedLocalWorkspace.id,
+      projectId: null,
     });
   });
 
