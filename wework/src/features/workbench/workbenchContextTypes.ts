@@ -233,6 +233,14 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
+    continueInNewConversation?: (
+      model: UnifiedModel,
+      options?: ModelOptions,
+      source?: {
+        address?: RuntimeTaskAddress
+        draft?: string
+      }
+    ) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
