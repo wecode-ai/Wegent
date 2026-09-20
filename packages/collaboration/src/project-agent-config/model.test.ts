@@ -59,7 +59,7 @@ describe("project agent configuration model", () => {
     });
   });
 
-  it("normalizes the legacy Wegent route as a shared definition source", () => {
+  it("uses the referenced Agent identity rather than its execution route as the definition source", () => {
     expect(
       normalizeProjectAgent({
         id: "agent-2",
@@ -72,6 +72,39 @@ describe("project agent configuration model", () => {
     ).toMatchObject({
       definitionSource: "shared_agent",
       executorType: null,
+      wegentTeamId: 12,
+    });
+  });
+
+  it("does not treat Wegent hosting as an Agent definition source", () => {
+    expect(
+      normalizeProjectAgent({
+        id: "agent-3",
+        name: "项目托管智能体",
+        runtime: "wegent",
+        status: "active",
+        version: 1,
+      } as WorkspaceProjectAgent),
+    ).toMatchObject({
+      definitionSource: "project",
+      executorType: null,
+      wegentTeamId: null,
+    });
+  });
+
+  it("keeps a shared Agent source independent from a resolved executor type", () => {
+    expect(
+      normalizeProjectAgent({
+        id: "agent-4",
+        name: "共享 Codex 智能体",
+        runtime: "codex",
+        status: "active",
+        version: 1,
+        wegent_team_id: 12,
+      } as WorkspaceProjectAgent),
+    ).toMatchObject({
+      definitionSource: "shared_agent",
+      executorType: "codex",
       wegentTeamId: 12,
     });
   });

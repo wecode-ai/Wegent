@@ -52,6 +52,7 @@ function projectAgent(
     id: "project-agent-1",
     name: "已有智能体",
     runtime: "wegent",
+    wegent_team_id: 12,
     status: "active",
     version: 1,
     ...values,
@@ -473,7 +474,7 @@ describe("ProjectAgentConfiguration", () => {
 
   it("offers no edit action for project Agents without an editable resource", async () => {
     const { api } = createApi({
-      agents: [projectAgent({ runtime: "claude_code" })],
+      agents: [projectAgent({ runtime: "claude_code", wegent_team_id: null })],
       workspaceAgents: [],
     });
     await renderHosted(api);
@@ -545,6 +546,7 @@ describe("ProjectAgentConfiguration", () => {
       agents: [
         projectAgent({
           runtime: "claude_code",
+          wegent_team_id: null,
           additionalSkills: [{ name: "review", namespace: "codex" }],
           mcpServers: {
             repository: { command: "node", args: ["server.mjs"] },
@@ -566,6 +568,7 @@ describe("ProjectAgentConfiguration", () => {
           displayName: "本地能力智能体",
           name: "local-capability-agent",
           runtime: "codex",
+          wegent_team_id: null,
         }),
       ],
     });

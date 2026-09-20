@@ -49,7 +49,7 @@ export function normalizeProjectAgent(
     id: String(row.id),
     name,
     displayName,
-    definitionSource: runtime === "wegent" ? "shared_agent" : "project",
+    definitionSource: rawTeamId == null ? "project" : "shared_agent",
     executorType:
       runtime === "wegent"
         ? null
