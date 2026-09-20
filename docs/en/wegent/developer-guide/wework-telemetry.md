@@ -18,7 +18,19 @@ Product analytics events must never contain chats, prompts, model responses, cod
 
 Before transmission, PostHog applies the event-specific allowlist again to remove SDK-added URLs, referrers, person-profile data, and other unnecessary properties; unregistered SDK-generated events are dropped. WebView and native Electron Sentry events remove requests, users, breadcrumbs, extra context, original exception text, source excerpts, local file paths, and local variables. WebView stack traces retain file locations, functions, line and column numbers, and source-map Debug IDs only for trusted Wework application resources; URL queries, fragments, and credentials are removed, while user files, external pages, and other untrusted paths are represented as `<redacted>`. Desktop E2E uses a local receiver to verify that no request is made before the user chooses, transmission starts only after explicit consent, and the real request body does not contain the test workspace path, authentication tokens, model key, or user email.
 
-Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `installation_id` tag stored in localStorage and a per-session `telemetry_session_id`; PostHog uses the SDK-generated `distinct_id` and `$session_id`. These identifiers are anonymous, independent of the authenticated account, and rotated when telemetry is disabled so data collected after re-enabling cannot be linked to data from before revocation.
+Public Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `installation_id` tag stored in localStorage and a per-session `telemetry_session_id`; PostHog uses the SDK-generated `distinct_id` and `$session_id`. These identifiers are anonymous, independent of the authenticated account, and rotated when telemetry is disabled so data collected after re-enabling cannot be linked to data from before revocation. Product distributions that need identified analytics provide the account identity and client IP through the telemetry policy described below.
+
+## Distribution Telemetry Policy
+
+Public Wework ships the anonymous policy only: no person profiles, no client IP, and no account identity. A product distribution replaces `@extensions/telemetry-policy` at build time (the contract lives in `wework/src/extensions/telemetry-policy-contract.ts`) and decides these three things with its own `TelemetryPolicy`:
+
+| Field | Purpose |
+| --- | --- |
+| `personProfiles` | PostHog person profile mode; `never` keeps every event anonymous |
+| `sendClientIp` | Whether the client IP is sent for PostHog to retain and geo-enrich |
+| `identityFor` | Account identity for the signed-in user (distinct id and person properties); `null` stays anonymous |
+
+The policy covers identity and client IP only: the event catalog, property allowlist, and scrubbing logic are identical for every distribution, and chats, prompts, model responses, code, file contents, file paths, terminal output, and screenshots must never be reported by any distribution. When a distribution enables person profiles it must also point the PostHog project's person display name at the person property it sets, otherwise the list still shows the distinct id.
 
 ## Event Catalog
 
@@ -136,8 +148,8 @@ For the PostHog project:
 
 - Set `VITE_WEWORK_POSTHOG_HOST` to the correct ingestion endpoint. The default is `https://us.i.posthog.com`; EU-hosted projects should use `https://eu.i.posthog.com`. Self-hosted instances should use their own ingestion URL.
 - Disable Session Replay and autocapture at the project level as a backup to the client-side flags; Wework never sends replay data or autocaptured events.
-- Keep person profiles disabled; Wework sets `person_profiles: 'never'` and `$process_person_profile: false` so PostHog does not build per-user profiles from anonymous events.
-- Use the project-level IP anonymization or `$_` capture settings as a fallback to `$geoip_disable: true`, which Wework already sends on every event.
+- Public builds keep person profiles disabled: `person_profiles: 'never'` and `$process_person_profile: false` stop PostHog from building per-user profiles out of anonymous events.
+- Use the project-level IP anonymization or `$_` capture settings as a fallback to `$geoip_disable: true`, which public builds already send on every event; a distribution that enables client IP should switch to project-level IP capture instead.
 
 ## Metric Cardinality
 
