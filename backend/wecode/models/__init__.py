@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""WeCode database models and internal indexes."""
+"""
+WeCode evaluation module models package.
+"""
 
-import wecode.models.kind_indexes  # noqa: F401  register internal Kind indexes
 from wecode.models.agent_task_usage import AgentTaskUsageDetail
 from wecode.models.erp_user import WecodeErpUser
 from wecode.models.evaluation import (
