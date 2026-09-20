@@ -22,8 +22,11 @@ from app.api.endpoints.openapi_responses import (
     _create_non_streaming_response_unified,
     _filter_current_assistant_turn,
     _iter_callback_events,
+    _model_category_from_kind,
+    _resolve_requested_model,
     _task_to_response_object,
 )
+from app.core.security import get_password_hash
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -587,6 +590,201 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 200
         assert mock_create_sync.call_args.kwargs["user"].id == test_admin_user.id
         assert mock_create_sync.call_args.kwargs["team"].id == test_team.id
+
+    def _create_group_with_referenced_model(
+        self,
+        test_db: Session,
+        test_user: User,
+        model: Kind,
+        *,
+        model_type: str = "llm",
+        namespace_name: str = "referenced-model-namespace",
+        caller_name: str = "referenced-model-caller",
+        caller_key: str = "wg-referenced-model-key",
+        team_name: str = "referenced-model-team",
+        bot_name: str = "referenced-model-bot",
+    ) -> tuple[User, Kind]:
+        """Create a group whose Team/Bot live in the group while the Bot's
+        modelRef points to a model only referenced into that group."""
+        caller = User(
+            user_name=caller_name,
+            password_hash=get_password_hash(f"{caller_name}password123"),
+            email=f"{caller_name}@example.com",
+            is_active=True,
+            git_info=None,
+        )
+        test_db.add(caller)
+        test_db.flush()
+
+        api_key = APIKey(
+            user_id=caller.id,
+            key_hash=hashlib.sha256(caller_key.encode()).hexdigest(),
+            key_prefix="wg-refmo...",
+            name="Referenced model key",
+            key_type=KEY_TYPE_PERSONAL,
+            description="",
+            expires_at=datetime.utcnow() + timedelta(days=365),
+            is_active=True,
+        )
+        test_db.add(api_key)
+
+        model.namespace = "default"
+        model.json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": model.name, "namespace": "default"},
+            "spec": {"modelType": model_type},
+        }
+
+        namespace = Namespace(
+            name=namespace_name,
+            display_name="Referenced model namespace",
+            owner_user_id=test_user.id,
+            visibility="internal",
+            description="",
+            level="group",
+            is_active=True,
+        )
+        test_db.add(namespace)
+        test_db.flush()
+
+        team = Kind(
+            user_id=test_user.id,
+            kind="Team",
+            name=team_name,
+            namespace=namespace.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Team",
+                "metadata": {"name": team_name, "namespace": namespace.name},
+                "spec": {
+                    "collaborationModel": "sequential",
+                    "members": [
+                        {"botRef": {"name": bot_name, "namespace": namespace.name}}
+                    ],
+                },
+            },
+            is_active=True,
+        )
+        bot = Kind(
+            user_id=test_user.id,
+            kind="Bot",
+            name=bot_name,
+            namespace=namespace.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Bot",
+                "metadata": {"name": bot_name, "namespace": namespace.name},
+                "spec": {
+                    "shellRef": {"name": "chat-shell", "namespace": "default"},
+                    "ghostRef": {"name": "test-ghost", "namespace": "default"},
+                    "modelRef": {"name": model.name, "namespace": namespace.name},
+                },
+            },
+            is_active=True,
+        )
+        test_db.add_all([team, bot])
+        test_db.flush()
+        test_db.add_all(
+            [
+                ResourceMember(
+                    resource_type="Namespace",
+                    resource_id=namespace.id,
+                    entity_type="user",
+                    entity_id=str(caller.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+                ResourceMember(
+                    resource_type=ResourceType.TEAM.value,
+                    resource_id=team.id,
+                    entity_type="namespace",
+                    entity_id=str(namespace.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+                # The model stays in the owner's personal namespace and is only
+                # referenced into the group namespace.
+                ResourceMember(
+                    resource_type="Model",
+                    resource_id=model.id,
+                    entity_type="namespace",
+                    entity_id=str(namespace.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+            ]
+        )
+        test_db.commit()
+        return caller, namespace
+
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_resolves_model_referenced_into_group(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_model: Kind,
+    ):
+        """A group member can invoke a group Team whose modelRef points to a
+        model referenced into the group from its owner's personal namespace."""
+        from app.schemas.openapi_response import ResponseObject
+
+        caller, namespace = self._create_group_with_referenced_model(
+            test_db, test_user, test_model
+        )
+        team = (
+            test_db.query(Kind)
+            .filter(Kind.kind == "Team", Kind.namespace == namespace.name)
+            .one()
+        )
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_124",
+            created_at=int(datetime.now().timestamp()),
+            status="completed",
+            model=f"{namespace.name}#referenced-model-team",
+            output=[],
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": "wg-referenced-model-key"},
+            json={
+                "model": f"{namespace.name}#referenced-model-team#{test_model.name}",
+                "input": "Hello",
+            },
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["user"].id == caller.id
+        assert mock_create_sync.call_args.kwargs["team"].id == team.id
+
+    def test_resolve_requested_model_uses_referenced_model_type(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_model: Kind,
+    ):
+        """A model referenced into the group namespace resolves with its own
+        modelType, so image/video models are not downgraded to chat."""
+        caller, namespace = self._create_group_with_referenced_model(
+            test_db, test_user, test_model, model_type="image"
+        )
+
+        resolved = _resolve_requested_model(
+            test_db, caller.id, namespace.name, test_model.name
+        )
+
+        assert resolved is not None
+        assert resolved.id == test_model.id
+        assert _model_category_from_kind(resolved) == "image"
+        assert (
+            _resolve_requested_model(
+                test_db, caller.id, namespace.name, "does-not-exist"
+            )
+            is None
+        )
 
     @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
     def test_create_response_allows_namespace_shared_team_api_key(
