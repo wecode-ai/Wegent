@@ -13,6 +13,7 @@ use std::env;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub redis_url: String,
+    pub redis_slave_url: Option<String>,
     pub jwt_key: String,
     pub jwt_legacy_keys: Vec<String>,
     pub algorithm: String,
@@ -23,6 +24,9 @@ impl AppConfig {
     pub fn from_env() -> Self {
         Self {
             redis_url: env_or("REDIS_URL", "redis://127.0.0.1:6379/0"),
+            redis_slave_url: env::var("REDIS_SLAVE_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
             jwt_key: env_or("SECRET_KEY", "secret-key"),
             jwt_legacy_keys: env::var("JWT_LEGACY_SECRET_KEYS")
                 .unwrap_or_default()

@@ -12,7 +12,7 @@
 //! endpoint consumes only the access-control outcome (404/409), but the
 //! same call sequence produces the recorded dependency traffic.
 use brz_mysql::{FromMysqlRow, Json};
-use brz_redis::Redis;
+use brz_redis::{Redis, RedisBytes};
 #[cfg(test)]
 use serde_json::Value;
 
@@ -271,6 +271,48 @@ pub(crate) struct SubtaskRow {
     reply_to_subtask_id: i64,
 }
 
+/// `userReader.get_by_id` as the task-detail chain performs it. The tree
+/// response discards the row, so only the read topology is observable: a
+/// supplied Redis client serves the read from the `user:v2:data:{user_id}`
+/// document (the deployment's cached reader); without one the read stays on
+/// the public direct SQL path.
+async fn user_reader_get_by_id<M, R: Redis>(
+    mysql: &M,
+    redis: Option<&R>,
+    user_id: i64,
+) -> Result<(), ApiError>
+where
+    M: brz_mysql::Mysql,
+{
+    let user_cache_key = format!("user:v2:data:{user_id}");
+    let cached: Option<RedisBytes> = match redis {
+        Some(redis) => redis
+            .get(user_cache_key.as_str())
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, key = %user_cache_key, "[user_cache] redis data read failed");
+                error
+            })
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    if cached.is_some() {
+        return Ok(());
+    }
+    let _user: Option<IdRow> = mysql
+        .fetch_optional(
+            "SELECT users.id AS users_id \
+             FROM users \
+             WHERE users.id = ? \
+             LIMIT 1",
+            (user_id,),
+        )
+        .await
+        .map_err(internal_mysql)?;
+    Ok(())
+}
+
 fn internal_mysql(error: brz_mysql::MysqlError) -> ApiError {
     tracing::warn!(%error, "[remote_workspace] mysql query failed");
     ApiError::internal("database query failed")
@@ -292,7 +334,8 @@ pub(crate) struct TaskDetail {
 
 pub(crate) async fn load_task_detail<M, R: Redis>(
     mysql: &M,
-    _redis: Option<&R>,
+    redis: Option<&R>,
+    erp: &crate::teams::group_membership::ErpContext<'_, R>,
     kinds: &KindStore<'_, M, R>,
     task_id: u64,
     user_id: i64,
@@ -394,18 +437,10 @@ where
         }
     }
 
-    // 3b. `convert_to_task_dict`'s own `userReader.get_by_id` uses the
-    // public direct SQL reader.
-    let _user: Option<IdRow> = mysql
-        .fetch_optional(
-            "SELECT users.id AS users_id \
-             FROM users \
-             WHERE users.id = ? \
-             LIMIT 1",
-            (task.user_id,),
-        )
-        .await
-        .map_err(internal_mysql)?;
+    // 3b. `convert_to_task_dict`'s own `userReader.get_by_id` (the
+    //     deployment-configured reader; the source's cached reader serves
+    //     the read from `user:v2:data` when the client is available).
+    user_reader_get_by_id(mysql, redis, task.user_id).await?;
 
     // 4. Requested-skills raw task load (`task_store.get_by_id` with the
     //    owner filter).
@@ -420,18 +455,9 @@ where
         .transpose()
         .map_err(internal_mysql)?;
 
-    // 5. `userReader.get_by_id` performs the same direct SQL read. The user
-    // row is not needed for the tree response.
-    let _user: Option<IdRow> = mysql
-        .fetch_optional(
-            "SELECT users.id AS users_id \
-             FROM users \
-             WHERE users.id = ? \
-             LIMIT 1",
-            (task.user_id,),
-        )
-        .await
-        .map_err(internal_mysql)?;
+    // 5. `userReader.get_by_id` again (the deployment-configured reader).
+    // The user row is not needed for the tree response.
+    user_reader_get_by_id(mysql, redis, task.user_id).await?;
 
     // 6. Team detail: `kindReader.get_by_id` (only when the task dict
     //    resolved a team_id in step 3), then
@@ -463,6 +489,18 @@ where
         .transpose()
         .map_err(internal_mysql)?;
     if let (Some(team), Some(owner_id)) = (team_record.as_ref(), owner_id) {
+        // `should_redact_team_for_user` runs BEFORE `_convert_to_team_dict`;
+        // the tree response discards the redacted team, but the membership
+        // resolution traffic is request-owned.
+        team_access_policy::should_redact_team_for_user(
+            mysql,
+            erp,
+            user_id,
+            team.id,
+            team.user_id,
+            &team.namespace,
+        )
+        .await?;
         convert_team_dict(kinds, team, owner_id).await?;
     }
 
@@ -706,6 +744,119 @@ pub(crate) fn test_subtask_row(executor_name: &str, executor_deleted_at: i8) -> 
         sender_type: String::new(),
         sender_user_id: 1,
         reply_to_subtask_id: 0,
+    }
+}
+
+/// `app.services.team_access_policy`: the team redaction check's
+/// request-owned dependency sequence. The tree response discards the
+/// outcome, so only the read topology is reproduced.
+pub(crate) mod team_access_policy {
+    use super::internal_mysql;
+    use crate::teams::group_membership::{self, ErpContext};
+    use crate::teams::teams_repository as repo;
+    use brz_mysql::Mysql;
+    use brz_redis::Redis;
+
+    /// `should_redact_team_for_user`: short-circuits for the team owner or a
+    /// `default`-namespace team; otherwise resolves the user's effective
+    /// group roles (`get_user_group_roles`), then the restricted-analyst
+    /// namespace checks. Only the read sequence is observable here.
+    pub(crate) async fn should_redact_team_for_user<M, R: Redis>(
+        mysql: &M,
+        erp: &ErpContext<'_, R>,
+        user_id: i64,
+        team_id: i64,
+        team_user_id: i64,
+        team_namespace: &str,
+    ) -> Result<bool, super::ApiError>
+    where
+        M: Mysql,
+    {
+        if team_user_id == user_id || team_namespace == "default" {
+            return Ok(false);
+        }
+        // `get_user_group_roles`: active namespace names, then
+        // `get_effective_roles_in_groups` (direct + entity memberships).
+        let resolved = group_membership::user_group_memberships(mysql, erp, user_id)
+            .await
+            .map_err(internal_mysql)?;
+        let roles =
+            group_membership::effective_roles(&resolved.memberships, &resolved.active_names);
+        let restricted: Vec<&str> = roles
+            .iter()
+            .filter(|(_, role)| role.as_str() == "RestrictedAnalyst")
+            .map(|(name, _)| name.as_str())
+            .collect();
+        if restricted.contains(&team_namespace) {
+            return Ok(true);
+        }
+        if restricted.is_empty() {
+            return Ok(false);
+        }
+        // Restricted namespaces' active ids (`Namespace.id.in_(names)`).
+        let mut sorted: Vec<String> = restricted.iter().map(|name| name.to_string()).collect();
+        sorted.sort();
+        let namespace_ids = repo::namespace_ids_by_names(mysql, &sorted)
+            .await
+            .map_err(internal_mysql)?;
+        if namespace_ids.is_empty() {
+            return Ok(false);
+        }
+        // Approved team member rows bound to those namespaces.
+        Ok(
+            team_member_bound_to_namespaces(mysql, team_id, &namespace_ids)
+                .await
+                .map_err(internal_mysql)?
+                .is_some(),
+        )
+    }
+
+    /// The `should_redact_team_for_user` tail query: one approved
+    /// `resource_members` row of the team bound to a restricted namespace.
+    async fn team_member_bound_to_namespaces<M>(
+        mysql: &M,
+        team_id: i64,
+        namespace_ids: &[i64],
+    ) -> Result<Option<i64>, brz_mysql::MysqlError>
+    where
+        M: Mysql,
+    {
+        if namespace_ids.is_empty() {
+            return Ok(None);
+        }
+        let placeholders = vec!["?"; namespace_ids.len()].join(", ");
+        #[derive(brz_mysql::FromMysqlRow)]
+        struct Row {
+            resource_members_id: i64,
+        }
+        let mut args: Vec<repo::BindingArg> = Vec::with_capacity(namespace_ids.len() + 3);
+        args.push(repo::BindingArg::Int(team_id));
+        args.push(repo::BindingArg::Str("Team".to_owned()));
+        args.push(repo::BindingArg::Str("TEAM".to_owned()));
+        args.push(repo::BindingArg::Str("namespace".to_owned()));
+        args.extend(
+            namespace_ids
+                .iter()
+                .map(|id| repo::BindingArg::Str(id.to_string())),
+        );
+        args.push(repo::BindingArg::Str("approved".to_owned()));
+        args.push(repo::BindingArg::Str("APPROVED".to_owned()));
+        let row: Option<Row> = mysql
+            .fetch_optional(
+                &format!(
+                    "SELECT resource_members.id AS resource_members_id \
+                     FROM resource_members \
+                     WHERE resource_members.resource_id = ? \
+                     AND resource_members.resource_type IN (?, ?) \
+                     AND resource_members.entity_type = ? \
+                     AND resource_members.entity_id IN ({placeholders}) \
+                     AND resource_members.status IN (?, ?) \
+                     LIMIT 1"
+                ),
+                args,
+            )
+            .await?;
+        Ok(row.map(|row| row.resource_members_id))
     }
 }
 

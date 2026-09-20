@@ -14,6 +14,7 @@ use anyhow::{Context as _, Result};
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub redis_cache_url: String,
+    pub redis_slave_url: Option<String>,
     pub executor_manager_url: String,
     pub jwt_algorithm: String,
     pub jwt_zinfoid_05q_key: String,
@@ -24,6 +25,9 @@ impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let redis_cache_url =
             env::var("REDIS_URL").context("REDIS_URL is required for kind/user caches")?;
+        let redis_slave_url = env::var("REDIS_SLAVE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         let executor_manager_url = env::var("EXECUTOR_MANAGER_URL")
             .context("EXECUTOR_MANAGER_URL is required for sandbox status queries")?;
         let jwt_algorithm = env::var("ALGORITHM").unwrap_or_else(|_| "HS256".to_string());
@@ -39,6 +43,7 @@ impl AppConfig {
 
         Ok(Self {
             redis_cache_url,
+            redis_slave_url,
             executor_manager_url,
             jwt_algorithm,
             jwt_zinfoid_05q_key,

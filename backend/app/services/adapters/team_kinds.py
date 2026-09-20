@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 from sqlalchemy import (
-    String,
+    Integer,
     and_,
     func,
     literal,
@@ -514,7 +514,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     (ResourceMember.resource_id == Kind.id)
                     & ResourceMember.resource_type.in_(team_resource_type_variants),
                 )
-                .join(Namespace, ResourceMember.entity_id == Namespace.id.cast(String))
+                # Compare numeric IDs without inheriting the connection collation.
+                .join(Namespace, ResourceMember.entity_id.cast(Integer) == Namespace.id)
                 .filter(
                     ResourceMember.entity_type == "namespace",
                     ResourceMember.entity_id.in_(authorized_namespace_entity_ids),

@@ -995,19 +995,20 @@ def create_socketio_asgi_app():
 app = create_socketio_asgi_app()
 
 
+# MIGRATION-CANDIDATE(api="GET /"): remove after final confirmation.
 # Root path (registered on FastAPI app)
-@_fastapi_app.get("/")
-async def root():
-    """
-    Root path, returns API information
-    """
-    return {
-        "name": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "api_prefix": settings.API_PREFIX,
-        "docs_url": f"{settings.API_PREFIX}/docs",
-        "socketio_path": "/socket.io",
-    }
+# @_fastapi_app.get("/")
+# async def root():
+#     """
+#     Root path, returns API information
+#     """
+#     return {
+#         "name": settings.PROJECT_NAME,
+#         "version": settings.VERSION,
+#         "api_prefix": settings.API_PREFIX,
+#         "docs_url": f"{settings.API_PREFIX}/docs",
+#         "socketio_path": "/socket.io",
+#     }
 
 
 # Health check endpoint (registered on FastAPI app)

@@ -788,13 +788,15 @@ fn build_items_from_blocks(
             Some("text") => {
                 if let Some(content) = block.content.as_deref().filter(|c| !c.is_empty()) {
                     emitted_text = true;
-                    items.push(text_message(subtask, message_status, content, ""));
+                    let index = items.len();
+                    items.push(text_message(subtask, message_status, index, content, ""));
                 }
             }
             Some("thinking") => {
                 if let Some(content) = block.content.as_deref().filter(|c| !c.is_empty()) {
                     emitted_reasoning = true;
-                    items.push(text_message(subtask, message_status, "", content));
+                    let index = items.len();
+                    items.push(text_message(subtask, message_status, index, "", content));
                 }
             }
             _ => {}
@@ -824,16 +826,18 @@ fn build_items_from_blocks(
     Some(items)
 }
 
-/// One `message` output item with the `msg_{id}_{index}` id.
+/// One `message` output item with the `msg_{id}_{index}` id
+/// (`append_message`'s `len(output)` index in the blocks path).
 fn text_message(
     subtask: &super::responses_repository::SubtaskRow,
     message_status: &'static str,
+    index: usize,
     text: &str,
     reasoning: &str,
 ) -> OutputItem {
     OutputItem::Message(OutputMessage {
         kind: "message",
-        id: format!("msg_{}_{}", subtask.id, 0),
+        id: format!("msg_{}_{}", subtask.id, index),
         status: message_status,
         role: "assistant",
         content: build_message_content(text, reasoning),
