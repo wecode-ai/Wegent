@@ -134,6 +134,10 @@ async fn stream_file(
         mysql: &deps.mysql,
         redis: deps.kinds_redis.as_ref(),
     };
+    let erp = crate::teams::group_membership::ErpContext {
+        erp: deps.erp.as_ref(),
+        redis: deps.redis.as_ref(),
+    };
 
     // 2-3. `_get_sandbox_payload` + `_resolve_root_path` + path validation.
     let sandbox_payload =
@@ -147,6 +151,7 @@ async fn stream_file(
     let _task = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
+        &erp,
         &kinds,
         task_id,
         auth.user_id,
@@ -167,6 +172,7 @@ async fn stream_file(
         let detail = task_detail::load_task_detail(
             &deps.mysql,
             deps.redis.as_ref(),
+            &erp,
             &kinds,
             task_id,
             auth.user_id,

@@ -156,11 +156,15 @@ where
             .remove(&task_id)
         else {
             self.running_tasks.remove(&task_id);
+            if let Some(event) = self.engine.cancel_pending(&task_id, None) {
+                return self.sink.send(event).await.is_ok();
+            }
             return false;
         };
         state.cancellation.cancel().await;
         state.handle.abort();
         let _ = state.handle.await;
+        self.engine.cancel_pending(&task_id, None);
         self.running_tasks.remove(&task_id);
         self.sink
             .send(state.builder.response_cancelled(message))

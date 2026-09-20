@@ -432,9 +432,9 @@ async fn build_lite_task_list(
         batch_query_workspaces(&state.mysql, i64::from(user_id), &workspace_refs).await?;
     let team_data = batch_query_teams(&state.mysql, &team_refs, i64::from(user_id)).await?;
     // `userReader.get_by_id` result only feeds `user_name`, which the lite
-    // projection does not return; retain the direct user-reader query to
-    // preserve the source dependency topology.
-    user_cache_get(state, user_id).await;
+    // projection does not return; the registered reader (public direct SQL,
+    // or a deployment's cached reader) keeps the source dependency topology.
+    let _ = state.user_reader.get_by_id(i64::from(user_id)).await;
     let device_data = device_display_names(state, user_id, &device_ids).await;
 
     Ok(project_lite_tasks(
@@ -592,29 +592,6 @@ fn execution_workspace_field(spec: Option<&crate::crd::CrdSpec>, source: bool) -
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
 }
-
-/// `userReader.get_by_id`: the public reader performs a direct SQL lookup.
-/// The endpoint only needs to trigger this dependency for the user display
-/// data, so the row is intentionally discarded here.
-async fn user_cache_get(state: &Arc<AppState>, user_id: i32) {
-    let _: Option<crate::auth::UserRow> = state
-        .mysql
-        .fetch_optional(USER_BY_ID_QUERY, (i64::from(user_id),))
-        .await
-        .ok()
-        .flatten();
-}
-
-/// The by-id ORM statement SQLAlchemy renders for `userReader.get_by_id`.
-const USER_BY_ID_QUERY: &str = "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-     users.password_hash AS users_password_hash, users.email AS users_email, \
-     users.git_info AS users_git_info, users.is_active AS users_is_active, \
-     users.`role` AS users_role, users.auth_source AS users_auth_source, \
-     users.preferences AS users_preferences, users.created_at AS users_created_at, \
-     users.updated_at AS users_updated_at \
-     FROM users \
-     WHERE users.id = ? \
-     LIMIT 1";
 
 /// `_batch_query_devices`: display names for the page's device references.
 async fn device_display_names(

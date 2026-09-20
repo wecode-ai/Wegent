@@ -2946,7 +2946,7 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
         headers=_auth(test_token),
         json={
             "version": project["version"],
-            "executionEnvironment": {
+            "execution_environment": {
                 "repositories": [
                     {
                         "name": "wegent",
@@ -2956,7 +2956,7 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
                         "primary": True,
                     }
                 ],
-                "setupSteps": [],
+                "setup_steps": [],
             },
         },
     )
@@ -3009,6 +3009,50 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
     assert retried_devices[device.name]["status"] == "ready"
     assert retried_devices[device.name]["workspace_path"] == "/workspace/ready"
     assert retried.json()["version"] == configured_version
+
+    saved_again = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": configured_version,
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setup_steps": [],
+            },
+        },
+    )
+    assert saved_again.status_code == 200, saved_again.text
+    assert saved_again.json()["execution_environment"]["devices"] == retried_devices
+
+    changed = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": saved_again.json()["version"],
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setup_steps": [{"command": "true", "working_directory": "wegent"}],
+            },
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["execution_environment"]["devices"] == {}
 
     # The project row must be unlocked while the device prepares the environment.
     assert open_transactions == [False, False]

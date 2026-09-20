@@ -6,6 +6,7 @@
 use super::config::Config;
 use brz_mysql::Mysql;
 use brz_redis::Redis;
+use std::sync::Arc;
 
 pub struct AppState<M: Mysql, R: Redis> {
     pub config: Config,
@@ -14,6 +15,9 @@ pub struct AppState<M: Mysql, R: Redis> {
     /// clients degrade to cache misses when Redis was unavailable at startup.
     pub redis: Option<R>,
     pub users: super::users::Users,
+    /// `userReader.get_by_id` strategy; the application state's registered
+    /// reader is installed by `startup::runtime_check::build`.
+    pub user_reader: Arc<dyn crate::user_reader::UserByIdReader>,
     /// Task id classification (`is_new_task_id` in the configured source
     /// store): selects the SQL-level DELETE filter for legacy ids.
     pub task_policy: crate::task_routing::TaskPolicy,
@@ -24,6 +28,7 @@ impl<M: Mysql, R: Redis> AppState<M, R> {
         config: Config,
         mysql: M,
         redis: Option<R>,
+        user_reader: Arc<dyn crate::user_reader::UserByIdReader>,
         task_policy: crate::task_routing::TaskPolicy,
     ) -> Self {
         Self {
@@ -31,6 +36,7 @@ impl<M: Mysql, R: Redis> AppState<M, R> {
             mysql,
             redis,
             users: super::users::Users,
+            user_reader,
             task_policy,
         }
     }

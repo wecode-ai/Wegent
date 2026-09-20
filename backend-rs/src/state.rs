@@ -12,6 +12,7 @@ use crate::erp_provider::ErpProvider;
 use crate::oidc_callback::OidcCallbackHandler;
 use crate::oidc_service::OidcService;
 use crate::shutdown_state::ShutdownState;
+use crate::user_reader::UserByIdReader;
 use std::sync::Arc;
 
 /// Application-wide state retained for the process lifetime.
@@ -45,4 +46,9 @@ pub struct AppState {
     /// Video URL refresh for assembled task detail responses. The public
     /// default leaves every result payload unchanged.
     pub video_result_urls: Arc<dyn crate::video_result_urls::VideoResultUrlRefresh>,
+    /// `userReader.get_by_id` strategy. The public default is the direct
+    /// SQL reader; an application whose deployment replaces the reader
+    /// (for example with a read-through cache) registers its own
+    /// implementation before route construction.
+    pub user_reader: Arc<dyn UserByIdReader>,
 }

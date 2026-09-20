@@ -12,7 +12,7 @@ export interface ComposerMentionPresentation {
 }
 export interface ComposerExternalMentionPresentation {
   id: string
-  type: 'agent' | 'user'
+  type: 'agent' | 'user' | 'group' | 'issue'
   title: string
   metaLabel: string
   testId?: string

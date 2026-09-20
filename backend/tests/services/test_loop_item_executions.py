@@ -3293,7 +3293,7 @@ def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(
         "upstream_api_format": "anthropic-messages",
     }
     with patch(
-        "app.services.chat.trigger.unified._build_cloud_gateway_model_config",
+        "app.services.chat.trigger.request_preparation._build_cloud_gateway_model_config",
         return_value=model_config,
     ) as compile_model:
         payload = loop_item_execution_service.build_runtime_payload(
@@ -5157,7 +5157,7 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
         "upstream_api_format": "anthropic-messages",
     }
     with patch(
-        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        "app.services.chat.trigger.request_preparation.build_wework_runtime_model_config",
         side_effect=AssertionError("model credentials must not resolve at enqueue"),
     ):
         execution = _make_execution(test_db, item, bot, test_user)
@@ -5176,7 +5176,7 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
     )
     assert claimed is not None
     with patch(
-        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        "app.services.chat.trigger.request_preparation.build_wework_runtime_model_config",
         return_value=full_config,
     ) as resolve_model:
         payload = loop_item_execution_service.build_runtime_payload(
@@ -5193,7 +5193,7 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
 
     rotated_config = {**full_config, "api_key": "sk-rotated-at-dispatch"}
     with patch(
-        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        "app.services.chat.trigger.request_preparation.build_wework_runtime_model_config",
         return_value=rotated_config,
     ):
         rebuilt = loop_item_execution_service.build_runtime_payload(
@@ -5364,7 +5364,7 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
     assert claimed is not None
     assert claimed.id == execution.id
     with patch(
-        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        "app.services.chat.trigger.request_preparation.build_wework_runtime_model_config",
         side_effect=AssertionError("backend must not resolve a local model"),
     ) as resolve_model:
         payload = loop_item_execution_service.build_runtime_payload(

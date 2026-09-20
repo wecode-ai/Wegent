@@ -108,7 +108,9 @@ class TestModelOptionsReasoningConfig:
 
     def test_model_options_reasoning_object_preserves_summary(self):
         """Test object-shaped UI reasoning does not become effort text."""
-        from app.services.chat.trigger.unified import _reasoning_from_model_options
+        from app.services.chat.trigger.request_preparation import (
+            _reasoning_from_model_options,
+        )
 
         payload = MagicMock()
         payload.model_options = {"reasoning": {"summary": "detailed"}}
@@ -117,7 +119,9 @@ class TestModelOptionsReasoningConfig:
 
     def test_model_options_reasoning_object_maps_effort_and_summary(self):
         """Test object-shaped UI reasoning maps supported fields separately."""
-        from app.services.chat.trigger.unified import _reasoning_from_model_options
+        from app.services.chat.trigger.request_preparation import (
+            _reasoning_from_model_options,
+        )
 
         payload = MagicMock()
         payload.model_options = {
@@ -140,7 +144,9 @@ class TestModelOptionsReasoningConfig:
     )
     def test_model_options_speed_maps_to_service_tier(self, speed, service_tier):
         """Test UI speed options map to Codex service tier values."""
-        from app.services.chat.trigger.unified import _service_tier_from_model_options
+        from app.services.chat.trigger.request_preparation import (
+            _service_tier_from_model_options,
+        )
 
         payload = MagicMock()
         payload.model_options = {"speed": speed}
@@ -149,7 +155,9 @@ class TestModelOptionsReasoningConfig:
 
     def test_model_options_speed_object_maps_to_service_tier(self):
         """Test object-shaped UI speed maps to Codex service tier values."""
-        from app.services.chat.trigger.unified import _service_tier_from_model_options
+        from app.services.chat.trigger.request_preparation import (
+            _service_tier_from_model_options,
+        )
 
         payload = MagicMock()
         payload.model_options = {"speed": {"value": "fast"}}

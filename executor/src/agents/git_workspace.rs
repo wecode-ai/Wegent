@@ -25,6 +25,7 @@ use crate::{
         configure_repo_proxy, request_git_domain, task_git_auth_environment, user_git_email,
         user_git_login, uses_device_local_git_credentials,
     },
+    local::native_git::clear_local_git_env,
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     workspace_paths::workspace_root,
@@ -409,6 +410,7 @@ async fn clone_repo(
     }
 
     let mut command = Command::new("git");
+    clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
@@ -500,6 +502,7 @@ async fn clone_repo(
 
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
     let mut command = Command::new("git");
+    clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command
         .arg("-C")
@@ -735,6 +738,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
         let mut command = Command::new("git");
+        clear_local_git_env(command.as_std_mut());
         crate::process::hide_windows_console(&mut command);
         let _ = command
             .arg("-C")
@@ -849,12 +853,8 @@ mod tests {
     use serde_json::json;
 
     fn run_test_git(command: &mut StdCommand) -> Output {
-        command
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .output()
-            .unwrap()
+        clear_local_git_env(command);
+        command.output().unwrap()
     }
 
     fn assert_test_git_success(description: &str, command: &mut StdCommand) {

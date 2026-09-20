@@ -65,6 +65,7 @@ interface CollaborationIssueCardContentProps {
   reference: string;
   renderAssigneeTooltip?: (label: string, child: ReactNode) => ReactNode;
   titleTrailing?: ReactNode;
+  unread?: boolean;
 }
 
 export function CollaborationIssueCardContent({
@@ -75,6 +76,7 @@ export function CollaborationIssueCardContent({
   reference,
   renderAssigneeTooltip = (_label, child) => child,
   titleTrailing,
+  unread,
 }: CollaborationIssueCardContentProps) {
   const model = createCollaborationIssueCardModel({
     agentNames,
@@ -93,7 +95,7 @@ export function CollaborationIssueCardContent({
         </span>
       ) : null}
       <span className="flex min-w-0 items-center gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
-        {model.unread ? (
+        {(unread ?? model.unread) ? (
           <span
             data-testid={`cloud-todo-card-unread-${item.id}`}
             className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
@@ -195,6 +197,7 @@ export interface CollaborationIssueCardProps extends CollaborationIssueCardConte
   dropTarget?: boolean;
   menu?: ReactNode;
   onOpen?: () => void;
+  unread?: boolean;
 }
 
 export function CollaborationIssueCard({
@@ -213,6 +216,7 @@ export function CollaborationIssueCard({
   dropTarget,
   menu,
   onOpen,
+  unread,
   ...contentProps
 }: CollaborationIssueCardProps) {
   const detailButtonRef = useRef<HTMLButtonElement>(null);
@@ -245,7 +249,7 @@ export function CollaborationIssueCard({
         className: classNames("cursor-default", cardClassName),
         dragging,
         dropTarget,
-        unread: Boolean(contentProps.item.is_unread),
+        unread: unread ?? Boolean(contentProps.item.is_unread),
       })}
     >
       {menu}
@@ -261,7 +265,7 @@ export function CollaborationIssueCard({
           detailButtonClassName,
         )}
       >
-        <CollaborationIssueCardContent {...contentProps} />
+        <CollaborationIssueCardContent {...contentProps} unread={unread} />
         {afterContent}
       </button>
       {childrenAction}

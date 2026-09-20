@@ -45,6 +45,24 @@ impl TaskRuntime {
             .map(|projects| projects.into_iter().map(mask_project).collect())
     }
 
+    pub(crate) fn list_collaboration_projects(&self) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        let duplicate_keys =
+            crate::runtime_work::sync_local_collaboration_projects(&self.local_store)?;
+        Ok(self
+            .list_projects()?
+            .into_iter()
+            .filter(|project| {
+                // Keep previously imported aliases and their issues addressable by ID;
+                // only omit their duplicate entries from the collaboration catalog.
+                !project
+                    .metadata
+                    .get("code_project_key")
+                    .and_then(|key| key.as_str())
+                    .is_some_and(|key| duplicate_keys.contains(key))
+            })
+            .collect())
+    }
+
     pub fn create_project(&self, input: ProjectCreate) -> Result<LoopItem, TaskRuntimeError> {
         self.local_store.create_project(input).map(mask_project)
     }

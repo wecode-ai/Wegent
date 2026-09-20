@@ -62,8 +62,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-text-primary: 56 58 61;
   --color-sidebar-text-secondary: 87 88 91;
   --color-sidebar-text-muted: 128 129 131;
-  --color-sidebar-scrollbar: 0 0 0 / 0.16;
-  --color-sidebar-scrollbar-hover: 0 0 0 / 0.24;
+  --color-sidebar-scrollbar: 0 0 0 / 0.08;
+  --color-sidebar-scrollbar-hover: 0 0 0 / 0.12;
   --color-mobile-drawer: 238 242 247;
   --color-popover: 255 255 255;
   --color-code-bg: 243 244 246;
@@ -163,8 +163,27 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   transform-origin: left center;
 }
 
+@keyframes task-view-board-enter {
+  from {
+    opacity: 0.35;
+    transform: translateX(28px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.task-view-board-enter {
+  animation-name: task-view-board-enter;
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .smart-app-workspace-tab-enter {
+  .smart-app-workspace-tab-enter,
+  .task-view-board-enter {
     animation: none;
   }
 }
@@ -475,12 +494,15 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   width: 100%;
 }
 
-.sidebar-worklists-scrollbar-thumb {
+.workbench-scrollbar-thumb,
+.project-board-scrollbar-thumb {
   background-color: rgb(var(--color-sidebar-scrollbar));
 }
 
-.sidebar-worklists-scrollbar:hover .sidebar-worklists-scrollbar-thumb,
-.sidebar-worklists-scrollbar:active .sidebar-worklists-scrollbar-thumb {
+.workbench-scrollbar:hover .workbench-scrollbar-thumb,
+.workbench-scrollbar:active .workbench-scrollbar-thumb,
+.project-board-scrollbar:hover .project-board-scrollbar-thumb,
+.project-board-scrollbar:active .project-board-scrollbar-thumb {
   background-color: rgb(var(--color-sidebar-scrollbar-hover));
 }
 
@@ -541,8 +563,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-text-primary: 242 242 242;
   --color-sidebar-text-secondary: 179 179 179;
   --color-sidebar-text-muted: 128 128 128;
-  --color-sidebar-scrollbar: 255 255 255 / 0.2;
-  --color-sidebar-scrollbar-hover: 255 255 255 / 0.3;
+  --color-sidebar-scrollbar: 255 255 255 / 0.08;
+  --color-sidebar-scrollbar-hover: 255 255 255 / 0.16;
   --color-mobile-drawer: 33 33 33;
   --color-popover: 40 40 40;
   --color-code-bg: 33 33 33;

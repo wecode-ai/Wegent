@@ -92,6 +92,19 @@ export function createWeworkSyncRequestSignal(
   return AbortSignal.timeout(timeoutMs)
 }
 
+export function describeWeworkSyncRequestFailure(error: unknown): string {
+  const messages: string[] = []
+  let current = error
+  while (current instanceof Error && messages.length < 3) {
+    const message = current.message
+      .replace(/\b(?:https?|wss?):\/\/[^\s<>"']+/gi, '[URL removed]')
+      .trim()
+    if (message && messages[messages.length - 1] !== message) messages.push(message)
+    current = current.cause
+  }
+  return `Wework cloud request failed${messages.length ? `: ${messages.join(': ')}` : ''}`
+}
+
 export function createWeworkSyncDownloadTimeout(timeoutMs = WEWORK_SYNC_REQUEST_TIMEOUT_MS): {
   signal: AbortSignal
   refresh: () => void
@@ -184,10 +197,16 @@ export async function requestWeworkSync(
   const path = normalizeWeworkSyncPath(request.path)
   const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
   try {
-    const response = await fetchImplementation(
-      `${apiBaseUrl}${path}`,
-      await createWeworkSyncFetchInit(request, authorization, downloadTimeout?.signal)
-    )
+    let response: Response
+    try {
+      response = await fetchImplementation(
+        `${apiBaseUrl}${path}`,
+        await createWeworkSyncFetchInit(request, authorization, downloadTimeout?.signal)
+      )
+    } catch (error) {
+      // Report the concrete transport failure without leaking the request URL.
+      throw new CloudCredentialError('request_failed', describeWeworkSyncRequestFailure(error))
+    }
     const body = await readWeworkSyncResponse(
       response,
       request.downloadPath,

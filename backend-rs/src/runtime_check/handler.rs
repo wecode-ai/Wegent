@@ -139,7 +139,8 @@ pub(crate) async fn runtime_check(
 /// The workspace, team, and owner-user lookups performed by
 /// `convert_to_task_dict`. The recorded task CRD carries
 /// `workspaceRef {name, namespace}` and a public `teamRef` with
-/// `user_id = 0`; the owner user is resolved through the public reader.
+/// `user_id = 0`; the owner user is resolved through the registered
+/// `userReader` (`AppState::user_reader`).
 async fn resolve_task_refs(
     state: &AppState<impl Mysql, impl brz_redis::Redis>,
     task: &TaskResourceRow,
@@ -187,8 +188,10 @@ async fn resolve_task_refs(
             }
         }
     }
-    // `userReader.get_by_id` uses the public direct SQL reader.
-    tasks::get_user_by_id(&state.mysql, task.user_id).await?;
+    // `userReader.get_by_id` through the registered reader: the public build
+    // performs the direct SQL lookup; the application build may replace the
+    // reader (for example with a read-through cache).
+    let _ = state.user_reader.get_by_id(task.user_id).await?;
     Ok(())
 }
 

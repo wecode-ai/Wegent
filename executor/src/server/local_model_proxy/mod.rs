@@ -11,6 +11,7 @@
 
 mod anthropic;
 mod chat;
+mod coordinate;
 mod fork;
 mod harness_protocol;
 mod history;
@@ -39,6 +40,9 @@ use sha2::{Digest, Sha256};
 use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
+pub(crate) use coordinate::{
+    coordinate_leader_upstream, set_coordinate_members, CoordinateMemberRoute, MEMBER_MODEL_MARKER,
+};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
 
 pub(crate) const API_KEY: &str = "wework-local-router";
@@ -157,6 +161,7 @@ pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyU
             pending_model_switch_cleanup: false,
             last_used: Instant::now(),
             active_references: 1,
+            coordinate_members: HashMap::new(),
         },
     );
     log_executor_event(
@@ -294,6 +299,7 @@ struct RegisteredUpstream {
     pending_model_switch_cleanup: bool,
     last_used: Instant,
     active_references: usize,
+    coordinate_members: HashMap<String, CoordinateMemberRoute>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -378,6 +384,11 @@ pub(crate) fn register_with_vision_sidecar(
         .routes
         .get(&token)
         .is_some_and(|registered| registered.pending_model_switch_cleanup);
+    let coordinate_members = registry
+        .routes
+        .get(&token)
+        .map(|registered| registered.coordinate_members.clone())
+        .unwrap_or_default();
     registry.routes.insert(
         token.clone(),
         RegisteredUpstream {
@@ -389,6 +400,7 @@ pub(crate) fn register_with_vision_sidecar(
             pending_model_switch_cleanup,
             last_used: Instant::now(),
             active_references,
+            coordinate_members,
         },
     );
     log_executor_event(
@@ -785,14 +797,22 @@ async fn handle_for_token(
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
         authorize_task_thread(registered, &body)?;
-        let model_routing = begin_model_request(registered, &body);
         registered.last_used = Instant::now();
-        (
-            registered.upstream.clone(),
-            registered.vision_sidecar.clone(),
-            registered.history.clone(),
-            model_routing,
-        )
+        if let Some(member) = coordinate::member_route(registered, &body)? {
+            (
+                member.upstream.clone(),
+                member.vision_sidecar.clone(),
+                member.history.clone(),
+                ModelRequestRouting::default(),
+            )
+        } else {
+            (
+                registered.upstream.clone(),
+                registered.vision_sidecar.clone(),
+                registered.history.clone(),
+                begin_model_request(registered, &body),
+            )
+        }
     };
     log_stale_requested_model(&upstream, &body);
     let request_url = upstream
@@ -1210,6 +1230,7 @@ fn request_thread_identity(body: &[u8]) -> Option<RequestThreadIdentity> {
     let thread_id = metadata.get("thread_id")?.as_str()?.to_owned();
     let parent_thread_id = metadata
         .get("parent_thread_id")
+        .or_else(|| metadata.get("x-codex-parent-thread-id"))
         .and_then(Value::as_str)
         .map(str::to_owned)
         .or_else(|| {

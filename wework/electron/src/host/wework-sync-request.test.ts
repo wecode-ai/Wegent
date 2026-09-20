@@ -7,6 +7,7 @@ import {
   createWeworkSyncDownloadTimeout,
   createWeworkSyncFetchInit,
   createWeworkSyncRequestSignal,
+  describeWeworkSyncRequestFailure,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
   readWeworkSyncResponse,
@@ -67,6 +68,16 @@ describe('Wework sync request normalization', () => {
       signal.addEventListener('abort', () => resolve(), { once: true })
     })
     expect(signal.aborted).toBe(true)
+  })
+
+  test('reports the concrete network failure without exposing request URLs', () => {
+    const failure = new TypeError('fetch failed for https://cloud.example.com/private', {
+      cause: new Error('connect timeout'),
+    })
+
+    expect(describeWeworkSyncRequestFailure(failure)).toBe(
+      'Wework cloud request failed: fetch failed for [URL removed]: connect timeout'
+    )
   })
 
   test('renews and clears the download inactivity timeout', () => {
@@ -169,5 +180,26 @@ describe('Wework sync request normalization', () => {
     expect(init?.method).toBe('GET')
     expect(init?.headers).toEqual({ authorization: 'Bearer token' })
     expect(init?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  test('reports transport failures without exposing the request URL', async () => {
+    electronMocks.netFetch.mockRejectedValueOnce(
+      new TypeError('fetch failed for https://cloud.example.com/private', {
+        cause: new Error('net::ERR_CONNECTION_RESET'),
+      })
+    )
+
+    await expect(
+      requestWeworkSync(
+        {
+          apiBaseUrl: 'https://cloud.example.com/api',
+          path: '/wework-transcripts/task-1/archives/4/turns?after=0',
+          method: 'GET',
+        },
+        'Bearer token'
+      )
+    ).rejects.toThrow(
+      'Wework cloud request failed: fetch failed for [URL removed]: net::ERR_CONNECTION_RESET'
+    )
   })
 })

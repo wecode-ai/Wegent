@@ -3,10 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import threading
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
 from app.api.endpoints import users as users_endpoint
 from app.models.kind import Kind
@@ -186,8 +189,7 @@ async def test_quick_access_keeps_favorites_and_recommendations(monkeypatch):
     ]
 
 
-@pytest.mark.asyncio
-async def test_recent_teams_are_returned_independently(monkeypatch):
+def test_recent_teams_are_returned_independently(monkeypatch):
     recent = [_team(202), _team(101, user_id=0)]
     monkeypatch.setattr(
         users_endpoint.team_kinds_service,
@@ -195,7 +197,7 @@ async def test_recent_teams_are_returned_independently(monkeypatch):
         lambda *a, **k: recent,
     )
 
-    response = await users_endpoint.get_user_recent_teams(
+    response = users_endpoint.get_user_recent_teams(
         db=SimpleNamespace(),
         current_user=SimpleNamespace(id=7),
     )
@@ -205,6 +207,46 @@ async def test_recent_teams_are_returned_independently(monkeypatch):
         (101, True),
     ]
     assert response[0].display_name == "Team 202"
+
+
+@pytest.mark.parametrize("query,is_code", [("", False), ("?is_code=true", True)])
+async def test_recent_teams_api_queries_run_off_event_loop(monkeypatch, query, is_code):
+    app = FastAPI()
+    app.include_router(users_endpoint.router, prefix="/api/users")
+    db = SimpleNamespace()
+    app.dependency_overrides[users_endpoint.get_db] = lambda: db
+    app.dependency_overrides[users_endpoint.security.get_current_user] = (
+        lambda: SimpleNamespace(id=7)
+    )
+    loop_thread = threading.get_ident()
+    calls = []
+
+    def get_recent_teams(session, *, user_id, is_code):
+        calls.append((threading.get_ident(), session, user_id, is_code))
+        return [_team(202), _team(101, user_id=0)]
+
+    monkeypatch.setattr(
+        users_endpoint.team_kinds_service,
+        "get_recent_accessible_teams",
+        get_recent_teams,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(f"/api/users/recent-teams{query}")
+
+    assert response.status_code == 200
+    assert [(team["id"], team["is_system"]) for team in response.json()] == [
+        (202, False),
+        (101, True),
+    ]
+    assert response.json()[0]["display_name"] == "Team 202"
+    assert len(calls) == 1
+    worker_thread, session, user_id, received_is_code = calls[0]
+    assert worker_thread != loop_thread
+    assert session is db
+    assert user_id == 7
+    assert received_is_code is is_code
 
 
 def test_get_user_quick_access_team_ids_handles_null_user_config():

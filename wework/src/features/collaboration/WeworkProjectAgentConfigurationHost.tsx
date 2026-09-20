@@ -4,6 +4,9 @@ import type { ProjectAgentConfigurationHost, ProjectAgentMode } from '@wegent/co
 
 import { Button } from '@/components/ui/button'
 import type { createAgentResourceApi } from '@/api/agentResources'
+import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
 import { cn } from '@/lib/utils'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
 
@@ -142,35 +145,71 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
  * Agent resource they point at.
  */
 export function createWeworkProjectAgentConfigurationHost(
-  agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined
+  agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
+  localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
+  localModelApi?: WorkbenchServices['modelApi'],
+  localPluginApi?: {
+    listPlugins(deviceId: string): Promise<import('@/types/api').RuntimeProjectPluginRef[]>
+  }
 ): ProjectAgentConfigurationHost {
-  if (!agentResourceApi) return weworkProjectAgentConfigurationHost
   return {
     ...weworkProjectAgentConfigurationHost,
-    supportsExistingAgentSelection: false,
-    renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
-      return (
-        <WeworkAgentResourceForm
-          api={agentResourceApi}
-          namespace={namespace}
-          onClose={onClose}
-          onSaved={onCreated}
-          workspaceName={workspaceName}
-        />
-      )
-    },
-    renderAgentEditor({ agent, namespace, onClose, onSaved, workspaceName }) {
-      return (
-        <WeworkAgentResourceForm
-          api={agentResourceApi}
-          editingTeamId={agent.teamId}
-          key={agent.teamId}
-          namespace={namespace}
-          onClose={onClose}
-          onSaved={onSaved}
-          workspaceName={workspaceName}
-        />
-      )
-    },
+    ...(agentResourceApi
+      ? {
+          supportsExistingAgentSelection: false,
+          renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
+            return (
+              <WeworkAgentResourceForm
+                api={agentResourceApi}
+                namespace={namespace}
+                onClose={onClose}
+                onSaved={onCreated}
+                workspaceName={workspaceName}
+              />
+            )
+          },
+          renderAgentEditor({ agent, namespace, onClose, onSaved, workspaceName }) {
+            return (
+              <WeworkAgentResourceForm
+                api={agentResourceApi}
+                editingTeamId={agent.teamId}
+                key={agent.teamId}
+                namespace={namespace}
+                onClose={onClose}
+                onSaved={onSaved}
+                workspaceName={workspaceName}
+              />
+            )
+          },
+        }
+      : {}),
+    ...(localAgentApi && localModelApi
+      ? {
+          renderLocalAgentCreator({ onClose, onCreated }) {
+            return (
+              <ProjectChatAgentEditor
+                api={localAgentApi}
+                modelApi={localModelApi}
+                pluginApi={localPluginApi}
+                onClose={onClose}
+                onSaved={onCreated}
+              />
+            )
+          },
+          renderLocalAgentEditor({ resourceId, onClose, onSaved }) {
+            return (
+              <ProjectChatAgentEditor
+                api={localAgentApi}
+                editingAgentId={resourceId}
+                key={resourceId}
+                modelApi={localModelApi}
+                pluginApi={localPluginApi}
+                onClose={onClose}
+                onSaved={onSaved}
+              />
+            )
+          },
+        }
+      : {}),
   }
 }
