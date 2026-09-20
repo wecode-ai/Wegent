@@ -183,11 +183,20 @@ class ExternalDocumentImportService:
         expected_generation: int | None = None,
     ) -> ExternalDocumentRefreshResult:
         """Prepare refresh state without choosing how the body fetch is executed."""
+        from app.services.knowledge.external_sync_providers import (
+            is_synchronized_external_document,
+        )
+
+        synchronized = (
+            document.external_provider == WIKI_PROVIDER_ID
+            and is_synchronized_external_document(document)
+        )
         decision = prepare_document_index_enqueue(
             db=db,
             document_id=document.id,
             allow_if_success=True,
             expected_generation=expected_generation,
+            capture_refresh_snapshot=synchronized,
         )
         if not decision.should_enqueue:
             if decision.reason in {"already_in_progress", "stale_generation"}:
@@ -202,11 +211,7 @@ class ExternalDocumentImportService:
             )
 
         db.refresh(document)
-        from app.services.knowledge.external_sync_providers import (
-            is_synchronized_external_document,
-        )
-
-        if not is_synchronized_external_document(document):
+        if not synchronized:
             document.is_active = False
         # Invalidate until the fetched body lands with its corresponding timestamp.
         refreshed_metadata = dict(external_meta or {})

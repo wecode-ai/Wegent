@@ -63,6 +63,10 @@ from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
     ExternalImportLostWriteError,
 )
+from app.services.knowledge.external_refresh_snapshot import (
+    get_external_refresh_snapshot,
+    stage_external_refresh_attachment,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
     get_profile,
@@ -1811,6 +1815,9 @@ class KnowledgeOrchestrator:
         previous_attachment_id = document.attachment_id
         previous_converted_id = document.converted_attachment_id
         retry_orphan_cleanup = document.external_provider == WIKI_PROVIDER_ID
+        has_refresh_snapshot = (
+            get_external_refresh_snapshot(document, generation) is not None
+        )
         attachment, _ = context_service.upload_attachment(
             db=db,
             user_id=owner_user_id,
@@ -1860,14 +1867,15 @@ class KnowledgeOrchestrator:
                 ) from exc
             raise
 
-        for previous_id in {previous_attachment_id, previous_converted_id}:
-            if previous_id and previous_id != attachment_id:
-                delete_attachment_best_effort(
-                    db,
-                    owner_user_id,
-                    previous_id,
-                    retry_orphan_cleanup=retry_orphan_cleanup,
-                )
+        if not has_refresh_snapshot:
+            for previous_id in {previous_attachment_id, previous_converted_id}:
+                if previous_id and previous_id != attachment_id:
+                    delete_attachment_best_effort(
+                        db,
+                        owner_user_id,
+                        previous_id,
+                        retry_orphan_cleanup=retry_orphan_cleanup,
+                    )
 
         db.refresh(document)
 
@@ -1942,6 +1950,11 @@ class KnowledgeOrchestrator:
         merged_source_config["external"] = merged_external
         # A conversion belongs to the previous body, never to its replacement.
         merged_source_config.pop("converted_attachment_id", None)
+        stage_external_refresh_attachment(
+            merged_source_config,
+            generation=generation,
+            attachment_id=attachment.id,
+        )
 
         update_fields = {
             KnowledgeDocument.attachment_id: attachment.id,

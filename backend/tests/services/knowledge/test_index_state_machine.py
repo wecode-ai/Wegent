@@ -22,6 +22,7 @@ from app.models.user import User
 from app.schemas.knowledge import DocumentProcessingStage
 from app.services.knowledge.index_state_machine import (
     _utcnow,
+    begin_external_import_attempt,
     mark_document_index_failed,
     mark_document_index_started,
     mark_document_index_succeeded,
@@ -685,3 +686,179 @@ def test_mark_document_index_succeeded_promotes_synced_external_version(
     assert "last_error_code" not in sync
     assert document.updated_at > previous_updated_at
     assert document.updated_at != datetime(2026, 9, 6, 2)
+
+
+def _create_synced_refresh_document(
+    test_db: Session,
+    test_user: User,
+    *,
+    index_status: DocumentIndexStatus,
+) -> KnowledgeDocument:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        is_active=True,
+        index_status=index_status,
+    )
+    document.attachment_id = 111
+    document.source_type = "external"
+    document.source_config = {
+        "processing_error": {
+            "stage": "indexing",
+            "code": "previous_index_failure",
+            "message": "Previous indexing failed",
+            "retryable": True,
+            "generation": 0,
+            "occurred_at": "2026-09-01T00:00:00Z",
+        },
+        "external": {
+            "provider": "wiki",
+            "title": "Runbook",
+            "sync": {
+                "enabled": True,
+                "content_version": "v1",
+                "indexed_version": "v1",
+            },
+        },
+    }
+    document.external_source = KnowledgeDocumentExternalSource(
+        kind_id=knowledge_base.id,
+        external_provider="wiki",
+        external_resource_id="v1:conn-primary:42",
+    )
+    test_db.commit()
+    test_db.refresh(document)
+    return document
+
+
+def test_failed_external_refresh_restores_previous_body_and_failed_state(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_refresh_document(
+        test_db,
+        test_user,
+        index_status=DocumentIndexStatus.FAILED,
+    )
+    cleanup = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.attachment_cleanup.delete_attachment_best_effort",
+        cleanup,
+    )
+
+    prepared = prepare_document_index_enqueue(
+        test_db,
+        document.id,
+        allow_if_success=True,
+        capture_refresh_snapshot=True,
+    )
+    attempt = begin_external_import_attempt(
+        test_db,
+        document.id,
+        prepared.generation,
+    )
+    test_db.refresh(document)
+    source_config = dict(document.source_config)
+    external = dict(source_config["external"])
+    sync = dict(external["sync"])
+    sync["content_version"] = "v2"
+    external["sync"] = sync
+    source_config["external"] = external
+    document.source_config = source_config
+    document.attachment_id = 222
+    document.file_size = 200
+    document.index_status = DocumentIndexStatus.INDEXING
+    test_db.commit()
+
+    finalized = mark_document_index_failed(
+        test_db,
+        document.id,
+        attempt.generation,
+        error=build_processing_error(
+            stage=DocumentProcessingStage.INDEXING,
+            code="indexing_failed",
+            message="New body indexing failed",
+            retryable=True,
+            generation=attempt.generation,
+        ),
+    )
+
+    test_db.refresh(document)
+    assert finalized is True
+    assert document.attachment_id == 111
+    assert document.file_size == 1024
+    assert document.index_status == DocumentIndexStatus.FAILED
+    assert document.processing_error_payload["code"] == "previous_index_failure"
+    assert document.external_source_config["sync"]["content_version"] == "v1"
+    assert document.external_source_config["status"] == "sync_error"
+    assert "_pending_external_refresh" not in document.source_config
+    cleanup.assert_called_once_with(
+        test_db,
+        test_user.id,
+        222,
+        retry_orphan_cleanup=True,
+    )
+
+
+def test_successful_external_refresh_reaps_previous_body_after_finalization(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_refresh_document(
+        test_db,
+        test_user,
+        index_status=DocumentIndexStatus.SUCCESS,
+    )
+    document.clear_processing_error_payload()
+    test_db.commit()
+    cleanup = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.attachment_cleanup.delete_attachment_best_effort",
+        cleanup,
+    )
+
+    prepared = prepare_document_index_enqueue(
+        test_db,
+        document.id,
+        allow_if_success=True,
+        capture_refresh_snapshot=True,
+    )
+    attempt = begin_external_import_attempt(
+        test_db,
+        document.id,
+        prepared.generation,
+    )
+    test_db.refresh(document)
+    source_config = dict(document.source_config)
+    external = dict(source_config["external"])
+    sync = dict(external["sync"])
+    sync["content_version"] = "v2"
+    external["sync"] = sync
+    source_config["external"] = external
+    document.source_config = source_config
+    document.attachment_id = 222
+    document.index_status = DocumentIndexStatus.INDEXING
+    test_db.commit()
+
+    finalized = mark_document_index_succeeded(
+        test_db,
+        document.id,
+        attempt.generation,
+    )
+
+    test_db.refresh(document)
+    assert finalized is True
+    assert document.attachment_id == 222
+    assert document.index_status == DocumentIndexStatus.SUCCESS
+    assert document.external_source_config["sync"]["indexed_version"] == "v2"
+    assert "_pending_external_refresh" not in document.source_config
+    cleanup.assert_called_once_with(
+        test_db,
+        test_user.id,
+        111,
+        retry_orphan_cleanup=True,
+    )

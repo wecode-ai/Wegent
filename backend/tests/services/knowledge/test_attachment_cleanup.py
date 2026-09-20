@@ -17,6 +17,9 @@ from app.services.knowledge.attachment_cleanup import (
     EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER,
     cleanup_orphaned_knowledge_attachments,
 )
+from app.services.knowledge.external_refresh_snapshot import (
+    EXTERNAL_REFRESH_SNAPSHOT_KEY,
+)
 
 
 def _attachment(
@@ -136,6 +139,41 @@ def test_cleanup_preserves_direct_and_converted_document_references(
 
     assert report.scanned == 0
     assert report.referenced == 0
+    assert report.deleted == 0
+    delete_context.assert_not_called()
+
+
+def test_cleanup_preserves_attachments_referenced_by_pending_refresh_snapshot(
+    test_db: Session,
+    test_user,
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 9, 14, 12, 0, 0)
+    previous = _attachment(test_db, test_user.id, created_at=now - timedelta(days=2))
+    previous_converted = _attachment(
+        test_db, test_user.id, created_at=now - timedelta(days=2)
+    )
+    current = _attachment(test_db, test_user.id, created_at=now - timedelta(days=2))
+    document = _document(test_db, test_user.id, attachment_id=current.id)
+    document.source_config = {
+        EXTERNAL_REFRESH_SNAPSHOT_KEY: {
+            "generation": 2,
+            "previous_attachment_id": previous.id,
+            "previous_converted_attachment_id": previous_converted.id,
+        }
+    }
+    test_db.commit()
+    delete_context = MagicMock(return_value=True)
+    monkeypatch.setattr(context_service, "delete_context", delete_context)
+
+    report = cleanup_orphaned_knowledge_attachments(
+        test_db,
+        retention_hours=24,
+        batch_size=100,
+        now=now,
+    )
+
+    assert report.scanned == 0
     assert report.deleted == 0
     delete_context.assert_not_called()
 

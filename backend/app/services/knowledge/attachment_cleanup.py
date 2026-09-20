@@ -16,6 +16,9 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
+from app.services.knowledge.external_refresh_snapshot import (
+    EXTERNAL_REFRESH_SNAPSHOT_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,18 @@ def cleanup_orphaned_knowledge_attachments(
         KnowledgeDocument.source_config["converted_attachment_id"].as_string(),
         Integer,
     )
+    pending_attachment_expression = cast(
+        KnowledgeDocument.source_config[EXTERNAL_REFRESH_SNAPSHOT_KEY][
+            "previous_attachment_id"
+        ].as_string(),
+        Integer,
+    )
+    pending_converted_expression = cast(
+        KnowledgeDocument.source_config[EXTERNAL_REFRESH_SNAPSHOT_KEY][
+            "previous_converted_attachment_id"
+        ].as_string(),
+        Integer,
+    )
     candidates = (
         db.query(SubtaskContext)
         .filter(
@@ -75,6 +90,8 @@ def cleanup_orphaned_knowledge_attachments(
             == EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER,
             ~exists().where(KnowledgeDocument.attachment_id == SubtaskContext.id),
             ~exists().where(converted_expression == SubtaskContext.id),
+            ~exists().where(pending_attachment_expression == SubtaskContext.id),
+            ~exists().where(pending_converted_expression == SubtaskContext.id),
         )
         .order_by(SubtaskContext.id.asc())
         .limit(max(1, batch_size))
@@ -98,7 +115,18 @@ def cleanup_orphaned_knowledge_attachments(
         .all()
         if attachment_id is not None
     }
-    referenced_ids = direct_references | converted_references
+    pending_references = {
+        int(attachment_id)
+        for expression in (
+            pending_attachment_expression,
+            pending_converted_expression,
+        )
+        for (attachment_id,) in db.query(expression)
+        .filter(expression.in_(candidate_ids))
+        .all()
+        if attachment_id is not None
+    }
+    referenced_ids = direct_references | converted_references | pending_references
 
     from app.services.context.context_service import context_service
 

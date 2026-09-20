@@ -388,6 +388,9 @@ class TestImportDocument:
         assert refresh.started is True
         test_db.refresh(document)
         assert document.is_active is True
+        snapshot = document.source_config["_pending_external_refresh"]
+        assert snapshot["previous_attachment_id"] == 1234
+        assert snapshot["previous_index_status"] == DocumentIndexStatus.SUCCESS.value
         assert document.index_status == DocumentIndexStatus.QUEUED
         assert "source_update_time" not in document.external_source_config
         assert document.external_source_config["url"].startswith("http://")
@@ -1435,6 +1438,79 @@ class TestAttachExternalDocumentContent:
         assert deleted_ids == [
             {"db": test_db, "context_id": 1111, "user_id": test_user.id}
         ]
+
+    def test_synchronized_refresh_keeps_previous_attachment_until_index_success(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.external_refresh_snapshot import (
+            capture_external_refresh_snapshot,
+        )
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.index_generation = 1
+        document.attachment_id = 1111
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "sync": {
+                    "enabled": True,
+                    "content_version": "v1",
+                    "indexed_version": "v1",
+                },
+            }
+        }
+        capture_external_refresh_snapshot(
+            document,
+            generation=1,
+            previous_index_status=DocumentIndexStatus.SUCCESS,
+        )
+        test_db.commit()
+
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=2222), None)),
+        )
+        delete_context = MagicMock()
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context", delete_context
+        )
+        monkeypatch.setattr(
+            knowledge_orchestrator,
+            "_schedule_indexing_celery",
+            lambda **kwargs: {"scheduled": True},
+        )
+
+        knowledge_orchestrator.attach_external_document_content(
+            db=test_db,
+            document=document,
+            user=test_user,
+            content=ExternalDocumentContent(
+                name="Attach Doc",
+                file_extension="md",
+                content=b"# fresh",
+                metadata={
+                    "sync": {
+                        "enabled": True,
+                        "content_version": "v2",
+                    }
+                },
+            ),
+            generation=1,
+        )
+
+        test_db.refresh(document)
+        assert document.attachment_id == 2222
+        assert (
+            document.source_config["_pending_external_refresh"]["staged_attachment_id"]
+            == 2222
+        )
+        delete_context.assert_not_called()
 
     def test_failed_previous_success_refetches_and_replaces_attachment(
         self,
