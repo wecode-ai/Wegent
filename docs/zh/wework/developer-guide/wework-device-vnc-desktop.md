@@ -8,6 +8,8 @@ sidebar_position: 41
 
 Wework 使用 `@novnc/novnc`，在 Chromium Canvas 中完成 RFB 解码与渲染。Electron Main 不运行 VNC client、解码器或原生渲染服务，只提供绑定窗口焦点和 lease 的系统剪贴板能力。
 
+Wework 的桌面路由由内置 DSH 插件 `@wegent/dsh-ui-cloud-work` 注册。桌面页、`VncViewer`、设备剪贴板命令桥接和入口组件位于 `wework/dsh/ui-cloud-work/src/device-desktop/`；宿主保留隔离路由契约、Electron surface 安全校验和剪贴板能力。该内置插件仍通过 Wework 的 Context 与服务工作，尚未作为可独立安装的插件发布。
+
 客户端与 Backend 的会话契约与具体 provider 无关。Backend 目前只为云设备注册 provider，因此只有云设备会暴露桌面。
 
 客户端只能获得 Backend 生成的短时 WebSocket 地址，不能获得 provider 地址、sandbox ID、provider 凭证、Runtime token 或长期用户 JWT。Provider 自身的配置写在 provider 实现旁，不在本指南内。

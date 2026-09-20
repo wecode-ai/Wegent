@@ -186,9 +186,9 @@ Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在�
 
 ## 云设备桌面
 
-公开版 Wework 包含通用 VNC viewer、云设备桌面页和入口实现。工作台和设备设置页通过 `src/extensions/cloud-desktop-contract.ts` 使用该能力，并根据设备类型、在线状态和桌面能力决定入口的展示或禁用状态。连接凭据和上游地址只由 Backend 的 provider 处理。
+公开版 Wework 的内置 DSH 插件 `@wegent/dsh-ui-cloud-work` 提供通用 VNC viewer、云设备桌面页和入口实现。工作台和设备设置页通过 `wework/src/extensions/cloud-desktop-contract.ts` 使用该能力，并根据设备类型、在线状态和桌面能力决定入口的展示或禁用状态。连接凭据和上游地址只由 Backend 的 provider 处理。
 
-通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口。入口通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求；没有注册 VNC provider 的设备类型无法创建会话。
+通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口。入口按设备 ID 打开桌面路由；没有注册 VNC provider 的设备类型无法创建会话。
 
 ### 云设备 VNC 实现
 
@@ -203,7 +203,7 @@ Viewer 只有在收到真实 noVNC framebuffer update 后才设置首帧标记�
 通用 VNC 协议、短时会话和渲染能力位于可开源层；具体云服务的上游地址、凭证和设备状态解析由发行版 provider 实现。
 
 - `backend/app/api/endpoints/devices.py`、`backend/app/api/vnc_websocket_middleware.py` 和 `backend/app/services/device/vnc_session_service.py` 提供通用会话 API、一次性 ticket、WebSocket 代理和按设备类型注册的 provider 契约。
-- `wework/src/components/vnc/`、`wework/src/pages/DeviceDesktopPage.tsx` 和 `wework/src/extensions/cloud-desktop*.tsx` 提供 Chromium viewer、内部路由和入口。`wework/electron/` 负责隔离的渲染 surface 与剪贴板 lease，不持有云服务凭证。
+- `wework/dsh/ui-cloud-work/client.js` 注册桌面路由；`wework/dsh/ui-cloud-work/src/device-desktop/` 提供 Chromium viewer、桌面页、设备剪贴板命令桥接和入口组件。`wework/src/extensions/cloud-desktop.tsx`、`wework/src/extensions/cloud-desktop-contract.ts` 及 `wework/src/pages/deviceDesktopRoute.ts` 是宿主集成契约。`wework/electron/` 负责隔离的渲染 surface 与剪贴板 lease，不持有云服务凭证。
 - 发行版代码只向公开的 provider registry 注册其云设备实现；没有 provider 的设备类型在 Backend 失败关闭。公共代码不能直接依赖具体云服务的 URL、签名或 sandbox 标识。
 - 桌面 E2E 的发行版场景通过可选模块接入公共 checkpoint runner；公共 runner 不直接导入发行版实现。
 

@@ -186,9 +186,9 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 
 ## Cloud Device Desktop
 
-Public Wework includes the generic VNC viewer, cloud-device desktop page, and entry points. The workbench and device settings use `src/extensions/cloud-desktop-contract.ts` and show or disable the entry point according to device type, online state, and desktop capability. Only the Backend provider handles connection credentials and upstream addresses.
+Public Wework's built-in DSH plugin `@wegent/dsh-ui-cloud-work` provides the generic VNC viewer, cloud-device desktop page, and entry points. The workbench and device settings use `wework/src/extensions/cloud-desktop-contract.ts` and show or disable the entry point according to device type, online state, and desktop capability. Only the Backend provider handles connection credentials and upstream addresses.
 
-The contract exposes `DeviceAction` and `WorkspaceAction` entry points for settings and project workspaces. The entry points use `isCurrent` to ignore asynchronous requests after the project, device, or connection context changes. Device types without a registered VNC provider cannot create a session.
+The contract exposes `DeviceAction` and `WorkspaceAction` entry points for settings and project workspaces. Each entry opens the desktop route for a device ID. Device types without a registered VNC provider cannot create a session.
 
 ### Cloud device VNC implementation
 
@@ -203,7 +203,7 @@ The viewer sets its first-frame marker only after a real noVNC framebuffer updat
 The generic VNC protocol, short-lived sessions, and rendering capability live in the public layer. A distribution provider implements the upstream address, credentials, and device status for its cloud service.
 
 - `backend/app/api/endpoints/devices.py`, `backend/app/api/vnc_websocket_middleware.py`, and `backend/app/services/device/vnc_session_service.py` provide the generic session API, single-use ticket, WebSocket proxy, and provider registry keyed by device type.
-- `wework/src/components/vnc/`, `wework/src/pages/DeviceDesktopPage.tsx`, and `wework/src/extensions/cloud-desktop*.tsx` provide the Chromium viewer, internal route, and entry points. `wework/electron/` owns the isolated rendering surface and clipboard lease, without cloud-service credentials.
+- `wework/dsh/ui-cloud-work/client.js` registers the desktop route. `wework/dsh/ui-cloud-work/src/device-desktop/` provides the Chromium viewer, page, device-command clipboard bridge, and entry components. `wework/src/extensions/cloud-desktop.tsx`, `wework/src/extensions/cloud-desktop-contract.ts`, and `wework/src/pages/deviceDesktopRoute.ts` form the host integration contract. `wework/electron/` owns the isolated rendering surface and clipboard lease, without cloud-service credentials.
 - Distribution code registers its cloud-device implementation with the public provider registry. Device types without a provider fail closed. Public code must not depend directly on a specific cloud service's URL, signature, or sandbox identifier.
 - Distribution-specific desktop E2E scenarios join the public checkpoint runner through an optional module. The public runner does not import the distribution implementation directly.
 

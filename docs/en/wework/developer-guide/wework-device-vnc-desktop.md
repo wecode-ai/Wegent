@@ -8,6 +8,8 @@ sidebar_position: 41
 
 Wework uses `@novnc/novnc`. RFB decoding and rendering stay in a Chromium Canvas. Electron Main does not run a VNC client, decoder, renderer, or native VNC service; it only exposes system clipboard operations bound to the focused window and an active lease.
 
+The built-in DSH plugin `@wegent/dsh-ui-cloud-work` registers Wework's desktop route. The desktop page, `VncViewer`, device-command clipboard bridge, and entry components live in `wework/dsh/ui-cloud-work/src/device-desktop/`. The host retains the isolated route contract, Electron surface security checks, and clipboard capabilities. This built-in plugin still uses Wework contexts and services and is not yet distributed as an independently installable plugin.
+
 The client and Backend session contract is provider-agnostic. Backend registers a provider only for cloud devices today, so only cloud devices expose a desktop.
 
 The client receives only a short-lived Backend WebSocket URL. It must never receive a provider URL, sandbox ID, provider credential, Runtime token, or long-lived user JWT. Provider-specific settings live alongside the provider implementation, not in this guide.
