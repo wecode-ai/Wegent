@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
+import { ApiError } from '@/api/http'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
@@ -1517,6 +1518,62 @@ describe('Wework collaboration workspace API', () => {
     await expect(api?.issues.list('local-project')).resolves.toEqual([localIssue])
     expect(localDeliveryApi.listLoopItems).toHaveBeenCalledWith('local-project', undefined)
     expect(listCloudIssues).not.toHaveBeenCalled()
+  })
+
+  it('does not route local Issue lookup failures to the cloud API', async () => {
+    const localFailure = new ApiError('Local Issue storage is unavailable', 500)
+    const localDeliveryApi = {
+      ...createLocalDeliveryApi(),
+      getLoopItem: vi.fn().mockRejectedValue(localFailure),
+    } as unknown as DeliveryApi
+    const getCloudIssue = vi.fn()
+    const api = createWeworkPlatformApi(
+      {
+        workspaces: {},
+        projects: {},
+        issues: {
+          get: getCloudIssue,
+        },
+      } as unknown as SharedWorkspaceApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.get('local-issue')).rejects.toBe(localFailure)
+    expect(getCloudIssue).not.toHaveBeenCalled()
+  })
+
+  it('uses the cloud API when a local Issue lookup reports not found', async () => {
+    const cloudIssue = {
+      id: 'cloud-issue',
+      cloud_project_id: 'cloud-project',
+      title: 'Cloud issue',
+    }
+    const localDeliveryApi = {
+      ...createLocalDeliveryApi(),
+      getLoopItem: vi.fn().mockRejectedValue(new Error('Local task not found')),
+    } as unknown as DeliveryApi
+    const getCloudIssue = vi.fn().mockResolvedValue(cloudIssue)
+    const api = createWeworkPlatformApi(
+      {
+        workspaces: {},
+        projects: {},
+        issues: {
+          get: getCloudIssue,
+        },
+      } as unknown as SharedWorkspaceApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.get(cloudIssue.id)).resolves.toEqual(cloudIssue)
+    expect(getCloudIssue).toHaveBeenCalledWith(cloudIssue.id)
   })
 
   it('adds a local space group to a project without duplicating or deleting its source', async () => {

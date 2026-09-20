@@ -1217,6 +1217,57 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
+  it("loads every navigation source when restoring a project deep link", async () => {
+    const localWorkspace = {
+      ...workspace,
+      id: "local-workspace",
+      location: "local" as const,
+    };
+    const localProject = {
+      ...project,
+      id: "local-project",
+      workspace_id: localWorkspace.id,
+      project_store: "local" as const,
+    };
+    const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
+    const cloudProject = {
+      ...project,
+      id: "cloud-project",
+      workspace_id: cloudWorkspace.id,
+    };
+    const { api: localApi } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [localProject],
+    });
+    const { api: cloudApi } = createApi({
+      initialWorkspaces: [cloudWorkspace],
+      initialProjects: [cloudProject],
+    });
+
+    await render(
+      <PlatformControllerHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+        location={{
+          ...initialLocation,
+          workspaceId: cloudWorkspace.id,
+          projectId: cloudProject.id,
+        }}
+      />,
+    );
+
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: null,
+      workspaceIds: [localWorkspace.id, cloudWorkspace.id],
+      projectIds: [cloudProject.id],
+    });
+    expect(localApi.projects.list).toHaveBeenCalled();
+    expect(cloudApi.projects.list).toHaveBeenCalled();
+  });
+
   it("keeps successful workspaces when projects from the same source fail", async () => {
     const cloudWorkspace = { ...workspace, id: "cloud-workspace" };
     const { api } = createApi({
@@ -1237,6 +1288,103 @@ describe("CollaborationPlatformApp real component flow", () => {
       workspaceIds: [cloudWorkspace.id],
       projectIds: [],
     });
+
+    await render(
+      <PlatformControllerHarness
+        api={api}
+        location={{ ...initialLocation, workspaceId: cloudWorkspace.id }}
+      />,
+    );
+
+    expect(api.workspaces!.list).toHaveBeenCalledTimes(2);
+    expect(api.projects.list).toHaveBeenCalledTimes(2);
+  });
+
+  it("enters a cached local workspace without retrying an unavailable cloud source", async () => {
+    const localWorkspace = {
+      ...workspace,
+      id: "local-workspace",
+      location: "local" as const,
+    };
+    const localProject = {
+      ...project,
+      id: "local-project",
+      workspace_id: localWorkspace.id,
+      project_store: "local" as const,
+    };
+    const { api: localApi } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [localProject],
+    });
+    const { api: cloudApi } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [],
+    });
+    cloudApi.workspaces!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("cloud unavailable"));
+    cloudApi.projects.list = vi
+      .fn()
+      .mockRejectedValue(new Error("cloud unavailable"));
+
+    await render(
+      <PlatformControllerHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+      />,
+    );
+    expect(cloudApi.workspaces.list).toHaveBeenCalledOnce();
+    expect(cloudApi.projects.list).toHaveBeenCalledOnce();
+
+    await render(
+      <PlatformControllerHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+        location={{ ...initialLocation, workspaceId: localWorkspace.id }}
+      />,
+    );
+
+    expect(cloudApi.workspaces.list).toHaveBeenCalledOnce();
+    expect(cloudApi.projects.list).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(byTestId("platform-controller-state").textContent ?? "{}"),
+    ).toMatchObject({
+      loading: false,
+      error: null,
+      workspaceIds: [localWorkspace.id],
+      projectIds: [localProject.id],
+    });
+  });
+
+  it("reuses a completed empty navigation cache", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [],
+    });
+
+    await render(<PlatformControllerHarness api={api} />);
+    await render(
+      <PlatformControllerHarness
+        api={api}
+        location={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    expect(api.workspaces!.list).toHaveBeenCalledOnce();
+    expect(api.projects.list).toHaveBeenCalledOnce();
+  });
+
+  it("loads Agent resources on the teams page", async () => {
+    const { api } = createApi();
+
+    await render(
+      <PlatformControllerHarness
+        api={api}
+        location={{ ...initialLocation, rootView: "teams" }}
+      />,
+    );
+
+    expect(api.resources!.list).toHaveBeenCalledOnce();
   });
 
   it("loads only run data alongside navigation on the runs page", async () => {
@@ -1746,13 +1894,15 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
+    expect(listNavigationProjects).toHaveBeenCalledOnce();
+    expect(listNavigationWorkspaces).toHaveBeenCalledOnce();
     await click(byTestId("collaboration-primary-home"));
     await flush();
 
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
     expect(container.querySelector(".collaboration-loading")).toBeNull();
-    expect(listNavigationProjects).not.toHaveBeenCalled();
-    expect(listNavigationWorkspaces).not.toHaveBeenCalled();
+    expect(listNavigationProjects).toHaveBeenCalledOnce();
+    expect(listNavigationWorkspaces).toHaveBeenCalledOnce();
     expect(
       byTestId(`collaboration-workspace-project-${project.id}`),
     ).toBeTruthy();

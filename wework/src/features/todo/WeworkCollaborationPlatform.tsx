@@ -34,6 +34,7 @@ import {
   type CloudProject,
   type LoopItemTaskBinding,
 } from '@/api/deliveries'
+import { ApiError } from '@/api/http'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
@@ -685,8 +686,14 @@ export function createWeworkPlatformApi(
   const localIssue = async (issueId: string) => {
     try {
       return await localApi.issues.get(issueId)
-    } catch {
-      return undefined
+    } catch (error) {
+      if (
+        (error instanceof ApiError && error.status === 404) ||
+        (error instanceof Error && error.message === 'Local task not found')
+      ) {
+        return undefined
+      }
+      throw error
     }
   }
   const issueLocation = async (issueId: string) => ((await localIssue(issueId)) ? 'local' : 'cloud')
