@@ -513,7 +513,7 @@
   padding: 14px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 14px;
-  background: rgb(var(--color-surface-subtle));
+  background: rgb(var(--color-bg-subtle));
 }
 
 .task-detail-default-assistant-icon {
@@ -525,7 +525,7 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 11px;
   color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-background));
+  background: rgb(var(--color-bg-base));
 }
 
 .task-detail-default-assistant-copy {
@@ -560,7 +560,7 @@
   padding: 0 12px;
   border: 0;
   border-radius: 9px;
-  color: rgb(var(--color-background));
+  color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
   font-size: 12px;
   font-weight: 600;
