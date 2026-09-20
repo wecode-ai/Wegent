@@ -49,6 +49,14 @@ test('rejects generated asset paths outside the packaged DSH app', () => {
   )
 })
 
+test('normalization is idempotent across development rebuilds', () => {
+  const root = '/tmp/build/wework-app'
+  const manifest = { assets: [{ to: `${root}/vendor/pdf/worker.mjs` }] }
+  const normalized = normalizeFileViewerAssetManifest(manifest, root)
+  assert.deepEqual(normalizeFileViewerAssetManifest(normalized, root), normalized)
+  assert.throws(() => normalizeFileViewerAssetManifest({ assets: [{ to: '../secret' }] }, root), /outside the DSH app output/)
+})
+
 test('normalizes assets reached through an equivalent filesystem path', t => {
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'wegent-harness-metadata-'))
   t.after(() => rmSync(temporaryRoot, { recursive: true, force: true }))

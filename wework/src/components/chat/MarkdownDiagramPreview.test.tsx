@@ -1,7 +1,18 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
+import type { ComponentProps } from 'react'
+import { MarkdownDiagramPreview as SharedMarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
+import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
+
+function MarkdownDiagramPreview(props: ComponentProps<typeof SharedMarkdownDiagramPreview>) {
+  return (
+    <MarkdownServicesProvider value={useDesktopMarkdownServices()}>
+      <SharedMarkdownDiagramPreview {...props} />
+    </MarkdownServicesProvider>
+  )
+}
 
 const fileViewerMocks = vi.hoisted(() => ({
   render: vi.fn(),
@@ -30,7 +41,7 @@ vi.mock('@file-viewer/preset-engineering', () => ({ default: {} }))
 vi.mock('@/features/appearance', () => ({
   useOptionalAppearance: () => ({ resolvedMode: appearanceMocks.resolvedMode }),
 }))
-vi.mock('./diagramImageExport', () => ({
+vi.mock('@wegent/collaboration/markdown/diagramImageExport', () => ({
   copyDiagramPng: imageExportMocks.copy,
   renderDiagramPng: imageExportMocks.render,
   saveDiagramPng: imageExportMocks.save,

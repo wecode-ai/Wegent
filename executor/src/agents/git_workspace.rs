@@ -27,6 +27,7 @@ use crate::{
     },
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
+    workspace_paths::workspace_root,
 };
 
 const DEFAULT_GIT_CLONE_TIMEOUT_SECONDS: u64 = 600;
@@ -408,6 +409,7 @@ async fn clone_repo(
     }
 
     let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
@@ -499,6 +501,7 @@ async fn clone_repo(
 
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
     let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command
         .arg("-C")
@@ -734,6 +737,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
         let mut command = Command::new("git");
+        crate::local::native_git::clear_local_git_env(command.as_std_mut());
         crate::process::hide_windows_console(&mut command);
         let _ = command
             .arg("-C")
@@ -834,33 +838,6 @@ fn truncate_summary(value: &str, max_chars: usize) -> String {
     } else {
         summary
     }
-}
-
-fn workspace_root() -> PathBuf {
-    env::var_os("WORKSPACE_ROOT")
-        .or_else(|| env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR"))
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("WEGENT_EXECUTOR_HOME")
-                .map(PathBuf::from)
-                .map(|root| root.join("workspace").join("projects"))
-        })
-        .or_else(|| {
-            env::var_os("WECODE_HOME").map(PathBuf::from).map(|root| {
-                root.join("wegent-executor")
-                    .join("workspace")
-                    .join("projects")
-            })
-        })
-        .or_else(|| {
-            home_dir().map(|home| {
-                home.join(".wecode")
-                    .join("wegent-executor")
-                    .join("workspace")
-                    .join("projects")
-            })
-        })
-        .unwrap_or_else(|| PathBuf::from("/workspace"))
 }
 
 fn home_dir() -> Option<PathBuf> {

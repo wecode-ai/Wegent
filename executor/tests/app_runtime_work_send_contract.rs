@@ -3912,7 +3912,7 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
         .iter()
         .find(|call| call["method"] == "thread/list")
         .expect("send should recover from thread list");
-    assert_eq!(list["params"]["sortKey"], "updated_at");
+    assert_eq!(list["params"]["sortKey"], "recency_at");
     let resume = calls
         .iter()
         .find(|call| call["method"] == "thread/resume")

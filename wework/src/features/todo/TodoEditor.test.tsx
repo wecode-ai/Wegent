@@ -230,10 +230,15 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeInTheDocument()
 
     await user.clear(screen.getByTestId('cloud-todo-detail-title'))
-    await user.type(screen.getByTestId('cloud-todo-detail-title'), 'Local editable Issue')
+    await user.paste('Local editable Issue')
     await user.click(screen.getByTestId('cloud-todo-save'))
 
-    await vi.waitFor(() => expect(updateLoopItem).toHaveBeenCalled())
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        localItem.id,
+        expect.objectContaining({ title: 'Local editable Issue' })
+      )
+    )
   })
 
   it('renders local task bindings without waiting for independent remote directories', async () => {
@@ -585,8 +590,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await screen.findByRole('option', { name: '张三' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'user:5')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     await user.click(
       screen.getByTestId(
         notify
@@ -650,8 +655,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await screen.findByRole('option', { name: '张三' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), '')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
     await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() => {
@@ -709,8 +714,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await screen.findByRole('option', { name: '评审智能体' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'team:42')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-team:42'))
     await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() => {
@@ -1294,7 +1299,7 @@ describe('TodoEditor create parent resolution', () => {
     render(
       <TodoEditor
         mode="create"
-        project={project}
+        project={{ ...project, access_role: 'Owner' }}
         initialParent={null}
         initialStatus="inbox"
         allItems={[]}
@@ -1306,7 +1311,132 @@ describe('TodoEditor create parent resolution', () => {
       />
     )
 
-    expect(await screen.findByRole('option', { name: '评审智能体' })).toHaveValue('team:42')
+    await userEvent.click(screen.getByTestId('cloud-todo-create-assignee'))
+    expect(
+      await screen.findByTestId('cloud-todo-create-assignee-option-team:42')
+    ).toHaveTextContent('评审智能体')
+  })
+
+  it('searches assignees and parent issues before selecting them', async () => {
+    const user = userEvent.setup()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+        {
+          id: 8,
+          user_id: 8,
+          user_name: 'Bob',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+    } as never
+    const release = {
+      ...baseItem,
+      id: 'WEG-20',
+      title: 'Release checklist',
+    } as unknown as CloudLoopItem
+    const onboarding = {
+      ...baseItem,
+      id: 'WEG-21',
+      title: 'Onboarding',
+    } as unknown as CloudLoopItem
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[release, onboarding]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={7}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    const assigneeSearch = screen.getByTestId('cloud-todo-create-assignee-search')
+    expect(assigneeSearch).toHaveFocus()
+    await user.type(assigneeSearch, 'ali')
+    expect(await screen.findByRole('option', { name: 'Alice' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'Bob' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Alice' }))
+    expect(screen.getByTestId('cloud-todo-create-assignee')).toHaveAttribute('data-value', 'user:7')
+
+    await user.click(screen.getByTestId('cloud-todo-create-parent'))
+    const parentSearch = screen.getByTestId('cloud-todo-create-parent-search')
+    expect(parentSearch).toHaveFocus()
+    await user.type(parentSearch, 'release')
+    expect(screen.getByRole('option', { name: 'WEG-20 · Release checklist' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'WEG-21 · Onboarding' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'WEG-20 · Release checklist' }))
+    expect(screen.getByTestId('cloud-todo-create-parent')).toHaveAttribute('data-value', 'WEG-20')
+  })
+
+  it('keeps the assignee search focused while its options finish loading', async () => {
+    const user = userEvent.setup()
+    const members = deferred<
+      Array<{
+        id: number
+        user_id: number
+        user_name: string
+        email: null
+        role: string
+      }>
+    >()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(() => members.promise),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={7}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    const search = screen.getByTestId('cloud-todo-create-assignee-search')
+    expect(search).toHaveFocus()
+
+    await act(async () => {
+      members.resolve([
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+      ])
+      await members.promise
+    })
+
+    expect(await screen.findByRole('option', { name: 'Alice' })).toBeVisible()
+    expect(search).toHaveFocus()
   })
 
   it('drops a parent that no longer exists and creates a top-level task', async () => {

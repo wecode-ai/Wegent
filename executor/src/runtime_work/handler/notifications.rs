@@ -468,14 +468,16 @@ impl RuntimeWorkRpcHandler {
             if notification_turn_id == active_turn.turn_id {
                 true
             } else {
-                log_executor_event(
-                    "runtime work routes non-active turn notification",
-                    &[
-                        ("thread_id", thread_id.clone()),
-                        ("active_turn_id", active_turn.turn_id),
-                        ("notification_turn_id", notification_turn_id.to_owned()),
-                    ],
-                );
+                if codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "runtime work routes non-active turn notification",
+                        &[
+                            ("thread_id", thread_id.clone()),
+                            ("active_turn_id", active_turn.turn_id),
+                            ("notification_turn_id", notification_turn_id.to_owned()),
+                        ],
+                    );
+                }
                 false
             }
         } else {

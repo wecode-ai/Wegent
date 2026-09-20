@@ -35,6 +35,76 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('projects stable turn start and completion timestamps through streaming and transcript restore', () => {
+    vi.useFakeTimers()
+    try {
+      const startedAt = Date.parse('2026-09-16T10:00:00Z')
+      vi.setSystemTime(startedAt + 3000)
+      const user = {
+        ...userMessage('user-timer', 'Check the code'),
+        createdAt: new Date(startedAt).toISOString(),
+      }
+      let turns: RuntimeConversationTurn[] = [
+        {
+          id: 'turn-timer',
+          status: 'streaming',
+          startedAt: startedAt - 1000,
+          items: [
+            { id: user.id, type: 'user_message', message: user },
+            {
+              id: 'tool-timer',
+              type: 'block',
+              block: {
+                id: 'tool-timer',
+                type: 'tool',
+                toolName: 'exec_command',
+                status: 'done',
+                createdAt: startedAt + 1000,
+                completedAt: startedAt + 2000,
+              },
+            },
+          ],
+        },
+      ]
+      const running = projectRuntimeConversationTurns(turns).find(
+        message => message.role === 'assistant'
+      )!
+      expect(running.completedAt).toBeUndefined()
+
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-timer',
+        itemId: 'final-timer',
+        content: 'Done',
+      })
+      vi.setSystemTime(startedAt + 10000)
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-timer',
+        itemId: 'final-timer',
+        content: '.',
+      })
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'assistant_done',
+        subtaskId: 'turn-timer',
+        startedAt,
+        durationMs: 10_000,
+      })
+      const snapshot = JSON.parse(JSON.stringify(turns)) as RuntimeConversationTurn[]
+      const restored = projectRuntimeConversationTurns(snapshot).find(
+        message => message.role === 'assistant'
+      )!
+      expect(snapshot[0].startedAt).toBe(startedAt)
+      expect(snapshot[0].durationMs).toBe(10_000)
+      expect(snapshot[0].completedAt).toBe(new Date(startedAt + 10000).toISOString())
+      expect(restored.createdAt).toBe(new Date(startedAt + 3000).toISOString())
+      expect(restored.completedAt).toBeUndefined()
+      expect(restored.status).toBe('done')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('bounds processing blocks retained by a continuously streaming turn', () => {
     let turns: RuntimeConversationTurn[] = [
       {
@@ -222,6 +292,7 @@ describe('runtimeConversationTurns', () => {
       type: 'assistant_started',
       subtaskId: 'turn-queued',
       clientUserMessageId: 'client-user-queued',
+      startedAt: 1234,
     })
 
     expect(turns).toEqual([
@@ -230,8 +301,44 @@ describe('runtimeConversationTurns', () => {
         clientUserMessageId: 'client-user-queued',
         items: [],
         status: 'streaming',
+        startedAt: 1234,
       },
     ])
+  })
+
+  test('creates a new turn for a real user request but keeps guidance in the active turn', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'user_added',
+      message: userMessage('user-1', 'Implement the fix'),
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_started',
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'user-1',
+      startedAt: 1000,
+    })
+
+    const guidance = {
+      ...userMessage('guidance-1', 'Keep the API unchanged'),
+      runtimeGuidance: true as const,
+    }
+    turns = appendRuntimeConversationGuidance(turns, 'turn-1', guidance)
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'user_added',
+      message: userMessage('user-2', 'Now add tests'),
+    })
+
+    expect(turns).toHaveLength(2)
+    expect(turns[0]).toMatchObject({
+      id: 'turn-1',
+      startedAt: 1000,
+    })
+    expect(turns[0].items.map(item => item.id)).toEqual(['user-1', 'guidance-1'])
+    expect(turns[1]).toMatchObject({
+      id: null,
+      clientUserMessageId: 'user-2',
+      status: 'pending',
+    })
   })
 
   test('binds Codex turn started to the latest unbound optimistic turn', () => {

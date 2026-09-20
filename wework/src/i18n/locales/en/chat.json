@@ -106,6 +106,9 @@
     "renamed_file": "Renamed {{filename}}"
   },
   "assistant_status": {
+    "working": "Working",
+    "working_for": "Working for {{duration}}",
+    "worked_for": "Worked for {{duration}}",
     "stopped": "Stopped",
     "stopped_after": "You stopped after {{duration}}"
   },
@@ -271,6 +274,11 @@
       "payload_too_large": {
         "title": "Content too large: conversation history or attachment exceeds the limit",
         "description": "Reduce attachments or context content, then retry."
+      },
+      "model_service_connection_error": {
+        "title": "Unable to connect to the model service",
+        "description": "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry.",
+        "description_with_endpoint": "Connection error: The request could not be sent to {{endpoint}}. Check your network or VPN connection and retry."
       },
       "network_error": {
         "title": "Network error: Please check your connection and try again",

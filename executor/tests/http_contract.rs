@@ -520,6 +520,146 @@ async fn workspace_routes_list_and_download_task_files() {
     );
 }
 
+/// The file panel of a code task always asks for the logical `/workspace/<task_id>`
+/// path, but the workspace root is rarely `/workspace` itself: container
+/// deployments point `WORKSPACE_ROOT` at a mounted directory and the wecode
+/// layout keeps it under the executor home. Every filesystem route has to reach
+/// the same directory for that logical path, otherwise the panel lists nothing.
+#[tokio::test]
+async fn envd_filesystem_routes_resolve_logical_task_workspace_paths() {
+    let _lock = env_lock().lock().await;
+    let workspace_dir = unique_dir("executor-http-logical-workspace");
+    fs::create_dir_all(workspace_dir.join("73392401305656/lottery/docs")).unwrap();
+    fs::write(
+        workspace_dir.join("73392401305656/lottery/docs/design.md"),
+        "# design",
+    )
+    .unwrap();
+    // Canonicalize so the logical path round-trips on platforms where the temp
+    // directory is reached through a symlink.
+    let workspace_root = fs::canonicalize(&workspace_dir).unwrap();
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+
+    let legacy_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/filesystem/list-dir?path=/workspace/73392401305656")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy_response.status(), StatusCode::OK);
+    let legacy_body: Value = serde_json::from_slice(
+        &legacy_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(legacy_body[0]["name"], json!("lottery"));
+    assert_eq!(
+        legacy_body[0]["path"],
+        json!("/workspace/73392401305656/lottery")
+    );
+
+    let connect_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/filesystem.Filesystem/ListDir")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"path": "/workspace/73392401305656", "depth": 1}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(connect_response.status(), StatusCode::OK);
+    let connect_body: Value = serde_json::from_slice(
+        &connect_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(connect_body["entries"][0]["name"], json!("lottery"));
+    assert_eq!(
+        connect_body["entries"][0]["path"],
+        json!("/workspace/73392401305656/lottery")
+    );
+
+    let nested_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/filesystem.Filesystem/ListDir")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"path": "/workspace/73392401305656/lottery", "depth": 1}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(nested_response.status(), StatusCode::OK);
+    let nested_body: Value = serde_json::from_slice(
+        &nested_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(nested_body["entries"][0]["name"], json!("docs"));
+
+    let stat_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/filesystem.Filesystem/Stat")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"path": "/workspace/73392401305656/lottery/docs/design.md"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stat_response.status(), StatusCode::OK);
+
+    let file_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/filesystem/file?path=/workspace/73392401305656/lottery/docs/design.md")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(file_response.status(), StatusCode::OK);
+    assert_eq!(
+        file_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+        "# design"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn workspace_directory_download_rejects_symbolic_links() {

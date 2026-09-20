@@ -172,6 +172,13 @@ migration and requires no schema change for existing deployments. If object
 storage is unavailable, segment metadata is not committed and the outbox keeps
 its locator while local execution remains available offline.
 
+The transcript bucket is a separate bucket from the attachment bucket: the
+account behind `ATTACHMENT_S3_*` needs `ListBucket`, `GetObject`, `PutObject`,
+and `DeleteObject` on it. An account that is only authorized for the attachment
+bucket fails on the first upload with a 503. The Backend log records the S3
+error code, and the device shows the same code in parentheses at the end of the
+message (for example `AccessDenied`).
+
 When the dedicated root is empty, `SECRET_KEY` is used for compatibility.
 Production deployments should configure a dedicated value and keep it unchanged
 while related tgz objects are retained.

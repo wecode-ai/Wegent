@@ -104,6 +104,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "runtime.archives",
     "runtime.automations",
     "runtime.codex",
+    "runtime.composer",
     "runtime.connectors",
     "runtime.harness",
     "runtime.hooks",
@@ -1916,9 +1917,11 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
-        "projects.list" => {
-            serialize_task_value(runtime.list_projects().map_err(task_runtime_error)?)
-        }
+        "projects.list" => serialize_task_value(
+            runtime
+                .list_collaboration_projects()
+                .map_err(task_runtime_error)?,
+        ),
         "projects.create" => {
             let input = serde_json::from_value::<ProjectCreate>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;

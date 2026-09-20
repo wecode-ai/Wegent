@@ -19,6 +19,7 @@ import {
   collaborationMessages,
   dueDateTimeLocalFromSource,
   type CollaborationIssue,
+  type CollaborationExecution,
   type SharedWorkspaceApi,
   type WorkspaceDelivery,
   type WorkspaceWorkflowPlan,
@@ -75,6 +76,7 @@ const project = {
 describe('shared IssueDetail', () => {
   type IssueDetailApi = Pick<
     SharedWorkspaceApi,
+    | 'activity'
     | 'issues'
     | 'members'
     | 'agents'
@@ -140,6 +142,8 @@ describe('shared IssueDetail', () => {
         create: jest.fn(),
         update: jest.fn(),
         assign: jest.fn(),
+        approveRun: jest.fn(),
+        rejectRun: jest.fn(),
       },
       members: {
         list: jest.fn().mockResolvedValue([member, secondMember]),
@@ -219,6 +223,301 @@ describe('shared IssueDetail', () => {
     return render(detailView(api, props))
   }
 
+  it('loads the PC project thread and sends replies through the same transport', async () => {
+    const message = {
+      messageId: 'chat-root',
+      projectId: project.id,
+      taskId: issue.id,
+      sequenceNumber: 1,
+      sender: { type: 'agent' as const, id: 'bot-1', name: 'Codex' },
+      type: 'text' as const,
+      content: 'Shared project conversation',
+      metadata: {},
+      status: 'completed' as const,
+      createdAt: issue.created_at,
+      updatedAt: issue.updated_at,
+    }
+    const unsubscribe = jest.fn()
+    const subscribe = jest.fn().mockResolvedValue({
+      snapshot: { messages: [message], latestSequence: 1, currentUserId: '1' },
+      unsubscribe,
+    })
+    const send = jest.fn().mockResolvedValue({
+      ...message,
+      messageId: 'reply-1',
+      rootMessageId: message.messageId,
+      sequenceNumber: 2,
+      content: 'Follow up',
+    })
+    const createComment = jest.fn()
+    const api = createApi({
+      activity: { subscribe, send } as unknown as NonNullable<SharedWorkspaceApi['activity']>,
+      comments: { create: createComment },
+    })
+    const { unmount } = renderDetail(api)
+    expect(await screen.findByText(message.content)).toBeInTheDocument()
+    expect(subscribe).toHaveBeenCalledWith(
+      project.id,
+      issue.id,
+      0,
+      expect.any(Function),
+      expect.any(Function)
+    )
+    expect(screen.queryByTestId('collaboration-current-assignment')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('collaboration-chat-reply-input-chat-root'), {
+      target: { value: 'Follow up' },
+    })
+    fireEvent.click(screen.getByTestId('collaboration-chat-reply-send-chat-root'))
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: project.id,
+          taskId: issue.id,
+          text: 'Follow up',
+          replyToMessageId: message.messageId,
+        })
+      )
+    )
+    expect(await screen.findByTestId('collaboration-chat-replies-chat-root')).toHaveTextContent(
+      'Follow up'
+    )
+    expect(createComment).not.toHaveBeenCalled()
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads details only for a changed Issue or API, not changed callbacks', async () => {
+    const api = createApi()
+    const aiIssue: CollaborationIssue = {
+      ...issue,
+      workflow: { advancement_policy: 'ai' },
+    }
+    const view = renderDetail(api, { issue: aiIssue })
+    await act(async () => {})
+    for (let index = 0; index < 10; index += 1) {
+      view.rerender(detailView(api, { issue: aiIssue }))
+      await act(async () => {})
+    }
+    const requests = [
+      api.attachments.list,
+      api.deliveries.list,
+      api.taskBindings.list,
+      api.collaborators.list,
+      api.members.list,
+      api.agents.list,
+      api.workflowPlans.get,
+    ]
+    for (const request of requests) expect(request).toHaveBeenCalledTimes(1)
+
+    const nextIssue = { ...aiIssue, id: 'issue-2' }
+    view.rerender(detailView(api, { issue: nextIssue }))
+    await act(async () => {})
+    for (const request of requests) expect(request).toHaveBeenCalledTimes(2)
+    expect(api.attachments.list).toHaveBeenLastCalledWith(nextIssue.id)
+
+    const nextApi = createApi()
+    view.rerender(detailView(nextApi, { issue: nextIssue }))
+    await act(async () => {})
+    expect(nextApi.attachments.list).toHaveBeenCalledTimes(1)
+    expect(nextApi.workflowPlans.get).toHaveBeenCalledWith(nextIssue.id)
+  })
+
+  it.each([409, 500])('uses the latest callbacks after a %s save failure', async status => {
+    const api = createApi()
+    jest
+      .mocked(api.issues.update)
+      .mockRejectedValue(Object.assign(new Error('Save failed'), { status }))
+    const original = { onError: jest.fn(), onConflict: jest.fn() }
+    const latest = { onError: jest.fn(), onConflict: jest.fn() }
+    const view = renderDetail(api, original)
+    await act(async () => {})
+    view.rerender(detailView(api, latest))
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
+      target: { value: '修改标题' },
+    })
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(status === 409 ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
+    )
+    expect(original.onError).not.toHaveBeenCalled()
+    expect(original.onConflict).not.toHaveBeenCalled()
+    expect(api.attachments.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('wires the PC approval toolbar through the complete Web Issue host', async () => {
+    const api = createApi()
+    const approved = { ...issue, version: 2, execution_state: 'queued' }
+    jest.mocked(api.issues.approveRun).mockResolvedValue(approved)
+    const onChange = jest.fn()
+    renderDetail(api, {
+      issue: { ...issue, can_approve: true, execution_state: 'waiting_approval' },
+      onChange,
+    })
+    fireEvent.click(await screen.findByTestId('cloud-task-activity-approve-issue-1'))
+    await waitFor(() =>
+      expect(api.issues.approveRun).toHaveBeenCalledWith('project-1', 'issue-1', issue.version)
+    )
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(approved))
+  })
+
+  it('separates bound task drawers from execution details and preserves the Issue draft', async () => {
+    // JSDOM does not lay out the viewport. Keep the real virtualizer and supply
+    // the browser geometry it observes instead of replacing the message list.
+    const dimensions = ['offsetHeight', 'clientHeight', 'offsetWidth', 'clientWidth'] as const
+    const geometry = dimensions.map(name =>
+      jest.spyOn(HTMLElement.prototype, name, 'get').mockReturnValue(600)
+    )
+    const canvas = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      measureText: (text: string) => ({ width: text.length * 7 }),
+    } as unknown as CanvasRenderingContext2D)
+    const scrollTo = jest.spyOn(Element.prototype, 'scrollTo').mockImplementation(() => {})
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = jest.fn().mockReturnValue({
+      matches: false,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    })
+    try {
+      const runtime = {
+        listDevices: jest.fn().mockResolvedValue([]),
+        subscribeChatStream: jest.fn().mockResolvedValue(jest.fn()),
+        work: {
+          createRuntimeTask: jest.fn(),
+          listRuntimeWork: jest.fn().mockResolvedValue({
+            projects: [],
+            totalTasks: 1,
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Actual execution device',
+                workspacePath: '/work',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'actual-runtime-task',
+                    title: 'Current task title',
+                    runtime: 'codex',
+                    workspacePath: '/work',
+                    modelSelection: { modelName: 'Current task model' },
+                  },
+                ],
+              },
+            ],
+          }),
+          sendRuntimeMessage: jest.fn(),
+          guideRuntimeTask: jest.fn(),
+          interruptAndSendRuntimeMessage: jest.fn(),
+          cancelRuntimeTask: jest.fn(),
+        },
+        getTranscript: jest.fn().mockResolvedValue({
+          runtime: 'codex',
+          workspacePath: '/work',
+          running: false,
+          title: '检查 pwd',
+          messages: [],
+          turns: [
+            {
+              id: 'turn-1',
+              status: 'done',
+              items: [
+                {
+                  id: 'answer',
+                  type: 'assistant_text',
+                  content: 'Actual runtime output',
+                  createdAt: '2026-09-17T00:00:00Z',
+                },
+              ],
+            },
+          ],
+        }),
+        subscribe: jest.fn().mockResolvedValue(jest.fn()),
+        cancel: jest.fn().mockResolvedValue(undefined),
+        listModels: jest.fn().mockResolvedValue([]),
+        uploadAttachment: jest.fn(),
+        deleteAttachment: jest.fn(),
+        openModelSettings: jest.fn(),
+        openCloudConnections: jest.fn(),
+        readAttachment: jest.fn(),
+        readWorkspaceFile: jest.fn(),
+        dispose: jest.fn(),
+      }
+      const api = createApi({
+        runtime,
+        taskBindings: {
+          bindTask: jest.fn(),
+          unbindTask: jest.fn(),
+          list: jest.fn().mockResolvedValue([
+            {
+              id: 'binding-1',
+              projectId: project.id,
+              issueId: issue.id,
+              taskUserId: 1,
+              deviceId: 'device-1',
+              taskId: 'actual-runtime-task',
+              taskTitle: '检查 pwd',
+              backendTaskId: null,
+              linkedAt: '2026-09-17T00:00:00Z',
+            },
+          ]),
+        },
+      })
+      const execution = {
+        id: 92,
+        loop_item_id: issue.id,
+        task_title: '检查 pwd',
+        executor_type: 'project_robot',
+        display_state: 'succeeded',
+        runtime_device_id: 'device-1',
+        runtime_task_id: 'actual-runtime-task',
+        created_at: '2026-09-10T01:00:00Z',
+      } as CollaborationExecution
+      await act(async () => {
+        renderDetail(api, { executions: [execution] })
+      })
+      const editor = screen.getByTestId('cloud-todo-detail')
+      const comment = screen.getByTestId('collaboration-issue-comment')
+      fireEvent.change(comment, { target: { value: '保留这条草稿' } })
+      fireEvent.click(screen.getByTestId('collaboration-open-execution-92'))
+      expect(await screen.findByText('Actual runtime output')).toBeInTheDocument()
+      expect(await screen.findByText(/Actual execution device/)).toBeInTheDocument()
+      expect(screen.getByText(/Current task model/)).toBeInTheDocument()
+      expect(runtime.getTranscript).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        taskId: 'actual-runtime-task',
+        limit: 50,
+        refresh: true,
+      })
+      expect(screen.getByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
+      expect(screen.getByTestId('runtime-execution-detail-close')).toHaveFocus()
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-detail')).toBe(editor)
+      expect(comment).toHaveValue('保留这条草稿')
+      fireEvent.click(screen.getByTestId('collaboration-open-task-92'))
+      expect(await screen.findByTestId('ai-chat-modal')).toBeInTheDocument()
+      expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
+      expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
+      expect(await screen.findByText('Actual runtime output')).toBeInTheDocument()
+      const track = document.querySelector('.issue-conversation-drawers')
+      expect(track).toHaveAttribute('data-has-conversation', 'true')
+      fireEvent.click(screen.getByTestId('collaboration-open-execution-92'))
+      expect(await screen.findByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
+      expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('ai-chat-modal-close'))
+      await waitFor(() => expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument())
+      expect(track).toHaveAttribute('data-has-conversation', 'false')
+      expect(screen.getByTestId('cloud-todo-detail')).toBe(editor)
+      expect(comment).toHaveValue('保留这条草稿')
+    } finally {
+      geometry.forEach(mock => mock.mockRestore())
+      canvas.mockRestore()
+      scrollTo.mockRestore()
+      window.matchMedia = originalMatchMedia
+    }
+  })
+
   it('creates an Issue through the same shared editor and detail port used by Wework', async () => {
     const created = {
       ...issue,
@@ -274,45 +573,15 @@ describe('shared IssueDetail', () => {
     expect(onCreated).toHaveBeenCalledWith(created)
   }, 30_000)
 
-  it('persists editable fields and appends a non-exclusive assignment activity', async () => {
+  it('persists content and assigns through the shared assignee control', async () => {
     const updated = { ...issue, version: 2, description: '新描述', priority: 'high' as const }
-    const assignment = {
-      id: 'assignment-1',
-      issue_id: issue.id,
-      target_type: 'human' as const,
-      target_id: '5',
-      target_name: '张三',
-      workflow_step: '交互设计',
-      comment_id: 'comment-1',
-      created_by_user_id: 1,
-      created_by_user_name: 'Owner',
-      status: 'active' as const,
-      created_at: '2026-09-11T00:00:00Z',
-      updated_at: '2026-09-11T00:00:00Z',
-    }
-    const assignmentComment = {
-      id: 'comment-1',
-      author: 'Owner',
-      body: '请完成交互稿',
-      web_url: null,
-      created_at: '2026-09-11T00:00:00Z',
-      updated_at: '2026-09-11T00:00:00Z',
-    }
     const update = jest.fn().mockResolvedValue(updated)
-    const createAssignment = jest.fn().mockResolvedValue({
-      assignment,
-      comment: assignmentComment,
-      issue: updated,
-    })
+    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 3 })
     const onChange = jest.fn()
     const onAssignmentsChange = jest.fn()
     const onCommentsChange = jest.fn()
     const api = createApi({
-      issues: { update, assign: jest.fn() },
-      assignments: {
-        list: jest.fn().mockResolvedValue([]),
-        create: createAssignment,
-      },
+      issues: { update, assign },
     })
     renderDetail(api, {
       agents: [{ id: 'bot-1', name: '代码机器人' }],
@@ -327,7 +596,7 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('cloud-todo-state-summary')).toHaveTextContent('待开始')
     expect(screen.getByTestId('cloud-todo-state-summary')).not.toHaveTextContent('执行任务')
     expect(screen.getByTestId('collaboration-comments')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-assignment-workflow-step')).not.toBeInTheDocument()
 
@@ -352,21 +621,41 @@ describe('shared IssueDetail', () => {
         tags: [],
       })
     )
-    fireEvent.click(screen.getByTestId('collaboration-issue-assignment-trigger'))
-    fireEvent.click(screen.getByTestId(`collaboration-issue-assign-member-${member.user_id}`))
-
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
-      expect(createAssignment).toHaveBeenCalledWith(issue.id, {
-        targetType: 'human',
-        targetId: '5',
-        workflowStep: null,
-        notifyTarget: true,
+      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+        version: 2,
+        assigneeType: 'user',
+        assigneeId: '5',
+        notifyAssignee: true,
       })
     )
-    expect(onAssignmentsChange).toHaveBeenCalledWith([assignment])
+    expect(screen.queryByTestId('collaboration-current-assignment')).not.toBeInTheDocument()
     expect(onCommentsChange).not.toHaveBeenCalled()
-    expect(onChange).toHaveBeenCalledWith(updated)
-    expect(api.issues.assign).not.toHaveBeenCalled()
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assignee_user_id: 5 }))
+  })
+
+  it('allows assignment without granting permission to edit Issue content', async () => {
+    const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
+    const update = jest.fn()
+    const api = createApi({ issues: { assign, update } })
+    renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+        version: 1,
+        assigneeType: 'user',
+        assigneeId: '5',
+        notifyAssignee: true,
+      })
+    )
+    expect(update).not.toHaveBeenCalled()
   })
 
   it('keeps an uploaded attachment when an older list request resolves afterward', async () => {
@@ -653,7 +942,7 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('cloud-todo-detail-description')).toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-detail-status')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-detail-priority')).toBeDisabled()
-    expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
     expect(screen.getByTestId('cloud-todo-detail-parent')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toBeDisabled()
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()

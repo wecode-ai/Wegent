@@ -11,6 +11,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
+  getElementMetrics,
   getSingleElementMetrics,
   prepareCompletedTurnScreenshot,
   verifyShortConversationLayout,
@@ -123,6 +124,7 @@ import {
 
 import {
   verifyFollowUpSendRejectionNotice,
+  verifyModelServiceConnectionError,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -287,6 +289,7 @@ import {
 import {
   captureVerificationScreenshot,
   enrichTrackedDefaultIssueTitle,
+  reloadMainWindow,
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
@@ -1284,6 +1287,11 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    if (DESKTOP_SEGMENT === 'running-conversation-history') {
+      appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS = '1500'
+    } else {
+      delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
+    }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
@@ -2646,6 +2654,33 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
         assertDefaultIssueContextInjected(enrichedIssueRequest)
+        phase = 'cloud-issue-task-sidebar-restored'
+        await reloadMainWindow(
+          control,
+          'The Wework WebView did not reconnect while restoring a cloud Issue task'
+        )
+        await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+          visible: true,
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        })
+        await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        const restoredTaskId = taskRowTestId.replace('runtime-local-task-row-', '')
+        await waitForWorkbenchTask(
+          control,
+          restoredTaskId,
+          'The cloud Issue task row did not become the current runtime task'
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="work-item-guide-summary-title"]`,
+          {
+            text: `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`,
+            visible: true,
+            timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+          }
+        )
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })
@@ -3352,6 +3387,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'rate-limit-recovery'
       await verifyRateLimitRecovery({ composerSelector, control })
 
+      phase = 'model-service-connection-error'
+      await verifyModelServiceConnectionError({ composerSelector, control })
+
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('resilience')) {
@@ -3515,13 +3553,34 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The conversation after opening a linked file',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterOpen = await waitForElementTop(
-        control,
-        filePanelAnchorSelector,
-        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-        'The linked file paragraph after opening the file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      // Capture the settled state before the anchor expectation is read: a failing run has to show where
+      // the paragraph ended up, not only where it started.
+      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
+      let filePanelAnchorAfterOpen
+      try {
+        filePanelAnchorAfterOpen = await waitForElementTop(
+          control,
+          filePanelAnchorSelector,
+          top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+          'The linked file paragraph after opening the file panel',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      } catch (error) {
+        const settled = {
+          anchor: (await getElementMetrics(control, filePanelAnchorSelector)).at(-1) ?? null,
+          scroller: await getSingleElementMetrics(
+            control,
+            conversationScrollerSelector,
+            'The conversation after the anchor expectation failed'
+          ),
+        }
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (before=${JSON.stringify({
+            anchor: filePanelAnchorBeforeOpen,
+            scroller: filePanelScrollerBeforeOpen,
+          })} settled=${JSON.stringify(settled)})`
+        )
+      }
       assert.ok(
         filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
         `Opening the file panel did not resize the conversation from ${filePanelScrollerBeforeOpen.width}px; after=${filePanelScrollerAfterOpen.width}px`
@@ -3540,7 +3599,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
       await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
       await waitForSnapshot(
         control,

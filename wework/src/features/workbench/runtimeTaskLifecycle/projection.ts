@@ -1,33 +1,10 @@
-import type { RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
+import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleSnapshot } from './types'
-import {
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
-} from '../runtimePaneMessages'
 
 export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
 
-export function projectRuntimePaneTranscript(
-  transcript: RuntimeTranscriptResponse
-): RuntimePaneTranscript {
-  return {
-    runtime: transcript.runtime,
-    running: transcript.running,
-    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
-    contextUsage: transcript.contextUsage ?? null,
-    turnNavigation: transcript.turnNavigation ?? [],
-    fullContent: transcript.fullContent === true,
-    rangeStart: transcript.rangeStart ?? null,
-    rangeEnd: transcript.rangeEnd ?? null,
-    hasMoreBefore: Boolean(transcript.hasMoreBefore),
-    beforeCursor: transcript.beforeCursor ?? null,
-    hasMoreAfter: Boolean(transcript.hasMoreAfter),
-    afterCursor: transcript.afterCursor ?? null,
-  }
-}
-
+export { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 export function isRuntimePaneTranscriptConfirmedIdle(transcript: RuntimePaneTranscript): boolean {
   if (transcript.running !== false) return false
   return !transcript.turns.some(turn => isRuntimeTurnRunningStatus(turn.status))

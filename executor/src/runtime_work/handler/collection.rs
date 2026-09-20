@@ -285,7 +285,6 @@ impl RuntimeWorkRpcHandler {
         }
 
         let mut visible_links = Vec::with_capacity(input_count);
-        let mut kept_non_codex = 0_usize;
         let mut kept_chat = 0_usize;
         let mut kept_project = 0_usize;
         let mut filtered_projectless = 0_usize;
@@ -314,26 +313,6 @@ impl RuntimeWorkRpcHandler {
                 visible_links.push(link);
                 continue;
             }
-            if !is_codex_runtime(&link.runtime) {
-                kept_non_codex += 1;
-                log_runtime_project_filter_item(
-                    &link,
-                    RuntimeProjectFilterLog {
-                        action: "keep",
-                        reason: "non_codex_runtime",
-                        workspace_kind: infer_workspace_kind(&link.workspace_path),
-                        group_path: None,
-                        matched_by: None,
-                        project_workspace_path: None,
-                        project_name: None,
-                        thread_hint: None,
-                        project_count,
-                    },
-                );
-                visible_links.push(link);
-                continue;
-            }
-
             let workspace_kind = infer_workspace_kind(&link.workspace_path);
             if workspace_kind == "chat" {
                 kept_chat += 1;
@@ -468,7 +447,6 @@ impl RuntimeWorkRpcHandler {
                     project_index.has_project_state().to_string(),
                 ),
                 ("project_roots", project_roots),
-                ("kept_non_codex", kept_non_codex.to_string()),
                 ("kept_chat", kept_chat.to_string()),
                 ("kept_project", kept_project.to_string()),
                 ("filtered_projectless", filtered_projectless.to_string()),
@@ -540,6 +518,9 @@ impl RuntimeWorkRpcHandler {
                 });
             }
 
+            for (sidebar_order, index) in group.listed.iter().enumerate() {
+                links[*index].sidebar_order = Some(sidebar_order);
+            }
             let ordered_indices = if group.unlisted_before_listed {
                 group.unlisted.into_iter().chain(group.listed)
             } else {
@@ -547,7 +528,9 @@ impl RuntimeWorkRpcHandler {
             };
             for (next_order, index) in ordered_indices.enumerate() {
                 links[index].list_order = Some(next_order);
-                links[index].sidebar_order = Some(next_order);
+                if !group.unlisted_before_listed {
+                    links[index].sidebar_order = Some(next_order);
+                }
             }
         }
     }
@@ -795,33 +778,14 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,
-        workspace_path: Option<&str>,
         cancel: oneshot::Sender<()>,
         stopped: oneshot::Receiver<()>,
-    ) -> Result<u64, AppIpcError> {
+    ) -> u64 {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
-        let workspace_path = self
-            .store
-            .get_task(&local_task_id)
-            .map(|task| PathBuf::from(task.workspace_path))
-            .or_else(|| workspace_path.map(PathBuf::from));
-        let managed_worktree_path =
-            workspace_path.filter(|path| self.worktrees.is_managed_path(path));
-        if let Some(workspace_path) = managed_worktree_path.as_deref() {
-            self.worktrees
-                .begin_execution(workspace_path, &local_task_id, execution_id)
-                .map_err(|error| {
-                    AppIpcError::new(
-                        "worktree_execution_state_failed",
-                        format!("Failed to persist Worktree execution evidence: {error}"),
-                    )
-                })?;
-        }
         let control = ActiveLocalExecution {
             execution_id,
             stop_requested: false,
             stop_acknowledged: false,
-            managed_worktree_path,
             cancel,
             stopped,
             codex_turn: None,
@@ -836,13 +800,15 @@ impl RuntimeWorkRpcHandler {
         }
         self.store.update_task(&local_task_id, |link| {
             apply_local_execution_state(link, true, None);
-            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
+            let started_at = now_ms();
+            link.updated_at = started_at.max(link.updated_at.saturating_add(1));
+            link.recency_at = started_at.max(link.recency_at.saturating_add(1));
             link.completed_at = None;
         });
         if let Some(link) = self.local_task_link(&local_task_id) {
             self.project_runtime_link_status_now(&link);
         }
-        Ok(execution_id)
+        execution_id
     }
 
     pub(super) fn finish_local_task_execution(
@@ -859,9 +825,6 @@ impl RuntimeWorkRpcHandler {
                 return false;
             };
             if control.execution_id != execution_id {
-                return false;
-            }
-            if !self.clear_worktree_execution_lease(local_task_id, control) {
                 return false;
             }
             active.remove(local_task_id);
@@ -921,16 +884,6 @@ impl RuntimeWorkRpcHandler {
                 return false;
             };
             request_execution_stop(control);
-            if !self.clear_worktree_execution_lease(local_task_id, control) {
-                log_executor_event(
-                    "runtime work forced settlement ignored execution lease conflict",
-                    &[
-                        ("local_task_id", local_task_id.to_owned()),
-                        ("execution_id", control.execution_id.to_string()),
-                        ("reason", reason.to_owned()),
-                    ],
-                );
-            }
             active.remove(local_task_id);
         }
         self.store.update_task(local_task_id, |link| {
@@ -977,9 +930,6 @@ impl RuntimeWorkRpcHandler {
                 return false;
             }
             control.stop_acknowledged = true;
-            if !self.clear_worktree_execution_lease(local_task_id, control) {
-                return false;
-            }
             active.remove(local_task_id);
         }
         self.store.update_task(local_task_id, |link| {
@@ -993,32 +943,6 @@ impl RuntimeWorkRpcHandler {
         }
         self.schedule_worktree_prune();
         true
-    }
-
-    fn clear_worktree_execution_lease(
-        &self,
-        local_task_id: &str,
-        control: &ActiveLocalExecution,
-    ) -> bool {
-        let Some(workspace_path) = control.managed_worktree_path.as_deref() else {
-            return true;
-        };
-        match self
-            .worktrees
-            .finish_execution(workspace_path, local_task_id, control.execution_id)
-        {
-            Ok(cleared) => cleared,
-            Err(error) => {
-                log_executor_event(
-                    "worktree execution evidence cleanup failed",
-                    &[
-                        ("local_task_id", local_task_id.to_owned()),
-                        ("error", error),
-                    ],
-                );
-                false
-            }
-        }
     }
 
     pub(super) fn fail_local_task_execution_start(&self, local_task_id: &str, error: &AppIpcError) {
@@ -1189,9 +1113,6 @@ impl RuntimeWorkRpcHandler {
             };
         }
         if control.stop_acknowledged {
-            if !self.clear_worktree_execution_lease(local_task_id, control) {
-                return ActiveTurnStopState::Pending;
-            }
             active.remove(local_task_id);
             ActiveTurnStopState::Stopped
         } else {

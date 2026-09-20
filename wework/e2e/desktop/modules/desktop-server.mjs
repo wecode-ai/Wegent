@@ -152,6 +152,8 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MODEL_SERVICE_CONNECTION_ERROR,
+  MODEL_SERVICE_CONNECTION_PROMPT,
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -396,6 +398,12 @@ function readyPluginWorkspaceResult(body) {
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
+
+const HELD_WORKTREE_SCENARIOS = new Set([
+  'worktree_queue_hold',
+  'worktree_restart_hold',
+  'worktree_status_hold',
+])
 
 class DesktopE2EServer {
   constructor(
@@ -813,11 +821,11 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'model_service_connection_error',
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
-        'worktree_queue_hold',
-        'worktree_restart_hold',
+        ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -853,7 +861,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      HELD_WORKTREE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -3919,7 +3927,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
@@ -4410,10 +4418,24 @@ class DesktopE2EServer {
           latestModelInputText(body).includes(RETRY_PROMPT),
           'The initial Codex request did not contain the retry scenario prompt'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          responseFailed(responseId, RETRY_FAILURE_TEXT),
-        ])
+        const processText = '检查失败前的处理状态。'
+        const stream = streamingTextEvents(responseId, processText, 'commentary')
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: processText,
+              offset: 0,
+            },
+          ])
+        )
+        await new Promise(resolve => setTimeout(resolve, 2100))
+        response.end(createSse([responseFailed(responseId, RETRY_FAILURE_TEXT)]))
         return
       }
       const continuationInput = latestModelInputText(body)
@@ -4451,6 +4473,19 @@ class DesktopE2EServer {
         responseCreated(responseId),
         assistantMessage(RATE_LIMIT_COMPLETION_TEXT),
         responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'model_service_connection_error') {
+      this.recordScenarioRequest('model_service_connection_error', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(MODEL_SERVICE_CONNECTION_PROMPT),
+        'The real Codex request did not contain the model-service connection prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, MODEL_SERVICE_CONNECTION_ERROR, 'other'),
       ])
       return
     }

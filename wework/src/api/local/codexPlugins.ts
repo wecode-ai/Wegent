@@ -1,3 +1,31 @@
+import type {
+  CodexPluginMarketplaceEntry,
+  CodexPluginSummary,
+  CodexPluginConnector,
+  CodexPluginDetail,
+  WegentStorePluginSummary,
+  WegentStoreListResult,
+} from '@wegent/chat-core/codex-plugin-types'
+export type { CodexPluginSummary } from '@wegent/chat-core/codex-plugin-types'
+import {
+  normalizeMarketplaceSource,
+  isLocalMarketplacePath,
+  emptyComponents,
+  pluginDescription,
+  pluginDisplayName,
+  pluginComponents,
+  resolvePluginInterfaceAssets,
+  localMarketplaceSource as sharedLocalMarketplaceSource,
+  toInstalledPlugin as sharedToInstalledPlugin,
+  mergeInstalledPluginSummaries as sharedMergeInstalledPluginSummaries,
+  toWegentStoreInstalledPlugin as sharedToWegentStoreInstalledPlugin,
+} from '@wegent/chat-core/codex-installed-plugins'
+export { normalizeMarketplaceSource } from '@wegent/chat-core/codex-installed-plugins'
+import {
+  catalogRecord,
+  decodeCodexComposerSkills,
+  listCodexComposerApps,
+} from '@wegent/chat-core/codex-composer-catalog'
 import i18n from '@/i18n'
 import { sha256Hex } from '@/api/fileHash'
 import { getErrorMessage } from '@/lib/error-message'
@@ -13,7 +41,6 @@ import {
 } from '@/desktop/localExecutor'
 import type {
   InstalledPlugin,
-  InstalledPluginComponents,
   InstalledPluginListResponse,
   InstalledPluginUpdateRequest,
   LocalDeviceApp,
@@ -31,7 +58,6 @@ import {
 import {
   INTERNAL_DEVICE_MARKETPLACE_ID,
   isBuiltInMarketplaceId,
-  isInternalDeviceMarketplaceId,
   isOpenAiOfficialMarketplaceId,
   isOpenAiOfficialRemoteMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
@@ -193,11 +219,6 @@ export interface PluginIdentityReference {
   pluginName: string
 }
 
-export function normalizeMarketplaceSource(source: string): string {
-  const normalized = source.trim().replace(/\\\\/g, '/')
-  return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
-}
-
 export function codexMarketplaceManifestSource(source: string): string {
   return `${normalizeMarketplaceSource(source).replace(/\/+$/, '')}/.agents/plugins/marketplace.json`
 }
@@ -288,142 +309,6 @@ const emptyState: LocalCodexPluginsState = {
   marketplacePath: '',
   installRegistryPath: '',
   deviceId: '',
-}
-
-interface CodexPluginMarketplaceEntry {
-  name: string
-  path?: string | null
-  interface?: {
-    displayName?: string | null
-  } | null
-  plugins: CodexPluginSummary[]
-}
-
-export interface CodexPluginSummary {
-  id: string
-  remotePluginId?: string | null
-  localVersion?: string | null
-  name: string
-  source?: Record<string, unknown>
-  installed: boolean
-  enabled: boolean
-  installPolicy?: string
-  authPolicy?: string
-  /** Codex PluginAvailability: AVAILABLE | DISABLED_BY_ADMIN */
-  availability?: string
-  /** Remote catalog reason, e.g. plan_not_eligible */
-  disabledReason?: string | null
-  eligiblePlanTypes?: string[] | null
-  interface?: PluginInterface | null
-  keywords?: string[]
-}
-
-interface CodexPluginConnector {
-  slug: string
-  accountAuth?: NonNullable<InstalledPluginComponents['connectors']>[number]['accountAuth']
-  displayName?: string | null
-  authorizationGroup?: { id: string; displayName: string } | null
-  authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
-  localAuth?: {
-    kind?: 'local_qr' | 'browser_oauth'
-    health?: string[]
-    start?: string[]
-    poll?: string[]
-    logout?: string[]
-    tool?: {
-      id: string
-      source: 'bundled' | 'managed'
-      version?: string | null
-      artifacts?: Record<
-        string,
-        {
-          url: string
-          sha256: string
-          archive: 'tar_gz' | 'zip'
-          binaryPath: string
-        }
-      >
-    } | null
-    qrField?: string
-    statusField?: string
-    okValues?: string[]
-    pollIntervalSeconds?: number
-    timeoutSeconds?: number
-    logoutOnUninstall?: boolean
-  } | null
-  description?: string | null
-}
-
-interface CodexPluginDetail {
-  marketplaceName: string
-  marketplacePath?: string | null
-  summary: CodexPluginSummary
-  description?: string | null
-  skills?: Array<{
-    name: string
-    description?: string | null
-    shortDescription?: string | null
-    path?: string | null
-    enabled: boolean
-  }>
-  hooks?: Array<{ key: string; eventName?: string }>
-  apps?: Array<{
-    id: string
-    name: string
-    slug?: string | null
-    required?: boolean | null
-    description?: string | null
-  }>
-  appTemplates?: Array<{
-    templateId: string
-    name: string
-    description?: string | null
-    category?: string | null
-    canonicalConnectorId?: string | null
-    logoUrl?: string | null
-    logoUrlDark?: string | null
-    materializedAppIds?: string[]
-    reason?: string | null
-  }>
-  agents?: Array<{
-    name: string
-    path?: string | null
-    description?: string | null
-  }>
-  mcpServers?: string[]
-  connectors?: CodexPluginConnector[]
-}
-
-interface CodexAppInfo {
-  id: string
-  name: string
-  description?: string | null
-  logoUrl?: string | null
-  installUrl?: string | null
-  isAccessible?: boolean
-  isEnabled?: boolean
-  pluginDisplayNames?: string[]
-}
-
-interface CodexSkillMetadata {
-  name: string
-  description: string
-  shortDescription?: string | null
-  short_description?: string | null
-  path: string
-  scope: string
-  enabled: boolean
-  interface?: {
-    displayName?: string | null
-    shortDescription?: string | null
-    short_description?: string | null
-  } | null
-}
-
-interface CodexSkillsListEntry {
-  cwd: string
-  skills: CodexSkillMetadata[]
-  errors?: Array<{ path: string; message: string }>
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
@@ -1139,11 +1024,6 @@ export function installedPluginMatchesImportedPersonalPlugin(
   )
 }
 
-function isLocalMarketplacePath(path: string | null | undefined): boolean {
-  if (!path) return false
-  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
-}
-
 interface EnsurePersonalPluginResult {
   pluginName: string
   marketplacePath: string
@@ -1361,20 +1241,6 @@ function rememberSelectedMarketplaceId(id: string) {
   }
 }
 
-function emptyComponents(): InstalledPluginComponents {
-  return {
-    skills: [],
-    commands: [],
-    apps: [],
-    agents: [],
-    mcps: [],
-    hooks: [],
-    lsps: [],
-    monitors: [],
-    bins: [],
-  }
-}
-
 type PersonalMarketplacePluginSummary = {
   name: string
   version?: string | null
@@ -1390,27 +1256,6 @@ type PersonalMarketplaceListResult = {
   marketplaceId: string
   marketplacePath: string
   plugins: PersonalMarketplacePluginSummary[]
-}
-
-type WegentStorePluginSummary = {
-  defaultPrompt?: PluginInterface['defaultPrompt']
-  name: string
-  packageId: string
-  installedPluginId?: number | null
-  marketplace: string
-  version?: string | null
-  enabled: boolean
-  displayName?: string | null
-  description?: string | null
-  logo?: string | null
-  category?: string | null
-  pluginPath: string
-}
-
-type WegentStoreListResult = {
-  supportsPluginReconciliation?: boolean
-  storePath: string
-  plugins: WegentStorePluginSummary[]
 }
 
 function toDiskPersonalMarketplaceItem(
@@ -1499,19 +1344,6 @@ export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMa
   )
 }
 
-function pluginDescription(summary: CodexPluginSummary, detail?: CodexPluginDetail | null): string {
-  return (
-    detail?.description?.trim() ||
-    summary.interface?.shortDescription?.trim() ||
-    summary.interface?.longDescription?.trim() ||
-    ''
-  )
-}
-
-function pluginDisplayName(summary: CodexPluginSummary): string {
-  return summary.interface?.displayName?.trim() || summary.name
-}
-
 function catalogItemId(
   marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary
@@ -1552,290 +1384,11 @@ function isFeaturedMarketplacePlugin(
   })
 }
 
-function localMarketplaceSource(marketplace: CodexPluginMarketplaceEntry): {
-  sourceProvider: 'wegent' | 'codex' | 'user'
-  sourceLabel: string
-  visibility: 'personal' | 'workspace' | 'public'
-} {
-  if (isPersonalMarketplaceId(marketplace.name)) {
-    return {
-      sourceProvider: 'user',
-      sourceLabel: i18n.t('workbench.plugins_source_personal_share'),
-      visibility: 'personal',
-    }
-  }
-  if (isInternalDeviceMarketplaceId(marketplace.name)) {
-    return {
-      sourceProvider: 'wegent',
-      sourceLabel: i18n.t('workbench.plugins_source_wegent_official'),
-      visibility: 'workspace',
-    }
-  }
-  if (isOpenAiOfficialMarketplaceId(marketplace.name)) {
-    return {
-      sourceProvider: 'codex',
-      sourceLabel: i18n.t('workbench.plugins_source_openai_official'),
-      visibility: 'public',
-    }
-  }
-  return {
-    sourceProvider: 'codex',
-    sourceLabel: marketplace.interface?.displayName?.trim() || marketplace.name,
-    visibility: 'public',
-  }
-}
-
-function sourcePayload(
-  marketplace: CodexPluginMarketplaceEntry,
-  plugin: CodexPluginSummary
-): Record<string, unknown> {
-  return {
-    marketplaceName: marketplace.name,
-    marketplacePath: marketplace.path ?? null,
-    pluginName: plugin.name,
-    pluginId: plugin.id,
-    remotePluginId: plugin.remotePluginId ?? null,
-  }
-}
-
-function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginComponents {
-  const components = emptyComponents()
-  if (!detail) return components
-  components.skills = (detail.skills ?? []).map(skill => ({
-    name: skill.name,
-    description: skill.shortDescription || skill.description || '',
-    path: skill.path || skill.name,
-  }))
-  components.hooks = (detail.hooks ?? []).map(hook => ({
-    name: hook.key,
-    path: hook.key,
-  }))
-  components.mcps = (detail.mcpServers ?? []).map(name => ({
-    name,
-    server: {},
-  }))
-  components.apps = (detail.apps ?? []).map(app => ({
-    name: app.name,
-    path: app.id,
-    description: app.description ?? null,
-  }))
-  components.commands = [
-    ...(detail.appTemplates ?? []).map(template => ({
-      name: template.name,
-      path: template.templateId,
-      description: template.description ?? null,
-      category: template.category ?? null,
-      canonicalConnectorId: template.canonicalConnectorId ?? null,
-      logoUrl: template.logoUrl ?? null,
-      logoUrlDark: template.logoUrlDark ?? null,
-      materializedAppIds: template.materializedAppIds ?? [],
-      unavailableReason: template.reason ?? null,
-    })),
-  ]
-  components.templates = components.commands
-  const declaredConnectors = detail.connectors ?? []
-  const inferredConnectors: CodexPluginConnector[] =
-    declaredConnectors.length === 0 &&
-    detail.summary.authPolicy?.trim().toLowerCase() === 'on_install'
-      ? (detail.apps ?? [])
-          .filter(app => app.required !== false)
-          .map(app => ({
-            slug:
-              app.slug?.trim() ||
-              app.name
-                .trim()
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, '-')
-                .replace(/^-+|-+$/g, '') ||
-              detail.summary.name,
-            authPolicy: 'on_install' as const,
-          }))
-      : []
-  components.connectors = [...declaredConnectors, ...inferredConnectors].map(connector => {
-    const localAuth = connector.localAuth
-    return {
-      slug: connector.slug,
-      displayName: connector.displayName ?? null,
-      authorizationGroup: connector.authorizationGroup ?? null,
-      ...(connector.accountAuth ? { accountAuth: connector.accountAuth } : {}),
-      authPolicy:
-        connector.authPolicy === 'on_install' ||
-        connector.authPolicy === 'on_use' ||
-        connector.authPolicy === 'optional'
-          ? connector.authPolicy
-          : 'optional',
-      description: connector.description ?? null,
-      localAuth:
-        localAuth?.health &&
-        localAuth.start &&
-        (localAuth.kind === 'browser_oauth' || localAuth.poll)
-          ? {
-              ...localAuth,
-              health: localAuth.health,
-              start: localAuth.start,
-              poll: localAuth.poll ?? [],
-            }
-          : null,
-    }
-  })
-  components.agents = (detail.agents ?? []).map(agent => ({
-    name: agent.name,
-    path: agent.path ?? agent.name,
-    description: agent.description ?? null,
-  }))
-  return components
-}
-
 function marketplaceInfo(marketplace: CodexPluginMarketplaceEntry): LocalCodexMarketplace {
   return {
     id: marketplace.name,
     name: marketplace.interface?.displayName?.trim() || marketplace.name,
     path: marketplace.path ?? marketplace.name,
-  }
-}
-
-function toLocalDeviceApp(app: CodexAppInfo): LocalDeviceApp {
-  return {
-    id: app.id,
-    name: app.name,
-    description: app.description ?? null,
-    logoUrl: app.logoUrl ?? null,
-    installUrl: app.installUrl ?? null,
-    isAccessible: app.isAccessible,
-    isEnabled: app.isEnabled,
-    pluginDisplayNames: app.pluginDisplayNames ?? [],
-    source: 'codex-app',
-  }
-}
-
-function toLocalDeviceSkill(skill: CodexSkillMetadata): LocalDeviceSkill {
-  return {
-    name: skill.name,
-    description:
-      skill.interface?.shortDescription ||
-      skill.interface?.short_description ||
-      skill.shortDescription ||
-      skill.short_description ||
-      skill.description ||
-      '',
-    short_description:
-      skill.interface?.shortDescription ||
-      skill.interface?.short_description ||
-      skill.shortDescription ||
-      skill.short_description ||
-      null,
-    path: skill.path,
-    source: 'codex',
-    scope: skill.scope,
-    source_label: null,
-    source_priority: skill.scope === 'system' || skill.scope === 'admin' ? 1 : 0,
-    origin: 'local',
-  }
-}
-
-function safeRelativePluginAssetPath(value: string): string | null {
-  const segments = value.replace(/\\/g, '/').split('/')
-  const safeSegments: string[] = []
-  for (const segment of segments) {
-    if (!segment || segment === '.') continue
-    if (segment === '..') return null
-    safeSegments.push(segment)
-  }
-  return safeSegments.length > 0 ? safeSegments.join('/') : null
-}
-
-function isRelativePluginAssetPath(value: string): boolean {
-  if (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)) return false
-  return !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value)
-}
-
-function localPluginRoot(
-  marketplace: CodexPluginMarketplaceEntry,
-  plugin: CodexPluginSummary,
-  detail?: CodexPluginDetail | null
-): string | null {
-  if (marketplace.path && isLocalMarketplacePath(marketplace.path)) {
-    const sourcePath =
-      plugin.source && typeof plugin.source.path === 'string' ? plugin.source.path.trim() : ''
-    if (sourcePath) {
-      if (isLocalMarketplacePath(sourcePath)) return sourcePath.replace(/[\\/]+$/, '')
-      const relativeSourcePath = safeRelativePluginAssetPath(sourcePath)
-      if (relativeSourcePath) {
-        return `${normalizeMarketplaceSource(marketplace.path).replace(/[\\/]+$/, '')}/${relativeSourcePath}`
-      }
-    }
-  }
-
-  for (const path of (detail?.skills ?? []).map(skill => skill.path)) {
-    if (!path || !isLocalMarketplacePath(path)) continue
-    const normalized = path.replace(/\\/g, '/')
-    const skillsIndex = normalized.lastIndexOf('/skills/')
-    if (skillsIndex > 0) return normalized.slice(0, skillsIndex)
-  }
-  return null
-}
-
-type CodexPluginInterfaceAssets = PluginInterface & {
-  logoUrl?: string | null
-  logoUrlDark?: string | null
-  composerIconUrl?: string | null
-  screenshotUrls?: string[] | null
-  homepageUrl?: string | null
-  homepage?: string | null
-  privacyPolicy?: string | null
-  termsOfService?: string | null
-}
-
-function firstPluginAssetUrl(...candidates: Array<string | null | undefined>): string | null {
-  for (const candidate of candidates) {
-    const value = candidate?.trim()
-    if (value) return value
-  }
-  return null
-}
-
-function normalizePluginInterfaceAssets(interfaceData: PluginInterface): PluginInterface {
-  const raw = interfaceData as CodexPluginInterfaceAssets
-  const screenshots =
-    raw.screenshots && raw.screenshots.length > 0
-      ? raw.screenshots
-      : raw.screenshotUrls && raw.screenshotUrls.length > 0
-        ? raw.screenshotUrls
-        : raw.screenshots
-  return {
-    ...interfaceData,
-    composerIcon: firstPluginAssetUrl(raw.composerIcon, raw.composerIconUrl),
-    logo: firstPluginAssetUrl(raw.logo, raw.logoUrl),
-    logoDark: firstPluginAssetUrl(raw.logoDark, raw.logoUrlDark),
-    websiteUrl: firstPluginAssetUrl(raw.websiteUrl, raw.homepageUrl, raw.homepage),
-    privacyPolicyUrl: firstPluginAssetUrl(raw.privacyPolicyUrl, raw.privacyPolicy),
-    termsOfServiceUrl: firstPluginAssetUrl(raw.termsOfServiceUrl, raw.termsOfService),
-    screenshots,
-  }
-}
-
-function resolvePluginInterfaceAssets(
-  marketplace: CodexPluginMarketplaceEntry,
-  plugin: CodexPluginSummary,
-  detail?: CodexPluginDetail | null
-): PluginInterface | null {
-  const interfaceData = plugin.interface
-  if (!interfaceData) return null
-  const normalized = normalizePluginInterfaceAssets(interfaceData)
-  const root = localPluginRoot(marketplace, plugin, detail)
-  if (!root) return normalized
-  const resolve = (value?: string | null): string | null | undefined => {
-    const source = value?.trim()
-    if (!source || !isRelativePluginAssetPath(source)) return value
-    const relativePath = safeRelativePluginAssetPath(source)
-    return relativePath ? `${root}/${relativePath}` : null
-  }
-  return {
-    ...normalized,
-    composerIcon: resolve(normalized.composerIcon),
-    logo: resolve(normalized.logo),
-    logoDark: resolve(normalized.logoDark),
-    screenshots: normalized.screenshots?.map(screenshot => resolve(screenshot) || screenshot),
   }
 }
 
@@ -1902,97 +1455,6 @@ function toMarketplaceItem(
   }
 }
 
-function installedPluginSummaryIdentity(
-  marketplaceName: string,
-  plugin: CodexPluginSummary
-): string {
-  const pluginKey = String(plugin.name || plugin.id || '')
-    .trim()
-    .toLowerCase()
-  const marketplace = marketplaceName.trim().toLowerCase()
-  return pluginKey && marketplace ? `${pluginKey}@${marketplace}` : ''
-}
-
-function mergeInstalledPluginSummaries(
-  installedMarketplaces: CodexPluginMarketplaceEntry[],
-  availableMarketplaces: CodexPluginMarketplaceEntry[]
-): InstalledPlugin[] {
-  const merged = new Map<string, InstalledPlugin>()
-  const add = (marketplace: CodexPluginMarketplaceEntry, plugin: CodexPluginSummary) => {
-    const normalized: CodexPluginSummary = {
-      ...plugin,
-      id: plugin.id?.trim() || plugin.name,
-      installed: true,
-      // Missing enabled in installed summaries should not hide the plugin from composer.
-      enabled: plugin.enabled !== false,
-    }
-    const identity =
-      installedPluginSummaryIdentity(marketplace.name, normalized) ||
-      `id:${normalized.id || normalized.name}`
-    if (!merged.has(identity)) {
-      merged.set(identity, toInstalledPlugin(marketplace, normalized))
-    }
-  }
-
-  for (const marketplace of installedMarketplaces) {
-    for (const plugin of marketplace.plugins) {
-      add(marketplace, plugin)
-    }
-  }
-  for (const marketplace of availableMarketplaces) {
-    for (const plugin of marketplace.plugins) {
-      if (!plugin.installed) continue
-      add(marketplace, plugin)
-    }
-  }
-  return Array.from(merged.values())
-}
-
-function toWegentStoreInstalledPlugin(
-  plugin: WegentStorePluginSummary,
-  storePath: string
-): InstalledPlugin {
-  const marketplace = isWegentCloudMarketplace(plugin.marketplace)
-    ? INTERNAL_DEVICE_MARKETPLACE_ID
-    : plugin.marketplace
-  const installed = toInstalledPlugin(
-    {
-      name: marketplace,
-      path: storePath || plugin.pluginPath,
-      plugins: [],
-    },
-    {
-      id: plugin.packageId,
-      name: plugin.name,
-      installed: true,
-      enabled: plugin.enabled,
-      localVersion: plugin.version ?? undefined,
-      source: {
-        source: 'local',
-        path: plugin.pluginPath,
-      },
-      interface: {
-        defaultPrompt: plugin.defaultPrompt,
-        displayName: plugin.displayName?.trim() || plugin.name,
-        shortDescription: plugin.description ?? null,
-        logo: plugin.logo ?? null,
-        category: plugin.category ?? null,
-      },
-    }
-  )
-  return {
-    ...installed,
-    spec: {
-      ...installed.spec,
-      sourcePayload: {
-        ...(installed.spec.sourcePayload ?? {}),
-        managedByWegent: true,
-        cloudInstalledPluginId: plugin.installedPluginId ?? null,
-      },
-    },
-  }
-}
-
 /** Read authoritative managed inventory without cached or partial results. */
 export async function readPluginReconciliationInventory(): Promise<InstalledPlugin[]> {
   const inventory = await requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
@@ -2041,68 +1503,6 @@ export async function listWegentStorePluginsFromDisk(
     if (requireComplete) throw error
     console.warn('[Wework] list wegent store plugins from disk failed', error)
     return []
-  }
-}
-
-function toInstalledPlugin(
-  marketplace: CodexPluginMarketplaceEntry,
-  plugin: CodexPluginSummary,
-  detail?: CodexPluginDetail | null
-): InstalledPlugin {
-  const components = pluginComponents(detail)
-  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
-  const isCreated = isPersonalMarketplaceId(marketplace.name)
-  const source = localMarketplaceSource(marketplace)
-  const skillStates = Object.fromEntries(
-    (detail?.skills ?? []).map(skill => [`skill:${skill.name}`, skill.enabled])
-  )
-  const pluginId = plugin.id?.trim() || plugin.name
-  return {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'InstalledPlugin',
-    metadata: {
-      name: plugin.name,
-      namespace: marketplace.name,
-      labels: { id: pluginId },
-    },
-    spec: {
-      source: {
-        type: isCreated ? 'local' : 'marketplace',
-        providerKey: marketplace.name,
-        pluginKey: plugin.name,
-        catalogItemId: plugin.remotePluginId ?? pluginId,
-        marketplace: marketplace.name,
-      },
-      origin: isCreated ? 'created' : 'market',
-      sourceProvider: source.sourceProvider,
-      sourceLabel: source.sourceLabel,
-      visibility: source.visibility,
-      displayName: pluginDisplayName(plugin),
-      description: pluginDescription(plugin, detail),
-      version: plugin.localVersion ?? null,
-      author: resolvedInterface?.developerName ?? null,
-      installState: plugin.installed ? 'installed' : 'not_installed',
-      enabled: plugin.enabled !== false,
-      componentStates: skillStates,
-      manifest: {
-        name: plugin.name,
-        id: pluginId,
-        source: plugin.source ?? null,
-        installPolicy: plugin.installPolicy ?? null,
-        authPolicy: plugin.authPolicy ?? null,
-        availability: plugin.availability ?? null,
-        disabledReason: plugin.disabledReason ?? null,
-        eligiblePlanTypes: plugin.eligiblePlanTypes ?? null,
-      },
-      components,
-      interface: resolvedInterface,
-      packageRef: null,
-      sourcePayload: {
-        ...sourcePayload(marketplace, plugin),
-        localId: isCreated ? pluginId : null,
-      },
-    },
-    status: { state: plugin.enabled !== false ? 'enabled' : 'disabled' },
   }
 }
 
@@ -3265,39 +2665,17 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     },
     async listSkills(params = {}) {
       if (!isDesktopRuntime()) return []
-      const response = await codexAppServerRequest<{ data: CodexSkillsListEntry[] }>(
-        'skills/list',
-        {
+      const response = catalogRecord(
+        await codexAppServerRequest('skills/list', {
           cwds: params.cwds ?? [],
           forceReload: params.forceReload ?? false,
-        }
+        })
       )
-      return response.data.flatMap(entry =>
-        entry.skills.filter(skill => skill.enabled !== false).map(toLocalDeviceSkill)
-      )
+      return decodeCodexComposerSkills(response.data)
     },
     async listApps(params = {}) {
       if (!isDesktopRuntime()) return []
-      const apps: LocalDeviceApp[] = []
-      let cursor: string | null = null
-      do {
-        const response: {
-          data: CodexAppInfo[]
-          nextCursor: string | null
-        } = await codexAppServerRequest<{
-          data: CodexAppInfo[]
-          nextCursor: string | null
-        }>('app/list', {
-          cursor,
-          limit: 100,
-          forceRefetch: params.forceRefetch ?? false,
-        })
-        apps.push(...response.data.map(toLocalDeviceApp))
-        cursor = response.nextCursor
-      } while (cursor)
-      return apps.filter(
-        app => app.isEnabled !== false && (params.includeInaccessible || app.isAccessible !== false)
-      )
+      return listCodexComposerApps(codexAppServerRequest, params)
     },
     async listAvailablePlugins(params = {}) {
       const state = await readState({
@@ -3671,4 +3049,27 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
     },
   }
+}
+
+function localMarketplaceSource(marketplace: CodexPluginMarketplaceEntry) {
+  return sharedLocalMarketplaceSource(marketplace, key => i18n.t(key))
+}
+function toInstalledPlugin(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null
+): InstalledPlugin {
+  return sharedToInstalledPlugin(marketplace, plugin, detail, key => i18n.t(key))
+}
+function mergeInstalledPluginSummaries(
+  installed: CodexPluginMarketplaceEntry[],
+  available: CodexPluginMarketplaceEntry[]
+): InstalledPlugin[] {
+  return sharedMergeInstalledPluginSummaries(installed, available, key => i18n.t(key))
+}
+function toWegentStoreInstalledPlugin(
+  plugin: WegentStorePluginSummary,
+  storePath: string
+): InstalledPlugin {
+  return sharedToWegentStoreInstalledPlugin(plugin, storePath, key => i18n.t(key))
 }

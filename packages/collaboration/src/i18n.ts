@@ -1,3 +1,16 @@
+import { pluginTrialMessages } from "./composer/pluginTrialMessages";
+import { pluginPickerMessages } from "./composer/pluginPickerMessages";
+import { quickPhraseMessages } from "./composer/quickPhraseMessages";
+import { contextUsageMessages } from "./composer/contextUsageMessages";
+import { autocompleteMessages } from "./composer/autocompleteMessages";
+import { queueMessages } from "./conversation/queueMessages";
+import { projectWorkMessages } from "./controls/projectWorkMessages";
+import { conversationMessages } from "./conversation/messages";
+import { boardCardMessages } from "./issue-card/messages";
+import { composerMessages } from "./controls/messages";
+import { modelMessages } from "./controls/modelMessages";
+import { markdownMessages } from "./markdown/MarkdownServices";
+import { activityMessages } from "./issue-detail/activityMessages";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -228,11 +241,11 @@ export const collaborationMessages = {
 export type CollaborationMessageKey =
   keyof (typeof collaborationMessages)["zh-CN"];
 
-export type CollaborationTranslate = (
+export type CollaborationTranslate = ((
   key: string,
   fallback?: string,
   options?: Record<string, string | number>,
-) => string;
+) => string) & { locale?: CollaborationLocale };
 
 const sharedMessages: Record<
   CollaborationLocale,
@@ -240,6 +253,14 @@ const sharedMessages: Record<
 > = {
   "zh-CN": {
     "common.actions": "操作",
+    "issue_creation.owner": "负责人",
+    "issue_creation.user": "成员",
+    "issue_creation.agent": "智能体",
+    "issue_creation.group": "协作小组",
+    "issue_creation.unassigned": "未分配",
+    "issue_creation.search_members": "搜索成员、智能体或协作小组",
+    "issue_creation.invalid_reference":
+      "引用不属于当前项目或已失效，请删除后重新 @ 或 # 选择。",
     "common.add": "添加",
     "common.cancel": "取消",
     "common.close": "关闭",
@@ -433,13 +454,16 @@ const sharedMessages: Record<
     "todo.priority_high": "高",
     "todo.priority_urgent": "紧急",
     "todo.assignee": "负责人",
-    "todo.add_assignee": "添加负责人",
+    "todo.search_assignee": "搜索负责人",
+    "todo.no_matching_assignee": "没有匹配的负责人",
     "todo.members": "成员",
     "todo.agents": "机器人",
     "todo.agent_teams": "Wegent 智能体",
     "todo.parent_issue": "父任务",
     "todo.top_level_issue": "顶层任务",
     "todo.no_parent_issue": "无父任务",
+    "todo.search_parent_issue": "搜索父任务",
+    "todo.no_matching_parent_issue": "没有匹配的父任务",
     "todo.due_date": "截止时间",
     "todo.add_date": "添加日期",
     "todo.creator": "创建人",
@@ -458,6 +482,7 @@ const sharedMessages: Record<
     "todo.saving": "保存中…",
     "todo.exit_full_screen": "退出全屏",
     "todo.full_screen": "全屏显示",
+    "todo.issue_details": "任务详情",
     "todo.close_issue_detail": "关闭任务详情",
     "todo.manual_trigger": "手动触发",
     "todo.scheduled_trigger": "定时触发",
@@ -483,6 +508,21 @@ const sharedMessages: Record<
     "todo.activity": "动态",
     "todo.activity_unavailable": "动态服务当前不可用",
     "todo.activity_empty": "还没有动态",
+    "todo.expand_content": "展开全文",
+    "todo.collapse_content": "收起全文",
+    "todo.reply_placeholder": "回复…",
+    "todo.send_message": "发送消息",
+    "todo.comment_placeholder": "留下评论…",
+    "todo.execution_settings": "执行设置",
+    "todo.show_text_attachment": "在文本框中显示",
+    "todo.appshot_attachment": "应用快照",
+    "todo.remove_attachment": "移除附件",
+    "todo.attachments_uploading": "附件仍在上传中",
+    "todo.send_failed": "消息发送失败",
+    "todo.attach_file": "添加附件",
+    "todo.execution_count": "{{count}} 条运行动态",
+    "todo.activity_loading": "正在加载动态…",
+
     "todo.assignment_empty_hint":
       "选择成员或智能体完成分配；其他项目成员仍可主动参与。",
     "todo.current_assignment": "当前分配",
@@ -514,7 +554,7 @@ const sharedMessages: Record<
     "todo.someone": "项目成员",
     "todo.assigned_to": "分配给",
     "todo.execution_run": "执行任务",
-    "todo.comment_or_assign": "发表评论，使用 @ 分配给成员或智能体",
+    "todo.comment_or_assign": "留下评论，输入 @ 提及成员或智能体",
     "todo.send_comment": "发送",
     "todo.assignment_non_exclusive": "普通评论与 @ 分配都会进入同一时间线。",
     "todo.sub_issues": "子任务",
@@ -647,6 +687,14 @@ const sharedMessages: Record<
   },
   en: {
     "common.actions": "Actions",
+    "issue_creation.owner": "Assignee",
+    "issue_creation.user": "People",
+    "issue_creation.agent": "Agents",
+    "issue_creation.group": "Teams",
+    "issue_creation.unassigned": "Unassigned",
+    "issue_creation.search_members": "Search people, agents or teams",
+    "issue_creation.invalid_reference":
+      "A reference is unavailable in this project. Remove it and select it again with @ or #.",
     "common.add": "Add",
     "common.cancel": "Cancel",
     "common.close": "Close",
@@ -847,13 +895,16 @@ const sharedMessages: Record<
     "todo.priority_high": "High",
     "todo.priority_urgent": "Urgent",
     "todo.assignee": "Assignee",
-    "todo.add_assignee": "Add assignee",
+    "todo.search_assignee": "Search assignees",
+    "todo.no_matching_assignee": "No matching assignees",
     "todo.members": "Members",
     "todo.agents": "Bots",
     "todo.agent_teams": "Wegent agents",
     "todo.parent_issue": "Parent issue",
     "todo.top_level_issue": "Top-level issue",
     "todo.no_parent_issue": "No parent issue",
+    "todo.search_parent_issue": "Search parent issues",
+    "todo.no_matching_parent_issue": "No matching parent issues",
     "todo.due_date": "Due date",
     "todo.add_date": "Add date",
     "todo.creator": "Creator",
@@ -872,6 +923,7 @@ const sharedMessages: Record<
     "todo.saving": "Saving…",
     "todo.exit_full_screen": "Exit full screen",
     "todo.full_screen": "Full screen",
+    "todo.issue_details": "Issue details",
     "todo.close_issue_detail": "Close issue details",
     "todo.manual_trigger": "Manual trigger",
     "todo.scheduled_trigger": "Scheduled trigger",
@@ -897,6 +949,21 @@ const sharedMessages: Record<
     "todo.activity": "Activity",
     "todo.activity_unavailable": "Activity is currently unavailable",
     "todo.activity_empty": "No activity yet",
+    "todo.expand_content": "Show more",
+    "todo.collapse_content": "Show less",
+    "todo.reply_placeholder": "Reply…",
+    "todo.send_message": "Send message",
+    "todo.comment_placeholder": "Leave a comment…",
+    "todo.execution_settings": "Execution settings",
+    "todo.show_text_attachment": "Show in text box",
+    "todo.appshot_attachment": "Appshot",
+    "todo.remove_attachment": "Remove attachment",
+    "todo.attachments_uploading": "Attachments are still uploading",
+    "todo.send_failed": "Failed to send message",
+    "todo.attach_file": "Attach files",
+    "todo.execution_count": "{{count}} execution events",
+    "todo.activity_loading": "Loading activity…",
+
     "todo.assignment_empty_hint":
       "Choose a member or agent to assign; other project members can still participate.",
     "todo.current_assignment": "Current assignment",
@@ -931,7 +998,7 @@ const sharedMessages: Record<
     "todo.assigned_to": "assigned to",
     "todo.execution_run": "Run",
     "todo.comment_or_assign":
-      "Add a comment. Use @ to assign a member or agent",
+      "Leave a comment. Use @ to mention a member or agent",
     "todo.send_comment": "Send",
     "todo.assignment_non_exclusive":
       "Comments and @ assignments appear in the same timeline.",
@@ -1075,8 +1142,28 @@ export function createCollaborationTranslator(
   locale: CollaborationLocale,
 ): CollaborationTranslate {
   const messages = sharedMessages[locale];
-  return (key, fallback, options) => {
+  const pluralRules = new Intl.PluralRules(locale);
+  const translate: CollaborationTranslate = (key, fallback, options) => {
+    const conversationKey =
+      typeof options?.count === "number"
+        ? `${key}_${pluralRules.select(options.count)}`
+        : key;
     let value =
+      autocompleteMessages[locale][key] ??
+      contextUsageMessages[locale][key] ??
+      pluginPickerMessages[locale][key] ??
+      pluginTrialMessages[locale][key] ??
+      quickPhraseMessages[locale][key] ??
+      queueMessages[locale][key] ??
+      projectWorkMessages[locale][key] ??
+      composerShellMessages[locale][key] ??
+      activityMessages[locale][key] ??
+      conversationMessages[locale][conversationKey] ??
+      conversationMessages[locale][key] ??
+      composerMessages[locale][key] ??
+      modelMessages[locale][key] ??
+      boardCardMessages[locale][key] ??
+      markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??
       messages[key] ??
@@ -1087,6 +1174,7 @@ export function createCollaborationTranslator(
     }
     return value;
   };
+  return Object.assign(translate, { locale });
 }
 
 const standardStatusIds = [
@@ -1202,3 +1290,4 @@ export const collaborationMyWorkMessages: Record<
     "collaboration.back_to_projects": "Back to projects",
   },
 };
+import { composerShellMessages } from "./composer/shellMessages";

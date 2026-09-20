@@ -1,15 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::env;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
-use http::Uri;
+use http::{Method, Uri};
 use tracing::info;
 
-use crate::{
-    Application, BoxError, Gateway, OriginService, RouteTable, RoutesConfig, RustApi, bind, serve,
-};
+use crate::{Application, BoxError, Gateway, OriginService, RouteTable, RustApi, bind, serve};
+
+mod routes;
+use routes::load as load_routes;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
@@ -45,7 +50,7 @@ impl HybridConfig {
             .unwrap_or_else(|_| DEFAULT_PYTHON_UPSTREAM.to_owned())
             .parse()?;
         let routes = match env::var_os("WEGENT_RS_ROUTES_FILE") {
-            Some(path) => RouteTable::compile(RoutesConfig::load(Path::new(&path))?)?,
+            Some(path) => load_routes(Path::new(&path))?,
             None => RouteTable::empty(),
         };
         Ok(Self {
@@ -72,6 +77,21 @@ impl HybridConfig {
         self.shutdown_grace = shutdown_grace;
         self
     }
+
+    /// Adds route rules from a file, including files it explicitly includes.
+    ///
+    /// # Errors
+    /// Returns an error when a route file cannot be read or has an invalid rule.
+    pub fn with_routes_file(mut self, path: &Path) -> Result<Self, BoxError> {
+        self.routes = load_routes(path)?;
+        Ok(self)
+    }
+
+    /// Reports whether a request is selected for the Rust API listener.
+    #[must_use]
+    pub fn selects_rust(&self, method: &Method, path: &str) -> bool {
+        self.routes.matches(method, path)
+    }
 }
 
 /// Runs a route-selective service with Python as the fallback origin.
@@ -85,13 +105,15 @@ where
     S: RustApi,
     F: Future<Output = ()>,
 {
-    let gateway = Gateway::new(config.routes, api, &config.python_upstream)?;
+    // The gateway selects the Rust origin once. Requests not in the table are
+    // forwarded to Python and are the only ones written to fallback.log.
+    let gateway = Gateway::new(config.routes.clone(), api, &config.python_upstream)?;
     let listener = bind(config.listen_address).await?;
 
     info!(
         listen = %listener.local_addr()?,
         python_upstream = %config.python_upstream,
-        rust_routes = gateway.routes().len(),
+        rust_routes = config.routes.len(),
         "Wegent migration gateway started"
     );
 
@@ -121,8 +143,11 @@ where
         state: _state,
         routes,
     } = application;
-    let api_server =
-        brz_http_server::Server::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), routes).await?;
+    let api_server = brz_http_server::Server::bind(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        crate::http_fallback::FastApiFallback::new(routes),
+    )
+    .await?;
     let api_address = api_server.local_addr()?;
     let api_origin: Uri = format!("http://{api_address}").parse()?;
     let api = OriginService::new(&api_origin)?;

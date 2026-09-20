@@ -142,6 +142,7 @@ pnpm --filter wework dev:mac
 | `executor/`                | 本地与远程的智能体任务执行环境          |
 | `frontend/`                | Wegent 平台 Web 管理界面                |
 | `backend/`                 | REST API 和核心业务逻辑                 |
+| `backend-rs/`              | Rust API 渐进迁移网关与已迁移处理器     |
 | `executor_manager/`        | 执行器调度与编排                        |
 | `chat_shell/`              | 对话运行时                              |
 | `knowledge_runtime/`       | 知识检索服务                            |
@@ -227,26 +228,26 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/luckjun529-lang">
+                    <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
+                    <br />
+                    <sub><b>junlong chen</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
                 <a href="https://github.com/moqimoqidea">
                     <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
                     <br />
                     <sub><b>Moqimoqidea</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/johnny0120">
                     <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
                     <br />
                     <sub><b>Johnny0120</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/luckjun529-lang">
-                    <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
-                    <br />
-                    <sub><b>junlong chen</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -278,17 +279,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/cocowh">
-                    <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
-                    <br />
-                    <sub><b>Birch</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sdadunderscoresdad">
                     <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
                     <br />
                     <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/cocowh">
+                    <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+                    <br />
+                    <sub><b>Birch</b></sub>
                 </a>
             </td>
 		</tr>
@@ -373,17 +374,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/junbaor">
-                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
-                    <br />
-                    <sub><b>Junbaor</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/Twelveeee">
                     <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
                     <br />
                     <sub><b>Twelveeee</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/junbaor">
+                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
+                    <br />
+                    <sub><b>Junbaor</b></sub>
                 </a>
             </td>
             <td align="center">

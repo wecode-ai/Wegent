@@ -66,13 +66,6 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.collect_links(false).await
         };
-        // Collaboration board tasks run on the device for a cloud project; they
-        // are managed from the collaboration space, so keep them out of the
-        // device task list.
-        let collected_links = collected_links
-            .into_iter()
-            .filter(|link| !link_is_cloud_project_task(link))
-            .collect::<Vec<_>>();
         for link in &collected_links {
             self.project_runtime_link_status(link);
         }
@@ -239,6 +232,7 @@ impl RuntimeWorkRpcHandler {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        delay_desktop_e2e_transcript_response().await;
         let limit = transcript_limit(&payload);
         let before_cursor = string_field(&payload, "beforeCursor")
             .or_else(|| string_field(&payload, "before_cursor"));
@@ -684,6 +678,17 @@ impl RuntimeWorkRpcHandler {
             .filter(|entry| entry.cached_at.elapsed() < CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL)
             .map(|entry| entry.navigation.clone())
     }
+}
+
+async fn delay_desktop_e2e_transcript_response() {
+    let Some(delay_ms) = std::env::var("WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+    else {
+        return;
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(delay_ms.min(10_000))).await;
 }
 
 fn mark_prepend_item_turns(response: &mut Value, turn_ids: &HashSet<String>) {

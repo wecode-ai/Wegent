@@ -19,9 +19,9 @@ describe('prepare development component resources', () => {
     const weworkRoot = join(fixtureRoot, 'wework')
     const resourcesRoot = join(fixtureRoot, 'dev-resources')
     const runtimeRoot = await directory(join(fixtureRoot, 'runtime'))
-    const executorPath = await file(join(fixtureRoot, 'bin', 'executor'))
-    const codexPath = await file(join(fixtureRoot, 'bin', 'codex'))
-    const dwsPath = await file(join(fixtureRoot, 'bin', 'dws'))
+    const executorPath = await file(join(fixtureRoot, 'bin', 'executor'), 'executor payload')
+    const codexPath = await file(join(fixtureRoot, 'bin', 'codex'), 'codex payload')
+    const dwsPath = await file(join(fixtureRoot, 'bin', 'dws'), 'dws payload')
 
     await json(join(weworkRoot, 'package.json'), {
       version: '1.0.0',
@@ -56,6 +56,16 @@ describe('prepare development component resources', () => {
     await expect(realpath(join(resourcesRoot, 'harness-runtime'))).resolves.toBe(
       await realpath(runtimeRoot)
     )
+    const fileComponents = [
+      ['bin/wegent-executor', 'executor payload'],
+      ['codex/codex', 'codex payload'],
+      ['bin/dws', 'dws payload'],
+    ]
+    for (const [relative, payload] of fileComponents) {
+      const target = join(resourcesRoot, relative)
+      await expect(readFile(target, 'utf8')).resolves.toBe(payload)
+      expect((await lstat(target)).isSymbolicLink()).toBe(process.platform !== 'win32')
+    }
     expect(manifest.components.weworkCorePlugins.path).toBe('wework-core-plugins')
     expect(manifest.components.weworkCorePlugins.sha256).toMatch(/^[0-9a-f]{64}$/)
     expect(manifest.components.weworkAppStatic.path).toBe('wework-app-static')
@@ -80,9 +90,9 @@ async function directory(path) {
   return path
 }
 
-async function file(path) {
+async function file(path, content = '') {
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, '')
+  await writeFile(path, content)
   return path
 }
 

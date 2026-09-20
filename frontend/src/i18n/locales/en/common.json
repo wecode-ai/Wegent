@@ -234,6 +234,7 @@
       "mcp_server_name_invalid": "MCP server name can only contain letters, numbers, underscores and hyphens",
       "fetch_agents_failed": "Failed to load agents",
       "fetch_models_failed": "Failed to load models",
+      "model_not_available_for_shell": "The selected model is unavailable for this executor. Select an available model or clear the binding.",
       "save_failed": "Save failed",
       "dify_validation_failed": "Failed to validate API key",
       "fetch_dify_apps_failed": "Failed to load Dify applications",

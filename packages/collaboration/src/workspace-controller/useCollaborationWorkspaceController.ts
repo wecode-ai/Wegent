@@ -87,6 +87,7 @@ export interface CollaborationWorkspaceControllerCommands {
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
   loadSelectedIssue(issueId: string): Promise<CollaborationIssue | null>;
+  markIssueRead(issue: CollaborationIssue): Promise<CollaborationIssue | null>;
   clearProject(): void;
   clearSelectedIssue(): void;
   createProject(
@@ -159,6 +160,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     loadMoreExternalColumn: async () => undefined,
     getIssue: async () => null,
     loadSelectedIssue: async () => null,
+    markIssueRead: async () => null,
     clearProject: () => undefined,
     clearSelectedIssue: () => undefined,
     createProject: async () => null,
@@ -287,6 +289,21 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     error: null,
     errorSource: null,
   };
+
+function mergeReorderIssues(
+  current: CollaborationIssue[],
+  incoming: CollaborationIssue[],
+): CollaborationIssue[] {
+  const currentById = new Map(current.map((issue) => [issue.id, issue]));
+  const incomingIds = new Set(incoming.map((issue) => issue.id));
+  return [
+    ...incoming.map((issue) => {
+      const existing = currentById.get(issue.id);
+      return existing && existing.version > issue.version ? existing : issue;
+    }),
+    ...current.filter((issue) => !incomingIds.has(issue.id)),
+  ];
+}
 
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
@@ -838,6 +855,55 @@ export function createCollaborationWorkspaceControllerCommands({
     homeSnapshotLoads.delete(projectId);
     homeSnapshotResults.delete(projectId);
   };
+  const pendingReadRequests = new Map<
+    string,
+    Promise<CollaborationIssue | null>
+  >();
+  const markIssueRead = (
+    issue: CollaborationIssue,
+  ): Promise<CollaborationIssue | null> => {
+    if (!issue.is_unread) return Promise.resolve(issue);
+    const pending = pendingReadRequests.get(issue.id);
+    if (pending) return pending;
+    const request = api.issues
+      .markRead(issue.id)
+      .then((updated) => {
+        const current = getExternalBoardState().issues.find(
+          (candidate) => candidate.id === issue.id,
+        );
+        const selected = getSelectedIssue();
+        const latest =
+          selected?.id === issue.id &&
+          (!current || selected.version >= current.version)
+            ? selected
+            : current;
+        const resolved =
+          latest &&
+          (latest.version > updated.version ||
+            (latest.content_revision ?? 0) > (updated.content_revision ?? 0))
+            ? {
+                ...latest,
+                is_unread:
+                  (latest.content_revision ?? 0) >
+                  (updated.content_revision ?? 0)
+                    ? latest.is_unread
+                    : updated.is_unread,
+              }
+            : updated;
+        markProjectMutated(issue.cloud_project_id);
+        dispatch({ type: "replace-issue", issue: resolved });
+        return resolved;
+      })
+      .catch(() => {
+        reportError(messages.saveFailed);
+        return null;
+      })
+      .finally(() => {
+        pendingReadRequests.delete(issue.id);
+      });
+    pendingReadRequests.set(issue.id, request);
+    return request;
+  };
   const loadProject = async (projectId: string, showLoading = true) => {
     const revision = ++projectLoadRevision;
     const mutationGeneration = projectMutationGeneration(projectId);
@@ -1093,6 +1159,7 @@ export function createCollaborationWorkspaceControllerCommands({
         return null;
       }
     },
+    markIssueRead,
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
       const attachmentsRevision = collectionRevision(
@@ -1158,7 +1225,7 @@ export function createCollaborationWorkspaceControllerCommands({
             assignmentsRevision !==
             collectionRevision(selectedIssueAssignmentsRevisions, issueId),
         });
-        return resolvedIssue;
+        return (await markIssueRead(resolvedIssue)) ?? resolvedIssue;
       } catch {
         if (revision !== selectedIssueLoadRevision) return null;
         reportError(messages.loadFailed, "load");
@@ -1264,7 +1331,11 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     async reorderIssue({ issue, status, laneIds, optimisticItems }) {
-      dispatch({ type: "replace-issues", issues: optimisticItems });
+      const mergedOptimisticItems = mergeReorderIssues(
+        getExternalBoardState().issues,
+        optimisticItems,
+      );
+      dispatch({ type: "replace-issues", issues: mergedOptimisticItems });
       try {
         if (issue.status !== status) {
           const movedIssue = await api.issues.update(issue.id, {
@@ -1284,13 +1355,17 @@ export function createCollaborationWorkspaceControllerCommands({
         });
         markProjectMutated(issue.cloud_project_id);
         const byId = new Map(updated.map((item) => [item.id, item]));
+        const reorderedItems = mergedOptimisticItems.map((item) => {
+          const reordered = byId.get(item.id);
+          if (!reordered) return item;
+          return reordered.version < item.version ? item : reordered;
+        });
         dispatch({
           type: "replace-issues",
-          issues: optimisticItems.map((item) => {
-            const reordered = byId.get(item.id);
-            if (!reordered) return item;
-            return reordered.version < item.version ? item : reordered;
-          }),
+          issues: mergeReorderIssues(
+            getExternalBoardState().issues,
+            reorderedItems,
+          ),
         });
       } catch (error) {
         if (isVersionConflict(error)) {

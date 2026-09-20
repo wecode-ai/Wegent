@@ -2,10 +2,11 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { ProcessingBlock, RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import { clearImagePreviewCache } from './imagePreviewCache'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import '@/i18n'
 
@@ -2863,7 +2864,7 @@ describe('MessageList', () => {
       <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
 
     rerender(
@@ -4939,6 +4940,41 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
   })
 
+  test.each([false, true])(
+    'counts the visible conversation title when deciding to collapse (long body: %s)',
+    longBody => {
+      const title = '让助手生成两张表格，包含中文、粗体、代码和空单元格。'
+      const reference = createConversationMentionReference(title, {
+        deviceId: 'local-device',
+        taskId: 'runtime-42',
+        workspacePath: `/workspace/${'项目目录/'.repeat(20)}`,
+      })
+      const body = longBody ? '需要详细分析。'.repeat(100) : 'n'
+      expect(reference.length).toBeGreaterThan(600)
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'conversation-mention',
+              role: 'user',
+              content: `${reference} ${body}`,
+              status: 'done',
+              createdAt: '2026-09-17T02:16:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('user-message-content')).toHaveTextContent(`${title} ${body}`)
+      expect(screen.getByTestId(/^sent-conversation-token-/)).toHaveAttribute(
+        'href',
+        reference.slice(reference.indexOf('](') + 2, -1)
+      )
+      expect(screen.queryByTestId('toggle-user-message-button') !== null).toBe(longBody)
+    }
+  )
+
   test('does not collapse long runtime guidance messages', () => {
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
 
@@ -5205,16 +5241,74 @@ describe('MessageList', () => {
       />
     )
 
-    const status = screen.getByText('1 秒')
-
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
-    expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
-    expect(status.parentElement).not.toHaveClass('border-b')
+    expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('processing-summary-header')).not.toBeInTheDocument()
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
   })
 
-  test('starts the live processing timer when the first visible response appears', () => {
+  test('keeps a reasoning-only timer through final streaming and remount', () => {
+    vi.useFakeTimers()
+    try {
+      const start = Date.parse('2026-09-16T10:00:00Z')
+      vi.setSystemTime(start + 5000)
+      const message: WorkbenchMessage = {
+        id: 'reasoning-timer',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        createdAt: new Date(start + 2000).toISOString(),
+        turnId: 'reasoning-turn',
+        blocks: [
+          {
+            id: 'thinking-timer',
+            type: 'thinking',
+            content: '检查实现',
+            status: 'streaming',
+            createdAt: start + 2000,
+          },
+        ],
+      }
+      const runningTurn: RuntimeConversationTurn = {
+        id: 'reasoning-turn',
+        status: 'streaming',
+        startedAt: start,
+        items: [],
+      }
+      const first = render(<MessageList messages={[message]} turns={[runningTurn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
+      act(() => vi.advanceTimersByTime(3000))
+      const finalMessage: WorkbenchMessage = {
+        ...message,
+        content: '最终回答',
+        createdAt: new Date(start + 8000).toISOString(),
+        blocks: message.blocks!.map(block => ({ ...block, status: 'done' })),
+      }
+      first.rerender(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
+      expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+      act(() => vi.advanceTimersByTime(5000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
+      first.unmount()
+      const restored = render(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
+      act(() => vi.advanceTimersByTime(2000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 15秒')
+      restored.rerender(
+        <MessageList
+          messages={[{ ...finalMessage, status: 'done' }]}
+          turns={[{ ...runningTurn, status: 'done', durationMs: 15_000 }]}
+        />
+      )
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 15秒')
+      act(() => vi.advanceTimersByTime(5000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 15秒')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('counts from the turn start when the first processing activity appears', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-05-25T18:46:08.000+08:00'))
@@ -5225,16 +5319,35 @@ describe('MessageList', () => {
             {
               id: '2',
               role: 'assistant',
-              content: '我先',
+              content: '',
               status: 'streaming',
               createdAt: '2026-05-25T18:46:00.000+08:00',
+              turnId: 'first-process-turn',
+              blocks: [
+                {
+                  id: 'first-process',
+                  type: 'text',
+                  content: '我先检查代码。',
+                  status: 'streaming',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+          turns={[
+            {
+              id: 'first-process-turn',
+              status: 'streaming',
+              startedAt: Date.parse('2026-05-25T18:46:00.000+08:00'),
+              items: [],
             },
           ]}
         />
       )
 
-      expect(screen.getByText('1 秒')).toBeInTheDocument()
-      expect(screen.queryByText('8 秒')).not.toBeInTheDocument()
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
+      act(() => vi.advanceTimersByTime(1000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 9秒')
     } finally {
       vi.useRealTimers()
     }
@@ -5400,7 +5513,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('keeps the processing layout stable while final text is streaming', () => {
+  test('collapses at final text, preserves expansion, and keeps the final text mounted', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -5432,7 +5545,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
     expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('已处理')
     const content = screen.getByTestId('assistant-message-content')
 
@@ -5442,13 +5556,13 @@ describe('MessageList', () => {
           {
             ...streamingMessage,
             content: `${streamingMessage.content} More text.`,
-            blocks: [{ ...completedBlock, status: 'streaming' }],
+            blocks: [completedBlock],
           },
         ]}
       />
     )
 
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('assistant-message-content')).toBe(content)
 
     rerender(
@@ -5465,7 +5579,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('assistant-message-content')).toBe(content)
     expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
 
@@ -5482,7 +5596,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {

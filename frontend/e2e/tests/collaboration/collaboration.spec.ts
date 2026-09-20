@@ -176,6 +176,15 @@ test.describe('Collaboration module', () => {
       )
     )
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
+    await expect(page.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-has-conversation',
+      'false'
+    )
+    await expect(page.locator('.issue-drawer-detail')).toHaveCSS('border-right-width', '1px')
+    await expect(page.getByTestId('cloud-todo-detail-scroll')).toHaveCSS('scrollbar-width', 'none')
+    await expect(page.getByTestId('collaboration-issue-comment').locator('..')).toHaveClass(
+      'task-detail-new-comment'
+    )
     const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(issueId).not.toBe('')
 
@@ -188,6 +197,14 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('collaboration-issue-comment').fill(comment)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
+    await expect(page.getByTestId('collaboration-current-assignment')).toHaveCount(0)
+    const commentCard = page.locator('.task-detail-comment-card').filter({ hasText: comment })
+    await expect(commentCard).toHaveCSS('border-top-width', '1px')
+    await expect(commentCard.locator('.task-detail-comment-inline-composer')).toBeVisible()
+    const reply = `Thread reply ${Date.now()}`
+    await commentCard.locator('.task-detail-comment-inline-composer textarea').fill(reply)
+    await commentCard.locator('.task-detail-comment-send').click()
+    await expect(commentCard.locator('.task-detail-comment-replies')).toContainText(reply)
 
     const authToken = (await page.context().cookies()).find(
       cookie => cookie.name === 'auth_token'
@@ -203,7 +220,7 @@ test.describe('Collaboration module', () => {
     const assignedMemberName = assignedMember?.user_name
     if (!assignedMember || !assignedMemberName) throw new Error('Workspace owner member is missing')
     await page.getByTestId('collaboration-issue-comment').click()
-    await page.getByTestId('collaboration-issue-mention-trigger').click()
+    await page.getByTestId('collaboration-issue-comment').fill('@')
     await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
     const assignmentComposer = page.getByTestId('collaboration-issue-comment')
     await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} `)
@@ -248,6 +265,7 @@ test.describe('Collaboration module', () => {
     await page.getByTestId(`collaboration-issue-${issueId}`).getByRole('button').first().click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
+    await expect(page.getByTestId('collaboration-comments')).toContainText(reply)
     await capture(page, testInfo, '03-persisted-issue')
   })
 })

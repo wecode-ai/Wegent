@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import {
   ProjectBoardBody,
+  ProjectBoardScrollArea,
   type ProjectBoardBodyProps,
   type ProjectBoardStatePort,
 } from "./ProjectBoardBody";
@@ -80,17 +81,11 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
     layerCount: 0,
     onBreadcrumbSelect: vi.fn(),
     onSaveGlobalGroupBy: vi.fn(),
-    renderAddIcon: () => null,
-    renderChevronDown: () => null,
-    renderChevronRight: () => null,
     renderDragOverlay: () => null,
     renderExternalGroupPicker: () => null,
-    renderFocusIcon: () => null,
     renderGroupPicker: () => null,
     renderItem: () => null,
-    renderSearchIcon: () => null,
     renderSkeleton: () => null,
-    renderTooltip: (_label, child) => child,
     rootLabel: "Issue",
     rootUnitLabel: "个 Issue",
     saveGlobalDisabled: false,
@@ -105,6 +100,7 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 describe("ProjectBoardBody", () => {
   it("owns the original toolbar, breadcrumb, scroll viewport and Kanban composition", () => {
     const tree = ProjectBoardBody(props());
+    expect(tree.props["data-board-cursor-policy"]).toBe("arrow");
     const nodes = descendants(tree);
 
     expect(
@@ -116,8 +112,33 @@ describe("ProjectBoardBody", () => {
       ),
     ).toBeDefined();
     expect(
-      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll"),
+      nodes.find((node) => node.type === ProjectBoardScrollArea),
     ).toBeDefined();
     expect(nodes.find((node) => node.type === KanbanBoard)).toBeDefined();
+  });
+
+  it("owns the horizontal scroll viewport and visible scrollbar", () => {
+    const tree = ProjectBoardScrollArea({
+      children: <div>board</div>,
+      viewportRef: { current: null },
+    });
+    const nodes = descendants(tree);
+
+    expect(
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll"),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] === "cloud-board-horizontal-scrollbar",
+      ),
+    ).toBeDefined();
+    expect(
+      nodes.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "cloud-board-horizontal-scrollbar-thumb",
+      ),
+    ).toBeDefined();
   });
 });

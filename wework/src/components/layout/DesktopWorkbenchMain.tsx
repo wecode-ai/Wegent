@@ -111,6 +111,7 @@ import {
 } from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
+import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
@@ -1861,6 +1862,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const workbenchScrollbarRef = useRef<HTMLDivElement | null>(null)
   const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -4930,27 +4932,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         />
-        <div
-          data-testid="desktop-workbench-scroll-frame"
-          className={cn(
+        <TaskDetailScrollArea
+          viewportRef={workbenchScrollRef}
+          scrollbarRef={workbenchScrollbarRef}
+          hasConversation={hasConversation}
+          showPageTopBar={showPageTopBar}
+          defaultEmbeddedBrowserLabel={defaultEmbeddedBrowserLabel}
+          frameClassName={cn(
             'relative flex h-full min-w-0 flex-none',
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
-          style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
+          frameStyle={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
+          overlay={
+            <aside
+              data-testid="environment-info-panel-container"
+              className={cn(
+                'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
+                environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
+                showPageTopBar && 'pt-11',
+                environmentInfoTransitionEnabled
+                  ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                  : 'transition-none'
+              )}
+            >
+              <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
+            </aside>
+          }
         >
-          <div
-            ref={workbenchScrollRef}
-            data-testid="desktop-workbench-content"
-            data-scroll-origin={hasConversation ? 'bottom' : 'top'}
-            data-embedded-browser-label={defaultEmbeddedBrowserLabel}
-            className={cn(
-              'relative flex h-full min-w-0 flex-1',
-              hasConversation
-                ? 'flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
-                : 'overflow-hidden',
-              showPageTopBar && 'pt-11'
-            )}
-          >
+          <>
             <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
               {isBootstrapping ? (
                 <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -5002,6 +5011,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 >
                   <ScrollableMessageArea
                     messages={paneMessages}
+                    turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
                     isWaitingForAssistant={
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
@@ -5022,6 +5032,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     className="min-h-full"
                     scrollTestId="desktop-chat-scroll"
                     externalScrollRef={workbenchScrollRef}
+                    externalScrollInteractionRef={workbenchScrollbarRef}
                     turnNavigationPortalTarget={turnNavigationPortalTarget}
                     scrollerClassName="min-h-full overflow-visible"
                     contentClassName={displayedRightPanelExpanded ? 'invisible' : undefined}
@@ -5527,21 +5538,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
               />
             </div>
-          </div>
-          <aside
-            data-testid="environment-info-panel-container"
-            className={cn(
-              'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
-              environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
-              showPageTopBar && 'pt-11',
-              environmentInfoTransitionEnabled
-                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
-                : 'transition-none'
-            )}
-          >
-            <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
-          </aside>
-        </div>
+          </>
+        </TaskDetailScrollArea>
         {displayedRightPanelOpen && !displayedRightPanelExpanded && (
           <div
             data-testid="right-workspace-resize-handle"

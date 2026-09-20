@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
@@ -70,6 +71,7 @@ import { createRuntimeUserMessage } from './runtimeUserMessage'
 import {
   getComposerApps,
   resetComposerAppsMemory,
+  replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import type {
   Attachment,
@@ -102,6 +104,11 @@ const localExecutorMocks = vi.hoisted(() => ({
   getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(),
   subscribeLocalExecutorEvents: vi.fn(),
+}))
+
+vi.mock('@/api/cloud/connectorApps', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/cloud/connectorApps')>()),
+  listWegentInstalledConnectorApps: vi.fn().mockResolvedValue({ apps: [] }),
 }))
 
 const pluginApiMocks = vi.hoisted(() => ({
@@ -605,7 +612,11 @@ function createWorkbenchServices(overrides: Partial<WorkbenchServices> = {}): Wo
   } as WorkbenchServices
 }
 
-function renderWorkbench(children: React.ReactNode, services = createWorkbenchServices()) {
+function renderWorkbench(
+  children: React.ReactNode,
+  services = createWorkbenchServices(),
+  cloud: Partial<CloudConnectionContextValue> = {}
+) {
   const cloudConnectionValue: CloudConnectionContextValue = {
     ...DISCONNECTED_STATE,
     isConnected: false,
@@ -613,6 +624,7 @@ function renderWorkbench(children: React.ReactNode, services = createWorkbenchSe
     connectWithAuthorization: vi.fn(),
     refreshUser: vi.fn(),
     disconnect: vi.fn(),
+    ...cloud,
   }
   return render(
     <CloudConnectionContext.Provider value={cloudConnectionValue}>
@@ -1981,6 +1993,9 @@ function RuntimeOpenProbe() {
       <span data-testid="runtime-transcript-loading">
         {paneSession.transcriptLoading ? 'loading' : 'idle'}
       </span>
+      <span data-testid="runtime-transcript-loading-more">
+        {paneSession.transcriptLoadingMoreBefore ? 'loading' : 'idle'}
+      </span>
       <span data-testid="runtime-transcript-has-more">
         {paneSession.transcriptHasMoreBefore ? 'more' : 'done'}
       </span>
@@ -2534,8 +2549,10 @@ function ExternalRuntimeSendProbe() {
 
 function RuntimeTaskSkillsProbe() {
   const workbench = useWorkbench()
+  const [appsResult, setAppsResult] = useState('idle')
   return (
     <div>
+      <span data-testid="composer-apps-result">{appsResult}</span>
       <button
         type="button"
         onClick={() =>
@@ -2551,7 +2568,16 @@ function RuntimeTaskSkillsProbe() {
       <button type="button" onClick={() => void workbench.projectChat.listLocalSkills()}>
         list local skills
       </button>
-      <button type="button" onClick={() => void workbench.projectChat.listLocalApps()}>
+      <button
+        type="button"
+        onClick={() => {
+          setAppsResult('loading')
+          void workbench.projectChat.listLocalApps().then(
+            apps => setAppsResult(`loaded:${apps.map(app => app.id).join(',')}`),
+            error => setAppsResult(`failed:${String(error)}`)
+          )
+        }}
+      >
         list local apps
       </button>
     </div>
@@ -3237,6 +3263,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -3265,10 +3293,70 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toHaveLength(0)
   })
 
+  test('clears a stale composer snapshot on a successful empty read while offline', async () => {
+    setElectronRuntime()
+    replaceComposerApps([{ id: 'old-plugin', name: 'Old plugin', isAccessible: true }])
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'codex.app_server_request') {
+          if ((params as { method: string }).method === 'plugin/installed')
+            return { marketplaces: [] }
+          if ((params as { method: string }).method === 'app/list')
+            return { data: [], nextCursor: null }
+        }
+        return {}
+      }
+    )
+    renderWorkbench(<RuntimeTaskSkillsProbe />)
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
+    )
+    expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+  })
+
+  test('reports a composer inventory failure and accepts a fresh read after recovery', async () => {
+    setElectronRuntime()
+    let storeAvailable = false
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.store.list') {
+          if (!storeAvailable) throw new Error('store unavailable')
+          return { storePath: '/store', plugins: [] }
+        }
+        if (method === 'codex.app_server_request') {
+          if ((params as { method: string }).method === 'plugin/installed')
+            return { marketplaces: [] }
+          if ((params as { method: string }).method === 'app/list')
+            return { data: [], nextCursor: null }
+        }
+        return {}
+      }
+    )
+    renderWorkbench(<RuntimeTaskSkillsProbe />)
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+        'failed:Error: store unavailable'
+      )
+    )
+    storeAvailable = true
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
+    )
+  })
+
   test('does not request remote Codex apps from retained workbenches', async () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -3367,6 +3455,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -3419,11 +3509,17 @@ describe('WorkbenchProvider runtime tasks', () => {
       .mockResolvedValueOnce({ items: [documentsPlugin] })
       .mockResolvedValue({ items: [] })
 
-    renderWorkbench(<RuntimeTaskSkillsProbe />)
+    renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+    })
 
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('local-device')
+    await waitFor(() => expect(listWegentInstalledConnectorApps).toHaveBeenCalled())
 
     act(() => {
       window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
@@ -3436,6 +3532,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -3479,9 +3577,9 @@ describe('WorkbenchProvider runtime tasks', () => {
           method === 'codex.app_server_request' &&
           (params as { method?: string }).method === 'plugin/installed'
       ).length
-    await waitFor(() => expect(pluginInstalledRequestCount()).toBe(2))
+    await waitFor(() => expect(pluginInstalledRequestCount()).toBe(1))
     await new Promise(resolve => window.setTimeout(resolve, 300))
-    expect(pluginInstalledRequestCount()).toBe(2)
+    expect(pluginInstalledRequestCount()).toBe(1)
   })
 
   test('ignores a superseded project plugin load after switching projects', async () => {
@@ -3510,6 +3608,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     }
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -9676,7 +9775,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
 
@@ -9830,7 +9929,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
     expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
   })
@@ -11491,6 +11590,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message b')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message a')
+    expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
   })
 
   test('restores cached history when returning before another transcript finishes loading', async () => {
@@ -11536,6 +11636,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
     )
+    expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(3)
 
     await act(async () => {
@@ -11553,6 +11654,74 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message b')
+  })
+
+  test('ignores an older transcript page that finishes after switching tasks', async () => {
+    const runtimeBOlderTranscript = deferred<RuntimeTranscriptResponse>()
+    const getRuntimeTranscript = vi.fn((request: RuntimeTranscriptRequest) => {
+      if (request.taskId === 'runtime-a') {
+        return Promise.resolve({
+          taskId: 'runtime-a',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'claude_code',
+          messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'message a' }],
+          hasMoreBefore: false,
+          beforeCursor: null,
+        } satisfies RuntimeTranscriptResponse)
+      }
+      if (request.beforeCursor === 'runtime-b-older') {
+        return runtimeBOlderTranscript.promise
+      }
+      return Promise.resolve({
+        taskId: 'runtime-b',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-b:user:2', role: 'user', content: 'recent message b' }],
+        hasMoreBefore: true,
+        beforeCursor: 'runtime-b-older',
+      } satisfies RuntimeTranscriptResponse)
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime b'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('recent message b')
+    )
+
+    await userEvent.click(screen.getByText('load older'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-transcript-loading-more')).toHaveTextContent('loading')
+    )
+
+    await userEvent.click(screen.getByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    )
+    expect(screen.getByTestId('runtime-transcript-loading-more')).toHaveTextContent('idle')
+
+    await act(async () => {
+      runtimeBOlderTranscript.resolve({
+        taskId: 'runtime-b',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-b:user:1', role: 'user', content: 'older message b' }],
+        hasMoreBefore: false,
+        beforeCursor: null,
+      })
+      await runtimeBOlderTranscript.promise
+    })
+
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message b')
+    expect(screen.getByTestId('runtime-transcript-loading-more')).toHaveTextContent('idle')
   })
 
   test('does not reload the currently selected runtime task when clicked again', async () => {
@@ -11759,6 +11928,51 @@ describe('WorkbenchProvider runtime tasks', () => {
       modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('inherits the destination cloud model for an external runtime action without opening its pane', async () => {
+    const modelSelection = {
+      modelName: 'deepseek-v4-flash',
+      modelType: 'user' as const,
+      options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        reasoning: 'high',
+      },
+    }
+    const work = createRuntimeWork()
+    const task = work.projects[0].deviceWorkspaces[0].tasks[0]
+    task.runtime = 'codex'
+    task.modelSelection = modelSelection
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({ accepted: true, taskId: 'runtime-a' })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(work),
+      sendRuntimeMessage,
+    })
+    renderWorkbench(
+      <ExternalRuntimeSendProbe />,
+      createWorkbenchServices({
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      })
+    )
+
+    await userEvent.click(await screen.findByText('repair pull request'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledOnce())
+    expect(sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-a',
+          workspacePath: '/workspace/project-alpha',
+        },
+        modelId: modelSelection.modelName,
+        modelType: modelSelection.modelType,
+        modelOptions: modelSelection.options,
+        modelSelection,
+      })
+    )
   })
 
   test('shows user messages sent from an external runtime action', async () => {
@@ -17912,6 +18126,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -17958,6 +18173,11 @@ describe('WorkbenchProvider runtime tasks', () => {
             nextCursor: null,
           }
         }
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string })?.method === 'plugin/installed'
+        )
+          return { marketplaces: [] }
         return {}
       }
     )

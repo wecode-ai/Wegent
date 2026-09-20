@@ -15,10 +15,7 @@ import {
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
-import {
-  resetSystemProxyStateForTests,
-  resolveEffectiveLocalCodexProxy,
-} from '@/desktop/systemProxy'
+import { resolveEffectiveLocalCodexProxy } from '@/desktop/systemProxy'
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
@@ -54,9 +51,45 @@ describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
     delete window.weworkElectronNetwork
-    resetSystemProxyStateForTests()
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {
+    const wire = {
+      taskId: 'side-task',
+      workspacePath: '/side',
+      projectPluginIds: [],
+      apps: [],
+      skills: [],
+      marketplaces: [],
+      store: { storePath: '/store', plugins: [] },
+    }
+    const request = vi.fn().mockResolvedValue(wire)
+    const cloud = vi.fn().mockResolvedValue([])
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-one' }),
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      listCloudInstalledPlugins: cloud,
+    })
+    await expect(
+      services.composerCatalogApi!.readCatalog({ deviceId: 'local-one', taskId: 'side-task' }, true)
+    ).resolves.toMatchObject({
+      taskId: 'side-task',
+      workspacePath: '/side',
+      cloudInstalledPlugins: [],
+    })
+    expect(request).toHaveBeenCalledWith('runtime.composer.catalog.read', {
+      taskId: 'side-task',
+      forceRefresh: true,
+    })
+    expect(cloud).toHaveBeenCalledWith('local-one')
+    request.mockClear()
+    await expect(
+      services.composerCatalogApi!.readCatalog({ deviceId: 'remote', taskId: 'side-task' })
+    ).rejects.toThrow('executor-not-local:remote')
+    expect(request).not.toHaveBeenCalled()
   })
 
   test('rejects cloud runtime construction without authenticated user identity', () => {
@@ -1150,6 +1183,7 @@ describe('createLocalAppServices', () => {
               runtime: 'codex',
               createdAt: 1780000100000,
               updatedAt: 1780000120000,
+              recencyAt: 1780000110000,
             },
             {
               taskId: 'older-task',
@@ -1158,6 +1192,7 @@ describe('createLocalAppServices', () => {
               runtime: 'codex',
               created_at: 1780000000000,
               updated_at: 1780000060000,
+              recency_at: 1780000050000,
             },
           ],
         },
@@ -1176,10 +1211,12 @@ describe('createLocalAppServices', () => {
     expect(tasks?.[0]).toMatchObject({
       createdAt: 1780000100000,
       updatedAt: 1780000120000,
+      recencyAt: 1780000110000,
     })
     expect(tasks?.[1]).toMatchObject({
       createdAt: 1780000000000,
       updatedAt: 1780000060000,
+      recencyAt: 1780000050000,
     })
   })
 
@@ -3421,6 +3458,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         codex_catalog_model_id: 'wework-deepseek-v4-flash',
         vision_sidecar: {
+          proxy: { url: null },
           enabled: true,
           request_url: 'https://vision.example/v1/responses',
           api_format: 'openai-responses',
@@ -3434,7 +3472,18 @@ describe('createLocalAppServices', () => {
   })
 
   test('uses selected Codex provider for local runtime execution requests', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const resolveProxy = vi.fn().mockResolvedValue(null)
+    window.weworkElectronNetwork = { resolveProxy }
+    const request = vi.fn().mockImplementation(async (method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'config/read') {
+        return {
+          config: {
+            model_providers: { 'wecode-openai': { base_url: 'https://provider.example/v1' } },
+          },
+        }
+      }
+      return { accepted: true }
+    })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
@@ -3490,6 +3539,7 @@ describe('createLocalAppServices', () => {
         },
       })
     )
+    expect(resolveProxy).toHaveBeenCalledWith('https://provider.example/v1/responses')
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('base_url')
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
@@ -3637,6 +3687,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         codex_catalog_model_id: 'wework-deepseek-v4-pro',
         vision_sidecar: {
+          proxy: { url: null },
           enabled: true,
           request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
           api_format: 'openai-responses',
@@ -3688,6 +3739,7 @@ describe('createLocalAppServices', () => {
 
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config.vision_sidecar).toEqual({
+      proxy: { url: null },
       enabled: true,
       request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
       api_format: 'anthropic-messages',
@@ -4087,7 +4139,7 @@ describe('createLocalAppServices', () => {
 
   test('waits for system proxy resolution before building the first local runtime request', async () => {
     window.weworkElectronNetwork = {
-      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+      resolveProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
     }
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const ensure = vi.fn().mockImplementation(async () => {

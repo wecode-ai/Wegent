@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN;
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -24,6 +25,12 @@ const WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS: usize = 600;
 const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn interrupted_by_executor_shutdown(
+    result: &Result<crate::agents::CodexAppServerTurn, String>,
+) -> bool {
+    matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN)
+}
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -831,14 +838,16 @@ impl RuntimeWorkRpcHandler {
             (active_turn.as_ref(), codex_notification_turn_id(&message))
         {
             if notification_turn_id != active_turn.turn_id {
-                log_executor_event(
-                    "runtime work execution mapper dropped non-active turn notification",
-                    &[
-                        ("local_task_id", local_task_id.to_owned()),
-                        ("active_turn_id", active_turn.turn_id.clone()),
-                        ("notification_turn_id", notification_turn_id),
-                    ],
-                );
+                if codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "runtime work execution mapper dropped non-active turn notification",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("active_turn_id", active_turn.turn_id.clone()),
+                            ("notification_turn_id", notification_turn_id),
+                        ],
+                    );
+                }
                 return;
             }
         }
@@ -933,6 +942,10 @@ impl RuntimeWorkRpcHandler {
     ) {
         turn.request.extra.remove(RESTORED_TURN_MARKER);
         let restore_startup = restore_permit.map(RestoreStartupGate::new);
+        turn.request.extra.insert(
+            "runtimeLocalTaskId".to_owned(),
+            Value::String(turn.local_task_id.clone()),
+        );
         if is_claude_runtime(&turn.runtime) {
             self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
             return;
@@ -942,10 +955,6 @@ impl RuntimeWorkRpcHandler {
             &mut turn.request,
             &self.device_id,
             &turn.local_task_id,
-        );
-        turn.request.extra.insert(
-            "runtimeLocalTaskId".to_owned(),
-            Value::String(turn.local_task_id.clone()),
         );
         let SpawnTurnRequest {
             local_task_id,
@@ -985,21 +994,8 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id = match self.start_local_task_execution(
-            local_task_id.clone(),
-            request
-                .project_workspace_path
-                .as_deref()
-                .or_else(|| request.cwd()),
-            cancel_tx,
-            stopped_rx,
-        ) {
-            Ok(execution_id) => execution_id,
-            Err(error) => {
-                self.fail_local_task_execution_start(&local_task_id, &error);
-                return;
-            }
-        };
+        let execution_id =
+            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
         if let Some(restore_startup) = restore_startup.as_ref() {
             self.schedule_restore_startup_timeout(
                 local_task_id.clone(),
@@ -1185,6 +1181,7 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await;
             let goal_execution_needs_attention = match result.as_ref() {
+                Err(_) if interrupted_by_executor_shutdown(&result) => false,
                 Err(_) => true,
                 Ok(turn) => matches!(
                     turn.outcome,
@@ -1248,6 +1245,7 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Failed { .. } => "failed",
                     ExecutionOutcome::Running => "inProgress",
                 },
+                Err(_) if interrupted_by_executor_shutdown(&result) => "inProgress",
                 Err(_) => "failed",
             };
             handler
@@ -1441,6 +1439,16 @@ impl RuntimeWorkRpcHandler {
         active_turn: Option<&ActiveCodexTurn>,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
+        if interrupted_by_executor_shutdown(&result) {
+            log_executor_event(
+                "runtime work turn interrupted by executor shutdown",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("execution_id", execution_id.to_string()),
+                ],
+            );
+            return;
+        }
         let mut event_request = request.clone();
         if let Some(active_turn) = active_turn {
             event_request.subtask_id = active_turn.turn_id.clone();
@@ -1523,6 +1531,9 @@ impl RuntimeWorkRpcHandler {
                             "valueOrigin": response_value_origin.as_str(),
                             "turnId": active_turn.map(|turn| &turn.turn_id),
                             "itemId": response_item_id,
+                            "startedAt": turn.started_at_ms,
+                            "completedAt": turn.completed_at_ms,
+                            "durationMs": turn.duration_ms,
                         }),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
@@ -1535,6 +1546,9 @@ impl RuntimeWorkRpcHandler {
                             "value": "",
                             "valueOrigin": "empty",
                             "turnId": active_turn.map(|turn| &turn.turn_id),
+                            "startedAt": turn.started_at_ms,
+                            "completedAt": turn.completed_at_ms,
+                            "durationMs": turn.duration_ms,
                             "stop_reason": stop_reason,
                             "silent_exit": true,
                             "silent_exit_reason": "waiting_for_user_input"
@@ -1546,7 +1560,12 @@ impl RuntimeWorkRpcHandler {
                         "response.incomplete",
                         local_task_id,
                         &event_request,
-                        json!({"error": {"message": message}}),
+                        json!({
+                            "error": {"message": message},
+                            "startedAt": turn.started_at_ms,
+                            "completedAt": turn.completed_at_ms,
+                            "durationMs": turn.duration_ms,
+                        }),
                     ),
                     ExecutionOutcome::Failed { message } => {
                         self.persist_failed_assistant_message(
@@ -1566,7 +1585,12 @@ impl RuntimeWorkRpcHandler {
                             "response.failed",
                             local_task_id,
                             &event_request,
-                            json!({"error": {"message": message}}),
+                            json!({
+                                "error": {"message": message},
+                                "startedAt": turn.started_at_ms,
+                                "completedAt": turn.completed_at_ms,
+                                "durationMs": turn.duration_ms,
+                            }),
                         );
                     }
                     ExecutionOutcome::Running => {}

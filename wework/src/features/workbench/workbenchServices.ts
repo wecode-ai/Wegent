@@ -1,4 +1,5 @@
 import { createDeviceApi } from '@/api/devices'
+import type { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
 import type { createAgentResourceApi } from '@/api/agentResources'
 import { createDeliveryApi } from '@/api/deliveries'
 import type { AITableApi } from '@/api/aitable'
@@ -162,6 +163,7 @@ export interface WorkbenchServices {
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
   pluginApi?: ProjectPluginCatalogApi
   automationApi?: AutomationApi
   attachmentApi?: {

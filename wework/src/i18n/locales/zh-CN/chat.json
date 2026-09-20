@@ -102,6 +102,9 @@
     "renamed_file": "重命名 {{filename}}"
   },
   "assistant_status": {
+    "working": "处理中",
+    "working_for": "已处理 {{duration}}",
+    "worked_for": "用时 {{duration}}",
     "stopped": "已停止",
     "stopped_after": "你在 {{duration}} 后停止了"
   },
@@ -267,6 +270,11 @@
       "payload_too_large": {
         "title": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小",
         "description": "请减少附件或上下文内容后重试。"
+      },
+      "model_service_connection_error": {
+        "title": "无法连接模型服务",
+        "description": "连接错误：向模型服务发送请求失败。请检查网络或 VPN 连接后重试。",
+        "description_with_endpoint": "连接错误：向 {{endpoint}} 发送请求失败。请检查网络或 VPN 连接后重试。"
       },
       "network_error": {
         "title": "网络连接失败：请检查网络连接后重试",

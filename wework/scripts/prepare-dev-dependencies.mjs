@@ -6,6 +6,8 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
 const weworkRoot = resolve(scriptDirectory, '..')
 const repositoryRoot = resolve(weworkRoot, '..')
@@ -55,7 +57,8 @@ async function ensureDependencies(options) {
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, {
       cwd,
       env: process.env,
       stdio: 'inherit',

@@ -70,13 +70,13 @@ function responseCompleted(id, output) {
   }
 }
 
-function responseFailed(id, message) {
+function responseFailed(id, message, code = 'context_length_exceeded') {
   return {
     type: 'response.failed',
     response: {
       id,
       status: 'failed',
-      error: { code: 'context_length_exceeded', message },
+      error: { code, message },
     },
   }
 }
@@ -214,9 +214,10 @@ function streamingMarkdownReport() {
   return `${Array.from({ length: sectionCount }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
 }
 
-function streamingTextEvents(id, text) {
+function streamingTextEvents(id, text, phase) {
   const itemId = `${id}-message`
   const chunks = text.match(/[\s\S]{1,48}/g) ?? []
+  const phaseFields = phase ? { phase } : {}
   return {
     chunks,
     start: [
@@ -230,6 +231,7 @@ function streamingTextEvents(id, text) {
           status: 'in_progress',
           role: 'assistant',
           content: [],
+          ...phaseFields,
         },
       },
       {
@@ -257,6 +259,7 @@ function streamingTextEvents(id, text) {
           status: 'completed',
           role: 'assistant',
           content: [{ type: 'output_text', text, annotations: [] }],
+          ...phaseFields,
         },
       },
       responseCompleted(id),
