@@ -824,6 +824,12 @@ function CollaborationPlatformNavigation({
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
             const expanded = expandedWorkspaceIds.has(candidate.id);
+            const WorkspaceLocationIcon =
+              candidate.location === "local" ? Laptop : Cloud;
+            const workspaceLocationLabel =
+              candidate.location === "local"
+                ? messages.localSource
+                : messages.cloudSource;
             const candidateProjects = projects.filter(
               (project) => project.workspace_id === candidate.id,
             );
@@ -861,9 +867,11 @@ function CollaborationPlatformNavigation({
                     >
                       <span
                         className="collaboration-workspace-folder"
+                        data-location={candidate.location}
+                        data-testid={`collaboration-workspace-location-${candidate.id}`}
                         aria-hidden="true"
                       >
-                        <FolderOpen />
+                        <WorkspaceLocationIcon />
                       </span>
                       <span
                         className="collaboration-workspace-title-block"
@@ -873,6 +881,7 @@ function CollaborationPlatformNavigation({
                         <span className="collaboration-workspace-title">
                           {candidate.name}
                         </span>
+                        <small>{workspaceLocationLabel}</small>
                       </span>
                     </button>
                   ) : (
@@ -882,9 +891,11 @@ function CollaborationPlatformNavigation({
                     >
                       <span
                         className="collaboration-workspace-folder"
+                        data-location={candidate.location}
+                        data-testid={`collaboration-workspace-location-${candidate.id}`}
                         aria-hidden="true"
                       >
-                        <FolderOpen />
+                        <WorkspaceLocationIcon />
                       </span>
                       <span
                         className="collaboration-workspace-title-block"
@@ -894,6 +905,7 @@ function CollaborationPlatformNavigation({
                         <span className="collaboration-workspace-title">
                           {candidate.name}
                         </span>
+                        <small>{workspaceLocationLabel}</small>
                       </span>
                     </div>
                   )}
@@ -2924,6 +2936,12 @@ export function CollaborationPlatformApp({
       projects: {
         ...api.projects,
         list: async () => {
+          if (projectId) {
+            const selectedProject = state.navigationProjects.find(
+              (project) => project.id === projectId,
+            );
+            if (selectedProject) return [selectedProject];
+          }
           const projects = await (hasFullWorkspaceAccess
             ? api.projects.list(workspaceId)
             : api.projects.list());
@@ -2937,6 +2955,7 @@ export function CollaborationPlatformApp({
     api,
     host.location.projectId,
     host.location.workspaceId,
+    state.navigationProjects,
     state.workspace,
   ]);
   const workspaceAgentConfigurationApi = useMemo(

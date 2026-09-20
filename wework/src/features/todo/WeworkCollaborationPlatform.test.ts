@@ -1460,6 +1460,38 @@ describe('Wework collaboration workspace API', () => {
     expect(listCloudCollaborationGroups).not.toHaveBeenCalled()
   })
 
+  it('keeps local Issue list requests off the cloud API', async () => {
+    const localIssue = {
+      id: 'local-issue',
+      cloud_project_id: 'local-project',
+      title: 'Local issue',
+    }
+    const localDeliveryApi = {
+      ...createLocalDeliveryApi(),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [localIssue] }),
+    } as unknown as DeliveryApi
+    const listCloudIssues = vi.fn().mockRejectedValue(new Error('local project reached cloud API'))
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: {
+        list: listCloudIssues,
+      },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.list('local-project')).resolves.toEqual([localIssue])
+    expect(localDeliveryApi.listLoopItems).toHaveBeenCalledWith('local-project', undefined)
+    expect(listCloudIssues).not.toHaveBeenCalled()
+  })
+
   it('adds a local space group to a project without duplicating or deleting its source', async () => {
     const records = [DEFAULT_WORK_ITEM_PROJECT_ID, 'local-project'].map(id => ({
       id,

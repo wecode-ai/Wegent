@@ -26,6 +26,7 @@
 
 .collaboration-platform-sidebar {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
@@ -46,6 +47,9 @@
 }
 
 .collaboration-platform-sidebar-footer {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin-top: auto;
   padding-top: 12px;
 }
@@ -224,11 +228,15 @@
 
 .collaboration-workspace-tree {
   display: flex;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
   flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
   padding: 0 6px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -236,6 +244,9 @@
 
 .collaboration-workspace-group {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   flex: none;
   flex-direction: column;
   gap: 2px;
@@ -245,8 +256,10 @@
   position: relative;
   display: flex;
   width: 100%;
+  min-width: 0;
   height: 30px;
   min-height: 30px;
+  box-sizing: border-box;
   align-items: center;
   border-radius: 6px;
   color: rgb(var(--color-text-primary));
@@ -448,7 +461,10 @@
 
 .collaboration-platform-sidebar .collaboration-workspace-project-list {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
   gap: 2px;
 }
 
@@ -509,6 +525,9 @@
 
 .collaboration-workspace-project-row {
   position: relative;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .collaboration-project-row-actions {
