@@ -23,6 +23,12 @@ URL 必须指向本机的 `plugin_auth_test`。测试只创建必要的 `users`�
 该套件由 `.github/workflows/test.yml` 的 `test-plugin-auth-mysql` 执行，使用
 独立 MySQL service；普通 Backend 单测仍由 `tests/` 下的 SQLite 夹具负责。
 
+`test_team_namespace_collation_mysql.py` 同样由该 CI job 执行，验证连接使用
+`utf8mb4_0900_ai_ci` 或 `utf8mb4_unicode_ci` 时的 namespace 授权查询、分页和权限过滤。
+本地运行时设置 `TEAM_NAMESPACE_MYSQL_TEST_URL` 后执行
+`uv run pytest integration_checks/test_team_namespace_collation_mysql.py -n 0`。
+URL 必须指向本机 MySQL，账号需要建库权限；测试创建随机命名的独立数据库并在结束后删除。
+
 ## English
 
 Run the command above against a disposable local `plugin_auth_test` database.
@@ -31,3 +37,8 @@ including concurrent enrollment/reservations, stale snapshots, terminal transfer
 states, idempotent receipts and cached owner status. A missing database is a failure.
 Each test removes only its own synthetic user and resources. GitHub CI runs this
 suite in `test-plugin-auth-mysql`, separately from ordinary SQLite unit tests.
+
+The same CI job runs `test_team_namespace_collation_mysql.py` against both
+connection collations. Set `TEAM_NAMESPACE_MYSQL_TEST_URL` to a local MySQL URL
+with database creation privileges to run it locally. The suite creates and
+removes its own randomly named database and checks pagination and grant filtering.

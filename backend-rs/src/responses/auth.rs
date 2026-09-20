@@ -15,8 +15,7 @@
 //! The recorded case authenticates with a personal API key: the source
 //! selects the key by SHA-256 hash, updates `last_used_at` (UPDATE + COMMIT),
 //! reloads the expired row (SELECT by id), and resolves the owner user
-//! through the public direct `userReader` SQL reader.
-use brz_mysql::{Mysql, MysqlResult};
+//! through the configured `userReader` (`user_reader::UserByIdReader`).
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -24,6 +23,7 @@ use sha2::{Digest, Sha256};
 use super::auth_error::AuthError;
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
+use crate::user_reader::{UserByIdReader, UserRecord};
 
 /// API key prefix (`app.core.auth_utils.API_KEY_PREFIX`).
 const API_KEY_PREFIX: &str = "wg-";
@@ -42,24 +42,9 @@ pub struct CurrentUser {
     pub user_name: String,
 }
 
-/// `users` row loaded from MySQL (full labeled `db.query(User)` projection;
-/// only the auth fields are consumed).
-#[derive(Debug)]
-pub struct UserRow {
-    pub id: i32,
-    pub user_name: String,
-    pub is_active: i8,
-}
-
-impl UserRow {
-    /// Decode one row of the labeled `users` projection.
-    fn from_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<Self> {
-        Ok(Self {
-            id: row.get_required("users_id")?,
-            user_name: row.get_required("users_user_name")?,
-            is_active: row.get_required("users_is_active")?,
-        })
-    }
+/// The reader's user id narrowed to the auth id type (`users.id` is INT).
+fn auth_id(user: &UserRecord) -> i32 {
+    i32::try_from(user.id).unwrap_or(i32::MAX)
 }
 
 /// `api_keys` row selected by hash (`db.query(APIKey).filter(key_hash, is_active)`).
@@ -242,87 +227,55 @@ fn decode_with_keys<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &s
         .map(|token| token.claims)
 }
 
-/// Public user reader: direct MySQL lookup by id.
-///
-/// The open-source `userReader` has no cache extension. The `redis`
-/// parameter remains for compatibility with callers shared with the internal
-/// deployment, but is deliberately unused here.
-pub(crate) async fn cached_user_by_id<R>(
-    _redis: Option<&R>,
-    mysql: &impl Mysql,
+/// `userReader.get_by_id` through the deployment-configured reader
+/// (`user_reader::UserByIdReader`); the public default performs a direct
+/// SQL lookup while an internal deployment supplies the cached reader.
+/// A reader infrastructure failure maps to the source dependency error.
+pub(crate) async fn cached_user_by_id(
+    user_reader: &dyn UserByIdReader,
     user_id: i64,
-) -> MysqlResult<Option<UserRow>> {
-    let row: Option<brz_mysql::MysqlRow> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-                 users.password_hash AS users_password_hash, users.email AS users_email, \
-                 users.git_info AS users_git_info, users.is_active AS users_is_active, \
-                 users.`role` AS users_role, users.auth_source AS users_auth_source, \
-                 users.preferences AS users_preferences, users.created_at AS users_created_at, \
-                 users.updated_at AS users_updated_at \nFROM users \nWHERE users.id = {user_id} \n LIMIT 1"
-            ),
-            (),
-        )
-        .await?;
-    row.as_ref().map(UserRow::from_row).transpose()
+) -> Result<Option<UserRecord>, AuthError> {
+    user_reader.get_by_id(user_id).await.map_err(|error| {
+        AuthError::dependency(brz_mysql::MysqlError::InvalidQuery {
+            reason: error.to_string(),
+        })
+    })
 }
 
-/// Public user reader: direct MySQL lookup by username.
-async fn cached_user_by_name<R>(
-    _redis: Option<&R>,
-    mysql: &impl Mysql,
+/// `userReader.get_by_name` through the deployment-configured reader.
+async fn cached_user_by_name(
+    user_reader: &dyn UserByIdReader,
     user_name: &str,
-) -> MysqlResult<Option<UserRow>> {
-    let row: Option<brz_mysql::MysqlRow> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-                 users.password_hash AS users_password_hash, users.email AS users_email, \
-                 users.git_info AS users_git_info, users.is_active AS users_is_active, \
-                 users.`role` AS users_role, users.auth_source AS users_auth_source, \
-                 users.preferences AS users_preferences, users.created_at AS users_created_at, \
-                 users.updated_at AS users_updated_at \nFROM users \nWHERE users.user_name = '{}' \n LIMIT 1",
-                user_name.replace('\'', "\\'")
-            ),
-            (),
-        )
-        .await?;
-    row.as_ref().map(UserRow::from_row).transpose()
+) -> Result<Option<UserRecord>, AuthError> {
+    user_reader.get_by_name(user_name).await.map_err(|error| {
+        AuthError::dependency(brz_mysql::MysqlError::InvalidQuery {
+            reason: error.to_string(),
+        })
+    })
 }
 
 /// `verify_jwt_token_with_db`: decode a user-session JWT and load the user.
-async fn verify_jwt_token_with_db<R>(
+async fn verify_jwt_token_with_db(
     config: &AuthConfig,
-    mysql: &impl Mysql,
-    redis: Option<&R>,
+    user_reader: &dyn UserByIdReader,
     token: &str,
-) -> Result<Option<UserRow>, AuthError>
-where
-    R: brz_redis::Redis,
-{
+) -> Result<Option<UserRecord>, AuthError> {
     let Some(claims) = decode_with_keys::<SessionClaims>(config, token) else {
         return Ok(None);
     };
     let Some(user_name) = claims.username() else {
         return Ok(None);
     };
-    let user = cached_user_by_name(redis, mysql, &user_name)
-        .await
-        .map_err(AuthError::dependency)?;
-    Ok(user.filter(|user| user.is_active != 0))
+    let user = cached_user_by_name(user_reader, &user_name).await?;
+    Ok(user.filter(|user| user.is_active))
 }
 
 /// `verify_task_token` fallback: `type=task_token` JWT resolving a user id.
-async fn verify_task_token_user<R>(
+async fn verify_task_token_user(
     config: &AuthConfig,
-    mysql: &impl Mysql,
-    redis: Option<&R>,
+    user_reader: &dyn UserByIdReader,
     token: &str,
-) -> Result<Option<UserRow>, AuthError>
-where
-    R: brz_redis::Redis,
-{
+) -> Result<Option<UserRecord>, AuthError> {
     let Some(claims) = decode_with_keys::<TaskTokenClaims>(config, token) else {
         return Ok(None);
     };
@@ -332,23 +285,17 @@ where
     let Some(user_id) = claims.user_id else {
         return Ok(None);
     };
-    let user = cached_user_by_id(redis, mysql, user_id)
-        .await
-        .map_err(AuthError::dependency)?;
-    Ok(user.filter(|user| user.is_active != 0))
+    let user = cached_user_by_id(user_reader, user_id).await?;
+    Ok(user.filter(|user| user.is_active))
 }
 
 /// `get_auth_context` with the source priority order.
-pub async fn get_current_user_flexible<M, R>(
+pub async fn get_current_user_flexible(
     config: &AuthConfig,
-    mysql: &M,
-    redis: Option<&R>,
+    user_reader: &dyn UserByIdReader,
+    mysql: &brz_mysql::MysqlService,
     headers: &impl crate::headers::Headers,
-) -> Result<CurrentUser, AuthError>
-where
-    M: Mysql,
-    R: brz_redis::Redis,
-{
+) -> Result<CurrentUser, AuthError> {
     let wegent_username = headers
         .header("wegent-username")
         .map(str::trim)
@@ -360,15 +307,15 @@ where
     // Fallback: JWT Bearer token when no API key is present.
     let Some(api_key) = api_key else {
         if let Some(token) = bearer_token(headers).filter(|token| !is_api_key(token)) {
-            if let Some(user) = verify_jwt_token_with_db(config, mysql, redis, &token).await? {
+            if let Some(user) = verify_jwt_token_with_db(config, user_reader, &token).await? {
                 return Ok(CurrentUser {
-                    id: user.id,
+                    id: auth_id(&user),
                     user_name: user.user_name,
                 });
             }
-            if let Some(user) = verify_task_token_user(config, mysql, redis, &token).await? {
+            if let Some(user) = verify_task_token_user(config, user_reader, &token).await? {
                 return Ok(CurrentUser {
-                    id: user.id,
+                    id: auth_id(&user),
                     user_name: user.user_name,
                 });
             }
@@ -465,12 +412,10 @@ where
 
     // Personal key: return the key owner directly.
     if record.key_type == KEY_TYPE_PERSONAL {
-        let user = cached_user_by_id(redis, mysql, i64::from(record.user_id))
-            .await
-            .map_err(AuthError::dependency)?;
+        let user = cached_user_by_id(user_reader, i64::from(record.user_id)).await?;
         return match user {
-            Some(user) if user.is_active != 0 => Ok(CurrentUser {
-                id: user.id,
+            Some(user) if user.is_active => Ok(CurrentUser {
+                id: auth_id(&user),
                 user_name: user.user_name,
             }),
             _ => Err(AuthError::UserNotFoundOrInactive),
@@ -491,15 +436,13 @@ where
         {
             return Err(AuthError::InvalidUsernameFormat);
         }
-        let user = cached_user_by_name(redis, mysql, &target_username)
-            .await
-            .map_err(AuthError::dependency)?;
+        let user = cached_user_by_name(user_reader, &target_username).await?;
         if let Some(user) = user {
-            if user.is_active == 0 {
+            if !user.is_active {
                 return Err(AuthError::UserInactive(target_username));
             }
             return Ok(CurrentUser {
-                id: user.id,
+                id: auth_id(&user),
                 user_name: user.user_name,
             });
         }
@@ -524,12 +467,18 @@ where
             .map_err(AuthError::dependency)?;
         let created = created
             .as_ref()
-            .map(UserRow::from_row)
+            .map(|row| {
+                Ok(UserRecord {
+                    id: row.get_required::<i64>("users_id")?,
+                    user_name: row.get_required::<String>("users_user_name")?,
+                    is_active: row.get_required::<i8>("users_is_active")? != 0,
+                })
+            })
             .transpose()
             .map_err(AuthError::dependency)?;
         return match created {
-            Some(user) if user.is_active != 0 => Ok(CurrentUser {
-                id: user.id,
+            Some(user) if user.is_active => Ok(CurrentUser {
+                id: auth_id(&user),
                 user_name: user.user_name,
             }),
             _ => Err(AuthError::UserNotFoundOrInactive),

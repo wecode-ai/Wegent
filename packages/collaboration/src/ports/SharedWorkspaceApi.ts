@@ -136,6 +136,7 @@ export interface WorkspaceIssueUpdateInput {
   priority?: CollaborationPriority
   parentId?: string | null
   assigneeUserId?: number | null
+  assigneeGroupId?: string | null
   assigneeAgentId?: string | null
   assigneeTeamId?: number | null
   dueAt?: string | null

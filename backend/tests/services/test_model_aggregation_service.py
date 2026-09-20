@@ -71,11 +71,10 @@ class TestModelAggregationService:
             lambda user_id, kind, namespace: [],
         )
         monkeypatch.setattr(
-            "app.services.model_aggregation_service.list_referenced_capabilities",
-            lambda db, kind, user_id, namespace: [
-                larger_id_model,
-                smallest_id_model,
-            ],
+            "app.services.model_aggregation_service.list_referenced_capabilities_by_namespace",
+            lambda db, kind, user_id, namespaces: {
+                "default": [larger_id_model, smallest_id_model]
+            },
         )
 
         models = model_aggregation_service.list_available_models(
@@ -112,11 +111,10 @@ class TestModelAggregationService:
             lambda user_id, kind, namespace: [],
         )
         monkeypatch.setattr(
-            "app.services.model_aggregation_service.list_referenced_capabilities",
-            lambda db, kind, user_id, namespace: [
-                larger_id_model,
-                smallest_id_model,
-            ],
+            "app.services.model_aggregation_service.list_referenced_capabilities_by_namespace",
+            lambda db, kind, user_id, namespaces: {
+                "default": [larger_id_model, smallest_id_model]
+            },
         )
 
         models = model_aggregation_service.list_available_models(
@@ -150,8 +148,8 @@ class TestModelAggregationService:
             lambda user_id, kind, namespace: [direct_model],
         )
         monkeypatch.setattr(
-            "app.services.model_aggregation_service.list_referenced_capabilities",
-            lambda db, kind, user_id, namespace: [referenced_model],
+            "app.services.model_aggregation_service.list_referenced_capabilities_by_namespace",
+            lambda db, kind, user_id, namespaces: {"default": [referenced_model]},
         )
 
         models = model_aggregation_service.list_available_models(

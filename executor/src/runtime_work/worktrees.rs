@@ -16,14 +16,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use uuid::Uuid;
-
 use crate::{
     config::device::worktree_persistent_storage_verified,
     path_compat::strip_windows_verbatim_prefix,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
@@ -100,19 +98,6 @@ pub(crate) struct WorktreePlan {
 pub(crate) struct WorktreeReconciliation {
     pub record: ManagedWorktree,
     pub interrupted_preparation: bool,
-    pub interrupted_execution: bool,
-    pub interrupted_execution_task_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorktreeExecutionLease {
-    #[serde(default)]
-    pub task_id: String,
-    pub execution_id: u64,
-    pub started_at: i64,
-    #[serde(default)]
-    pub owner_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -181,7 +166,6 @@ pub(crate) struct ManagedWorktree {
     pub git_common_dir: Option<String>,
     pub state: String,
     pub last_error: Option<String>,
-    pub execution_lease: Option<WorktreeExecutionLease>,
 }
 
 impl Default for ManagedWorktree {
@@ -203,7 +187,6 @@ impl Default for ManagedWorktree {
             git_common_dir: None,
             state: STATE_ACTIVE.to_owned(),
             last_error: None,
-            execution_lease: None,
         }
     }
 }
@@ -221,7 +204,6 @@ struct WorktreeState {
 pub(crate) struct WorktreeManager {
     state_path: PathBuf,
     device_id: String,
-    execution_owner_id: String,
     persistent_storage_verified: bool,
     mutation_lock: Arc<Mutex<()>>,
     worktree_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
@@ -291,7 +273,6 @@ impl WorktreeManager {
         Self {
             state_path,
             device_id: normalize_device_id(device_id),
-            execution_owner_id: Uuid::new_v4().to_string(),
             persistent_storage_verified,
             mutation_lock: Arc::new(Mutex::new(())),
             worktree_locks: Arc::new(Mutex::new(HashMap::new())),
@@ -381,72 +362,6 @@ impl WorktreeManager {
 
     pub fn is_managed_path(&self, path: &Path) -> bool {
         ensure_managed_path(path, &self.load().known_roots).is_ok()
-    }
-
-    pub fn begin_execution(
-        &self,
-        path: &Path,
-        task_id: &str,
-        execution_id: u64,
-    ) -> Result<(), String> {
-        self.update_execution_lease(
-            path,
-            Some(WorktreeExecutionLease {
-                task_id: task_id.to_owned(),
-                execution_id,
-                started_at: now_ms(),
-                owner_id: self.execution_owner_id.clone(),
-            }),
-            None,
-        )
-        .map(|_| ())
-    }
-
-    pub fn finish_execution(
-        &self,
-        path: &Path,
-        task_id: &str,
-        execution_id: u64,
-    ) -> Result<bool, String> {
-        self.update_execution_lease(path, None, Some((task_id, execution_id)))
-    }
-
-    fn update_execution_lease(
-        &self,
-        path: &Path,
-        execution_lease: Option<WorktreeExecutionLease>,
-        expected_execution: Option<(&str, u64)>,
-    ) -> Result<bool, String> {
-        let worktree_lock = self.worktree_lock(path)?;
-        let _worktree_guard = worktree_lock
-            .lock()
-            .map_err(|_| "Worktree execution lock is unavailable".to_owned())?;
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree execution lock is unavailable".to_owned())?;
-        let mut state = self.load();
-        let key = normalized_path_key(path);
-        let record = state
-            .records
-            .get_mut(&key)
-            .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        if let Some((task_id, execution_id)) = expected_execution {
-            match record.execution_lease.as_ref() {
-                Some(lease) if lease.execution_id == execution_id && lease.task_id == task_id => {}
-                None if execution_lease.is_none() => return Ok(true),
-                _ => return Ok(false),
-            }
-        } else if let Some(lease) = record.execution_lease.as_ref() {
-            return Err(format!(
-                "Managed worktree {} is already executing task {}",
-                path.display(),
-                lease.task_id
-            ));
-        }
-        record.execution_lease = execution_lease;
-        self.save(&state)?;
-        Ok(true)
     }
 
     pub fn update_settings(
@@ -685,7 +600,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        reconcile_worktree_state(&mut state, &self.execution_owner_id, false)?;
+        reconcile_worktree_state(&mut state)?;
         let mut result = state
             .records
             .values_mut()
@@ -725,7 +640,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        let reconciled = reconcile_worktree_state(&mut state, &self.execution_owner_id, true)?;
+        let reconciled = reconcile_worktree_state(&mut state)?;
         self.save(&state)?;
         Ok(reconciled)
     }
@@ -1745,8 +1660,6 @@ fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> R
 
 fn reconcile_worktree_state(
     state: &mut WorktreeState,
-    execution_owner_id: &str,
-    recover_interrupted_execution: bool,
 ) -> Result<Vec<WorktreeReconciliation>, String> {
     let mut reconciled = Vec::new();
     for record in state.records.values_mut() {
@@ -1775,26 +1688,8 @@ fn reconcile_worktree_state(
             reconciled.push(WorktreeReconciliation {
                 record: record.clone(),
                 interrupted_preparation: true,
-                interrupted_execution: false,
-                interrupted_execution_task_id: None,
             });
             continue;
-        }
-        let interrupted_execution = recover_interrupted_execution
-            && record
-                .execution_lease
-                .as_ref()
-                .is_some_and(|lease| lease.owner_id != execution_owner_id);
-        let interrupted_execution_task_id = if interrupted_execution {
-            record
-                .execution_lease
-                .take()
-                .and_then(|lease| (!lease.task_id.is_empty()).then_some(lease.task_id))
-        } else {
-            None
-        };
-        if interrupted_execution {
-            debug_assert!(record.execution_lease.is_none());
         }
         if record.state == STATE_ACTIVE && path.exists() {
             if let Err(error) = validate_record_worktree_identity(record, &path) {
@@ -1802,21 +1697,6 @@ fn reconcile_worktree_state(
                 record.last_error = Some(error);
                 record.updated_at = now_ms();
             }
-        }
-        if interrupted_execution {
-            if record.last_error.is_none() {
-                record.last_error = Some(
-                    "Executor restarted while the Worktree task was executing; runtime was not resumed"
-                        .to_owned(),
-                );
-            }
-            record.updated_at = now_ms();
-            reconciled.push(WorktreeReconciliation {
-                record: record.clone(),
-                interrupted_preparation: false,
-                interrupted_execution: true,
-                interrupted_execution_task_id,
-            });
         }
     }
     Ok(reconciled)
@@ -2154,14 +2034,7 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            mpsc,
-        },
-        thread,
-        time::Duration,
-    };
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
     use serde_json::Value;
@@ -2725,12 +2598,6 @@ mod tests {
 
         let restarted = WorktreeManager::new_for_device(state_path.clone(), "device-b");
         restarted.reconcile().unwrap();
-        restarted
-            .begin_execution(Path::new(&record.path), "task-1", 1)
-            .unwrap();
-        assert!(restarted
-            .finish_execution(Path::new(&record.path), "task-1", 1)
-            .unwrap());
 
         let persisted: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
         assert_eq!(persisted["records"][&key]["deviceId"], "legacy-device");
@@ -2813,74 +2680,6 @@ mod tests {
             fs::read_to_string(path.join("untracked.txt")).unwrap(),
             "new\n"
         );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn deleting_one_worktree_does_not_block_execution_on_another() {
-        let root = test_directory("wegent-worktree-delete-concurrency-test");
-        let source = root.join("source");
-        initialize_repository(&source);
-        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-        manager
-            .update_settings(WorktreeSettingsPatch {
-                worktree_root: Some(root.join("managed").display().to_string()),
-                ..WorktreeSettingsPatch::default()
-            })
-            .unwrap();
-        let deleting = manager
-            .prepare(&source, "task-deleting", None, false)
-            .unwrap();
-        let executing = manager
-            .prepare(&source, "task-executing", None, false)
-            .unwrap();
-        let deleting_path = PathBuf::from(&deleting.path);
-        let executing_path = PathBuf::from(&executing.path);
-        let (delete_started_tx, delete_started_rx) = mpsc::channel();
-        let (release_delete_tx, release_delete_rx) = mpsc::channel();
-        let deleting_manager = manager.clone();
-        let deleting_path_for_thread = deleting_path.clone();
-        let delete_thread = thread::spawn(move || {
-            deleting_manager.delete_with_operation(&deleting_path_for_thread, true, |_record| {
-                delete_started_tx.send(()).unwrap();
-                release_delete_rx.recv().unwrap();
-                Err("delete interrupted by test".to_owned())
-            })
-        });
-        // Repository discovery is setup, not the concurrency assertion. Wait for
-        // its handshake; an early deletion error disconnects the channel.
-        delete_started_rx
-            .recv()
-            .expect("deletion must reach the slow operation");
-
-        let (execution_tx, execution_rx) = mpsc::channel();
-        let executing_manager = manager.clone();
-        let executing_path_for_thread = executing_path.clone();
-        let execution_thread = thread::spawn(move || {
-            execution_tx
-                .send(executing_manager.begin_execution(
-                    &executing_path_for_thread,
-                    "task-executing",
-                    1,
-                ))
-                .unwrap();
-        });
-        let execution_result = execution_rx.recv_timeout(Duration::from_secs(5));
-        release_delete_tx.send(()).unwrap();
-        assert_eq!(
-            delete_thread.join().unwrap().unwrap_err(),
-            "delete interrupted by test"
-        );
-        execution_thread.join().unwrap();
-        execution_result
-            .expect("execution lease on another worktree must not wait for deletion")
-            .unwrap();
-
-        assert!(manager
-            .finish_execution(&executing_path, "task-executing", 1)
-            .unwrap());
-        manager.delete(&deleting_path, false).unwrap();
-        manager.delete(&executing_path, false).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 

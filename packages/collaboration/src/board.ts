@@ -105,6 +105,7 @@ export function reorderLaneItems<T extends LaneItem>(
 
 function assigneeLabel(issue: CollaborationIssue, unassigned: string): string {
   return (
+    issue.assignee_group_name ??
     issue.assignee_name ??
     issue.assignee_agent_name ??
     issue.assignee_team_name ??

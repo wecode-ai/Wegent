@@ -446,7 +446,7 @@ export function MobileChatInputControls({
           </div>
         )}
 
-        {!isGenerationMode && selectedTeam && (
+        {!isGenerationMode && (
           <div className="min-w-0 flex-1 overflow-hidden" data-testid="mobile-model-selector-slot">
             <MobileModelSelector
               selectedModel={selectedModel}
@@ -455,6 +455,7 @@ export function MobileChatInputControls({
               setForceOverride={setForceOverride}
               selectedTeam={selectedTeam}
               disabled={
+                !selectedTeam ||
                 Boolean(hideSelectors) ||
                 isStreaming ||
                 (hasMessages && !canSwitchModelAfterMessages(selectedTeam))

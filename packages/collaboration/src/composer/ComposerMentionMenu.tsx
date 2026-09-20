@@ -11,6 +11,7 @@ import {
   Target,
   Bot,
   UserRound,
+  UsersRound,
 } from 'lucide-react'
 import type { RefObject } from 'react'
 import type { CollaborationTranslate } from '../i18n'
@@ -127,7 +128,11 @@ export function ComposerMentionMenu<
           const Icon = externalCandidate
             ? externalCandidate.type === 'agent'
               ? Bot
-              : UserRound
+              : externalCandidate.type === 'group'
+                ? UsersRound
+                : externalCandidate.type === 'issue'
+                  ? ClipboardList
+                  : UserRound
             : pathItem
               ? pathItem.matchType === 'directory'
                 ? Folder

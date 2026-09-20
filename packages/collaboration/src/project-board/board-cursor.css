@@ -50,3 +50,34 @@ body:has(
   /* Override component recipes and utility classes at this policy boundary. */
   cursor: default !important;
 }
+
+.project-board-scrollbar {
+  z-index: 10;
+  display: flex;
+  touch-action: none;
+  user-select: none;
+  background: transparent;
+}
+
+.project-board-scrollbar-horizontal {
+  flex-direction: column;
+  height: 8px;
+  transform: translateY(-3px);
+}
+
+.project-board-scrollbar-vertical {
+  width: 8px;
+  transform: translateX(-3px);
+}
+
+.project-board-scrollbar-thumb {
+  position: relative;
+  flex: 1;
+  border-radius: 9999px;
+  background-color: rgb(var(--color-text-primary) / 0.08);
+}
+
+.project-board-scrollbar:hover .project-board-scrollbar-thumb,
+.project-board-scrollbar:active .project-board-scrollbar-thumb {
+  background-color: rgb(var(--color-text-primary) / 0.16);
+}

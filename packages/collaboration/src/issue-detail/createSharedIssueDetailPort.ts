@@ -116,6 +116,7 @@ export interface SharedIssueDetailUpdateInput {
   assignee_user_id?: number | null;
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
+  assignee_group_id?: string | null;
   due_at?: string | null;
   tags?: string[];
   workflow?: Record<string, unknown> | null;
@@ -528,6 +529,9 @@ export function createSharedIssueDetailPort(
             : {}),
           ...(input.assignee_team_id !== undefined
             ? { assigneeTeamId: input.assignee_team_id }
+            : {}),
+          ...(input.assignee_group_id !== undefined
+            ? { assigneeGroupId: input.assignee_group_id }
             : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.tags !== undefined ? { tags: input.tags } : {}),
