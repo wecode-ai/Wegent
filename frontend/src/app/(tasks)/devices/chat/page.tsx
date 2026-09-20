@@ -24,6 +24,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
+import { useDeviceChatSidecar } from '@extensions/device-chat-sidecar'
 import { Monitor, WifiOff } from 'lucide-react'
 import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
@@ -181,6 +182,7 @@ export default function DeviceChatPage() {
     setSelectedDeviceId(deviceId)
     // Clear any existing task when selecting a new device
     selectTask(null)
+    sidecar.reset()
     const nextParams = new URLSearchParams(searchParams.toString())
     nextParams.set('deviceId', deviceId)
     nextParams.delete('device_id')
@@ -198,6 +200,12 @@ export default function DeviceChatPage() {
 
   // Check if selected device is OpenClaw type
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
+  const sidecar = useDeviceChatSidecar({
+    selectedDevice,
+    selectedDeviceId: activeDeviceId,
+    isMobile,
+    hideFilesTab: isOpenClaw,
+  })
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -265,6 +273,7 @@ export default function DeviceChatPage() {
               ))}
             </select>
           </div>
+          {sidecar.toolbar}
           {shareButton}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
@@ -272,22 +281,34 @@ export default function DeviceChatPage() {
         {/* Chat area or placeholder */}
         {/* Show ChatArea when device is selected OR when viewing an existing task */}
         {activeDeviceId || isExistingTask ? (
-          <ChatArea
-            teams={teams}
-            isTeamsLoading={isTeamsLoading}
-            loadError={teams.length === 0 ? loadError : null}
-            rawTeamsEmpty={teams.length === 0}
-            showRepositorySelector={false}
-            taskType="task"
-            onRefreshTeams={handleRefreshTeams}
-            onShareButtonRender={handleShareButtonRender}
-            disabledReason={
-              !selectedDevice || selectedDevice.status === 'offline'
-                ? t('device_offline_cannot_send')
-                : undefined
-            }
-            hideSelectors={isOpenClaw}
-          />
+          <div className="flex flex-1 min-h-0">
+            <div
+              className="transition-all duration-300 ease-in-out flex flex-col min-h-0 overflow-hidden"
+              style={{
+                width: sidecar.open ? (sidecar.fullscreen ? '0%' : '50%') : '100%',
+                opacity: sidecar.open && sidecar.fullscreen ? 0 : 1,
+                pointerEvents: sidecar.open && sidecar.fullscreen ? 'none' : 'auto',
+              }}
+            >
+              <ChatArea
+                teams={teams}
+                isTeamsLoading={isTeamsLoading}
+                loadError={teams.length === 0 ? loadError : null}
+                rawTeamsEmpty={teams.length === 0}
+                showRepositorySelector={false}
+                taskType="task"
+                onRefreshTeams={handleRefreshTeams}
+                onShareButtonRender={handleShareButtonRender}
+                disabledReason={
+                  !selectedDevice || selectedDevice.status === 'offline'
+                    ? t('device_offline_cannot_send')
+                    : undefined
+                }
+                hideSelectors={isOpenClaw}
+              />
+            </div>
+            {sidecar.panel}
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">
             <div className="text-center max-w-md px-6">

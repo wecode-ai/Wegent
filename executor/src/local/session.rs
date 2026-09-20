@@ -657,10 +657,6 @@ impl LocalSessionHandler {
             }
             _ => {}
         }
-        let path = match self.project_path(&request.path, request.create_if_missing) {
-            Ok(path) => path,
-            Err(error) => return SessionResult::error(error),
-        };
         if self.sessions.contains_key(&request.session_id) {
             if let Some(mut existing) = self.sessions.remove(&request.session_id) {
                 if let Some(mut terminal) = existing.terminal.take() {
@@ -669,6 +665,10 @@ impl LocalSessionHandler {
                 }
             }
         }
+        let path = match self.project_path(&request.path, request.create_if_missing) {
+            Ok(path) => path,
+            Err(error) => return SessionResult::error(error),
+        };
         match request.session_type {
             SessionType::CodeServer => self.start_code_server_session(request, path),
             SessionType::Terminal => self.start_terminal_session(request, path),

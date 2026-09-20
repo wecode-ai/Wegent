@@ -808,15 +808,11 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
     )
     monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
 
-    class FakeCloudDeviceProvider:
-        async def get_vm_status(self, sandbox_id):
-            assert sandbox_id == "sandbox-123"
-            return {"ip_address": "10.1.2.3"}
-
+    resolve_cloud_host = AsyncMock(return_value={"ip_address": "10.1.2.3"})
     monkeypatch.setattr(
         session_service,
-        "_get_cloud_device_provider",
-        lambda: FakeCloudDeviceProvider(),
+        "_cloud_session_host_resolver",
+        resolve_cloud_host,
     )
 
     result = await session_service.local_device_session_service.start_session(
@@ -830,6 +826,7 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
 
     assert result["url"] == "http://10.1.2.3:17888/s/session-123/?token=short"
     assert result["transport"] == "url"
+    resolve_cloud_host.assert_awaited_once_with("sandbox-123")
 
 
 @pytest.mark.asyncio
@@ -874,10 +871,11 @@ async def test_cloud_device_session_service_uses_runtime_transfer_host(
         lambda db, user_id, device_id: device_kind,
     )
     monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+    resolve_cloud_host = AsyncMock(side_effect=AssertionError("resolver not expected"))
     monkeypatch.setattr(
         session_service,
-        "_get_cloud_device_provider",
-        lambda: (_ for _ in ()).throw(ModuleNotFoundError("wecode")),
+        "_cloud_session_host_resolver",
+        resolve_cloud_host,
     )
 
     result = await session_service.local_device_session_service.start_session(
@@ -891,3 +889,4 @@ async def test_cloud_device_session_service_uses_runtime_transfer_host(
 
     assert result["url"] == "http://10.2.3.4:17888/s/session-123/?token=short"
     assert result["transport"] == "url"
+    resolve_cloud_host.assert_not_awaited()
