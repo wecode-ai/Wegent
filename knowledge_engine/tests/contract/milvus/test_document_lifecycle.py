@@ -499,12 +499,16 @@ def test_a_parent_id_shared_by_two_documents_is_not_expanded(
             ],
             user_id=CONTRACT_USER_ID,
         )
-    await_parent_visibility(
-        backend,
-        knowledge_id=knowledge_id,
-        parent_refs=[("9301", "shared-parent")],
-        user_id=CONTRACT_USER_ID,
-    )
+    # Each document-scoped reference is waited for on its own: one visible row
+    # answers the poll for both of them, which would leave the ambiguity this
+    # test asserts disproven by a row that has not landed yet.
+    for doc_ref in ("9301", "9302"):
+        await_parent_visibility(
+            backend,
+            knowledge_id=knowledge_id,
+            parent_refs=[(doc_ref, "shared-parent")],
+            user_id=CONTRACT_USER_ID,
+        )
 
     ambiguous = backend.get_parent_nodes(
         knowledge_id,

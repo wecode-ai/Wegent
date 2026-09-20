@@ -837,6 +837,41 @@ def test_a_collection_whose_row_layout_differs_is_refused():
     ), failure.value.details
 
 
+@pytest.mark.parametrize(
+    ("field_name", "property_name", "value"),
+    [
+        # The identity column carries the primary key rows are replaced by.
+        ("id", "is_primary", False),
+        # A shorter id column cannot hold the ids this schema writes into it.
+        ("id", "max_length", 64),
+        # The metadata column is written with a null value it must accept.
+        ("metadata", "nullable", False),
+    ],
+)
+def test_a_collection_whose_column_declares_another_property_is_refused(
+    field_name: str, property_name: str, value: Any
+) -> None:
+    """A named column is this schema's column only with the properties it writes."""
+    binding = _binding()
+    fields = recorded_fields(binding.dimension)
+    field = next(entry for entry in fields if entry["name"] == field_name)
+    # The server answers the length among the field's parameters, the flags at
+    # the field itself, so the difference is recorded where the server keeps it.
+    location = field["params"] if property_name == "max_length" else field
+    location[property_name] = value
+
+    client = _CollectionClient(exists=True, contract=binding, fields=fields)
+    store = MilvusDocumentStore(uri="http://milvus.test:19530")
+
+    with pytest.raises(IndexContractIncompatibleError) as failure:
+        _ensure(store, client, binding)
+
+    assert any(
+        f"field {field_name} has {property_name} {value}" in mismatch
+        for mismatch in failure.value.details["mismatches"]
+    ), failure.value.details
+
+
 def test_a_collection_without_the_bm25_function_is_refused():
     """Keyword retrieval is a function of the collection, not of a reader."""
     binding = _binding()

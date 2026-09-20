@@ -443,20 +443,44 @@ def collection_structure_mismatches(
 def _field_mismatches(
     described: CollectionDescription, schema: CollectionSchema
 ) -> List[str]:
-    """Compare the described columns with the schema this code writes."""
+    """Compare the described columns with the schema this code writes.
+
+    A column is this schema's column only when every property the schema
+    declares on it is the one the server reports. The dense dimension is left
+    to the contract comparison: a collection whose vector field reports
+    another dimension than its own contract is refused before this runs.
+    """
     expected = {field.name: field for field in schema.fields}
     actual = described.fields
     mismatches = _name_mismatches(expected, actual, kind="fields")
     for name in sorted(set(expected) & set(actual)):
-        expected_type = int(expected[name].dtype)
-        actual_type = int(actual[name].get("type", -1))
-        if expected_type != actual_type:
-            mismatches.append(
-                f"field {name} has type {actual_type}, expected {expected_type}"
-            )
+        mismatches += _field_property_mismatches(name, expected[name], actual[name])
     if bool(described.enable_dynamic_field) != bool(schema.enable_dynamic_field):
         mismatches.append("the collection accepts dynamic fields, this schema does not")
     return mismatches
+
+
+def _field_property_mismatches(
+    name: str, expected: FieldSchema, actual: Dict[str, Any]
+) -> List[str]:
+    """Report the properties of one column that differ from this schema.
+
+    Each property is read from where its own side keeps it: the schema declares
+    them on the field it writes, while ``describe_collection`` answers the type
+    at the field and the length among the field's parameters.
+    """
+    params = actual.get("params") or {}
+    declared = (
+        ("type", int(expected.dtype), int(actual.get("type", -1))),
+        ("is_primary", bool(expected.is_primary), bool(actual.get("is_primary"))),
+        ("nullable", bool(expected.nullable), bool(actual.get("nullable"))),
+        ("max_length", expected.max_length, params.get("max_length")),
+    )
+    return [
+        f"field {name} has {property_name} {actual_value}, expected {expected_value}"
+        for property_name, expected_value, actual_value in declared
+        if expected_value != actual_value
+    ]
 
 
 def _analyzer_mismatches(described: CollectionDescription) -> List[str]:

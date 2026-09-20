@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 import pytest
 from llama_index.core.vector_stores import (
     FilterCondition,
@@ -98,6 +100,10 @@ def test_iter_valid_conditions_skips_conditions_without_a_constraint() -> None:
         {"operator": "or"},
         {"operator": "OR"},
         {"operator": "xor"},
+        # Naming a combination this contract does not compile states the same
+        # thing with or without the conditions it would combine.
+        {"operator": "not", "conditions": [{"key": "a", "operator": "eq"}]},
+        {"operator": "xor", "conditions": [{"key": "a", "operator": "eq"}]},
         # Only an absent value and an empty mapping express no constraint.
         [],
         "",
@@ -116,7 +122,7 @@ def test_iter_valid_conditions_skips_conditions_without_a_constraint() -> None:
     ],
 )
 def test_validate_metadata_condition_rejects_a_malformed_shape(
-    metadata_condition,
+    metadata_condition: Any,
 ) -> None:
     """Every entry point rejects a shape it cannot honour, before filtering."""
     with pytest.raises(ValueError):
@@ -404,3 +410,21 @@ def test_filter_chunk_records_ignores_invalid_conditions_in_or_tree() -> None:
     )
 
     assert filtered == [{"content": "a", "metadata": {"lang": "zh"}}]
+
+
+def test_filter_chunk_records_treats_an_empty_condition_as_no_constraint() -> None:
+    """An empty mapping states nothing, so it filters nothing."""
+    chunks = [{"content": "a", "metadata": {"lang": "zh"}}]
+
+    assert filter_chunk_records(chunks, {}) == chunks
+
+
+@pytest.mark.parametrize("metadata_condition", [[], "", 0])
+def test_filter_chunk_records_rejects_a_condition_that_is_not_an_object(
+    metadata_condition: Any,
+) -> None:
+    """A value that states no filtering must not be served as one that does."""
+    chunks = [{"content": "a", "metadata": {"lang": "zh"}}]
+
+    with pytest.raises(ValueError):
+        filter_chunk_records(chunks, metadata_condition)

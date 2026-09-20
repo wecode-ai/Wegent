@@ -158,9 +158,14 @@ def filter_chunk_records(
     chunks: List[Dict[str, Any]],
     metadata_condition: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Filter normalized chunk records using the same metadata condition contract."""
+    """Filter normalized chunk records using the same metadata condition contract.
 
-    if not metadata_condition:
+    Only an absent condition is "no condition": an empty mapping states no
+    constraint either, so it is validated like every other value and a
+    malformed one is refused rather than answered with the unfiltered list.
+    """
+
+    if metadata_condition is None:
         return chunks
 
     validate_metadata_condition(metadata_condition)
@@ -334,8 +339,11 @@ def _validate_condition_shape(
     documents, and so the combination operator is normalized exactly once.
     """
     operator = _normalize_condition_operator(metadata_condition.get("operator"))
-    if operator == "not":
-        raise ValueError("metadata_condition operator 'not' is not supported.")
+    if operator not in {"and", "or"}:
+        raise ValueError(
+            f"metadata_condition operator '{operator}' is not supported; only "
+            "'and' and 'or' combine conditions."
+        )
 
     if "conditions" not in metadata_condition:
         if operator != "and":
