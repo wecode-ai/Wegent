@@ -7,8 +7,8 @@ live in `brz-http-gateway`.
 
 The route configuration selects the migrated public APIs. Requests without a
 matching method and path continue to the Python backend. The checked-in
-`config/routes.toml` ships with no active rules, so a default checkout forwards
-every request to Python.
+`config/routes.toml` activates only the APIs that have completed cutover, so
+every other request is forwarded to Python.
 
 ## Run
 
@@ -60,10 +60,11 @@ under the same prefix remain with Python.
 ## Observability foundation
 
 The Rust binary initializes `brz-logs`, writing its `info.log`, `warn.log`, and
-`error.log` files to the Backend `LOG_DIR` supplied by the repository launcher.
-The hybrid launcher defaults to `logs/backend` when that variable is absent;
-`BREEZE_LOG_DIR` can override it. `brz-metrics` is pinned to the
-process-global-registry release used by the registered Rust APIs.
+`error.log` files to a `rust` subdirectory of the Backend `LOG_DIR` supplied by
+the repository launcher. The hybrid launcher nests it under `logs/backend/rust`
+when the Backend `LOG_DIR` is absent; `BREEZE_LOG_DIR` can override it.
+`brz-metrics` is pinned to the process-global-registry release used by the
+registered Rust APIs.
 
 ## Library boundary
 

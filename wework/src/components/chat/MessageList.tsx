@@ -8,8 +8,11 @@ import {
   type DesktopConversationPresentationProp,
 } from './useDesktopConversationPresentation'
 export { AssistantMessage } from './AssistantMessage'
-export function MessageList(props: Omit<MessageListProps, DesktopConversationPresentationProp>) {
-  const presentation = useDesktopConversationPresentation()
+export function MessageList({
+  workspacePath,
+  ...props
+}: Omit<MessageListProps, DesktopConversationPresentationProp> & { workspacePath?: string }) {
+  const presentation = useDesktopConversationPresentation(props.messages, workspacePath)
   return (
     <DesktopToolServices>
       <SharedMessageList {...props} {...presentation} />

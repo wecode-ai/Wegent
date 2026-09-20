@@ -264,8 +264,7 @@ export function ProjectBoardAdapter({
         }
         getColumnEmptyState={column => ({
           hint: labels.noIssues,
-          ...(controller.state.groupBy === 'status' &&
-          (column.status === 'inbox' || column.status === 'pending')
+          ...(controller.state.groupBy === 'status' && column.status === 'inbox'
             ? {
                 action: {
                   ariaLabel: `在${column.label}中新建 Issue`,

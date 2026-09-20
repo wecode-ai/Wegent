@@ -58,6 +58,7 @@ export interface ComposerToolbarProps {
   onPause?: () => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
+  sendButtonLabel?: string
   leadingContext?: ReactNode
   sendKey?: 'enter' | 'cmd_enter'
   followUpBehavior?: ComposerFollowUpBehavior
@@ -102,6 +103,7 @@ export function ComposerToolbar({
   onPause,
   onSubmit,
   sendButtonTestId = 'send-message-button',
+  sendButtonLabel,
   leadingContext,
   sendKey = 'enter',
   followUpBehavior = 'queue',
@@ -297,7 +299,7 @@ export function ComposerToolbar({
           </div>
         ) : (
           <Tooltip
-            label={t('workbench.send_message', '发送消息')}
+            label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
             align="end"
             testId="composer-send-tooltip"
           >
@@ -307,9 +309,13 @@ export function ComposerToolbar({
               data-testid={sendButtonTestId}
               disabled={!canSend}
               onMouseDown={event => event.preventDefault()}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background disabled:cursor-not-allowed disabled:bg-text-muted/45"
-              aria-label={t('workbench.send_message', '发送消息')}
+              className={cn(
+                'flex h-8 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
+                sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-8 rounded-full p-0'
+              )}
+              aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
             >
+              {sendButtonLabel}
               <ArrowUp className="h-4 w-4" />
             </button>
           </Tooltip>

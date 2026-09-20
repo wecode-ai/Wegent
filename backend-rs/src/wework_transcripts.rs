@@ -8,7 +8,7 @@
 //! (router prefix `/wework-transcripts`, mounted under the app prefix
 //! `/api`): authenticate the bearer token, list the user's transcripts
 //! ordered by `updated_at` descending, and for each transcript load its
-//! archives ordered by `from_sequence`. The response follows the
+//! retained archives ordered by `to_sequence`. The response follows the
 //! `TranscriptListResponse` pydantic model with `by_alias=True` so fields
 //! render in camelCase.
 //! Column aliases (`wework_transcripts_<column>`,
@@ -150,10 +150,23 @@ const TRANSCRIPTS_QUERY_ACTIVE_ONLY: &str = "SELECT wework_transcripts.id AS wew
      WHERE wework_transcripts.user_id = ? AND wework_transcripts.state = 'active' \
      ORDER BY wework_transcripts.updated_at DESC";
 
+/// The `wework_transcript_archives` retained-floor query
+/// (`wework_transcript_service._retained_archive_floor`): the two newest
+/// snapshot `to_sequence` values (`from_sequence = 0`, ordered by
+/// `to_sequence` descending, limited to 2). The floor is the second value, or
+/// `0` when fewer than two snapshots exist. The projection mirrors the source
+/// SQLAlchemy labeled rendering.
+const ARCHIVES_FLOOR_QUERY: &str = "SELECT wework_transcript_archives.to_sequence AS wework_transcript_archives_to_sequence \
+     FROM wework_transcript_archives \
+     WHERE wework_transcript_archives.transcript_db_id = ? AND wework_transcript_archives.from_sequence = 0 \
+     ORDER BY wework_transcript_archives.to_sequence DESC \
+     LIMIT 2";
+
 /// The source `wework_transcript_archives` query
 /// (`wework_transcript_service.list_archives`): filter by
-/// `transcript_db_id`, ordered by `from_sequence`. The projection mirrors
-/// the source SQLAlchemy labeled rendering.
+/// `transcript_db_id` and `to_sequence >= retained_floor`, ordered by
+/// `to_sequence`. The projection mirrors the source SQLAlchemy labeled
+/// rendering.
 const ARCHIVES_QUERY: &str = "SELECT wework_transcript_archives.id AS wework_transcript_archives_id, \
      wework_transcript_archives.transcript_db_id AS wework_transcript_archives_transcript_db_id, \
      wework_transcript_archives.from_sequence AS wework_transcript_archives_from_sequence, \
@@ -164,8 +177,8 @@ const ARCHIVES_QUERY: &str = "SELECT wework_transcript_archives.id AS wework_tra
      wework_transcript_archives.format AS wework_transcript_archives_format, \
      wework_transcript_archives.created_at AS wework_transcript_archives_created_at \
      FROM wework_transcript_archives \
-     WHERE wework_transcript_archives.transcript_db_id = ? \
-     ORDER BY wework_transcript_archives.from_sequence";
+     WHERE wework_transcript_archives.transcript_db_id = ? AND wework_transcript_archives.to_sequence >= ? \
+     ORDER BY wework_transcript_archives.to_sequence";
 
 /// Pydantic v2 naive-datetime serialization: `YYYY-MM-DDTHH:MM:SS` plus
 /// fractional seconds (microseconds) when nonzero. The source `TranscriptResponse`
@@ -295,18 +308,45 @@ async fn transcripts_list(
 
     let mut items: Vec<TranscriptResponse> = Vec::with_capacity(transcripts.len());
     for row in &transcripts {
-        let archives: Vec<ArchiveRow> = state
-            .mysql
-            .fetch_all(ARCHIVES_QUERY, (row.id,))
-            .await
-            .unwrap_or_else(|error| {
+        let floor: i64 = match retained_archive_floor(&state.mysql, row.id).await {
+            Ok(floor) => floor,
+            Err(error) => {
                 tracing::error!(%error, "wework_transcript_archives database dependency failure");
-                Vec::new()
-            });
+                return Err(internal_error());
+            }
+        };
+        let archives: Vec<ArchiveRow> = match state
+            .mysql
+            .fetch_all(ARCHIVES_QUERY, (row.id, floor))
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!(%error, "wework_transcript_archives database dependency failure");
+                return Err(internal_error());
+            }
+        };
         items.push(transcript_response(row, &archives));
     }
 
     Ok(TranscriptListResponse { items })
+}
+
+/// `wework_transcript_service._retained_archive_floor`: the two newest
+/// snapshot `to_sequence` values for the transcript; the floor is the second
+/// value, or `0` when fewer than two snapshots exist. A database failure here
+/// surfaces as the source global exception handler's 500 response.
+async fn retained_archive_floor<M: brz_mysql::Mysql>(
+    mysql: &M,
+    transcript_db_id: i64,
+) -> brz_mysql::MysqlResult<i64> {
+    let snapshots: Vec<(i64,)> = mysql
+        .fetch_all(ARCHIVES_FLOOR_QUERY, (transcript_db_id,))
+        .await?;
+    Ok(snapshots
+        .get(1)
+        .map(|(to_sequence,)| *to_sequence)
+        .unwrap_or(0))
 }
 
 /// Source `python_exception_handler` 500 response shape.
@@ -436,5 +476,24 @@ mod tests {
     #[test]
     fn default_include_archived_is_true() {
         assert!(default_include_archived());
+    }
+
+    #[test]
+    fn archives_query_filters_by_retained_floor_and_orders_by_to_sequence() {
+        let expected_tail = "WHERE wework_transcript_archives.transcript_db_id = ? \
+             AND wework_transcript_archives.to_sequence >= ? \
+             ORDER BY wework_transcript_archives.to_sequence";
+        assert!(ARCHIVES_QUERY.trim().ends_with(expected_tail.trim()));
+    }
+
+    #[test]
+    fn archives_floor_query_selects_two_newest_snapshots_descending() {
+        let expected = "SELECT wework_transcript_archives.to_sequence AS wework_transcript_archives_to_sequence \
+             FROM wework_transcript_archives \
+             WHERE wework_transcript_archives.transcript_db_id = ? \
+             AND wework_transcript_archives.from_sequence = 0 \
+             ORDER BY wework_transcript_archives.to_sequence DESC \
+             LIMIT 2";
+        assert_eq!(ARCHIVES_FLOOR_QUERY, expected);
     }
 }

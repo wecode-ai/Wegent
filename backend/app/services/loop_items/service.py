@@ -91,6 +91,7 @@ from app.services.loop_items.assignment_notification import (
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
+from shared.telemetry.decorators import trace_sync
 
 TASK_AI_STATE_KEY = "ai_state"
 ASSIGNMENT_HISTORY_KEY = "assignment_history"
@@ -221,6 +222,13 @@ class LoopItemService:
             team = db.get(Kind, item.assignee_team_id)
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        group = metadata.get("collaboration_group")
+        values["assignee_group_id"] = (
+            group.get("id") if isinstance(group, dict) else None
+        )
+        values["assignee_group_name"] = (
+            group.get("name") if isinstance(group, dict) else None
+        )
         values["content_revision"] = content_revision(metadata)
         values["is_unread"] = is_unread(metadata, user_id)
         automation = metadata.get("automation")
@@ -1277,6 +1285,7 @@ class LoopItemService:
         self.get(db, attachment.loop_item_id, user_id)
         return attachment
 
+    @trace_sync("loop_items.update", tracer_name="backend")
     def update(
         self,
         db: Session,
@@ -1291,19 +1300,27 @@ class LoopItemService:
             "assignee_team_id",
         }
         assignee_changed = bool(assignee_fields & values.model_fields_set)
+        group_changed = "assignee_group_id" in values.model_fields_set
         self._require_item_access(
             db,
             item,
             user_id,
             action=(
-                IssueAction.ASSIGN if assignee_changed else IssueAction.EDIT_CONTENT
+                IssueAction.ASSIGN
+                if assignee_changed or group_changed
+                else IssueAction.EDIT_CONTENT
             ),
         )
         updates = values.model_dump(
-            exclude={"version", "automation_rule_id", "notify_assignee"},
+            exclude={
+                "version",
+                "automation_rule_id",
+                "notify_assignee",
+                "assignee_group_id",
+            },
             exclude_unset=True,
         )
-        meaningful_change = any(
+        meaningful_change = group_changed or any(
             field in values.model_fields_set
             and (
                 field in {"tags", "workflow"}
@@ -1376,6 +1393,42 @@ class LoopItemService:
                 updates.pop("execution_config", None)
             updates["metadata_json"] = metadata
         cancelled_runs: list = []
+        if group_changed:
+            from app.services.workspaces import workspace_service
+
+            group = None
+            if values.assignee_group_id:
+                group = next(
+                    (
+                        entry
+                        for entry in workspace_service.list_project_collaboration_groups(
+                            db, int(str(item.cloud_project_id)), user_id
+                        )
+                        if str(entry["id"]) == values.assignee_group_id
+                    ),
+                    None,
+                )
+                if group is None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Team is not in this project",
+                    )
+            metadata = dict(updates.get("metadata_json") or item.metadata_json or {})
+            metadata["collaboration_group"] = (
+                {"id": str(group["id"]), "name": group["name"]} if group else None
+            )
+            self._write_assignment_change(
+                metadata,
+                user_id,
+                "group" if group else None,
+                str(group["id"]) if group else None,
+                group["name"] if group else None,
+            )
+            updates["metadata_json"] = metadata
+            if group:
+                updates.update(
+                    assignee_user_id=None, assignee_agent_id="", assignee_team_id=None
+                )
         if assignee_changed:
             # Legacy assignment path: record the chain and derive the queue
             # state on the task itself so every queue view stays a projection
@@ -1383,6 +1436,7 @@ class LoopItemService:
             metadata = dict(item.metadata_json or {})
             if isinstance(updates.get("metadata_json"), dict):
                 metadata = dict(updates["metadata_json"])
+            metadata.pop("collaboration_group", None)
             if updates.get("assignee_team_id"):
                 target_type = "team"
                 target_id = str(updates["assignee_team_id"])

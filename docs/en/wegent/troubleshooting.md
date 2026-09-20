@@ -473,6 +473,30 @@ curl http://localhost:8000/api/tasks/<task-id>
 
 ### Issue 8: Task Execution Fails
 
+To inspect Claude Code or Codex streaming output, set
+`WEGENT_DEBUG_CLAUDE_STDOUT=1` in the Executor process environment. Both executors
+share this switch. It is disabled by default; `0`, `false`, `no`, and `off` disable it.
+
+For containers created by Executor Manager, set the variable in the Manager's
+startup environment and restart the Manager. It forwards the switch to newly
+created containers. The executor image must include this feature.
+
+Inside the container, output is appended to these task-specific JSONL files, with
+a `received_at` timestamp on each record:
+
+- Claude Code: `/tmp/wegent-claude-stdout-<task_id>-<subtask_id>.jsonl`
+- Codex: `/tmp/wegent-codex-stdout-<task_id>-<subtask_id>.jsonl`
+
+Codex records incoming JSON-RPC responses and notifications, including summaries,
+messages, tool events, and completion events, with credential fields redacted.
+The Wework shared Codex process uses `wegent-codex-stdout-<pid>.jsonl`; use event
+`threadId` fields to distinguish sessions. Local execution uses the system
+temporary directory. Executor logs report the actual path as `debug_stdout_path`.
+
+```bash
+docker exec <executor-container-id> tail -f /tmp/wegent-codex-stdout-<task_id>-<subtask_id>.jsonl
+```
+
 **Common Failure Reasons**:
 
 | Error Type | Possible Cause | Solution |

@@ -10,11 +10,13 @@ import type { ComposerCatalogStore, ComposerCatalogEvents } from './useComposerC
 import type { ComposerMentionCandidate } from './composerMentionCandidates'
 import type { WorkspaceMentionSearchApi, WorkspaceMentionTarget } from './workspaceMentionTypes'
 import type { SlashCommand } from './composerAutocomplete'
+import type { ComposerPathTransfer } from './useComposerTransfers'
 
 export type ComposerCatalogCommand = SlashCommand<LocalDeviceApp, LocalDeviceSkill>
 export interface ComposerExternalMentionCandidate {
+  reference?: string
   id: string
-  type: 'agent' | 'user'
+  type: 'agent' | 'user' | 'group' | 'issue'
   title: string
   metaLabel: string
   searchAliases?: string[]
@@ -61,6 +63,7 @@ export interface ComposerAutocompleteInputProps<
   >[]
   cloudSpaceEnabled?: boolean
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  mentionScope?: 'all' | 'external'
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: Project) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
@@ -86,7 +89,7 @@ export interface ComposerAutocompleteInputProps<
   onOpenMarketplace?: () => void
   renderAppIcon?: (command: ComposerCatalogCommand) => ReactNode
   onOpenMentionPlugin?: (reference: PluginReference) => void
-  onPickWorkspacePaths?: (path?: string) => Promise<Array<{ path: string; isDirectory: boolean }>>
+  onPickWorkspacePaths?: (path?: string) => Promise<ComposerPathTransfer>
   contributedMentionCandidates?: ComposerMentionCandidate<Project, Conversation>[]
   contributedSlashCommands?: ComposerCatalogCommand[]
   onMentionQueryChange?: (query: string) => void

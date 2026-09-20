@@ -39,6 +39,14 @@ class ExecutorReference:
     deleted_at: bool
 
 
+@dataclass(frozen=True)
+class RecentTaskTeamRef:
+    """Raw JSON values; validation belongs to the team service."""
+
+    task_type: Any
+    team_ref: Any
+
+
 class TaskIdAllocationError(RuntimeError):
     """Raised when a task ID reservation cannot be allocated."""
 
@@ -294,6 +302,14 @@ class TaskStore(Protocol):
         limit: int,
         client_origin: Optional[str] = None,
     ) -> list[TaskResource]: ...
+
+    def list_recent_task_team_refs(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+    ) -> list[RecentTaskTeamRef]: ...
 
     def list_recent_owner_only_used_tasks(
         self,
@@ -746,6 +762,17 @@ class SubtaskStore(Protocol):
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
 
+    def get_user_by_task_source_message(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        channel_type: str,
+        channel_id: int,
+        message_id: str,
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]: ...
+
     def get_first_user_before_message_id(
         self,
         db: Session,
@@ -1050,6 +1077,18 @@ class TaskAccessStore(Protocol):
 
     def is_member(self, db: Session, *, task_id: int, user_id: int) -> bool: ...
 
+    def get_runtime_state(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Optional["TaskRuntimeState"]: ...
+
     def is_group_chat(self, db: Session, *, task_id: int) -> bool: ...
 
     def list_member_task_ids(self, db: Session, *, user_id: int) -> set[int]: ...
+
+
+@dataclass(frozen=True)
+class TaskRuntimeState:
+    """Authorized runtime state without task content or related resources."""
+
+    status: str
+    updated_at: datetime | str | None

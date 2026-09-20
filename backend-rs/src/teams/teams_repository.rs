@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! MySQL data access for `GET /api/teams`, mirroring
-//! `team_kinds_service.get_user_teams` / `count_user_teams` and the
+//! `team_kinds_service.get_user_teams` / `get_user_teams_page` and the
 //! group-membership resolution they share (`group_permission`,
 //! `group_member_helper`, entity resolvers).
 //!
@@ -57,7 +57,8 @@ pub const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
 /// Re-export of the team-union query functions for the teams modules'
 /// existing `repo::` call sites.
 pub use super::team_union::{
-    accessible_teams, count_user_teams, kinds_by_refs, public_kinds_by_names, users_by_ids,
+    AccessibleTeamsQuery, TeamListFilter, accessible_teams, kinds_by_refs, public_kinds_by_names,
+    team_count, users_by_ids,
 };
 
 /// `namespace` column list rendered by `db.query(Namespace)`.
@@ -81,6 +82,11 @@ pub const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_use
 /// (`_build_accessible_teams_query`). The outer SQLAlchemy query aliases every
 /// column `anon_1_<name>`; the replay engine matches and delivers those
 /// recorded aliases, so each field decodes by its recorded alias.
+///
+/// Decoding is field-driven, so the union's `restricted_guest_access` column
+/// stays projected for statement identity without a field here: the source
+/// only consumes it for `team_usage_summary`, whose effect is not observable
+/// in the recorded traffic.
 #[derive(Debug, FromMysqlRow)]
 pub struct TeamRow {
     #[mysql(rename = "anon_1_team_id")]
@@ -171,6 +177,33 @@ pub struct UserSummaryRow {
 /// Expand `?, ?, ...` with `count` placeholders.
 pub fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
+}
+
+/// One bound SQL argument that preserves the recorded literal's token kind.
+///
+/// The replay matcher compares bound values by type as well as by value, so an
+/// integer column (`kinds.user_id`, `resource_members.resource_id`) must bind as
+/// `Int` and everything the source renders as a quoted string (entity ids,
+/// namespaces, database names) as `Str`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingArg {
+    Int(i64),
+    Str(String),
+}
+
+impl brz_mysql::MysqlValue for BindingArg {
+    fn write(self, writer: &mut brz_mysql::MysqlValueWriter) -> MysqlResult<()> {
+        match self {
+            Self::Int(value) => value.write(writer),
+            Self::Str(value) => value.write(writer),
+        }
+    }
+    fn encoded_size_hint(&self) -> usize {
+        match self {
+            Self::Int(value) => value.encoded_size_hint(),
+            Self::Str(value) => value.encoded_size_hint(),
+        }
+    }
 }
 
 /// Validate a pagination literal (`page >= 1`, `limit` in `1..=100`).
@@ -421,6 +454,10 @@ where
 
 /// External entity members of the given namespaces
 /// (`iter_user_groups_with_roles` step 2).
+///
+/// `resource_members.resource_id` is an integer column: the source builds the
+/// IN list from the resolver's integer resource ids, so the target binds them
+/// as integers and only `entity_type` as a string.
 pub async fn external_members_for_namespaces<M>(
     mysql: &M,
     entity_type: &str,
@@ -441,9 +478,20 @@ where
          AND resource_members.status = 'approved'",
         placeholders(namespace_ids.len()),
     );
-    let mut args: Vec<String> = namespace_ids.iter().map(ToString::to_string).collect();
-    args.push(entity_type.to_owned());
-    mysql.fetch_all(sql.as_str(), args).await
+    mysql
+        .fetch_all(
+            sql.as_str(),
+            external_member_args(entity_type, namespace_ids),
+        )
+        .await
+}
+
+/// The external-members query's bound values: the integer namespace ids in the
+/// caller's order, then the string entity type.
+fn external_member_args(entity_type: &str, namespace_ids: &[i64]) -> Vec<BindingArg> {
+    let mut args: Vec<BindingArg> = namespace_ids.iter().copied().map(BindingArg::Int).collect();
+    args.push(BindingArg::Str(entity_type.to_owned()));
+    args
 }
 
 /// Namespace ids by names, active only
@@ -478,6 +526,27 @@ mod tests {
     fn placeholders_render() {
         assert_eq!(placeholders(1), "?");
         assert_eq!(placeholders(3), "?, ?, ?");
+    }
+
+    #[test]
+    fn namespace_member_ids_bind_as_integers() {
+        // The recorded statement renders `resource_members.resource_id IN (245)`
+        // as an integer literal, so the target must not bind a string.
+        assert_eq!(
+            external_member_args("org_department", &[245]),
+            vec![
+                BindingArg::Int(245),
+                BindingArg::Str("org_department".to_string()),
+            ]
+        );
+        assert_eq!(
+            external_member_args("org_department", &[703, 660]),
+            vec![
+                BindingArg::Int(703),
+                BindingArg::Int(660),
+                BindingArg::Str("org_department".to_string()),
+            ]
+        );
     }
 
     #[test]

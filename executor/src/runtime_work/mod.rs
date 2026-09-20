@@ -8,6 +8,7 @@ mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
 mod codex_transcript_page;
+mod collaboration_projects;
 mod connectors;
 mod events;
 pub mod fork_transfer;
@@ -26,6 +27,8 @@ mod transcript_page;
 mod util;
 mod worktrees;
 
+pub(crate) use collaboration_projects::sync_local_collaboration_projects;
+pub(crate) use events::CodexNotificationEventMapper;
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;

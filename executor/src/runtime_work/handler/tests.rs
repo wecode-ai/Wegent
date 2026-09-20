@@ -119,14 +119,11 @@ fn running_task_count_uses_process_local_execution_state() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let (first_cancel, _first_cancel_rx) = oneshot::channel();
     let (_first_stopped, first_stopped_rx) = oneshot::channel();
-    let first_execution = handler
-        .start_local_task_execution("task-1".to_owned(), None, first_cancel, first_stopped_rx)
-        .expect("first local execution should start");
+    let first_execution =
+        handler.start_local_task_execution("task-1".to_owned(), first_cancel, first_stopped_rx);
     let (second_cancel, _second_cancel_rx) = oneshot::channel();
     let (_second_stopped, second_stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-2".to_owned(), None, second_cancel, second_stopped_rx)
-        .expect("second local execution should start");
+    handler.start_local_task_execution("task-2".to_owned(), second_cancel, second_stopped_rx);
 
     assert_eq!(handler.running_task_count()["runningCount"], 2);
     assert!(handler.finish_local_task_execution("task-1", first_execution));
@@ -366,9 +363,7 @@ async fn archive_waits_for_runtime_stopped_ack_before_marking_task_archived() {
     ));
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     let archive = {
         let handler = handler.clone();
@@ -434,9 +429,8 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
     handler.upsert_local_task(link);
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    let execution_id =
+        handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     assert!(
         !handler
@@ -454,16 +448,6 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
         handler.finish_local_task_execution("task-1", execution_id),
         "a terminal runtime result must settle the execution when stop acknowledgement is lost"
     );
-    let active_state = serde_json::from_slice::<Value>(
-        &fs::read(root.join("runtime-work/worktrees.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        active_state["records"][normalize_workspace_path(&worktree.path)]["executionLease"],
-        Value::Null,
-        "terminal completion must clear durable execution evidence"
-    );
-
     let retry = {
         let handler = handler.clone();
         tokio::spawn(async move {
@@ -485,20 +469,10 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
     assert_eq!(response["accepted"], true);
     assert_eq!(handler.store.get_task("task-1").unwrap().status, "archived");
     assert!(!handler.is_active_local_task("task-1"));
-    let archived_worktree = handler
+    handler
         .worktrees
         .delete(Path::new(&worktree.path), true)
         .expect("snapshot-preserving cleanup should succeed");
-    assert!(archived_worktree.execution_lease.is_none());
-    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-    assert!(
-        restarted
-            .reconcile()
-            .expect("restart reconciliation should succeed")
-            .iter()
-            .all(|outcome| !outcome.interrupted_execution),
-        "a stopped and archived task must not retain interrupted execution evidence"
-    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -507,9 +481,7 @@ async fn closed_stopped_channel_does_not_count_as_a_stop_acknowledgement() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
     drop(stopped_tx);
 
     assert!(
@@ -538,9 +510,7 @@ async fn cancel_timeout_force_settles_task_and_returns_success() {
     ));
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     let response = handler
         .cancel_task_with_timeout(
@@ -610,14 +580,8 @@ async fn runtime_terminal_cancellation_settles_execution_after_stop_request_time
     ));
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution(
-            "task-1".to_owned(),
-            Some(&worktree.path),
-            cancel_tx,
-            stopped_rx,
-        )
-        .expect("local execution should start");
+    let execution_id =
+        handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
     let _stopped_sender = stopped_tx;
 
     assert!(
@@ -645,15 +609,6 @@ async fn runtime_terminal_cancellation_settles_execution_after_stop_request_time
     assert_eq!(task.status, "cancelled");
     assert!(!task.running);
     assert!(task.completed_at.is_some());
-    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-    assert!(
-        restarted
-            .reconcile()
-            .expect("restart reconciliation should succeed")
-            .iter()
-            .all(|outcome| !outcome.interrupted_execution),
-        "the runtime terminal result must clear durable execution evidence"
-    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -947,200 +902,7 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 }
 
 #[tokio::test]
-async fn restart_reconciliation_fails_only_explicitly_interrupted_execution() {
-    let root = temp_runtime_work_index_path("restart-active-execution").with_extension("directory");
-    let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let index_path = root.join("runtime-work/index.json");
-    let state_path = root.join("runtime-work/worktrees.json");
-    initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(state_path.clone());
-    handler
-        .worktrees
-        .update_settings(WorktreeSettingsPatch {
-            worktree_root: Some(managed_root.display().to_string()),
-            ..WorktreeSettingsPatch::default()
-        })
-        .unwrap();
-    let record = handler
-        .worktrees
-        .prepare(&source, "task-source", None, false)
-        .unwrap();
-    let mut source_link = RuntimeTaskLink::new_pending(
-        "task-source".to_owned(),
-        record.path.clone(),
-        "Source Worktree".to_owned(),
-    );
-    source_link.updated_at = 1_780_000_000_000;
-    handler.upsert_local_task(source_link);
-    let mut fork_link = RuntimeTaskLink::new_pending(
-        "task-fork".to_owned(),
-        record.path.clone(),
-        "Forked Worktree".to_owned(),
-    );
-    fork_link.updated_at = 1_780_000_000_000;
-    handler.upsert_local_task(fork_link);
-    handler
-        .worktrees
-        .begin_execution(Path::new(&record.path), "task-fork", 7)
-        .expect("a forked task should be able to execute in its source worktree");
-    assert!(
-        handler
-            .worktrees
-            .begin_execution(Path::new(&record.path), "task-source", 8)
-            .unwrap_err()
-            .contains("already executing task task-fork"),
-        "a second task must not execute concurrently in the shared worktree"
-    );
-
-    handler.store = RuntimeWorkStore::new(index_path);
-    handler.worktrees = WorktreeManager::new(state_path.clone());
-    assert!(handler.reconcile_worktrees_once().await);
-
-    let task = handler
-        .store
-        .get_task("task-fork")
-        .expect("interrupted fork task should remain diagnosable");
-    assert_eq!(task.status, "failed");
-    assert!(!task.running);
-    assert!(task.runtime_handle["lastError"]
-        .as_str()
-        .unwrap()
-        .contains("was executing"));
-    assert_eq!(
-        handler.store.get_task("task-source").unwrap().status,
-        "active",
-        "restart reconciliation must not fail the worktree creator when its fork was executing"
-    );
-    let state = serde_json::from_slice::<Value>(&fs::read(state_path).unwrap()).unwrap();
-    assert_eq!(
-        state["records"][normalize_workspace_path(&record.path)]["executionLease"],
-        Value::Null
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn active_execution_evidence_survives_listing_and_clears_on_finish() {
-    let root = temp_runtime_work_index_path("active-execution-lease").with_extension("directory");
-    let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let state_path = root.join("runtime-work/worktrees.json");
-    initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(state_path.clone());
-    handler
-        .worktrees
-        .update_settings(WorktreeSettingsPatch {
-            worktree_root: Some(managed_root.display().to_string()),
-            ..WorktreeSettingsPatch::default()
-        })
-        .unwrap();
-    let record = handler
-        .worktrees
-        .prepare(&source, "task-executing", None, false)
-        .unwrap();
-    let (cancel, _cancelled) = oneshot::channel();
-    let (_stopped, stopped) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution(
-            "task-executing".to_owned(),
-            Some(&record.path),
-            cancel,
-            stopped,
-        )
-        .expect("execution should start");
-
-    let reconciled = handler
-        .worktrees
-        .reconcile()
-        .expect("listing should succeed");
-    assert!(
-        reconciled.is_empty(),
-        "startup reconciliation must not consume this process's live lease"
-    );
-    let active_state = serde_json::from_slice::<Value>(&fs::read(&state_path).unwrap()).unwrap();
-    assert_eq!(
-        active_state["records"][normalize_workspace_path(&record.path)]["executionLease"]
-            ["executionId"],
-        execution_id
-    );
-
-    assert!(handler.finish_local_task_execution("task-executing", execution_id));
-    let finished_state = serde_json::from_slice::<Value>(&fs::read(state_path).unwrap()).unwrap();
-    assert_eq!(
-        finished_state["records"][normalize_workspace_path(&record.path)]["executionLease"],
-        Value::Null
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn execution_finish_is_idempotent_after_reconciliation_clears_lease() {
-    let root = temp_runtime_work_index_path("active-execution-idempotent-finish")
-        .with_extension("directory");
-    let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let state_path = root.join("runtime-work/worktrees.json");
-    initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(state_path);
-    handler
-        .worktrees
-        .update_settings(WorktreeSettingsPatch {
-            worktree_root: Some(managed_root.display().to_string()),
-            ..WorktreeSettingsPatch::default()
-        })
-        .unwrap();
-    let record = handler
-        .worktrees
-        .prepare(&source, "task-executing", None, false)
-        .unwrap();
-    handler.upsert_local_task(RuntimeTaskLink::new_pending(
-        "task-executing".to_owned(),
-        record.path.clone(),
-        "Task".to_owned(),
-    ));
-    let (cancel, _cancelled) = oneshot::channel();
-    let (_stopped, stopped) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution(
-            "task-executing".to_owned(),
-            Some(&record.path),
-            cancel,
-            stopped,
-        )
-        .expect("execution should start");
-
-    assert!(handler
-        .worktrees
-        .finish_execution(Path::new(&record.path), "task-executing", execution_id)
-        .expect("simulated reconciliation should clear the lease"));
-    assert!(
-        handler.finish_local_task(
-            "task-executing",
-            execution_id,
-            Some("thread-1".to_owned()),
-            "done",
-        ),
-        "terminal completion should treat an already-cleared lease as settled"
-    );
-
-    let task = handler
-        .local_task_link("task-executing")
-        .expect("task should remain stored");
-    assert_eq!(task.status, "done");
-    assert!(!task.running);
-    assert!(!handler.is_active_local_task("task-executing"));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn restart_reconciliation_leaves_history_without_execution_evidence_unchanged() {
+async fn restart_reconciliation_leaves_active_history_unchanged() {
     let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
     let source = root.join("source");
     let managed_root = root.join("workspace/worktrees");
@@ -1299,9 +1061,7 @@ async fn failed_worktree_reconciliation_remains_retryable() {
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();
-    handler
-        .start_local_task_execution(local_task_id.to_owned(), None, cancel, stopped)
-        .expect("test execution should start")
+    handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
 }
 
 fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
@@ -3472,6 +3232,54 @@ fn cached_user_message_preserves_attachment_only_messages() {
 }
 
 #[test]
+fn user_message_presentation_matches_shared_reference_fixtures() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for fixture in fixtures {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "shared-reference",
+            "message": fixture["reference"],
+        }))
+        .unwrap();
+        let expected = match fixture["kind"].as_str() {
+            Some("skill") => json!([{
+                "token": format!("${}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            Some("plugin") => json!([{
+                "token": format!("@{}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            _ => json!([]),
+        };
+        assert_eq!(presentation["content"], fixture["reference"]);
+        assert_eq!(presentation["references"], expected, "{fixture}");
+    }
+}
+
+#[test]
+fn user_message_presentation_preserves_home_relative_skill_references() {
+    let content = "Use [$test-skill](~/.agents/skills/test-skill/SKILL.md)";
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "home-relative-skill",
+        "message": content,
+    }))
+    .expect("home-relative skills should produce presentation metadata");
+
+    assert_eq!(presentation["content"], content);
+    assert_eq!(
+        presentation["references"],
+        json!([{
+            "token": "$test-skill",
+            "href": "~/.agents/skills/test-skill/SKILL.md",
+        }])
+    );
+}
+
+#[test]
 fn user_message_presentation_preserves_visible_content_and_references() {
     let presentation = user_message_presentation(&json!({
         "clientUserMessageId": "runtime-local-pane-1",
@@ -4155,6 +3963,7 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
             after_cursor: None,
         },
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
     });
@@ -4164,6 +3973,53 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
     assert_eq!(response["turnNavigation"].as_array().unwrap().len(), 2);
     assert_eq!(response["turnNavigation"][0]["promptPreview"], "old prompt");
     assert_eq!(response["turnNavigation"][1]["promptPreview"], "new prompt");
+}
+
+#[test]
+fn conversation_context_transcript_omits_process_payloads() {
+    let messages = vec![
+        json!({
+            "id": "user-1",
+            "turnId": "turn-1",
+            "role": "user",
+            "content": "Investigate",
+            "attachments": [{"localPath": "/tmp/secret"}],
+        }),
+        json!({
+            "id": "assistant-1",
+            "turnId": "turn-1",
+            "role": "assistant",
+            "content": "Fixed",
+            "status": "done",
+            "blocks": [{"type": "tool", "toolOutput": "x".repeat(1_000_000)}],
+            "runtimeItems": [{"type": "command_execution", "output": "large"}],
+        }),
+    ];
+
+    let response = transcript_response(TranscriptResponseInput {
+        local_task_id: "task-1".to_owned(),
+        workspace_path: "/tmp/project".to_owned(),
+        runtime: "codex".to_owned(),
+        messages,
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: true,
+        conversation_context_only: true,
+        turn_item_source: TranscriptTurnItemSource::CodexItems,
+        turn_navigation: Vec::new(),
+    });
+
+    assert_eq!(response["messages"][0]["content"], "Investigate");
+    assert!(response["messages"][0].get("attachments").is_none());
+    assert_eq!(response["messages"][1]["content"], "Fixed");
+    assert!(response["messages"][1].get("blocks").is_none());
+    assert!(response["messages"][1].get("runtimeItems").is_none());
+    assert_eq!(response["turns"][0]["items"][1]["type"], "assistant_text");
+    assert_eq!(response["turns"][0]["items"][1]["content"], "Fixed");
 }
 
 #[test]
@@ -5128,6 +4984,11 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 #[tokio::test]
 async fn cached_task_list_uses_the_existing_runtime_work_store() {
     let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    let project_index = CodexGlobalProjectIndex::from_test_payload(
+        json!({ "electron-saved-workspace-roots": ["/tmp/cached-project"] })
+            .as_object()
+            .unwrap(),
+    );
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "local-task-1".to_owned(),
         runtime: "claude".to_owned(),
@@ -5138,7 +4999,11 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     });
 
     let response = handler
-        .list_tasks(&json!({ "preferCached": true }))
+        .list_tasks_with_project_index(
+            &json!({ "preferCached": true }),
+            &project_index,
+            Instant::now(),
+        )
         .await
         .expect("cached task list should be available");
     let tasks = response["workspaces"]

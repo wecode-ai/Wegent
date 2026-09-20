@@ -9,6 +9,8 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST'
 const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST_COMPLETE'
+const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
+const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
 const LONG_HISTORY_ITEM_COUNT = 1_200
@@ -120,6 +122,17 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('Timed out waiting for the long running transcript to hydrate')
+}
+
+async function waitForTranscriptState(control, predicate, description, timeoutMs) {
+  const startedAt = Date.now()
+  let latest = null
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (predicate(latest)) return latest
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
 }
 
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
@@ -236,6 +249,17 @@ export function createDesktopScenario({
         return true
       }
 
+      if (body.includes(SWITCH_PROMPT)) {
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(responseId, SWITCH_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
       response.end(sse([responseCreated(responseId), responseCompleted(responseId)]))
       return true
     },
@@ -259,11 +283,54 @@ export function createDesktopScenario({
       const taskRowTestId = await waitForNewTaskRow(control, knownRows, uiTimeoutMs)
       const taskId = taskRowTestId.replace('runtime-local-task-row-', '')
       const taskRow = `[data-testid="${taskRowTestId}"]`
-      const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
-      const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+      const rowsAfterFirstTask = new Set(knownRows).add(taskRowTestId)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('fill', COMPOSER_SELECTOR, { value: SWITCH_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SWITCH_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      const switchTaskRowTestId = await waitForNewTaskRow(control, rowsAfterFirstTask, uiTimeoutMs)
+      const switchTaskId = switchTaskRowTestId.replace('runtime-local-task-row-', '')
+      const switchTaskRow = `[data-testid="${switchTaskRowTestId}"]`
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The task-switch fixture did not settle before the transcript race',
+        uiTimeoutMs
+      )
+
+      await control.command('click', taskRow)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+          snapshot.pane?.transcript?.loading === true,
+        'The source transcript request did not remain in flight',
+        uiTimeoutMs
+      )
+      await control.command('click', switchTaskRow)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'Returning to the cached task retained another task transcript loading state',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SWITCH_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
+      const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+
       await control.command('doubleClick', taskRow)
       await control.command('waitFor', renameInput, {
         visible: true,

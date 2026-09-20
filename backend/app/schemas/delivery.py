@@ -63,6 +63,7 @@ class LoopItemUpdate(BaseModel):
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
@@ -83,6 +84,7 @@ class LoopItemUpdate(BaseModel):
             value
             for field, value in (
                 ("assignee_user_id", self.assignee_user_id),
+                ("assignee_group_id", self.assignee_group_id),
                 ("assignee_agent_id", self.assignee_agent_id),
                 ("assignee_team_id", self.assignee_team_id),
             )
@@ -119,6 +121,8 @@ class LoopItemResponse(BaseModel):
     description: str
     status: str
     assignee_user_id: int | None
+    assignee_group_id: str | None = None
+    assignee_group_name: str | None = None
     assignee_name: str | None = None
     assignee_agent_id: str | None = None
     assignee_agent_name: str | None = None

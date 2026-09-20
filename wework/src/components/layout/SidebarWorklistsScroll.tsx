@@ -1,6 +1,7 @@
 import * as ScrollArea from '@radix-ui/react-scroll-area'
 import type { ReactNode, RefObject, UIEventHandler } from 'react'
 import { cn } from '@/lib/utils'
+import { WorkbenchScrollbar } from './WorkbenchScrollbar'
 
 interface SidebarWorklistsScrollProps {
   children: ReactNode
@@ -37,16 +38,13 @@ export function SidebarWorklistsScroll({
       >
         {children}
       </ScrollArea.Viewport>
-      <ScrollArea.Scrollbar
+      <WorkbenchScrollbar
         orientation="vertical"
-        data-testid="sidebar-worklists-scrollbar"
-        className="sidebar-worklists-scrollbar z-10 flex w-2 touch-none select-none bg-transparent p-0.5"
-      >
-        <ScrollArea.Thumb
-          data-testid="sidebar-worklists-scrollbar-thumb"
-          className="sidebar-worklists-scrollbar-thumb relative flex-1 rounded-full"
-        />
-      </ScrollArea.Scrollbar>
+        testId="sidebar-worklists-scrollbar"
+        thumbTestId="sidebar-worklists-scrollbar-thumb"
+        className="sidebar-worklists-scrollbar -translate-x-[3px]"
+        thumbClassName="sidebar-worklists-scrollbar-thumb"
+      />
     </ScrollArea.Root>
   )
 }

@@ -17,6 +17,7 @@ use anyhow::{Context as _, Result};
 pub struct Config {
     /// Redis URL like `redis://:pass@host:port/0`.
     pub redis_url: String,
+    pub redis_slave_url: Option<String>,
     /// Active JWT signing key (source `SECRET_KEY`).
     pub jwt_key: String,
     /// JWT algorithm (source `ALGORITHM`, HS256 in deployment).
@@ -37,6 +38,7 @@ impl Config {
         };
         Ok(Self {
             redis_url: lookup("REDIS_URL").context("REDIS_URL is required")?,
+            redis_slave_url: lookup("REDIS_SLAVE_URL").filter(|value| !value.trim().is_empty()),
             jwt_key: lookup("SECRET_KEY").context("SECRET_KEY is required")?,
             jwt_algorithm: lookup("ALGORITHM").unwrap_or_else(|| "HS256".to_string()),
             jwt_legacy_keys: lookup("JWT_LEGACY_SECRET_KEYS").unwrap_or_default(),
@@ -54,13 +56,6 @@ impl Config {
             }
         }
         keys
-    }
-
-    /// Parse the deployment Redis URL into the `host:port:db` form and the
-    /// password expected by `brz-redis` endpoint configuration.
-    pub fn redis_endpoint(&self) -> Result<(String, Option<String>)> {
-        let (credentials, host_port_db) = parse_redis_url(&self.redis_url)?;
-        Ok((host_port_db, credentials))
     }
 }
 
@@ -83,65 +78,15 @@ fn read_env_file(path: &Path) -> HashMap<String, String> {
     values
 }
 
-/// Convert `redis://[:pass@]host:port/db` to `(pass, "host:port:db")`.
-fn parse_redis_url(url: &str) -> Result<(Option<String>, String)> {
-    let rest = url
-        .strip_prefix("redis://")
-        .or_else(|| url.strip_prefix("unix://"))
-        .context("unsupported Redis URL scheme in REDIS_URL")?;
-    let (authority, db) = match rest.split_once('/') {
-        Some((authority, path)) => {
-            let db = path.split('?').next().unwrap_or("").trim();
-            (
-                authority,
-                if db.is_empty() {
-                    "0".to_string()
-                } else {
-                    db.to_string()
-                },
-            )
-        }
-        None => (rest, "0".to_string()),
-    };
-    let (host_port, password) = match authority.rsplit_once('@') {
-        Some((userinfo, host_port)) => {
-            let password = userinfo
-                .strip_prefix(':')
-                .or_else(|| userinfo.strip_prefix("default:"))
-                .unwrap_or(userinfo);
-            (
-                host_port,
-                (!password.is_empty()).then(|| password.to_string()),
-            )
-        }
-        None => (authority, None),
-    };
-    Ok((password, format!("{host_port}:{db}")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parses_redis_url_with_password_and_db() {
-        let (password, endpoint) =
-            parse_redis_url("redis://:secret@redis-cache.example.test:48958/0").unwrap();
-        assert_eq!(password.as_deref(), Some("secret"));
-        assert_eq!(endpoint, "redis-cache.example.test:48958:0");
-    }
-
-    #[test]
-    fn parses_redis_url_without_credentials() {
-        let (password, endpoint) = parse_redis_url("redis://127.0.0.1:6379/1").unwrap();
-        assert_eq!(password, None);
-        assert_eq!(endpoint, "127.0.0.1:6379:1");
-    }
-
-    #[test]
     fn legacy_keys_are_unique_and_trimmed() {
         let config = Config {
             redis_url: String::new(),
+            redis_slave_url: None,
             jwt_key: "active".to_string(),
             jwt_algorithm: "HS256".to_string(),
             jwt_legacy_keys: " active, legacy ,active".to_string(),

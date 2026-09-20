@@ -87,6 +87,14 @@ export interface ProjectChatControls {
   onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
+  continueInNewConversation?: (
+    model: UnifiedModel,
+    options?: ModelOptions,
+    source?: {
+      address?: RuntimeTaskAddress
+      draft?: string
+    }
+  ) => void
   setSelectedModelOption: (optionId: string, value: string) => void
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
@@ -136,6 +144,7 @@ export interface ProjectWorkControls {
 }
 
 export interface ChatInputProps {
+  presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -155,12 +164,14 @@ export interface ChatInputProps {
   inputTestId?: string
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
+  submitLabel?: string
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
   projectPhrases?: QuickPhrase[]
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
+  projectWorkBar?: ReactNode
   showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
@@ -185,6 +196,7 @@ export interface ChatInputProps {
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  mentionScope?: 'all' | 'external'
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
@@ -230,15 +242,41 @@ interface PendingQueuedSend {
 interface PendingModelSelection {
   model: UnifiedModel | null
   options?: ModelOptions
+  continueInNewConversation: boolean
 }
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
   return left?.name === right?.name && left?.type === right?.type
 }
 
+function codexConversationProvider(
+  model: UnifiedModel | null | undefined
+): 'openai' | 'router' | null {
+  if (!model) return null
+  const configuredKind =
+    typeof model.config?.weworkModelKind === 'string'
+      ? model.config.weworkModelKind
+      : typeof (model.config?.ui as Record<string, unknown> | undefined)?.family === 'string'
+        ? ((model.config?.ui as Record<string, unknown>).family as string)
+        : ''
+  if (configuredKind === 'codex-official') return 'openai'
+  if (configuredKind === 'codex-provider' || configuredKind === 'model-interface') return 'router'
+  return model.provider && model.provider !== 'local' ? 'router' : null
+}
+
+function requiresNewConversationForModelSwitch(
+  activeModel: UnifiedModel | null | undefined,
+  targetModel: UnifiedModel | null
+): boolean {
+  const activeProvider = codexConversationProvider(activeModel)
+  const targetProvider = codexConversationProvider(targetModel)
+  return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
+}
+
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   {
     value,
+    presentation,
     onChange,
     onBlur,
     onCompositionStart,
@@ -254,6 +292,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     inputTestId,
     nativeEmptyCaret = false,
     submitButtonTestId,
+    submitLabel,
     variant = 'compact',
     collapseWhenIdle = false,
     projectPhrases,
@@ -281,6 +320,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceFileApi,
     cloudMentionCandidates,
     externalMentionCandidates,
+    mentionScope,
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectExternalMention,
@@ -293,6 +333,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onDismissInputLeadingContext,
     toolbarLeadingContext,
     projectWorkBarMiddleContext,
+    projectWorkBar,
     projectWorkBarTrailingContext,
     projectWorkBarEndContext,
     modelSelectorOverride,
@@ -440,7 +481,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       controls.activeModel &&
       !isSameModel(controls.activeModel, model)
     ) {
-      setPendingModelSelection({ model, options })
+      setPendingModelSelection({
+        model,
+        options,
+        continueInNewConversation: requiresNewConversationForModelSwitch(
+          controls.activeModel,
+          model
+        ),
+      })
       return false
     }
     applyModelSelection(model, options)
@@ -449,8 +497,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
   const confirmModelSelection = () => {
     if (!pendingModelSelection) return
-    const { model, options } = pendingModelSelection
+    const { model, options, continueInNewConversation } = pendingModelSelection
     setPendingModelSelection(null)
+    if (continueInNewConversation && model) {
+      if (controls.continueInNewConversation) {
+        controls.continueInNewConversation(model, options, { draft: value })
+      } else {
+        controls.onBlockedModelSelect?.(
+          model,
+          t(
+            'workbench.model_switch_new_conversation_unavailable',
+            'Start a new conversation before switching to a different model provider.'
+          )
+        )
+      }
+      return
+    }
     applyModelSelection(model, options)
   }
   const cancelModelSelection = () => {
@@ -490,6 +552,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }
 
   const composerProps = {
+    presentation,
     value,
     onChange,
     onBlur,
@@ -504,11 +567,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     inputTestId,
     nativeEmptyCaret,
     submitButtonTestId,
+    submitLabel,
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
     externalMentionCandidates,
+    mentionScope,
     conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
@@ -550,6 +615,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         pendingModelSelection.model?.name ||
         t('workbench.model_auto_select', 'Auto select')
       }
+      continueInNewConversation={pendingModelSelection.continueInNewConversation}
       onCancel={cancelModelSelection}
       onConfirm={confirmModelSelection}
     />
@@ -669,6 +735,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             showProjectWorkBar={showProjectWorkBar}
             showExecutionTools={showExecutionTools}
             projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+            projectWorkBar={projectWorkBar}
             projectWorkBarTrailingContext={projectWorkBarTrailingContext}
             projectWorkBarEndContext={projectWorkBarEndContext}
             modelSelectorOverride={modelSelectorOverride}
@@ -865,11 +932,13 @@ function QueueResumeDialog({
 function ModelSwitchWarningDialog({
   t,
   targetModelLabel,
+  continueInNewConversation,
   onCancel,
   onConfirm,
 }: {
   t: ReturnType<typeof useTranslation>['t']
   targetModelLabel: string
+  continueInNewConversation: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -887,23 +956,36 @@ function ModelSwitchWarningDialog({
         className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
       >
         <h2 id="model-switch-warning-dialog-title" className="heading-small text-text-primary">
-          {t('workbench.model_switch_warning_title', 'Switch model?')}
+          {continueInNewConversation
+            ? t('workbench.model_switch_new_conversation_title', 'Continue in a new conversation?')
+            : t('workbench.model_switch_warning_title', 'Switch model?')}
         </h2>
         <p
           id="model-switch-warning-dialog-description"
           className="mt-2 text-sm leading-5 text-text-secondary"
         >
-          {t(
-            'workbench.model_switch_warning_description',
-            'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
-            { model: targetModelLabel }
-          )}
+          {continueInNewConversation
+            ? t(
+                'workbench.model_switch_new_conversation_description',
+                '{{model}} uses a different model provider, so it cannot continue this Codex thread directly.',
+                { model: targetModelLabel }
+              )
+            : t(
+                'workbench.model_switch_warning_description',
+                'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
+                { model: targetModelLabel }
+              )}
         </p>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {t(
-            'workbench.model_switch_warning_effect',
-            'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
-          )}
+          {continueInNewConversation
+            ? t(
+                'workbench.model_switch_new_conversation_effect',
+                'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
+              )
+            : t(
+                'workbench.model_switch_warning_effect',
+                'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
+              )}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button
@@ -923,7 +1005,9 @@ function ModelSwitchWarningDialog({
             onClick={onConfirm}
             className="h-8 rounded-lg bg-text-primary px-4 text-sm text-background hover:bg-text-primary/90"
           >
-            {t('workbench.model_switch_warning_confirm', 'Switch model')}
+            {continueInNewConversation
+              ? t('workbench.model_switch_new_conversation_confirm', 'Continue in new conversation')
+              : t('workbench.model_switch_warning_confirm', 'Switch model')}
           </Button>
         </div>
       </div>

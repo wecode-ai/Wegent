@@ -1157,6 +1157,53 @@ describe("collaboration workspace controller", () => {
     expect(state.issues).toEqual([movedIssue]);
   });
 
+  it("does not let an older reorder response revert another issue moved concurrently", async () => {
+    const secondIssue: CollaborationIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Second issue",
+      sort_order: 1,
+    };
+    const movedIssue = {
+      ...issue,
+      status: "completed",
+      version: 2,
+    };
+    const concurrentlyMovedIssue = {
+      ...secondIssue,
+      status: "completed",
+      version: 2,
+    };
+    const reorderResponse = deferred<CollaborationIssue[]>();
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue, secondIssue],
+      projectItems: { [project.id]: [issue, secondIssue] },
+    };
+    const api = createApi();
+    api.issues.reorder = vi.fn(() => reorderResponse.promise);
+    const { commands } = createController(api);
+
+    const reorder = commands.reorderIssue({
+      issue: movedIssue,
+      status: "completed",
+      laneIds: [movedIssue.id],
+      optimisticItems: [movedIssue, secondIssue],
+    });
+    commands.replaceIssue(concurrentlyMovedIssue);
+    reorderResponse.resolve([{ ...movedIssue, version: 3 }]);
+    await reorder;
+
+    expect(state.issues).toEqual([
+      { ...movedIssue, version: 3 },
+      concurrentlyMovedIssue,
+    ]);
+    expect(state.projectItems[project.id]).toEqual(state.issues);
+  });
+
   it("keeps the mutated project in the catalog used by background refreshes", async () => {
     const statusProject = {
       ...project,

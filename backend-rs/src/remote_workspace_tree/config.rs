@@ -32,6 +32,7 @@ impl std::error::Error for ConfigError {}
 #[derive(Debug, Clone)]
 pub(crate) struct Config {
     pub(crate) redis_url: String,
+    pub(crate) redis_slave_url: Option<String>,
     pub(crate) executor_manager_url: String,
     /// Active JWT decode key first, then legacy decode-only keys
     /// (`JWT_LEGACY_SECRET_KEYS`, comma-separated).
@@ -56,6 +57,10 @@ impl Config {
         };
 
         let redis_url = lookup("REDIS_URL").unwrap_or_else(|| DEFAULT_REDIS_URL.to_owned());
+        let redis_slave_url = match env::var("REDIS_SLAVE_URL") {
+            Ok(value) => (!value.trim().is_empty()).then(|| value.trim().to_owned()),
+            Err(_) => env_file.get("REDIS_SLAVE_URL").cloned(),
+        };
         let executor_manager_url = lookup("EXECUTOR_MANAGER_URL")
             .unwrap_or_else(|| DEFAULT_EXECUTOR_MANAGER_URL.to_owned())
             .trim_end_matches('/')
@@ -82,17 +87,11 @@ impl Config {
 
         Ok(Self {
             redis_url,
+            redis_slave_url,
             executor_manager_url,
             jwt_decode_keys,
             jwt_algorithm,
         })
-    }
-
-    /// Redis endpoint list for `brz-redis`. The SDK's `configured_server`
-    /// accepts only `host:port[:db]` (colon-separated), so the URL's `/db`
-    /// path is re-encoded as a third colon segment.
-    pub(crate) fn redis_endpoints(&self) -> Vec<String> {
-        redis_url_to_endpoints(&self.redis_url)
     }
 }
 
@@ -128,53 +127,9 @@ fn dotenv_map(path: &str) -> HashMap<String, String> {
     map
 }
 
-/// Extract `host:port[:db]` endpoints from a `redis://[user:pass@]host:port[/db]` URL.
-///
-/// The db suffix becomes a third colon-separated segment, the format
-/// `brz-redis`'s `configured_server` parser accepts.
-pub(crate) fn redis_url_to_endpoints(url: &str) -> Vec<String> {
-    let Some(rest) = url
-        .strip_prefix("redis://")
-        .or_else(|| url.strip_prefix("rediss://"))
-    else {
-        return vec![url.to_owned()];
-    };
-    let host_part = match rest.rsplit_once('@') {
-        Some((_credentials, host)) => host,
-        None => rest,
-    };
-    let (authority, path) = match host_part.split_once('/') {
-        Some((authority, path)) => (authority, path),
-        None => (host_part, ""),
-    };
-    let authority = authority.trim();
-    if authority.is_empty() {
-        return vec![url.to_owned()];
-    }
-    if authority.contains(':') {
-        if path.is_empty() {
-            vec![authority.to_owned()]
-        } else {
-            vec![format!("{authority}:{path}")]
-        }
-    } else {
-        vec![authority.to_owned()]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn redis_url_drops_credentials_and_keeps_db() {
-        let endpoints =
-            redis_url_to_endpoints("redis://user:pass@redis-cache.example.test:48958/0");
-        assert_eq!(
-            endpoints,
-            vec!["redis-cache.example.test:48958:0".to_owned()]
-        );
-    }
 
     #[test]
     fn missing_env_file_is_empty() {

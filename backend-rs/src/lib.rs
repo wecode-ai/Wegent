@@ -30,7 +30,7 @@ use std::sync::Arc;
 pub use application::Application;
 pub use brz_http_gateway::{
     BoxError, ConfigError, Gateway, GatewayBody, GatewayResponse, MatchedService as RustApi,
-    OriginService, PathMatch, ProxyConfigError, RejectMatched as NoRustApi, RouteRule, RouteTable,
+    OriginService, ProxyConfigError, RejectMatched as NoRustApi, RouteRule, RouteTable,
     RoutesConfig, bind, serve,
 };
 pub use brz_http_server as http_server;
@@ -110,6 +110,7 @@ mod task_skills;
 mod tasks_lite_personal;
 mod teams;
 pub mod user_profile;
+pub mod user_reader;
 mod users_default_teams;
 mod users_me;
 mod users_search;

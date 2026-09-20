@@ -93,6 +93,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   rows,
   textareaRef,
   className,
+  scrollContainerClassName,
   nativeEmptyCaret = false,
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   disableAutocomplete = false,
@@ -104,6 +105,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   cloudMentionCandidates = [],
   conversationMentionCandidates = [],
   externalMentionCandidates = [],
+  mentionScope = 'all',
   cloudProjectCandidates = [],
   cloudSpaceEnabled = false,
   onSelectCloudProject,
@@ -188,7 +190,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       isMenuOpen: isCatalogMenuOpen,
     })
   const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
-  const canPickNativeWorkspacePaths = Boolean(onPickWorkspacePaths)
+  const canPickNativeWorkspacePaths = Boolean(onPickWorkspacePaths && onPasteFiles)
 
   useEffect(() => {
     valueRef.current = value
@@ -218,13 +220,21 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const filteredExternalMentionCandidates = useMemo(() => {
     if (activeMenu?.kind !== 'mention') return []
     const query = activeMenu.trigger.query.trim().toLocaleLowerCase()
-    if (!query) return externalMentionCandidates
-    return externalMentionCandidates.filter(candidate =>
+    const candidates =
+      mentionScope === 'external'
+        ? externalMentionCandidates.filter(candidate =>
+            (editorRef.current?.getSnapshot().value ?? value)[activeMenu.trigger.start] === '#'
+              ? candidate.type === 'issue'
+              : candidate.type !== 'issue'
+          )
+        : externalMentionCandidates
+    if (!query) return candidates
+    return candidates.filter(candidate =>
       [candidate.title, ...(candidate.searchAliases ?? [])].some(value =>
         value.toLocaleLowerCase().includes(query)
       )
     )
-  }, [activeMenu, externalMentionCandidates])
+  }, [activeMenu, externalMentionCandidates, mentionScope, value])
   const mentionQuery = activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
   useEffect(() => {
     onMentionQueryChange?.(mentionQuery)
@@ -341,25 +351,31 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const showSlashMenu = activeMenu?.kind === 'slash'
   const mentionMenuRows = useMemo<MentionMenuRow[]>(
     () =>
-      createComposerMentionRows<ComposerMentionCandidate, ComposerExternalMentionCandidate>({
-        open: showSkillMenu,
-        mode: activeMenu?.kind,
-        query: activeMenu?.trigger.query ?? '',
-        skillCandidates: filteredSkillCandidates,
-        candidates: filteredMentionCandidates,
-        contributedCandidates: contributedMentionCandidates,
-        externalCandidates: filteredExternalMentionCandidates,
-        cloudProjectsOpen,
-        cloudProjectScopeActive,
-        cloudSpaceEnabled,
-        cloudProjectCandidates,
-        filteredCloudProjectCandidates,
-        canSetGoal: Boolean(onSetGoal),
-        canSetPlanMode: Boolean(onSetPlanMode),
-        planModeActive,
-        workspaceMatches: workspaceSearch.matches,
-      }),
+      mentionScope === 'external'
+        ? filteredExternalMentionCandidates.map(candidate => ({
+            kind: 'external' as const,
+            candidate,
+          }))
+        : createComposerMentionRows<ComposerMentionCandidate, ComposerExternalMentionCandidate>({
+            open: showSkillMenu,
+            mode: activeMenu?.kind,
+            query: activeMenu?.trigger.query ?? '',
+            skillCandidates: filteredSkillCandidates,
+            candidates: filteredMentionCandidates,
+            contributedCandidates: contributedMentionCandidates,
+            externalCandidates: filteredExternalMentionCandidates,
+            cloudProjectsOpen,
+            cloudProjectScopeActive,
+            cloudSpaceEnabled,
+            cloudProjectCandidates,
+            filteredCloudProjectCandidates,
+            canSetGoal: Boolean(onSetGoal),
+            canSetPlanMode: Boolean(onSetPlanMode),
+            planModeActive,
+            workspaceMatches: workspaceSearch.matches,
+          }),
     [
+      mentionScope,
       activeMenu,
       cloudProjectCandidates,
       cloudProjectScopeActive,
@@ -432,13 +448,18 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         valueRef.current = next.value
         editor.setValue(next.value, next.cursor)
         closeAutocompleteMenu()
+        if (mentionScope === 'external' && /(?:^|\s)[@#]$/.test(reference)) {
+          const symbol = reference.endsWith('#') ? '#' : '@'
+          const trigger = findStandaloneTrigger(next.value, next.cursor, symbol, 'mention')
+          if (trigger) setActiveMenu({ kind: 'mention', trigger })
+        }
       },
       setValue: (nextValue, selectionOffset = nextValue.length) => {
         valueRef.current = nextValue
         editorRef.current?.setValue(nextValue, selectionOffset)
       },
     }),
-    [closeAutocompleteMenu]
+    [closeAutocompleteMenu, mentionScope]
   )
 
   const moveHighlightedIndex = useCallback((delta: number) => {
@@ -461,12 +482,15 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       const current = snapshot ?? editor?.getSnapshot()
       if (!current) return
 
-      const { nextTrigger, triggerUnchanged } = resolveComposerAutocompleteTrigger(
+      const { nextTrigger: resolvedTrigger, triggerUnchanged } = resolveComposerAutocompleteTrigger(
         current,
         activeMenuRef.current,
         Boolean(onListLocalSkills),
-        cloudProjectScopeLabelsRef.current
+        cloudProjectScopeLabelsRef.current,
+        mentionScope === 'external'
       )
+      const nextTrigger =
+        mentionScope === 'external' && resolvedTrigger?.kind !== 'mention' ? null : resolvedTrigger
 
       startTransition(() => {
         setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
@@ -480,6 +504,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         }
       })
       if (
+        mentionScope === 'all' &&
         nextTrigger &&
         (nextTrigger.kind === 'skill' ||
           nextTrigger.kind === 'mention' ||
@@ -489,7 +514,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         loadLocalMentions()
       }
     },
-    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete]
+    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete, mentionScope]
   )
 
   const commitEditorValue = useCallback(
@@ -501,14 +526,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       } else {
         onChange(nextValue)
       }
-      window.requestAnimationFrame(() =>
-        updateAutocompleteTrigger({
-          value: nextValue,
-          selectionOffset: nextCursor,
-          selectionStart: nextCursor,
-          selectionEnd: nextCursor,
-        })
-      )
+      // A later edit may open another picker before this frame runs.
+      window.requestAnimationFrame(() => updateAutocompleteTrigger())
     },
     [onChange, updateAutocompleteTrigger]
   )
@@ -620,7 +639,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
 
   const selectMentionMenuRow = useCallback(
     (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
-      if (row.kind === 'files-action' && !onPickWorkspacePaths) return false
+      if (row.kind === 'files-action' && !canPickNativeWorkspacePaths) return false
       const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
       const editor = editorRef.current
       if (!trigger || !editor) return false
@@ -633,6 +652,16 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         return selected
       }
       if (row.kind === 'external') {
+        if (row.candidate.reference) {
+          const snapshot = editor.getSnapshot()
+          const replacement = replaceComposerMentionTrigger(
+            snapshot.value,
+            row.candidate.reference,
+            trigger.start,
+            Math.max(snapshot.selectionEnd, trigger.start + 1 + trigger.query.length)
+          )
+          commitEditorValue(replacement.value, replacement.cursor)
+        }
         onSelectExternalMention?.(row.candidate)
         closeAutocompleteMenu()
         return true
@@ -687,11 +716,15 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       if (row.kind === 'files-action' && onPickWorkspacePaths) {
         setActionError(null)
         void onPickWorkspacePaths(workspaceTarget?.path)
-          .then(entries => {
-            if (entries.length === 0) return
+          .then(async ({ attachmentFiles, referenceEntries }) => {
             const currentEditor = editorRef.current
             if (!currentEditor) return
-            const references = entries
+            if (attachmentFiles.length) await onPasteFiles?.(attachmentFiles)
+            if (!referenceEntries.length) {
+              currentEditor.focus()
+              return
+            }
+            const references = referenceEntries
               .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
               .join(' ')
             const current = currentEditor.getSnapshot()
@@ -716,6 +749,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       return true
     },
     [
+      canPickNativeWorkspacePaths,
       closeAutocompleteMenu,
       cloudSpaceDirectReference,
       commitEditorValue,
@@ -726,6 +760,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       selectMentionCandidate,
       workspaceTarget?.path,
       onPickWorkspacePaths,
+      onPasteFiles,
     ]
   )
 
@@ -900,6 +935,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         rows={rows}
         textareaRef={textareaRef}
         className={className}
+        scrollContainerClassName={scrollContainerClassName}
         services={editorServices}
         nativeEmptyCaret={nativeEmptyCaret}
       />

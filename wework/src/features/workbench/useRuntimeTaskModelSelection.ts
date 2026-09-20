@@ -20,7 +20,8 @@ interface RuntimeTaskModelStore {
     scopeKey: string,
     model: UnifiedModel | null,
     options?: ModelOptions,
-    restoredSelectionConfig?: ModelSelectionConfig | null
+    restoredSelectionConfig?: ModelSelectionConfig | null,
+    persist?: boolean
   ) => void
   setSelectedModelForScope: (scopeKey: string, model: UnifiedModel | null) => void
   setSelectedModelAndOptionsForScope: (

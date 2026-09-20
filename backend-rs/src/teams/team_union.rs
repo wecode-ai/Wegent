@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! The accessible-team UNION queries and related kinds/user lookups for
-//! `GET /api/teams` (`_build_accessible_teams_query`, `count_user_teams`,
+//! The accessible-team UNION query and related kinds/user lookups for
+//! `GET /api/teams` (`_build_accessible_teams_query`, its `.count()` form,
 //! and the preload lookups over `kinds` / `users`).
 //!
 //! Split from `teams_repository` to keep each file under the 1000-line
@@ -12,405 +12,402 @@
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 
 use super::teams_repository::{
-    KIND_COLUMNS, KindRow, TeamRow, USER_COLUMNS, UserSummaryRow, placeholders,
+    BindingArg, KIND_COLUMNS, KindRow, TeamRow, USER_COLUMNS, UserSummaryRow, placeholders,
 };
 
-/// The deduplicated accessible-team union with pagination
-/// (`_build_accessible_teams_query` + `final_query`).
-///
-/// `skip` and `limit` must be pre-validated by `validate_pagination`; they
-/// are inlined as literals exactly like the source's rendered
-/// `LIMIT offset, limit` clause.
-pub async fn accessible_teams<M>(
-    mysql: &M,
-    user_id: i64,
-    scope: &str,
-    group_namespaces: &[String],
-    authorized_namespace_ids: &[i64],
-    skip: i64,
-    limit: i64,
-) -> MysqlResult<Vec<TeamRow>>
-where
-    M: Mysql,
-{
-    let Some(sql) = union_sql(
-        user_id,
-        scope,
-        group_namespaces,
-        authorized_namespace_ids,
-        Some((skip, limit)),
-    ) else {
-        return Ok(Vec::new());
-    };
-    let args = union_arguments(
-        user_id,
-        scope,
-        group_namespaces,
-        authorized_namespace_ids,
-        true,
-    );
-    mysql.fetch_all(sql.as_str(), args).await
+/// One source `build_team_list_filters` predicate, appended to every union
+/// branch after its own predicates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TeamListFilter {
+    /// `source_filter in ("mine", "personal")`: `Kind.user_id == user_id`.
+    OwnerUserId,
+    /// `source_filter == "personal"`: `Kind.namespace == "default"`.
+    DefaultNamespace,
+    /// `source_filter == "system"`: `Kind.user_id == 0`.
+    SystemOwner,
+    /// `mode is not None`: the bind-mode text must not be an empty list.
+    HasBindMode,
+    /// `mode != "all"`: the bind-mode text carries the mode name.
+    BindModeLike(String),
 }
 
-/// Count of distinct accessible team ids (`count_user_teams`).
+/// `_resource_json_text(db, "$.spec.bind_mode")` on MySQL.
+const BIND_MODE_TEXT: &str =
+    "coalesce(json_unquote(json_extract(kinds.json, '$.spec.bind_mode')), '')";
+
+impl TeamListFilter {
+    /// `build_team_list_filters`: the predicates the endpoint derives from the
+    /// `source_filter` and `mode` query parameters, in source order.
+    pub fn for_query(source_filter: Option<&str>, mode: Option<&str>) -> Vec<Self> {
+        let mut filters = Vec::new();
+        if matches!(source_filter, Some("mine" | "personal")) {
+            filters.push(Self::OwnerUserId);
+        }
+        if source_filter == Some("personal") {
+            filters.push(Self::DefaultNamespace);
+        } else if source_filter == Some("system") {
+            filters.push(Self::SystemOwner);
+        }
+        if let Some(mode) = mode {
+            filters.push(Self::HasBindMode);
+            if mode != "all" {
+                filters.push(Self::BindModeLike(mode.to_string()));
+            }
+        }
+        filters
+    }
+
+    /// The predicate SQL, in source filter order, with `?` per bound value.
+    fn sql(&self) -> String {
+        match self {
+            Self::OwnerUserId => "kinds.user_id = ?".to_string(),
+            Self::DefaultNamespace => "kinds.namespace = 'default'".to_string(),
+            Self::SystemOwner => "kinds.user_id = 0".to_string(),
+            Self::HasBindMode => format!("{BIND_MODE_TEXT} != '[]'"),
+            Self::BindModeLike(_) => {
+                format!("({BIND_MODE_TEXT} IN (?, ?) OR {BIND_MODE_TEXT} LIKE ?)")
+            }
+        }
+    }
+
+    /// The values bound by `sql`, in placeholder order.
+    fn args(&self, user_id: i64) -> Vec<BindingArg> {
+        match self {
+            Self::OwnerUserId => vec![BindingArg::Int(user_id)],
+            Self::BindModeLike(mode) => vec![
+                BindingArg::Str(String::new()),
+                BindingArg::Str("null".to_string()),
+                BindingArg::Str(format!("%\"{mode}\"%")),
+            ],
+            Self::DefaultNamespace | Self::SystemOwner | Self::HasBindMode => Vec::new(),
+        }
+    }
+}
+
+/// The resolved selection of the accessible-team union: the scope the source
+/// expands, the group namespaces it expands to, the namespace-authorization
+/// ids, the restricted group namespaces the `restricted_guest_access` label
+/// compares against, and the resolved `build_team_list_filters` predicates.
+#[derive(Clone, Copy)]
+pub struct AccessibleTeamsQuery<'a> {
+    pub user_id: i64,
+    pub scope: &'a str,
+    pub group_namespaces: &'a [String],
+    pub authorized_namespace_ids: &'a [i64],
+    pub restricted_namespaces: &'a [String],
+    pub filters: &'a [TeamListFilter],
+    /// `source_filter == "group"` (`shared_only`): the ranked query keeps only
+    /// non-default namespaces or shared teams.
+    pub shared_only: bool,
+    pub skip: i64,
+    pub limit: i64,
+}
+
+/// The deduplicated accessible-team union page
+/// (`_build_accessible_teams_query` + `_load_teams_from_query`).
 ///
-/// Unlike `_build_accessible_teams_query` (which renders one branch with
-/// `kinds.namespace IN (...)`), the source's `count_user_teams` loops over
-/// `namespaces_to_count` and appends one branch per group namespace with a
-/// single `kinds.namespace = ?` predicate, labels the union
-/// `combined_team_counts`, and selects `count(distinct(...)) AS count_1`.
-/// A single-branch count renders the bare subquery alias `anon_1` instead.
-/// The recorded exchanges are plain COM_QUERY with inline literals; the
-/// target binds the same values as prepared-statement parameters, which the
-/// replay engine matches cross-protocol exactly like the main team query.
-pub async fn count_user_teams<M>(
+/// Returns `None` when the source builds no union branch
+/// (`accessible_query is None`): no SQL is issued and the caller reports zero
+/// items and a zero total. `skip` and `limit` must be pre-validated by
+/// `validate_pagination`; they are inlined as literals exactly like the
+/// source's rendered `LIMIT offset, limit` clause.
+pub async fn accessible_teams<M>(
     mysql: &M,
-    user_id: i64,
-    scope: &str,
-    group_namespaces: &[String],
-    authorized_namespace_ids: &[i64],
-) -> MysqlResult<i64>
+    query: AccessibleTeamsQuery<'_>,
+) -> MysqlResult<Option<Vec<TeamRow>>>
 where
     M: Mysql,
 {
-    let Some((alias, union)) = count_union_sql(scope, group_namespaces, authorized_namespace_ids)
-    else {
-        // `if not count_queries: return 0` — no SQL is issued.
-        return Ok(0);
+    let Some(body) = union_body(&query) else {
+        return Ok(None);
     };
     let sql = format!(
-        "SELECT count(distinct({alias}.team_id)) AS count_1 \
-         FROM ({union}) AS {alias}"
+        "{} ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT {}, {}",
+        base_query_sql(&body, "anon_1", query.shared_only),
+        query.skip,
+        query.limit,
+    );
+    mysql.fetch_all(sql.as_str(), body.args).await.map(Some)
+}
+
+/// `accessible_query[0].count()`: the same ranked query wrapped in
+/// `SELECT count(*)`, with the ranked alias renamed `anon_2` and the count
+/// subquery aliased `anon_1`. Returns `None` when there is no branch, which
+/// the caller reports as a zero total.
+pub async fn team_count<M>(mysql: &M, query: AccessibleTeamsQuery<'_>) -> MysqlResult<Option<i64>>
+where
+    M: Mysql,
+{
+    let Some(body) = union_body(&query) else {
+        return Ok(None);
+    };
+    let sql = format!(
+        "SELECT count(*) AS count_1 FROM ({}) AS anon_1",
+        base_query_sql(&body, "anon_2", query.shared_only),
     );
     #[derive(Debug, FromMysqlRow)]
     struct CountRow {
         count_1: i64,
     }
-    let args = count_union_arguments(user_id, scope, group_namespaces, authorized_namespace_ids);
-    let row: CountRow = mysql.fetch_one(sql.as_str(), args).await?;
-    Ok(row.count_1)
+    let row: CountRow = mysql.fetch_one(sql.as_str(), body.args).await?;
+    Ok(Some(row.count_1))
 }
 
-/// Render the UNION ALL branches of the count query. Returns the subquery
-/// alias (`combined_team_counts`, or `anon_1` for a single branch) and the
-/// joined branch SQL; `None` when no branch applies.
-fn count_union_sql(
-    scope: &str,
-    group_namespaces: &[String],
-    authorized_namespace_ids: &[i64],
-) -> Option<(&'static str, String)> {
-    // `namespaces_to_count` contains "default" for personal/all scopes.
-    let has_default = scope == "personal" || scope == "all";
-    let include_shared = scope == "personal" || scope == "all";
-    let mut branches: Vec<String> = Vec::new();
-
-    if has_default {
-        // Own teams.
-        branches.push(
-            "SELECT kinds.id AS team_id \
-             FROM kinds \
-             WHERE kinds.user_id = ? AND kinds.kind = 'Team' \
-             AND kinds.namespace = 'default' AND kinds.is_active = true"
-                .to_string(),
-        );
-        if include_shared {
-            branches.push(
-                "SELECT kinds.id AS team_id \
-                 FROM resource_members INNER JOIN kinds \
-                 ON resource_members.resource_id = kinds.id \
-                 AND resource_members.resource_type IN ('Team', 'TEAM') \
-                 WHERE resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = ? \
-                 AND resource_members.status IN ('approved', 'APPROVED') \
-                 AND kinds.is_active = true AND kinds.kind = 'Team'"
-                    .to_string(),
-            );
-        }
-        // Public (system-owned) teams.
-        branches.push(
-            "SELECT kinds.id AS team_id \
-             FROM kinds \
-             WHERE kinds.user_id = 0 AND kinds.kind = 'Team' \
-             AND kinds.namespace = 'default' AND kinds.is_active = true"
-                .to_string(),
-        );
-    }
-
-    // One branch per group namespace (`for namespace in namespaces_to_count`).
-    for _ in group_namespaces {
-        branches.push(
-            "SELECT kinds.id AS team_id \
-             FROM kinds \
-             WHERE kinds.kind = 'Team' AND kinds.namespace = ? \
-             AND kinds.is_active = true"
-                .to_string(),
-        );
-    }
-
-    if !authorized_namespace_ids.is_empty() {
-        // The authorized branch always follows group namespaces in the
-        // source (`~Kind.namespace.in_(group_namespaces)`), and authorized
-        // ids only exist when group namespaces do.
-        branches.push(format!(
-            "SELECT kinds.id AS team_id \
-             FROM kinds \
-             WHERE (EXISTS (SELECT 1 \
-             FROM resource_members \
-             WHERE resource_members.resource_id = kinds.id \
-             AND resource_members.resource_type IN ('Team', 'TEAM') \
-             AND resource_members.entity_type = 'namespace' \
-             AND resource_members.entity_id IN ({entity_list}) \
-             AND resource_members.status IN ('approved', 'APPROVED'))) \
-             AND kinds.kind = 'Team' AND kinds.is_active IS true \
-             AND (kinds.namespace NOT IN ({not_in}))",
-            entity_list = placeholders(authorized_namespace_ids.len()),
-            not_in = placeholders(group_namespaces.len()),
-        ));
-    }
-
-    if branches.is_empty() {
-        return None;
-    }
-    if branches.len() == 1 {
-        // `count_queries[0].subquery()` renders the default `anon_1` alias.
-        Some(("anon_1", branches.join(" UNION ALL ")))
+/// Render the `restricted_guest_access` label of a union branch.
+///
+/// The source computes the label from a Python `set` with
+/// `column.in_(namespaces)`. SQLAlchemy renders that as the ordinary
+/// parameter list when the set is non-empty, and as the always-false
+/// `IN (NULL) AND (1 != 1)` when it is empty.
+fn restricted_label(column: &str, namespaces: &[String]) -> String {
+    if namespaces.is_empty() {
+        format!("{column} IN (NULL) AND (1 != 1)")
     } else {
-        Some(("combined_team_counts", branches.join(" UNION ALL ")))
+        format!("{column} IN ({})", placeholders(namespaces.len()))
     }
 }
 
-/// Bind the count-query arguments in branch order: the own branch's integer
-/// user id, the shared branch's string entity id, one string per group
-/// namespace branch, the authorized entity ids, then the group namespaces
-/// again for the NOT IN list.
-fn count_union_arguments(
-    user_id: i64,
-    scope: &str,
-    group_namespaces: &[String],
-    authorized_namespace_ids: &[i64],
-) -> Vec<UnionArg> {
-    let has_default = scope == "personal" || scope == "all";
-    let include_shared = scope == "personal" || scope == "all";
-    let mut args: Vec<UnionArg> = Vec::new();
-    if has_default {
-        args.push(UnionArg::Int(user_id));
-        if include_shared {
-            args.push(UnionArg::Str(user_id.to_string()));
-        }
-    }
-    args.extend(group_namespaces.iter().cloned().map(UnionArg::Str));
-    args.extend(
-        authorized_namespace_ids
-            .iter()
-            .map(|id| UnionArg::Str(id.to_string())),
-    );
-    if !authorized_namespace_ids.is_empty() {
-        args.extend(group_namespaces.iter().cloned().map(UnionArg::Str));
-    }
-    args
+/// A rendered union body: the `UNION ALL` branches and their bound values in
+/// placeholder order.
+struct UnionBody {
+    sql: String,
+    args: Vec<BindingArg>,
 }
 
-/// Render the UNION ALL branches of the accessible-team query. `pagination`
-/// appends the ranked outer query with `LIMIT offset, limit`.
+/// Render the UNION ALL branches of the accessible-team query. Returns `None`
+/// when the source appends no branch (`if not queries: return None`).
 ///
 /// The statement mirrors the recorded SQLAlchemy rendering token for token:
-/// every branch selects the same labeled columns, the ranked subquery keeps
-/// `row_number() OVER (PARTITION BY ... ) AS access_row_number`, and the
-/// outer query filters `anon_1.access_row_number = 1` before the
-/// `ORDER BY ... LIMIT offset, limit`.
-fn union_sql(
-    user_id: i64,
-    scope: &str,
-    group_namespaces: &[String],
-    authorized_namespace_ids: &[i64],
-    pagination: Option<(i64, i64)>,
-) -> Option<String> {
-    let _ = user_id;
-    let has_default = scope == "personal" || scope == "all";
-    let include_shared = scope == "personal" || scope == "all";
-    let mut branches: Vec<String> = Vec::new();
+/// every branch selects the same labeled columns, including the
+/// `restricted_guest_access` label the source derives from
+/// `restricted_group_namespaces`; the ranked subquery keeps
+/// `row_number() OVER (PARTITION BY ... ) AS access_row_number` ordered by
+/// `access_rank`, `restricted_guest_access`, `team_updated_at` and `team_id`;
+/// and the outer query filters `anon_1.access_row_number = 1`.
+fn union_body(query: &AccessibleTeamsQuery<'_>) -> Option<UnionBody> {
+    let has_default = query.scope == "personal" || query.scope == "all";
+    let include_shared = query.scope == "personal" || query.scope == "all";
+    let mut branches: Vec<(String, Vec<BindingArg>)> = Vec::new();
+
+    // `query.filter(*filters)` appends the list filters after the branch's own
+    // predicates, so their placeholders follow the branch's own values.
+    let filter_sql = query
+        .filters
+        .iter()
+        .map(TeamListFilter::sql)
+        .collect::<Vec<String>>()
+        .join(" AND ");
+    let filter_args = |user_id: i64| -> Vec<BindingArg> {
+        query
+            .filters
+            .iter()
+            .flat_map(|filter| filter.args(user_id))
+            .collect()
+    };
+    let with_filters = |mut args: Vec<BindingArg>, user_id: i64| -> Vec<BindingArg> {
+        args.extend(filter_args(user_id));
+        args
+    };
+    let suffix = if filter_sql.is_empty() {
+        String::new()
+    } else {
+        format!(" AND {filter_sql}")
+    };
 
     if has_default {
         // Own teams: context_user_id is the requesting user; the source
         // inlines both user_id occurrences as bound parameters.
-        branches.push(
-            "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
-             kinds.name AS team_name, kinds.namespace AS team_namespace, \
-             kinds.json AS team_json, kinds.created_at AS team_created_at, \
-             kinds.updated_at AS team_updated_at, 0 AS share_status, \
-             ? AS context_user_id, 'native' AS access_source, 0 AS access_rank \
-             FROM kinds \
-             WHERE kinds.user_id = ? AND kinds.kind = 'Team' \
-             AND kinds.namespace = 'default' AND kinds.is_active = true"
-                .to_string(),
-        );
-        if include_shared {
-            branches.push(
+        branches.push((
+            format!(
                 "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
                  kinds.name AS team_name, kinds.namespace AS team_namespace, \
                  kinds.json AS team_json, kinds.created_at AS team_created_at, \
-                 kinds.updated_at AS team_updated_at, 2 AS share_status, \
-                 kinds.user_id AS context_user_id, 'user_share' AS access_source, \
-                 1 AS access_rank FROM kinds INNER JOIN resource_members \
-                 ON resource_members.resource_id = kinds.id \
-                 AND resource_members.resource_type IN ('Team', 'TEAM') \
-                 WHERE resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = ? \
-                 AND resource_members.status IN ('approved', 'APPROVED') \
-                 AND kinds.is_active = true AND kinds.kind = 'Team'"
-                    .to_string(),
-            );
+                 kinds.updated_at AS team_updated_at, 0 AS share_status, \
+                 ? AS context_user_id, 0 AS restricted_guest_access, \
+                 'native' AS access_source, 0 AS access_rank \
+                 FROM kinds \
+                 WHERE kinds.user_id = ? AND kinds.kind = 'Team' \
+                 AND kinds.namespace = 'default' AND kinds.is_active = true{suffix}"
+            ),
+            vec![
+                BindingArg::Int(query.user_id),
+                BindingArg::Int(query.user_id),
+            ],
+        ));
+        if include_shared {
+            branches.push((
+                format!(
+                    "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
+                     kinds.name AS team_name, kinds.namespace AS team_namespace, \
+                     kinds.json AS team_json, kinds.created_at AS team_created_at, \
+                     kinds.updated_at AS team_updated_at, 2 AS share_status, \
+                     kinds.user_id AS context_user_id, 0 AS restricted_guest_access, \
+                     'user_share' AS access_source, \
+                     1 AS access_rank FROM kinds INNER JOIN resource_members \
+                     ON resource_members.resource_id = kinds.id \
+                     AND resource_members.resource_type IN ('Team', 'TEAM') \
+                     WHERE resource_members.entity_type = 'user' \
+                     AND resource_members.entity_id = ? \
+                     AND resource_members.status IN ('approved', 'APPROVED') \
+                     AND kinds.is_active = true AND kinds.kind = 'Team'{suffix}"
+                ),
+                vec![BindingArg::Str(query.user_id.to_string())],
+            ));
         }
-        branches.push(
-            "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
-             kinds.name AS team_name, kinds.namespace AS team_namespace, \
-             kinds.json AS team_json, kinds.created_at AS team_created_at, \
-             kinds.updated_at AS team_updated_at, 0 AS share_status, \
-             0 AS context_user_id, 'native' AS access_source, 0 AS access_rank \
-             FROM kinds \
-             WHERE kinds.user_id = 0 AND kinds.kind = 'Team' \
-             AND kinds.namespace = 'default' AND kinds.is_active = true"
-                .to_string(),
-        );
-    }
-
-    if !group_namespaces.is_empty() {
-        branches.push(format!(
-            "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
-             kinds.name AS team_name, kinds.namespace AS team_namespace, \
-             kinds.json AS team_json, kinds.created_at AS team_created_at, \
-             kinds.updated_at AS team_updated_at, 0 AS share_status, \
-             kinds.user_id AS context_user_id, 'native' AS access_source, \
-             0 AS access_rank FROM kinds \
-             WHERE kinds.kind = 'Team' \
-             AND kinds.namespace IN ({}) AND kinds.is_active = true",
-            placeholders(group_namespaces.len()),
+        branches.push((
+            format!(
+                "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
+                 kinds.name AS team_name, kinds.namespace AS team_namespace, \
+                 kinds.json AS team_json, kinds.created_at AS team_created_at, \
+                 kinds.updated_at AS team_updated_at, 0 AS share_status, \
+                 0 AS context_user_id, 0 AS restricted_guest_access, \
+                 'native' AS access_source, 0 AS access_rank \
+                 FROM kinds \
+                 WHERE kinds.user_id = 0 AND kinds.kind = 'Team' \
+                 AND kinds.namespace = 'default' AND kinds.is_active = true{suffix}"
+            ),
+            Vec::new(),
         ));
     }
 
-    if !authorized_namespace_ids.is_empty() {
-        let entity_list = placeholders(authorized_namespace_ids.len());
-        let not_in = if group_namespaces.is_empty() {
+    if !query.group_namespaces.is_empty() {
+        // Group teams: the label compares `kinds.namespace` against the
+        // restricted group namespaces, the filter against all of them.
+        let mut args: Vec<BindingArg> = query
+            .restricted_namespaces
+            .iter()
+            .cloned()
+            .map(BindingArg::Str)
+            .collect();
+        args.extend(query.group_namespaces.iter().cloned().map(BindingArg::Str));
+        branches.push((
+            format!(
+                "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
+                 kinds.name AS team_name, kinds.namespace AS team_namespace, \
+                 kinds.json AS team_json, kinds.created_at AS team_created_at, \
+                 kinds.updated_at AS team_updated_at, 0 AS share_status, \
+                 kinds.user_id AS context_user_id, {} AS restricted_guest_access, \
+                 'native' AS access_source, \
+                 0 AS access_rank FROM kinds \
+                 WHERE kinds.kind = 'Team' \
+                 AND kinds.namespace IN ({}) AND kinds.is_active = true{suffix}",
+                restricted_label("kinds.namespace", query.restricted_namespaces),
+                placeholders(query.group_namespaces.len()),
+            ),
+            args,
+        ));
+    }
+
+    if !query.authorized_namespace_ids.is_empty() {
+        let entity_list = placeholders(query.authorized_namespace_ids.len());
+        let not_in = if query.group_namespaces.is_empty() {
             String::new()
         } else {
             format!(
                 " AND (kinds.namespace NOT IN ({}))",
-                placeholders(group_namespaces.len())
+                placeholders(query.group_namespaces.len())
             )
         };
-        branches.push(format!(
-            "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
-             kinds.name AS team_name, kinds.namespace AS team_namespace, \
-             kinds.json AS team_json, kinds.created_at AS team_created_at, \
-             kinds.updated_at AS team_updated_at, 2 AS share_status, \
-             kinds.user_id AS context_user_id, \
-             'namespace_authorization' AS access_source, 2 AS access_rank \
-             FROM kinds WHERE (EXISTS (SELECT 1 \
-             FROM resource_members \
-             WHERE resource_members.resource_id = kinds.id \
-             AND resource_members.resource_type IN ('Team', 'TEAM') \
-             AND resource_members.entity_type = 'namespace' \
-             AND resource_members.entity_id IN ({entity_list}) \
-             AND resource_members.status IN ('approved', 'APPROVED'))) \
-             AND kinds.kind = 'Team' AND kinds.is_active IS true{not_in}"
+        let mut args: Vec<BindingArg> = query
+            .restricted_namespaces
+            .iter()
+            .cloned()
+            .map(BindingArg::Str)
+            .collect();
+        args.extend(
+            query
+                .authorized_namespace_ids
+                .iter()
+                .map(|id| BindingArg::Str(id.to_string())),
+        );
+        if !query.group_namespaces.is_empty() {
+            args.extend(query.group_namespaces.iter().cloned().map(BindingArg::Str));
+        }
+        // The source joins `namespace` so the label can compare
+        // `namespace.name` and the filter can require an active namespace.
+        branches.push((
+            format!(
+                "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
+                 kinds.name AS team_name, kinds.namespace AS team_namespace, \
+                 kinds.json AS team_json, kinds.created_at AS team_created_at, \
+                 kinds.updated_at AS team_updated_at, 2 AS share_status, \
+                 kinds.user_id AS context_user_id, {} AS restricted_guest_access, \
+                 'namespace_authorization' AS access_source, 2 AS access_rank \
+                 FROM kinds INNER JOIN resource_members \
+                 ON resource_members.resource_id = kinds.id \
+                 AND resource_members.resource_type IN ('Team', 'TEAM') \
+                 INNER JOIN namespace \
+                 ON resource_members.entity_id = CAST(namespace.id AS CHAR) \
+                 WHERE resource_members.entity_type = 'namespace' \
+                 AND resource_members.entity_id IN ({entity_list}) \
+                 AND resource_members.status IN ('approved', 'APPROVED') \
+                 AND namespace.is_active IS true AND kinds.kind = 'Team' \
+                 AND kinds.is_active IS true{not_in}{suffix}",
+                restricted_label("namespace.name", query.restricted_namespaces),
+            ),
+            args,
         ));
     }
 
     if branches.is_empty() {
         return None;
     }
-    let combined = branches.join(" UNION ALL ");
-    match pagination {
-        Some((skip, limit)) => Some(format!(
-            "SELECT anon_1.team_id AS anon_1_team_id, \
-             anon_1.team_user_id AS anon_1_team_user_id, \
-             anon_1.team_name AS anon_1_team_name, \
-             anon_1.team_namespace AS anon_1_team_namespace, \
-             anon_1.team_json AS anon_1_team_json, \
-             anon_1.team_created_at AS anon_1_team_created_at, \
-             anon_1.team_updated_at AS anon_1_team_updated_at, \
-             anon_1.share_status AS anon_1_share_status, \
-             anon_1.context_user_id AS anon_1_context_user_id, \
-             anon_1.access_source AS anon_1_access_source \
-             FROM (SELECT combined_teams.team_id AS team_id, \
-             combined_teams.team_user_id AS team_user_id, \
-             combined_teams.team_name AS team_name, \
-             combined_teams.team_namespace AS team_namespace, \
-             combined_teams.team_json AS team_json, \
-             combined_teams.team_created_at AS team_created_at, \
-             combined_teams.team_updated_at AS team_updated_at, \
-             combined_teams.share_status AS share_status, \
-             combined_teams.context_user_id AS context_user_id, \
-             combined_teams.access_source AS access_source, \
-             row_number() OVER (PARTITION BY combined_teams.team_id \
-             ORDER BY combined_teams.access_rank ASC, \
-             combined_teams.team_updated_at DESC, \
-             combined_teams.team_id DESC) AS access_row_number \
-             FROM ({combined}) AS combined_teams) AS anon_1 \
-             WHERE anon_1.access_row_number = 1 \
-             ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC \
-             LIMIT {skip}, {limit}"
-        )),
-        None => Some(combined),
+    let mut sql_parts: Vec<String> = Vec::with_capacity(branches.len());
+    let mut args: Vec<BindingArg> = Vec::new();
+    let user_id = query.user_id;
+    for (branch_sql, branch_args) in branches {
+        sql_parts.push(branch_sql);
+        args.extend(with_filters(branch_args, user_id));
     }
+    Some(UnionBody {
+        sql: sql_parts.join(" UNION ALL "),
+        args,
+    })
 }
 
-/// One bound union-query argument, preserving the recorded literal's token
-/// kind: integer user ids bind as `Int` (recorded `2927`), and every
-/// identifier the source renders as a quoted string (`'2927'`,
-/// `'Player_FAQ'`) binds as `Str`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum UnionArg {
-    Int(i64),
-    Str(String),
-}
-
-impl brz_mysql::MysqlValue for UnionArg {
-    fn write(self, writer: &mut brz_mysql::MysqlValueWriter) -> MysqlResult<()> {
-        match self {
-            Self::Int(value) => value.write(writer),
-            Self::Str(value) => value.write(writer),
-        }
-    }
-    fn encoded_size_hint(&self) -> usize {
-        match self {
-            Self::Int(value) => value.encoded_size_hint(),
-            Self::Str(value) => value.encoded_size_hint(),
-        }
-    }
-}
-
-/// Bind the union query arguments in branch order.
-fn union_arguments(
-    user_id: i64,
-    scope: &str,
-    group_namespaces: &[String],
-    authorized_namespace_ids: &[i64],
-    with_pagination: bool,
-) -> Vec<UnionArg> {
-    let has_default = scope == "personal" || scope == "all";
-    let include_shared = scope == "personal" || scope == "all";
-    let mut args: Vec<UnionArg> = Vec::new();
-    if has_default {
-        // own branch: context_user_id and user_id render as integer literals
-        args.push(UnionArg::Int(user_id));
-        args.push(UnionArg::Int(user_id));
-        if include_shared {
-            // shared branch: entity_id renders as a quoted string
-            args.push(UnionArg::Str(user_id.to_string()));
-        }
-    }
-    args.extend(group_namespaces.iter().cloned().map(UnionArg::Str));
-    args.extend(
-        authorized_namespace_ids
-            .iter()
-            .map(|id| UnionArg::Str(id.to_string())),
-    );
-    if !authorized_namespace_ids.is_empty() && !group_namespaces.is_empty() {
-        args.extend(group_namespaces.iter().cloned().map(UnionArg::Str));
-    }
-    let _ = with_pagination;
-    args
+/// The source's `base_query`: the ranked query minus pagination, optionally
+/// restricted to shared or non-default teams (`shared_only`).
+///
+/// `alias` is the ranked subquery's alias: `anon_1` for the page query and
+/// `anon_2` when the whole base query is wrapped by `count(*)`.
+fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
+    let shared_only_filter = if shared_only {
+        format!(" AND ({alias}.team_namespace != 'default' OR {alias}.share_status = 2)")
+    } else {
+        String::new()
+    };
+    format!(
+        "SELECT {alias}.team_id AS {alias}_team_id, \
+         {alias}.team_user_id AS {alias}_team_user_id, \
+         {alias}.team_name AS {alias}_team_name, \
+         {alias}.team_namespace AS {alias}_team_namespace, \
+         {alias}.team_json AS {alias}_team_json, \
+         {alias}.team_created_at AS {alias}_team_created_at, \
+         {alias}.team_updated_at AS {alias}_team_updated_at, \
+         {alias}.share_status AS {alias}_share_status, \
+         {alias}.context_user_id AS {alias}_context_user_id, \
+         {alias}.restricted_guest_access AS {alias}_restricted_guest_access, \
+         {alias}.access_source AS {alias}_access_source \
+         FROM (SELECT combined_teams.team_id AS team_id, \
+         combined_teams.team_user_id AS team_user_id, \
+         combined_teams.team_name AS team_name, \
+         combined_teams.team_namespace AS team_namespace, \
+         combined_teams.team_json AS team_json, \
+         combined_teams.team_created_at AS team_created_at, \
+         combined_teams.team_updated_at AS team_updated_at, \
+         combined_teams.share_status AS share_status, \
+         combined_teams.context_user_id AS context_user_id, \
+         combined_teams.restricted_guest_access AS restricted_guest_access, \
+         combined_teams.access_source AS access_source, \
+         row_number() OVER (PARTITION BY combined_teams.team_id \
+         ORDER BY combined_teams.access_rank ASC, \
+         combined_teams.restricted_guest_access DESC, \
+         combined_teams.team_updated_at DESC, \
+         combined_teams.team_id DESC) AS access_row_number \
+         FROM ({}) AS combined_teams) AS {alias} \
+         WHERE {alias}.access_row_number = 1{shared_only_filter}",
+        body.sql
+    )
 }
 
 /// Team-owner user summaries. `ids` must be in the source's Python-set
@@ -540,95 +537,192 @@ where
 mod tests {
     use super::*;
 
+    fn query<'a>(
+        scope: &'a str,
+        groups: &'a [String],
+        authorized: &'a [i64],
+        restricted: &'a [String],
+        filters: &'a [TeamListFilter],
+    ) -> AccessibleTeamsQuery<'a> {
+        AccessibleTeamsQuery {
+            user_id: 229,
+            scope,
+            group_namespaces: groups,
+            authorized_namespace_ids: authorized,
+            restricted_namespaces: restricted,
+            filters,
+            shared_only: false,
+            skip: 0,
+            limit: 100,
+        }
+    }
+
+    fn page_sql(query: &AccessibleTeamsQuery<'_>) -> String {
+        let body = union_body(query).unwrap();
+        format!(
+            "{} ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT {}, {}",
+            base_query_sql(&body, "anon_1", query.shared_only),
+            query.skip,
+            query.limit,
+        )
+    }
+
+    fn count_sql(query: &AccessibleTeamsQuery<'_>) -> String {
+        let body = union_body(query).unwrap();
+        format!(
+            "SELECT count(*) AS count_1 FROM ({}) AS anon_1",
+            base_query_sql(&body, "anon_2", query.shared_only),
+        )
+    }
+
     #[test]
-    fn union_argument_order_matches_branch_order() {
+    fn union_body_binds_values_in_placeholder_order() {
         let groups = vec!["alpha".to_string(), "beta".to_string()];
-        let authorized = vec![7i64, 9];
-        let args = union_arguments(229, "all", &groups, &authorized, true);
-        // own(2) + shared(1) + groups(2) + authorized(2) + groups again(2)
+        let restricted = vec!["alpha".to_string()];
+        let filters: Vec<TeamListFilter> = Vec::new();
+        let body = union_body(&query("all", &groups, &[7, 9], &restricted, &filters)).unwrap();
+        // own(2) + shared(1) + group restricted(1) + groups(2)
+        // + authorized restricted(1) + authorized(2) + groups again(2)
         assert_eq!(
-            args,
+            body.args,
             vec![
-                UnionArg::Int(229),
-                UnionArg::Int(229),
-                UnionArg::Str("229".to_string()),
-                UnionArg::Str("alpha".to_string()),
-                UnionArg::Str("beta".to_string()),
-                UnionArg::Str("7".to_string()),
-                UnionArg::Str("9".to_string()),
-                UnionArg::Str("alpha".to_string()),
-                UnionArg::Str("beta".to_string()),
+                BindingArg::Int(229),
+                BindingArg::Int(229),
+                BindingArg::Str("229".to_string()),
+                BindingArg::Str("alpha".to_string()),
+                BindingArg::Str("alpha".to_string()),
+                BindingArg::Str("beta".to_string()),
+                BindingArg::Str("alpha".to_string()),
+                BindingArg::Str("7".to_string()),
+                BindingArg::Str("9".to_string()),
+                BindingArg::Str("alpha".to_string()),
+                BindingArg::Str("beta".to_string()),
             ]
         );
     }
 
     #[test]
-    fn union_sql_contains_all_branches() {
+    fn empty_restricted_list_renders_always_false_label() {
         let groups = vec!["alpha".to_string()];
-        let sql = union_sql(229, "all", &groups, &[3], Some((0, 100))).unwrap();
-        assert!(sql.contains("'user_share' AS access_source"));
-        assert!(sql.contains("'namespace_authorization' AS access_source"));
-        assert!(sql.contains("kinds.namespace NOT IN (?)"));
-        assert!(sql.ends_with("LIMIT 0, 100"));
-        assert!(sql.contains("row_number() OVER (PARTITION BY combined_teams.team_id"));
-        assert!(sql.contains("WHERE anon_1.access_row_number = 1"));
-        // Entity ids bind as string placeholders like the source's
-        // str(ns_id) rendering.
-        assert!(sql.contains("resource_members.entity_id IN (?)"));
-    }
-
-    #[test]
-    fn count_union_renders_one_branch_per_group() {
-        let groups = vec!["alpha".to_string(), "beta".to_string()];
-        let (alias, union) = count_union_sql("all", &groups, &[7, 9]).unwrap();
-        assert_eq!(alias, "combined_team_counts");
-        // own + shared + public + one per group + authorized = 6 branches.
-        assert_eq!(union.matches(" UNION ALL ").count(), 5);
-        // One `kinds.namespace = ?` predicate per group branch, no IN list.
-        assert_eq!(union.matches("kinds.namespace = ?").count(), 2);
-        assert!(!union.contains("kinds.namespace IN ("));
-        // Authorized branch keeps the NOT IN list over the group namespaces.
-        assert!(union.contains("kinds.namespace NOT IN (?, ?)"));
-        assert!(union.contains("resource_members.entity_id IN (?, ?)"));
-    }
-
-    #[test]
-    fn count_union_single_group_without_default() {
-        // scope=group: no own/shared/public branches, only the group branch.
-        let groups = vec!["alpha".to_string()];
-        let (alias, union) = count_union_sql("group", &groups, &[]).unwrap();
-        assert_eq!(alias, "anon_1");
-        assert_eq!(union.matches(" UNION ALL ").count(), 0);
-        assert!(union.contains("kinds.namespace = ?"));
-    }
-
-    #[test]
-    fn count_union_personal_scope_only_default() {
-        let (alias, union) = count_union_sql("personal", &[], &[]).unwrap();
-        assert_eq!(alias, "combined_team_counts");
-        assert_eq!(union.matches(" UNION ALL ").count(), 2);
-        assert!(union.contains("kinds.user_id = ? AND kinds.kind = 'Team'"));
-        assert!(union.contains("kinds.user_id = 0 AND kinds.kind = 'Team'"));
-    }
-
-    #[test]
-    fn count_argument_order_matches_branch_order() {
-        let groups = vec!["alpha".to_string(), "beta".to_string()];
-        let authorized = vec![7i64, 9];
-        let args = count_union_arguments(229, "all", &groups, &authorized);
-        // own(1 int) + shared(1 str) + groups(2) + authorized(2) + groups again(2)
+        let filters: Vec<TeamListFilter> = Vec::new();
+        let body = union_body(&query("all", &groups, &[7, 9], &[], &filters)).unwrap();
+        // No value is bound for the empty label, so only the own(2) + shared(1)
+        // + groups(1) + authorized(2) + groups again(1) values remain.
+        assert_eq!(body.args.len(), 7);
         assert_eq!(
-            args,
-            vec![
-                UnionArg::Int(229),
-                UnionArg::Str("229".to_string()),
-                UnionArg::Str("alpha".to_string()),
-                UnionArg::Str("beta".to_string()),
-                UnionArg::Str("7".to_string()),
-                UnionArg::Str("9".to_string()),
-                UnionArg::Str("alpha".to_string()),
-                UnionArg::Str("beta".to_string()),
-            ]
+            restricted_label("kinds.namespace", &[]),
+            "kinds.namespace IN (NULL) AND (1 != 1)"
         );
+        assert_eq!(
+            restricted_label("namespace.name", &["alpha".to_string()]),
+            "namespace.name IN (?)"
+        );
+    }
+
+    #[test]
+    fn union_and_count_render_the_source_statement_shapes() {
+        let groups = vec!["alpha".to_string()];
+        let filters: Vec<TeamListFilter> = Vec::new();
+        let query = query("all", &groups, &[3], &[], &filters);
+        let page = page_sql(&query);
+        assert!(page.contains("'user_share' AS access_source"));
+        assert!(page.contains("'namespace_authorization' AS access_source"));
+        assert!(page.contains("kinds.namespace NOT IN (?)"));
+        assert!(
+            page.ends_with(
+                "ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 0, 100"
+            )
+        );
+        assert!(page.contains("row_number() OVER (PARTITION BY combined_teams.team_id"));
+        assert!(page.contains("WHERE anon_1.access_row_number = 1"));
+        assert!(page.contains("resource_members.entity_id IN (?)"));
+        assert!(page.contains("0 AS restricted_guest_access"));
+        assert!(page.contains("kinds.namespace IN (NULL) AND (1 != 1) AS restricted_guest_access"));
+        assert!(page.contains("namespace.name IN (NULL) AND (1 != 1) AS restricted_guest_access"));
+        assert!(page.contains("combined_teams.restricted_guest_access AS restricted_guest_access"));
+        assert!(page.contains("combined_teams.restricted_guest_access DESC"));
+        assert!(page.contains("anon_1.restricted_guest_access AS anon_1_restricted_guest_access"));
+        assert!(page.contains(
+            "INNER JOIN namespace ON resource_members.entity_id = CAST(namespace.id AS CHAR)"
+        ));
+        assert!(page.contains("namespace.is_active IS true"));
+        assert!(
+            page.find("0 AS restricted_guest_access").unwrap()
+                < page.find("'native' AS access_source").unwrap()
+        );
+        assert!(
+            page.find("combined_teams.access_rank ASC").unwrap()
+                < page
+                    .find("combined_teams.restricted_guest_access DESC")
+                    .unwrap()
+        );
+
+        // `accessible_query[0].count()` keeps the same ranked query, renames
+        // its alias to `anon_2`, and drops the page's ordering and limit.
+        let count = count_sql(&query);
+        assert!(count.starts_with("SELECT count(*) AS count_1 FROM (SELECT anon_2.team_id"));
+        assert!(count.contains("WHERE anon_2.access_row_number = 1) AS anon_1"));
+        assert!(count.contains("anon_2.restricted_guest_access AS anon_2_restricted_guest_access"));
+        assert!(!count.contains("ORDER BY anon_2"));
+        assert!(!count.contains("LIMIT"));
+    }
+
+    #[test]
+    fn list_filters_append_to_every_branch() {
+        let groups = vec!["alpha".to_string()];
+        let filters = vec![TeamListFilter::OwnerUserId, TeamListFilter::HasBindMode];
+        let query = query("all", &groups, &[3], &[], &filters);
+        let body = union_body(&query).unwrap();
+        // Four branches (own, shared, public, group, authorized) -> five with
+        // this scope; each carries the same filter predicates.
+        assert_eq!(body.sql.matches(BIND_MODE_TEXT).count(), 5);
+        // The own branch's own predicate plus one filter per branch.
+        assert_eq!(body.sql.matches("kinds.user_id = ?").count(), 6);
+        // The own branch binds the user twice; each of the five branches binds
+        // it once more through `OwnerUserId`.
+        assert_eq!(
+            body.args
+                .iter()
+                .filter(|a| **a == BindingArg::Int(229))
+                .count(),
+            7
+        );
+    }
+
+    #[test]
+    fn bind_mode_filter_renders_the_source_like_predicate() {
+        let filters = vec![TeamListFilter::BindModeLike("chat".to_string())];
+        let query = query("personal", &[], &[], &[], &filters);
+        let body = union_body(&query).unwrap();
+        assert!(body.sql.contains(&format!(
+            "{BIND_MODE_TEXT} IN (?, ?) OR {BIND_MODE_TEXT} LIKE ?"
+        )));
+        assert!(body.args.contains(&BindingArg::Str(String::new())));
+        assert!(body.args.contains(&BindingArg::Str("null".to_string())));
+        assert!(
+            body.args
+                .contains(&BindingArg::Str("%\"chat\"%".to_string()))
+        );
+    }
+
+    #[test]
+    fn shared_only_restricts_the_base_query() {
+        let groups = ["alpha".to_string()];
+        let mut query = query("group", &groups, &[], &[], &[]);
+        query.shared_only = true;
+        let page = page_sql(&query);
+        assert!(page.contains(
+            "WHERE anon_1.access_row_number = 1 AND (anon_1.team_namespace != 'default' OR anon_1.share_status = 2)"
+        ));
+        let count = count_sql(&query);
+        assert!(count.contains(
+            "WHERE anon_2.access_row_number = 1 AND (anon_2.team_namespace != 'default' OR anon_2.share_status = 2)"
+        ));
+    }
+
+    #[test]
+    fn group_scope_without_namespaces_builds_no_query() {
+        let filters: Vec<TeamListFilter> = Vec::new();
+        assert!(union_body(&query("group", &[], &[], &[], &filters)).is_none());
     }
 }

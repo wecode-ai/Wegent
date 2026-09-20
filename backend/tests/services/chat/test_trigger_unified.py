@@ -21,7 +21,7 @@ from shared.models.knowledge import (
 
 
 def test_apply_image_generation_params_overrides_request_size() -> None:
-    from app.services.chat.trigger import unified as trigger_unified
+    from app.services.chat.trigger import request_preparation as trigger_unified
 
     model_config = {
         "modelType": "image",
@@ -45,7 +45,7 @@ def test_apply_image_generation_params_overrides_request_size() -> None:
 
 
 def test_generation_config_for_log_excludes_capabilities() -> None:
-    from app.services.chat.trigger import unified as trigger_unified
+    from app.services.chat.trigger import request_preparation as trigger_unified
 
     assert trigger_unified._generation_config_for_log(
         {
@@ -60,7 +60,7 @@ def test_generation_config_for_log_excludes_capabilities() -> None:
 
 
 def test_apply_generation_params_rejects_image_options_for_video() -> None:
-    from app.services.chat.trigger import unified as trigger_unified
+    from app.services.chat.trigger import request_preparation as trigger_unified
 
     with pytest.raises(ValueError, match="does not support option: size"):
         trigger_unified._apply_generation_params(
@@ -76,7 +76,7 @@ def test_apply_generation_params_rejects_image_options_for_video() -> None:
 
 
 def test_apply_generation_params_ignores_non_generation_model() -> None:
-    from app.services.chat.trigger import unified as trigger_unified
+    from app.services.chat.trigger import request_preparation as trigger_unified
 
     model_config = {"modelType": "llm"}
 
@@ -90,7 +90,7 @@ def test_apply_generation_params_ignores_non_generation_model() -> None:
 
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     """Codex execution requests should carry explicit user runtime config status."""
-    from app.services.chat.trigger import unified as trigger_unified
+    from app.services.chat.trigger import request_preparation as trigger_unified
 
     request = ExecutionRequest(
         model_config={
@@ -148,7 +148,7 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
 
 def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
     """Non-Codex-compatible models should not query user runtime config."""
-    from app.services.chat.trigger import unified as trigger_unified
+    from app.services.chat.trigger import request_preparation as trigger_unified
 
     request = ExecutionRequest(
         model_config={
@@ -184,7 +184,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder",
                 return_value=mock_builder,
@@ -226,7 +232,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         ):
             return request
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -284,7 +296,13 @@ class TestBuildExecutionRequestUserSubtaskId:
             generate_params=None,
         )
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -331,7 +349,13 @@ class TestBuildExecutionRequestUserSubtaskId:
             client_origin=CLIENT_ORIGIN_FRONTEND,
         )
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -385,7 +409,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         user = MagicMock()
         user.id = 7
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -431,7 +461,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         user = MagicMock()
         user.id = 7
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -484,7 +520,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         user = MagicMock()
         user.id = 7
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -493,7 +535,9 @@ class TestBuildExecutionRequestUserSubtaskId:
                     ".allowed_model_names_for_team",
                     return_value={"another-model"},
                 ) as mock_allowed:
-                    with patch.object(trigger_unified.logger, "info") as info_mock:
+                    with patch(
+                        "app.services.chat.trigger.request_preparation.logger.info"
+                    ) as info_mock:
                         await trigger_unified.build_execution_request(
                             task=task,
                             assistant_subtask=assistant_subtask,
@@ -531,7 +575,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -582,6 +632,10 @@ class TestBuildExecutionRequestUserSubtaskId:
 
         with (
             patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
             patch(
                 "app.services.execution.TaskRequestBuilder",
                 return_value=mock_builder,
@@ -636,7 +690,13 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -689,7 +749,13 @@ class TestBuildExecutionRequestUserSubtaskId:
             enable_clarification=False,
         )
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -831,7 +897,13 @@ class TestBuildExecutionRequestUserSubtaskId:
             "spec": {"members": [], "collaborationModel": "solo"},
         }
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -949,7 +1021,13 @@ class TestBuildExecutionRequestUserSubtaskId:
             "spec": {"members": [], "collaborationModel": "solo"},
         }
 
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
@@ -1045,7 +1123,13 @@ class TestBuildExecutionRequestUserSubtaskId:
             return request
 
         apply_context = MagicMock(return_value=["wegent-knowledge"])
-        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):

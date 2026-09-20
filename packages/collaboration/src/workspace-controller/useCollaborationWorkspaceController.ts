@@ -290,6 +290,21 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
+function mergeReorderIssues(
+  current: CollaborationIssue[],
+  incoming: CollaborationIssue[],
+): CollaborationIssue[] {
+  const currentById = new Map(current.map((issue) => [issue.id, issue]));
+  const incomingIds = new Set(incoming.map((issue) => issue.id));
+  return [
+    ...incoming.map((issue) => {
+      const existing = currentById.get(issue.id);
+      return existing && existing.version > issue.version ? existing : issue;
+    }),
+    ...current.filter((issue) => !incomingIds.has(issue.id)),
+  ];
+}
+
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
@@ -1316,7 +1331,11 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     async reorderIssue({ issue, status, laneIds, optimisticItems }) {
-      dispatch({ type: "replace-issues", issues: optimisticItems });
+      const mergedOptimisticItems = mergeReorderIssues(
+        getExternalBoardState().issues,
+        optimisticItems,
+      );
+      dispatch({ type: "replace-issues", issues: mergedOptimisticItems });
       try {
         if (issue.status !== status) {
           const movedIssue = await api.issues.update(issue.id, {
@@ -1336,13 +1355,17 @@ export function createCollaborationWorkspaceControllerCommands({
         });
         markProjectMutated(issue.cloud_project_id);
         const byId = new Map(updated.map((item) => [item.id, item]));
+        const reorderedItems = mergedOptimisticItems.map((item) => {
+          const reordered = byId.get(item.id);
+          if (!reordered) return item;
+          return reordered.version < item.version ? item : reordered;
+        });
         dispatch({
           type: "replace-issues",
-          issues: optimisticItems.map((item) => {
-            const reordered = byId.get(item.id);
-            if (!reordered) return item;
-            return reordered.version < item.version ? item : reordered;
-          }),
+          issues: mergeReorderIssues(
+            getExternalBoardState().issues,
+            reorderedItems,
+          ),
         });
       } catch (error) {
         if (isVersionConflict(error)) {

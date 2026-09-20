@@ -372,10 +372,18 @@ fn environment_change_diagnostics_report_keys_without_values() {
 #[test]
 fn shared_notification_lag_is_recoverable() {
     let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
             .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
+}
+
+#[test]
+fn closed_notification_stream_reports_executor_shutdown() {
+    assert!(matches!(
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
 }
 
 #[tokio::test]
@@ -3500,6 +3508,68 @@ fn codex_model_provider_validation_accepts_requested_provider() {
     });
 
     validate_codex_model_provider("thread/resume", &response, Some("openai")).unwrap();
+}
+
+#[test]
+fn turn_input_matches_shared_prompt_reference_cases() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for case in cases {
+        let reference = case["reference"].as_str().unwrap();
+        let input = turn_input(&json!(reference));
+        if case["kind"].is_null() {
+            assert_eq!(input, vec![text_input(reference.to_owned())], "{reference}");
+            continue;
+        }
+        let expected = if case["kind"] == "skill" {
+            skill_input(
+                case["name"].as_str().unwrap(),
+                case["href"].as_str().unwrap(),
+            )
+        } else {
+            mention_input(
+                case["name"].as_str().unwrap(),
+                case["href"].as_str().unwrap(),
+            )
+        };
+        assert_eq!(input.len(), 2, "{reference}");
+        assert_eq!(input[1], expected, "{reference}");
+    }
+}
+
+#[test]
+fn turn_input_preserves_collaboration_references_as_text() {
+    for scheme in [
+        "wework-member",
+        "wework-agent",
+        "wework-group",
+        "wework-issue",
+    ] {
+        let reference = format!("[$test]({scheme}://test)");
+        assert_eq!(turn_input(&json!(reference)), vec![text_input(reference)]);
+    }
+}
+
+#[test]
+fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
+    let path = dirs::home_dir()
+        .expect("test user has a home directory")
+        .join(".agents/skills/test-skill/SKILL.md");
+    let input = turn_input(&Value::String(format!(
+        "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
+        path.display()
+    )));
+
+    assert_eq!(
+        input,
+        vec![
+            json!({"type": "text", "text": "$test-skill then $test-skill", "text_elements": []}),
+            json!({"type": "skill", "name": "test-skill", "path": path.to_string_lossy()}),
+        ]
+    );
 }
 
 #[test]

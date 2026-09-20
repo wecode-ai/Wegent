@@ -1,3 +1,4 @@
+import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import {
   memo,
   type MouseEvent as ReactMouseEvent,
@@ -45,7 +46,10 @@ import {
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
+  LOCAL_WORKBENCH_DEVICE_ALIAS,
+  resolveLocalWorkbenchDeviceId,
 } from '@/lib/workbench-device'
+import { isAbsoluteWorkspacePath, resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 import {
   createLocalAttachmentWorkspaceTarget,
   createLocalFileWorkspaceTarget,
@@ -111,6 +115,7 @@ import {
 } from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
+import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
@@ -1217,6 +1222,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
   const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
   const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
+  const [fileOpenError, setFileOpenError] = useState<string | null>(null)
   const [additionalHarnessError, setAdditionalHarnessError] = useState<string | null>(null)
   const [harnessResumeLaunchError, setHarnessResumeLaunchError] = useState<{
     sessionId: string
@@ -1861,6 +1867,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const workbenchScrollbarRef = useRef<HTMLDivElement | null>(null)
   const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -2018,7 +2025,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
+    const canBrowseFiles = Boolean(
+      workspaceProject || openFileRequest?.target || openFileRequest?.attachment
+    )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'work-item')
@@ -2040,6 +2049,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : [...permittedTabs, rightPanelView]
   }, [
     openFileRequest?.target,
+    openFileRequest?.attachment,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
@@ -2158,7 +2168,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           isDirectory: selectedWorkspaceFile.isDirectory,
         }
       : null
-  const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
+  const canBrowseFiles = Boolean(
+    workspaceProject || openFileRequest?.target || openFileRequest?.attachment
+  )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
@@ -4161,10 +4173,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!canBrowseFiles) return
     openRightPanelTab('files')
   }, [canBrowseFiles, openRightPanelTab])
-  const selectFileWorkspaceTarget = useCallback((target: WorkspaceTarget) => {
-    setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
-    setOpenFileRequest(null)
-  }, [])
+  const selectFileWorkspaceTarget = useCallback(
+    (target: WorkspaceTarget) => {
+      setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
+      setOpenFileRequest(null)
+    },
+    [setOpenFileRequest]
+  )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
       if (!fileWorkspaceTarget) return
@@ -4210,76 +4225,115 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const openWorkspaceFileFromMessage = useCallback(
     async (path: string, options?: WorkspaceFileOpenOptions) => {
-      const trimmedPath = decodeMarkdownFilePath(path.trim())
-      if (!trimmedPath) return
-      const traceId = createFilePreviewTraceId()
-      const pathMetadata = filePreviewPathMetadata(trimmedPath)
-      logFilePreviewDiagnostic(traceId, 'message_link_click', pathMetadata)
-      scheduleFilePreviewMainThreadProbe(traceId, 'message_link_click')
-      const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
-      const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
-      let localTarget =
-        attachmentTarget ??
-        (absoluteLocalTarget &&
-        (!effectiveWorkspaceTarget ||
-          effectiveWorkspaceTarget.workspaceSource === 'local' ||
-          effectiveWorkspaceTarget.deviceId === absoluteLocalTarget.deviceId)
-          ? absoluteLocalTarget
-          : null)
-      let isDirectory = options?.isDirectory
-      if (localTarget && isDirectory === undefined) {
-        const statStartedAt = performance.now()
-        logFilePreviewDiagnostic(traceId, 'filesystem_stat_start', pathMetadata)
-        isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
-        logFilePreviewDiagnostic(traceId, 'filesystem_stat_end', {
-          ...pathMetadata,
-          durationMs: filePreviewElapsedMs(statStartedAt),
-          isDirectory,
-        })
-        scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
-      }
-      if (localTarget && isDirectory) {
-        localTarget = {
-          ...localTarget,
-          path: trimmedPath.replace(/\\/g, '/').replace(/\/+$/, '') || '/',
+      setFileOpenError(null)
+      try {
+        const trimmedPath = await resolveHomeRelativeWorkspacePath(
+          decodeMarkdownFilePath(path.trim()),
+          effectiveWorkspaceTarget?.deviceId ??
+            resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)!,
+          getDeviceHomeDirectory
+        )
+        if (!trimmedPath) return
+        const traceId = createFilePreviewTraceId()
+        const pathMetadata = filePreviewPathMetadata(trimmedPath)
+        logFilePreviewDiagnostic(traceId, 'message_link_click', pathMetadata)
+        scheduleFilePreviewMainThreadProbe(traceId, 'message_link_click')
+        const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
+        const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
+        let localTarget =
+          attachmentTarget ??
+          (absoluteLocalTarget &&
+          (!effectiveWorkspaceTarget ||
+            effectiveWorkspaceTarget.workspaceSource === 'local' ||
+            effectiveWorkspaceTarget.deviceId === absoluteLocalTarget.deviceId)
+            ? absoluteLocalTarget
+            : null)
+        let isDirectory = options?.isDirectory
+        if (localTarget && isDirectory === undefined) {
+          const statStartedAt = performance.now()
+          logFilePreviewDiagnostic(traceId, 'filesystem_stat_start', pathMetadata)
+          isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
+          logFilePreviewDiagnostic(traceId, 'filesystem_stat_end', {
+            ...pathMetadata,
+            durationMs: filePreviewElapsedMs(statStartedAt),
+            isDirectory,
+          })
+          scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
         }
+        if (localTarget && isDirectory) {
+          localTarget = {
+            ...localTarget,
+            path: trimmedPath.replace(/\\/g, '/').replace(/\/+$/, '') || '/',
+          }
+        }
+        setOpenFileRequest(current => ({
+          id: (current?.id ?? 0) + 1,
+          path: trimmedPath,
+          lineStart: options?.lineStart,
+          lineEnd: options?.lineEnd,
+          isDirectory,
+          traceId,
+          target: localTarget ?? undefined,
+        }))
+        logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
+          ...pathMetadata,
+          hasLocalTarget: Boolean(localTarget),
+          isDirectory: isDirectory ?? null,
+        })
+        openRightPanelTab('files')
+        logFilePreviewDiagnostic(traceId, 'right_panel_open_requested')
+        scheduleFilePreviewMainThreadProbe(traceId, 'right_panel_open_requested')
+      } catch (error) {
+        setFileOpenError(getErrorMessage(error, t('workbench.workspace_file_preview_failed')))
       }
-      setOpenFileRequest(current => ({
-        id: (current?.id ?? 0) + 1,
-        path: trimmedPath,
-        lineStart: options?.lineStart,
-        lineEnd: options?.lineEnd,
-        isDirectory,
-        traceId,
-        target: localTarget ?? undefined,
-      }))
-      logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
-        ...pathMetadata,
-        hasLocalTarget: Boolean(localTarget),
-        isDirectory: isDirectory ?? null,
-      })
-      openRightPanelTab('files')
-      logFilePreviewDiagnostic(traceId, 'right_panel_open_requested')
-      scheduleFilePreviewMainThreadProbe(traceId, 'right_panel_open_requested')
     },
-    [devices, effectiveWorkspaceTarget, openRightPanelTab, setOpenFileRequest]
+    [
+      devices,
+      effectiveWorkspaceTarget,
+      getDeviceHomeDirectory,
+      openRightPanelTab,
+      setOpenFileRequest,
+      setFileOpenError,
+      t,
+    ]
   )
 
   const openLocalSkillFile = useCallback(
-    (path: string) => {
-      const trimmedPath = path.trim()
-      if (!trimmedPath) return
-      const target = createLocalFileWorkspaceTarget(trimmedPath, devices)
-      if (!target) return
+    async (path: string) => {
+      setFileOpenError(null)
+      try {
+        const trimmedPath = await resolveHomeRelativeWorkspacePath(
+          path.trim(),
+          resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)!,
+          getDeviceHomeDirectory
+        )
+        if (!trimmedPath) return
+        if (!isAbsoluteWorkspacePath(trimmedPath)) {
+          await openWorkspaceFileFromMessage(trimmedPath)
+          return
+        }
+        const target = createLocalFileWorkspaceTarget(trimmedPath, devices)
+        if (!target) return
 
-      setOpenFileRequest(current => ({
-        id: (current?.id ?? 0) + 1,
-        path: trimmedPath,
-        target,
-      }))
-      openRightPanelTab('files')
+        setOpenFileRequest(current => ({
+          id: (current?.id ?? 0) + 1,
+          path: trimmedPath,
+          target,
+        }))
+        openRightPanelTab('files')
+      } catch (error) {
+        setFileOpenError(getErrorMessage(error, t('workbench.workspace_file_preview_failed')))
+      }
     },
-    [devices, openRightPanelTab, setOpenFileRequest]
+    [
+      devices,
+      getDeviceHomeDirectory,
+      openRightPanelTab,
+      openWorkspaceFileFromMessage,
+      setOpenFileRequest,
+      setFileOpenError,
+      t,
+    ]
   )
 
   const applyReviewPatch = useCallback(
@@ -4866,7 +4920,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     })
   }, [rightPanelSessionKey])
 
-  return (
+  const content = (
     <main
       ref={setWorkbenchMainRef}
       className={cn(
@@ -4930,27 +4984,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         />
-        <div
-          data-testid="desktop-workbench-scroll-frame"
-          className={cn(
+        <TaskDetailScrollArea
+          viewportRef={workbenchScrollRef}
+          scrollbarRef={workbenchScrollbarRef}
+          hasConversation={hasConversation}
+          showPageTopBar={showPageTopBar}
+          defaultEmbeddedBrowserLabel={defaultEmbeddedBrowserLabel}
+          frameClassName={cn(
             'relative flex h-full min-w-0 flex-none',
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
-          style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
+          frameStyle={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
+          overlay={
+            <aside
+              data-testid="environment-info-panel-container"
+              className={cn(
+                'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
+                environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
+                showPageTopBar && 'pt-11',
+                environmentInfoTransitionEnabled
+                  ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                  : 'transition-none'
+              )}
+            >
+              <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
+            </aside>
+          }
         >
-          <div
-            ref={workbenchScrollRef}
-            data-testid="desktop-workbench-content"
-            data-scroll-origin={hasConversation ? 'bottom' : 'top'}
-            data-embedded-browser-label={defaultEmbeddedBrowserLabel}
-            className={cn(
-              'relative flex h-full min-w-0 flex-1',
-              hasConversation
-                ? 'flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
-                : 'overflow-hidden',
-              showPageTopBar && 'pt-11'
-            )}
-          >
+          <>
             <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
               {isBootstrapping ? (
                 <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -5001,6 +5062,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
+                    workspacePath={composerWorkspaceTarget?.path}
                     messages={paneMessages}
                     turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}
@@ -5023,6 +5085,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     className="min-h-full"
                     scrollTestId="desktop-chat-scroll"
                     externalScrollRef={workbenchScrollRef}
+                    externalScrollInteractionRef={workbenchScrollbarRef}
                     turnNavigationPortalTarget={turnNavigationPortalTarget}
                     scrollerClassName="min-h-full overflow-visible"
                     contentClassName={displayedRightPanelExpanded ? 'invisible' : undefined}
@@ -5528,21 +5591,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
               />
             </div>
-          </div>
-          <aside
-            data-testid="environment-info-panel-container"
-            className={cn(
-              'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
-              environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
-              showPageTopBar && 'pt-11',
-              environmentInfoTransitionEnabled
-                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
-                : 'transition-none'
-            )}
-          >
-            <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
-          </aside>
-        </div>
+          </>
+        </TaskDetailScrollArea>
         {displayedRightPanelOpen && !displayedRightPanelExpanded && (
           <div
             data-testid="right-workspace-resize-handle"
@@ -5609,7 +5659,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               initialFileSelection={initialFileWorkspaceSelection}
-              workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
+              workspaceTargetError={
+                openFileRequest?.target || openFileRequest?.attachment ? null : workspaceTargetError
+              }
               review={reviewState}
               planContent={rightPanelPlanContent}
               subagentPanel={
@@ -5823,6 +5875,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           tone="error"
           onClear={() => setAdditionalHarnessError(null)}
         />
+        <TransientNotice
+          message={fileOpenError}
+          tone="error"
+          onClear={() => setFileOpenError(null)}
+        />
         <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />
         <TaskBoardAssociationDialog
@@ -5856,6 +5913,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
       </>
     </main>
+  )
+  return (
+    <AttachmentPreviewContext.Provider
+      value={source => {
+        setOpenFileRequest(current => ({
+          id: (current?.id ?? 0) + 1,
+          path: source.filename,
+          target: current?.target,
+          attachment: source,
+        }))
+        openRightPanelTab('files')
+      }}
+    >
+      {content}
+    </AttachmentPreviewContext.Provider>
   )
 })
 

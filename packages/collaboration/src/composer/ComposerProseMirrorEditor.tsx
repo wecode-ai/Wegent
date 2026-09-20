@@ -61,6 +61,15 @@ import {
 } from "./composerProseMirrorModel";
 import { parseComposerMentions } from "./composerMentions";
 import { composerTextLinks, openComposerTextLink } from "./composerTextLinks";
+import {
+  parseComposerClipboardHtml,
+  serializeComposerClipboardHtml,
+} from "./composerClipboard";
+import {
+  composerMarkdownInputRules,
+  convertTypedComposerTable,
+  indentComposerList,
+} from "./composerMarkdownInputRules";
 
 export interface ComposerEditorSnapshot {
   value: string;
@@ -112,6 +121,7 @@ export interface ComposerProseMirrorEditorProps {
   rows: number;
   textareaRef: RefObject<HTMLElement | null>;
   className: string;
+  scrollContainerClassName?: string;
   nativeEmptyCaret?: boolean;
 }
 
@@ -249,13 +259,17 @@ export const ComposerProseMirrorEditor = forwardRef<
             },
           }),
           history(),
+          composerMarkdownInputRules(),
           composerTextLinks((...args) =>
             callbacksRef.current.onEditComposerLink?.(...args),
           ),
           trailingComposerParagraph,
           keymap({
-            Tab: moveComposerTableCell(1),
-            "Shift-Tab": moveComposerTableCell(-1),
+            Tab: chainCommands(moveComposerTableCell(1), indentComposerList(1)),
+            "Shift-Tab": chainCommands(
+              moveComposerTableCell(-1),
+              indentComposerList(-1),
+            ),
             "Mod-z": undo,
             "Mod-y": redo,
             "Shift-Mod-z": redo,
@@ -345,18 +359,24 @@ export const ComposerProseMirrorEditor = forwardRef<
         const text =
           event.clipboardData?.getData("text/plain") ||
           event.clipboardData?.getData("text");
-        if (!text) return false;
         if (view.state.selection.$from.parent.type.spec.code) {
+          if (!text) return false;
           view.dispatch(view.state.tr.insertText(text).scrollIntoView());
           return true;
         }
-        const pastedDocument = createComposerDocument(text);
+        const htmlDocument = parseComposerClipboardHtml(
+          event.clipboardData?.getData("text/html") ?? "",
+        );
+        if (!text && !htmlDocument) return false;
+        const pastedDocument =
+          htmlDocument ?? createComposerDocument(text || "");
         const { $from, empty } = view.state.selection;
         if (
           isInTable(view.state) &&
           pastedDocument.firstChild?.type.name === "table" &&
-          pastedDocument.childCount === 2 &&
-          pastedDocument.lastChild?.attrs.trailing
+          (pastedDocument.childCount === 1 ||
+            (pastedDocument.childCount === 2 &&
+              pastedDocument.lastChild?.attrs.trailing))
         ) {
           return (
             tablePlugin.props.handlePaste?.call(
@@ -485,6 +505,18 @@ export const ComposerProseMirrorEditor = forwardRef<
         event.stopImmediatePropagation();
         return;
       }
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        convertTypedComposerTable(view)
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       const handledByComposer = callbacksRef.current.onKeyDown(
         event,
         readComposerSnapshot(view.state),
@@ -496,6 +528,10 @@ export const ComposerProseMirrorEditor = forwardRef<
     };
     const handleCopyCapture = (event: ClipboardEvent) => {
       if (!event.clipboardData || view.state.selection.empty) return;
+      event.clipboardData.setData(
+        "text/html",
+        serializeComposerClipboardHtml(view.state.selection.content()),
+      );
       event.clipboardData.setData(
         "text/plain",
         view.state.selection instanceof AllSelection
@@ -633,7 +669,11 @@ export const ComposerProseMirrorEditor = forwardRef<
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
-      <div ref={mountRef} />
+      <div
+        ref={mountRef}
+        className={props.scrollContainerClassName}
+        data-composer-scroll-container={props.scrollContainerClassName ? '' : undefined}
+      />
       {!hasContent && (
         <div
           className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-muted/55`}
@@ -663,12 +703,14 @@ function keepTrailingComposerCaretVisible(view: EditorView): void {
   window.requestAnimationFrame(() => {
     const selectionAtEnd =
       view.state.selection.head === view.state.doc.content.size - 1;
-    if (!selectionAtEnd || view.dom.scrollHeight <= view.dom.clientHeight)
+    const scroller =
+      view.dom.closest<HTMLElement>('[data-composer-scroll-container]') ?? view.dom;
+    if (!selectionAtEnd || scroller.scrollHeight <= scroller.clientHeight)
       return;
 
     // WebKit reports the rectangle before consecutive trailing BR nodes, so
     // ProseMirror cannot scroll the actual caret into view on its own.
-    view.dom.scrollTop = view.dom.scrollHeight - view.dom.clientHeight;
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
   });
 }
 

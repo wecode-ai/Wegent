@@ -9,6 +9,7 @@ import {
   listLocalWorkspaceOpeners,
   localPathExists,
   openLocalFile,
+  openLocalFileInWorkspaceApp,
   openLocalWorkspace,
   pickLocalWorkspaceOpenerExe,
   resizeLocalTerminal,
@@ -16,6 +17,7 @@ import {
   startLocalTerminal,
   writeLocalTerminal,
 } from './local-terminal'
+import { setPreferredWorkspaceOpener } from './workspace-opener-preferences'
 
 const mocks = vi.hoisted(() => ({
   desktop: true,
@@ -197,6 +199,59 @@ describe('Electron local terminal', () => {
       ['workspace.listOpeners'],
       ['workspace.pickOpener'],
     ])
+  })
+
+  test('opens attachments with the workspace choice and uses the global choice for a new workspace', async () => {
+    const available = ['vscode', 'cursor', 'file-manager'].map(id => ({ id, available: true }))
+    mocks.desktopHost.mockImplementation(async capability =>
+      capability === 'workspace.listOpeners' ? available : undefined
+    )
+    setPreferredWorkspaceOpener('/project-a', 'cursor')
+    setPreferredWorkspaceOpener('/project-b', 'file-manager')
+
+    await openLocalFileInWorkspaceApp(' /draft/test.md ', '/project-a')
+    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
+      opener: 'cursor',
+      path: '/draft/test.md',
+    })
+    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-b')
+    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
+      opener: 'file-manager',
+      path: '/draft/test.md',
+    })
+    await openLocalFileInWorkspaceApp('/draft/test.md', '/project-c')
+    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
+      opener: 'file-manager',
+      path: '/draft/test.md',
+    })
+  })
+
+  test('rejects empty attachment paths before contacting the desktop host', async () => {
+    await expect(openLocalFileInWorkspaceApp('   ')).rejects.toThrow('Local file path is empty')
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
+  test('rejects attachment opening outside the desktop runtime', async () => {
+    mocks.desktop = false
+    await expect(openLocalFileInWorkspaceApp('/draft/test.md')).rejects.toThrow()
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
+  test('uses the first available opener when a saved app is uninstalled and propagates launch failures', async () => {
+    setPreferredWorkspaceOpener('/project-a', 'cursor')
+    mocks.desktopHost
+      .mockResolvedValueOnce([
+        { id: 'vscode', available: true },
+        { id: 'cursor', available: false },
+      ])
+      .mockRejectedValueOnce(new Error('test launch failure'))
+    await expect(openLocalFileInWorkspaceApp('/draft/test.md', '/project-a')).rejects.toThrow(
+      'test launch failure'
+    )
+    expect(mocks.desktopHost).toHaveBeenLastCalledWith('workspace.openFile', {
+      opener: 'vscode',
+      path: '/draft/test.md',
+    })
   })
 
   test('replays snapshots before buffered live output and filters other sessions', async () => {

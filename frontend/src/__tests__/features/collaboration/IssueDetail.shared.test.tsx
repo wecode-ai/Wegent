@@ -621,9 +621,8 @@ describe('shared IssueDetail', () => {
         tags: [],
       })
     )
-    fireEvent.change(screen.getByTestId('cloud-todo-detail-assignee'), {
-      target: { value: 'user:5' },
-    })
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
     fireEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
@@ -644,10 +643,8 @@ describe('shared IssueDetail', () => {
     const update = jest.fn()
     const api = createApi({ issues: { assign, update } })
     renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
-    await screen.findByRole('option', { name: member.user_name })
-    fireEvent.change(screen.getByTestId('cloud-todo-detail-assignee'), {
-      target: { value: 'user:5' },
-    })
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
     fireEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>

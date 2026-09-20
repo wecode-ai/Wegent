@@ -22,7 +22,6 @@ use anyhow::Result;
 
 use brz_mysql::{Mysql, MysqlRow};
 
-use super::auth::model::UserRow;
 use crate::crd::CrdDocument;
 use crate::json_compat::OpaqueJson;
 use crate::task_routing::{ByTaskId, ByUserId};
@@ -227,29 +226,6 @@ where
     Ok(row
         .as_ref()
         .and_then(|row| row.get_required::<i64>("kinds_id").ok()))
-}
-
-/// `userReader.get_by_id` MySQL fallback (`UserReader.get_by_id`): the full
-/// labeled users projection filtered by id.
-pub(crate) async fn get_user_by_id<M>(mysql: &M, user_id: i64) -> Result<Option<UserRow>>
-where
-    M: brz_mysql::Mysql,
-{
-    let row: Option<UserRow> = mysql
-        .fetch_optional(
-            "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-             users.password_hash AS users_password_hash, users.email AS users_email, \
-             users.git_info AS users_git_info, users.is_active AS users_is_active, \
-             users.`role` AS users_role, users.auth_source AS users_auth_source, \
-             users.preferences AS users_preferences, users.created_at AS users_created_at, \
-             users.updated_at AS users_updated_at \
-             FROM users \
-             WHERE users.id = ? \
-             LIMIT 1",
-            (user_id,),
-        )
-        .await?;
-    Ok(row)
 }
 
 /// The runtime-check fields extracted from a task row, mirroring

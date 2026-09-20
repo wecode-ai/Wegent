@@ -42,6 +42,11 @@ impl<R: Redis> CacheClients<R> {
         }
     }
 
+    /// The user-cache client (`None` when Redis was unavailable).
+    pub fn user_cache(&self) -> Option<&R> {
+        self.user_cache.as_ref()
+    }
+
     /// The optional client retained by the public kinds reader call shape.
     pub fn kinds_cache(&self) -> Option<&R> {
         self.kinds_cache.as_ref()
