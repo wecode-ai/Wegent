@@ -3097,6 +3097,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
+  test('shows only the local runtime selector in the task composer', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Codex')
+    expect(screen.queryByTestId('workbench-team-selector')).not.toBeInTheDocument()
+  })
+
   test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
     deliveryApiMock.available = true
