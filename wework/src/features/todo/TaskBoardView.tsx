@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, CheckCheck } from 'lucide-react'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import {
@@ -136,6 +136,7 @@ export function TaskBoardView({
   const [taskContexts, setTaskContexts] = useState<Map<string, RuntimeTaskContextSource>>(
     () => new Map()
   )
+  const taskContextLookupVersions = useRef(new Map<string, number>())
   const [batchConfirmItems, setBatchConfirmItems] = useState<RuntimeMyWorkItem[] | null>(null)
   const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
   const [batchConfirmError, setBatchConfirmError] = useState<string | null>(null)
@@ -199,14 +200,27 @@ export function TaskBoardView({
     if (projectSpaceApis.length === 0 || reviewItems.length === 0) return
     let active = true
     void Promise.allSettled(
-      reviewItems.map(async item => ({
-        key: runtimeTaskKey(item.runtime_address),
-        source: await findProjectSpaceContextSourceForTask(projectSpaceApis, item.runtime_address),
-      }))
+      reviewItems.map(async item => {
+        const key = runtimeTaskKey(item.runtime_address)
+        const lookupVersion = (taskContextLookupVersions.current.get(key) ?? 0) + 1
+        taskContextLookupVersions.current.set(key, lookupVersion)
+        return {
+          key,
+          lookupVersion,
+          source: await findProjectSpaceContextSourceForTask(
+            projectSpaceApis,
+            item.runtime_address
+          ),
+        }
+      })
     ).then(results => {
       if (!active) return
       const resolved = results.flatMap(result =>
-        result.status === 'fulfilled' && result.value.source.context.loop_item ? [result.value] : []
+        result.status === 'fulfilled' &&
+        result.value.source.context.loop_item &&
+        taskContextLookupVersions.current.get(result.value.key) === result.value.lookupVersion
+          ? [result.value]
+          : []
       )
       if (resolved.length === 0) return
       setTaskContexts(current => {
@@ -275,6 +289,13 @@ export function TaskBoardView({
     const repairTaskContext = async (item: RuntimeMyWorkItem) => {
       defaultWorkItemSources ??= loadDefaultWorkItemSources(projectSpaceApis)
       return trackDefaultWorkItem(await defaultWorkItemSources, item)
+    }
+    for (const item of reviewItemsToConfirm) {
+      const key = runtimeTaskKey(item.runtime_address)
+      taskContextLookupVersions.current.set(
+        key,
+        (taskContextLookupVersions.current.get(key) ?? 0) + 1
+      )
     }
     const localContextKeys = new Set<string>()
     const results = await Promise.allSettled(
