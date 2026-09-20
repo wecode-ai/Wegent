@@ -160,6 +160,32 @@ class TestDockerExecutor:
         assert "TASK_API_DOMAIN=http://backend:8000" in cmd
         assert "WEGENT_BACKEND_URL=http://backend:8000" not in cmd
 
+    @pytest.mark.parametrize("value", [None, "1", "0"])
+    @patch.object(docker_executor_module, "find_available_port", return_value=8080)
+    @patch.object(
+        docker_executor_module, "build_callback_url", return_value="http://callback.url"
+    )
+    def test_prepare_docker_command_forwards_stdout_debug_flag(
+        self, mock_callback, mock_find_port, executor, sample_task, monkeypatch, value
+    ):
+        name = "WEGENT_DEBUG_CLAUDE_STDOUT"
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+        cmd = executor._prepare_docker_command(
+            sample_task,
+            executor._extract_task_info(sample_task),
+            "test-executor",
+            "test/executor:latest",
+        )
+
+        matches = [arg for arg in cmd if arg.startswith(f"{name}=")]
+        assert matches == ([] if value is None else [f"{name}={value}"])
+        if matches:
+            assert cmd[cmd.index(matches[0]) - 1] == "-e"
+
     @patch.dict(
         os.environ,
         {

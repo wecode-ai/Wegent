@@ -80,10 +80,34 @@ fn no_chain_keeps_the_blocks_path() {
         "blocks": [{"type": "thinking", "content": "think"}, {"type": "text", "content": "v"}]
     });
     let items = serialized_items(&chain_subtask(result));
-    // The blocks path emits one message per thinking/text block.
+    // The blocks path emits one message per thinking/text block; each id
+    // indexes the emitted output like the source's `append_message`
+    // (`len(output)`), so the second message carries `_1`.
     assert_eq!(items.len(), 2);
     assert_eq!(items[0]["content"][0]["type"], "reasoning");
+    assert_eq!(items[0]["id"], "msg_429771607670244_0");
     assert_eq!(items[1]["content"][0]["type"], "output_text");
+    assert_eq!(items[1]["id"], "msg_429771607670244_1");
+}
+
+#[test]
+fn blocks_path_indexes_tool_items_into_message_ids() {
+    // Recorded case 53a36b98 shape: tool blocks and text blocks interleave;
+    // a message after tool items carries the item count as its index.
+    let result = serde_json::json!({
+        "value": "v",
+        "blocks": [
+            {"type": "tool", "id": "toolu_a", "tool_name": "Bash", "tool_use_id": "toolu_a",
+             "tool_protocol": "function", "tool_input": {"command": "ls"}, "tool_output": "out"},
+            {"type": "thinking", "content": "think"},
+            {"type": "text", "content": "v"}
+        ]
+    });
+    let items = serialized_items(&chain_subtask(result));
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[1]["id"], "msg_429771607670244_1");
+    assert_eq!(items[2]["id"], "msg_429771607670244_2");
 }
 
 #[test]

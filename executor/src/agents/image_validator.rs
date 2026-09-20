@@ -129,6 +129,11 @@ async fn run_check(check: ValidationCheck) -> CheckResult {
 
 fn checks_for_shell(shell_type: &str) -> Option<Vec<ValidationCheck>> {
     match shell_type {
+        "Codex" => Some(vec![ValidationCheck {
+            name: "codex",
+            command: "codex app-server --help >/dev/null && codex --version",
+            min_version: None,
+        }]),
         "ClaudeCode" => Some(vec![
             ValidationCheck {
                 name: "node",

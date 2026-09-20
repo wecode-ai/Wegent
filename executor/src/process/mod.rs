@@ -10,21 +10,14 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
     time::Duration,
     time::Instant,
 };
 
-use chrono::{Local, SecondsFormat};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
     process::Command,
-    sync::mpsc::{unbounded_channel, UnboundedSender},
-    sync::oneshot,
     time::timeout,
 };
 
@@ -34,11 +27,11 @@ use crate::{
         deferred_proxy_exception_failure, deferred_proxy_response_decision,
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
-    emitter::{EventEnvelope, ResponsesEventBuilder},
+    emitter::ResponsesEventBuilder,
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::ExecutionRequest,
-    runner::{AgentEngine, EventSink, ExecutionOutcome},
+    runner::{streaming::StreamingEventDispatcher, AgentEngine, EventSink, ExecutionOutcome},
     stream::{
         collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_message_blocks,
         extract_claude_result_error, extract_claude_subagent_update, extract_reasoning,
@@ -50,11 +43,17 @@ use crate::{
 #[cfg(windows)]
 mod windows_batch;
 
+pub(crate) mod debug_stdout;
+use debug_stdout::line as debug_claude_stdout_line;
+#[cfg(test)]
+use debug_stdout::{
+    line_with_timestamp as debug_claude_stdout_line_with_timestamp, ENV as DEBUG_CLAUDE_STDOUT_ENV,
+};
+
 const DEFAULT_STREAM_TEXT_CHUNK_CHARS: usize = 256;
 const DEFAULT_STREAM_REASONING_CHUNK_CHARS: usize = 4_096;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
-const DEBUG_CLAUDE_STDOUT_ENV: &str = "WEGENT_DEBUG_CLAUDE_STDOUT";
 const STDERR_PREVIEW_MAX_CHARS: usize = 500;
 
 #[derive(Clone, Default)]
@@ -66,34 +65,6 @@ impl EventSink for NoopEventSink {
     fn send(&self, _event: crate::emitter::EventEnvelope) -> Self::SendFuture {
         std::future::ready(Ok(()))
     }
-}
-
-#[derive(Clone)]
-struct StreamingEventDispatcher {
-    sender: UnboundedSender<QueuedStreamEvent>,
-    pending: Arc<AtomicUsize>,
-    compact_pending_text: Arc<AtomicBool>,
-}
-
-struct QueuedStreamEvent {
-    kind: QueuedStreamEventKind,
-}
-
-enum QueuedStreamEventKind {
-    Callback {
-        event: Box<EventEnvelope>,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-        text_delta_chars: usize,
-    },
-    Flush {
-        done: oneshot::Sender<()>,
-    },
-}
-
-struct CompactedTextDelta {
-    event: EventEnvelope,
-    text: String,
 }
 
 #[derive(Default)]
@@ -120,215 +91,6 @@ impl ClaudeOutputTextState {
     fn finish_segment(&mut self) {
         self.item_id = None;
         self.offset = 0;
-    }
-}
-
-fn compact_text_delta(
-    compacted: &mut Option<CompactedTextDelta>,
-    event: Box<EventEnvelope>,
-) -> Result<(), Box<EventEnvelope>> {
-    if event.event_type != "response.output_text.delta" {
-        return Err(event);
-    }
-    let Some(delta) = event
-        .data
-        .get("delta")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-    else {
-        return Err(event);
-    };
-    if delta.is_empty() {
-        return Ok(());
-    }
-    if let Some(existing) = compacted.as_mut() {
-        existing.text.push_str(&delta);
-        return Ok(());
-    }
-    let event = *event;
-    *compacted = Some(CompactedTextDelta { event, text: delta });
-    Ok(())
-}
-
-async fn send_compacted_text_delta<S>(sink: &S, compacted: &mut Option<CompactedTextDelta>)
-where
-    S: EventSink,
-{
-    let Some(mut compacted_text) = compacted.take() else {
-        return;
-    };
-    let text_chars = compacted_text.text.chars().count();
-    compacted_text.event.data["delta"] = Value::String(compacted_text.text);
-    let task_id = compacted_text.event.task_id.clone();
-    let subtask_id = compacted_text.event.subtask_id.clone();
-    if let Err(message) = sink.send(compacted_text.event).await {
-        let fields = vec![
-            ("task_id", task_id.clone()),
-            ("subtask_id", subtask_id.clone()),
-            ("error_len", message.len().to_string()),
-        ];
-        log_executor_event("streaming compacted text callback failed", &fields);
-    }
-    let fields = vec![
-        ("task_id", task_id),
-        ("subtask_id", subtask_id),
-        ("text_chars", text_chars.to_string()),
-    ];
-    log_executor_event("streaming compacted text emitted", &fields);
-}
-
-impl StreamingEventDispatcher {
-    fn new<S>(sink: S) -> Self
-    where
-        S: EventSink,
-    {
-        let (sender, mut receiver) = unbounded_channel::<QueuedStreamEvent>();
-        let pending = Arc::new(AtomicUsize::new(0));
-        let worker_pending = Arc::clone(&pending);
-        let compact_pending_text = Arc::new(AtomicBool::new(false));
-        let worker_compact_pending_text = Arc::clone(&compact_pending_text);
-        tokio::spawn(async move {
-            let mut compacted_text: Option<CompactedTextDelta> = None;
-            while let Some(queued) = receiver.recv().await {
-                match queued.kind {
-                    QueuedStreamEventKind::Callback {
-                        event,
-                        log_name,
-                        fields,
-                        text_delta_chars,
-                    } => {
-                        let event = if worker_compact_pending_text.load(Ordering::Relaxed)
-                            && text_delta_chars > 0
-                        {
-                            match compact_text_delta(&mut compacted_text, event) {
-                                Ok(()) => {
-                                    worker_pending.fetch_sub(1, Ordering::Relaxed);
-                                    continue;
-                                }
-                                Err(original_event) => original_event,
-                            }
-                        } else {
-                            event
-                        };
-                        send_compacted_text_delta(&sink, &mut compacted_text).await;
-                        let event = *event;
-                        let started = Instant::now();
-                        let event_type = event.event_type.clone();
-                        let task_id = event.task_id.clone();
-                        let subtask_id = event.subtask_id.clone();
-                        let message_id = event.message_id.map(|value| value.to_string());
-                        if let Err(message) = sink.send(event).await {
-                            let mut fields = fields;
-                            fields.push(("error_len", message.len().to_string()));
-                            log_executor_event(log_name, &fields);
-                        }
-                        let remaining = worker_pending
-                            .fetch_sub(1, Ordering::Relaxed)
-                            .saturating_sub(1);
-                        let elapsed_ms = started.elapsed().as_millis();
-                        if elapsed_ms >= 1_000 {
-                            let fields = vec![
-                                ("task_id", task_id),
-                                ("subtask_id", subtask_id),
-                                ("event_type", event_type),
-                                ("elapsed_ms", elapsed_ms.to_string()),
-                                ("pending_depth", remaining.to_string()),
-                                ("message_id", message_id.unwrap_or_default()),
-                            ];
-                            log_executor_event("streaming callback dispatch slow", &fields);
-                        }
-                    }
-                    QueuedStreamEventKind::Flush { done } => {
-                        send_compacted_text_delta(&sink, &mut compacted_text).await;
-                        let _ = done.send(());
-                    }
-                }
-            }
-        });
-        Self {
-            sender,
-            pending,
-            compact_pending_text,
-        }
-    }
-
-    async fn flush(&self) {
-        let (done, wait) = oneshot::channel();
-        if self
-            .sender
-            .send(QueuedStreamEvent {
-                kind: QueuedStreamEventKind::Flush { done },
-            })
-            .is_err()
-        {
-            log_executor_event("streaming callback queue closed", &[]);
-            return;
-        }
-        let _ = wait.await;
-    }
-
-    async fn compact_pending_text_and_flush(&self, task_id: &str, subtask_id: &str) {
-        self.compact_pending_text.store(true, Ordering::Relaxed);
-        let fields = vec![
-            ("task_id", task_id.to_string()),
-            ("subtask_id", subtask_id.to_string()),
-            (
-                "pending_depth",
-                self.pending.load(Ordering::Relaxed).to_string(),
-            ),
-        ];
-        log_executor_event("streaming callback queue compaction requested", &fields);
-        self.flush().await;
-    }
-
-    fn send(
-        &self,
-        event: EventEnvelope,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-    ) {
-        self.send_internal(event, log_name, fields, 0);
-    }
-
-    fn send_text_delta(
-        &self,
-        event: EventEnvelope,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-        text_delta_chars: usize,
-    ) {
-        self.send_internal(event, log_name, fields, text_delta_chars);
-    }
-
-    fn send_internal(
-        &self,
-        event: EventEnvelope,
-        log_name: &'static str,
-        fields: Vec<(&'static str, String)>,
-        text_delta_chars: usize,
-    ) {
-        let depth = self.pending.fetch_add(1, Ordering::Relaxed) + 1;
-        if depth % 100 == 0 {
-            let mut queue_fields = fields.clone();
-            queue_fields.push(("pending_depth", depth.to_string()));
-            queue_fields.push(("event_type", event.event_type.clone()));
-            log_executor_event("streaming callback queue depth", &queue_fields);
-        }
-        if self
-            .sender
-            .send(QueuedStreamEvent {
-                kind: QueuedStreamEventKind::Callback {
-                    event: Box::new(event),
-                    log_name,
-                    fields,
-                    text_delta_chars,
-                },
-            })
-            .is_err()
-        {
-            self.pending.fetch_sub(1, Ordering::Relaxed);
-            log_executor_event("streaming callback queue closed", &[]);
-        }
     }
 }
 
@@ -1370,7 +1132,7 @@ where
         );
     }
     dispatcher
-        .compact_pending_text_and_flush(&task_id, &subtask_id)
+        .compact_pending_and_flush(&task_id, &subtask_id)
         .await;
     StreamingStdoutOutcome::Success(output.trim().to_owned())
 }
@@ -1946,40 +1708,12 @@ fn append_debug_claude_stdout(path: &PathBuf, stdout: &str) -> std::io::Result<(
     Ok(())
 }
 
-fn debug_claude_stdout_line(line: &str) -> String {
-    debug_claude_stdout_line_with_timestamp(
-        line,
-        Local::now().to_rfc3339_opts(SecondsFormat::Millis, false),
-    )
-}
-
-fn debug_claude_stdout_line_with_timestamp(line: &str, received_at: String) -> String {
-    match serde_json::from_str::<Value>(line.trim()) {
-        Ok(Value::Object(mut object)) => {
-            object.insert("received_at".to_owned(), Value::String(received_at));
-            Value::Object(object).to_string()
-        }
-        Ok(value) => {
-            let mut object = Map::new();
-            object.insert("received_at".to_owned(), Value::String(received_at));
-            object.insert("value".to_owned(), value);
-            Value::Object(object).to_string()
-        }
-        Err(_) => {
-            let mut object = Map::new();
-            object.insert("received_at".to_owned(), Value::String(received_at));
-            object.insert("raw".to_owned(), Value::String(line.to_owned()));
-            Value::Object(object).to_string()
-        }
-    }
-}
-
 fn debug_claude_stdout_path_for_spec(
     spec: &CommandSpec,
     task_id: Option<&str>,
     subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
-    (is_claude_program(&spec.program) && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
+    (is_claude_program(&spec.program) && debug_stdout::enabled())
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
 }
 
@@ -1988,15 +1722,6 @@ fn is_claude_program(program: &str) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         == Some("claude")
-}
-
-fn env_flag_enabled(name: &str) -> bool {
-    env::var(name)
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            !matches!(value.as_str(), "0" | "false" | "no" | "off")
-        })
-        .unwrap_or(false)
 }
 
 fn debug_claude_stdout_path(task_id: Option<&str>, subtask_id: Option<&str>) -> PathBuf {

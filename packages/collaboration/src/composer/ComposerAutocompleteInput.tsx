@@ -525,14 +525,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       } else {
         onChange(nextValue)
       }
-      window.requestAnimationFrame(() =>
-        updateAutocompleteTrigger({
-          value: nextValue,
-          selectionOffset: nextCursor,
-          selectionStart: nextCursor,
-          selectionEnd: nextCursor,
-        })
-      )
+      // A later edit may open another picker before this frame runs.
+      window.requestAnimationFrame(() => updateAutocompleteTrigger())
     },
     [onChange, updateAutocompleteTrigger]
   )

@@ -3,14 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Tests for Claude Code MCP processing in TaskRequestBuilder.
+Tests for coding executor MCP processing in TaskRequestBuilder.
 
-Verifies that skill MCP extraction, type normalization, and reachability
-filtering work correctly when preparing MCP servers for Claude Code executor.
+Verifies shared Skill MCP extraction and Claude-specific transport processing.
 """
 
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
@@ -395,7 +396,12 @@ class TestBuildMcpServers:
         assert servers["native-server"]["timeout"] == 900000
 
 
-def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, mocker):
+@pytest.mark.parametrize(
+    ("shell_type", "transport"), [("ClaudeCode", "http"), ("Codex", "streamable-http")]
+)
+def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(
+    test_db, mocker, shell_type, transport
+):
     builder = TaskRequestBuilder(test_db)
     subtask = SimpleNamespace(
         id=2,
@@ -441,7 +447,7 @@ def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, 
     mocker.patch.object(
         builder,
         "_build_bot_config",
-        return_value=[{"shell_type": "ClaudeCode", "skills": [], "mcp_servers": []}],
+        return_value=[{"shell_type": shell_type, "skills": [], "mcp_servers": []}],
     )
     mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
     mocker.patch.object(builder, "_is_group_chat", return_value=False)
@@ -474,7 +480,7 @@ def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, 
     assert result.bot[0]["mcp_servers"] == [
         {
             "name": "wegent-wework-space",
-            "type": "http",
+            "type": transport,
             "url": "http://localhost:8000/mcp/wework-space/sse",
             "timeout": 60,
             "headers": {"Authorization": "Bearer task-jwt"},
@@ -500,8 +506,8 @@ def test_generic_wegent_task_does_not_auto_inject_board_mcp():
     assert TaskRequestBuilder._is_board_wegent_task(task) is False
 
 
-class TestPrepareMcpForClaudeCode:
-    """Integration tests for _prepare_mcp_for_claude_code."""
+class TestPrepareMcpForCodingExecutor:
+    """Integration tests for _prepare_mcp_for_coding_executor."""
 
     @patch.object(
         TaskRequestBuilder,
@@ -532,7 +538,7 @@ class TestPrepareMcpForClaudeCode:
             }
         ]
 
-        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+        builder._prepare_mcp_for_coding_executor(bot_config, skill_configs)
 
         mcp = bot_config["mcp_servers"]
         assert len(mcp) == 2
@@ -563,7 +569,7 @@ class TestPrepareMcpForClaudeCode:
             }
         ]
 
-        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+        builder._prepare_mcp_for_coding_executor(bot_config, skill_configs)
 
         assert len(bot_config["mcp_servers"]) == 1
         assert bot_config["mcp_servers"][0]["name"] == "my-skill_server1"
@@ -587,7 +593,7 @@ class TestPrepareMcpForClaudeCode:
             ],
         }
 
-        builder._prepare_mcp_for_claude_code(bot_config, [])
+        builder._prepare_mcp_for_coding_executor(bot_config, [])
 
         assert bot_config["mcp_servers"] == []
 
@@ -609,7 +615,7 @@ class TestPrepareMcpForClaudeCode:
             }
         ]
 
-        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+        builder._prepare_mcp_for_coding_executor(bot_config, skill_configs)
 
         assert bot_config["mcp_servers"] == [
             {
@@ -637,21 +643,56 @@ class TestPrepareMcpForClaudeCode:
             ],
         }
 
-        builder._prepare_mcp_for_claude_code(bot_config, [])
+        builder._prepare_mcp_for_coding_executor(bot_config, [])
 
         assert len(bot_config["mcp_servers"]) == 1
         assert bot_config["mcp_servers"][0]["name"] == "ghost-server"
+
+    def test_codex_merges_skills_without_claude_normalization_or_filtering(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {"shell_type": "Codex", "mcp_servers": []}
+        skill_configs = [
+            {
+                "name": "my-skill",
+                "mcpServers": {
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "${{backend_url}}/mcp/skill",
+                        "headers": {"Authorization": "Bearer ${{auth_token}}"},
+                    },
+                    "local": {"command": "node", "args": ["skill-server.js"]},
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_coding_executor(bot_config, skill_configs)
+
+        assert bot_config["mcp_servers"] == [
+            {
+                "name": "my-skill_remote",
+                "type": "streamable-http",
+                "url": "${{backend_url}}/mcp/skill",
+                "headers": {"Authorization": "Bearer ${{auth_token}}"},
+            },
+            {"name": "my-skill_local", "command": "node", "args": ["skill-server.js"]},
+        ]
 
 
 class TestResolveRequestPreloadSkills:
     """Tests for late skill resolution after context processing."""
 
+    @pytest.mark.parametrize(
+        ("shell_type", "transport"),
+        [("ClaudeCode", "http"), ("Codex", "streamable-http")],
+    )
     @patch.object(
         TaskRequestBuilder,
         "_check_mcp_server_reachable",
         return_value=True,
     )
-    def test_inherited_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
+    def test_inherited_kb_skill_resolves_into_request_and_coding_mcp(
+        self, mock_check, shell_type, transport
+    ):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         request = ExecutionRequest(
             task_id=1273,
@@ -664,7 +705,7 @@ class TestResolveRequestPreloadSkills:
             user_selected_skills=["wegent-knowledge"],
             bot=[
                 {
-                    "shell_type": "ClaudeCode",
+                    "shell_type": shell_type,
                     "skills": ["browser"],
                     "mcp_servers": [],
                 }
@@ -724,7 +765,7 @@ class TestResolveRequestPreloadSkills:
         assert result.bot[0]["mcp_servers"] == [
             {
                 "name": "wegent-knowledge",
-                "type": "http",
+                "type": transport,
                 "url": "${{backend_url}}/mcp/knowledge/sse",
             }
         ]

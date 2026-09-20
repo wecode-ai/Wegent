@@ -44,9 +44,14 @@ pub struct Deps<M: Mysql, R: Redis> {
     pub(crate) config: Config,
     pub(crate) http: HttpClient,
     pub(crate) mysql: M,
-    /// Optional Redis dependency retained for shared executor integrations.
+    /// Employee-directory provider for the team redaction check's
+    /// entity-derived membership pass.
+    pub(crate) erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
+    /// The user-cache client of the deployment's cached reader
+    /// (`user:v2:data` reads); `None` keeps direct SQL.
     pub(crate) redis: Option<R>,
-    /// Optional Redis dependency retained for shared call-site compatibility.
+    /// The kinds-cache client of the deployment's cached reader
+    /// (`kind:v2:idx` / `kind:v2:data` reads); `None` keeps direct SQL.
     pub(crate) kinds_redis: Option<R>,
 }
 
@@ -57,11 +62,13 @@ pub fn build_deps<M: Mysql, R: Redis>(
     http: HttpClient,
     redis: Option<R>,
     kinds_redis: Option<R>,
+    erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
 ) -> Arc<Deps<M, R>> {
     Arc::new(Deps {
         config,
         http,
         mysql,
+        erp,
         redis,
         kinds_redis,
     })
@@ -207,6 +214,10 @@ async fn tree(
         mysql: &deps.mysql,
         redis: deps.kinds_redis.as_ref(),
     };
+    let erp = crate::teams::group_membership::ErpContext {
+        erp: deps.erp.as_ref(),
+        redis: deps.redis.as_ref(),
+    };
 
     let sandbox_payload = get_sandbox_payload(&deps.http, &deps.config, task_id).await;
     let root_path = resolve_root_path(task_id, &sandbox_payload);
@@ -220,6 +231,7 @@ async fn tree(
     let _task = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
+        &erp,
         &kinds,
         task_id,
         auth.user_id,
@@ -245,6 +257,7 @@ async fn tree(
         let detail = task_detail::load_task_detail(
             &deps.mysql,
             deps.redis.as_ref(),
+            &erp,
             &kinds,
             task_id,
             auth.user_id,
