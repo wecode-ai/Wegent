@@ -182,19 +182,6 @@ export function supportsRemoteTerminalSessions(
     : isCloudDevice(device) || isRemoteDevice(device)
 }
 
-export function supportsVncDesktop(device: DeviceLike, deviceId?: string | null): boolean {
-  const route = selectedRuntimeRoute(device, deviceId)
-  const cloudTarget = route
-    ? route.kind === 'cloud-relay' && (isCloudDevice(device) || route.device_type === 'cloud')
-    : isCloudDevice(device)
-  return (
-    cloudTarget &&
-    isClaudeCodeDevice(device) &&
-    supportsCloudSessions(device, deviceId) &&
-    device.runtime_features?.desktop?.available === true
-  )
-}
-
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
   return !isCloudDevice(device) && !isRemoteDevice(device) && isClaudeCodeDevice(device)
 }

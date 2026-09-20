@@ -184,29 +184,6 @@ Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在�
 - 页面动作脚本只能执行与当前工具语义一致的操作。禁止把任意 DOM 修改包装成内部 evaluate 来绕过安全检查。
 - macOS App Transport Security 只为嵌入式网页内容允许 HTTP。无效服务器证书必须先经过系统信任校验；仅在校验失败后使用该次 server-trust challenge 继续加载，并向前端发送包含原生 WebView 标识和来源的风险状态。TLS handler 必须在首次导航前完成注册，避免初始页面与异步 `with_webview` 配置竞争。证书提示在同源页面间保留，导航到其他来源或关闭 WebView 时必须清除。
 
-## 云设备桌面
-
-公开版 Wework 的内置 DSH 插件 `@wegent/dsh-ui-cloud-work` 提供通用 VNC viewer、云设备桌面页和入口实现。工作台和设备设置页通过 `wework/src/extensions/cloud-desktop-contract.ts` 使用该能力，并根据设备类型、在线状态和桌面能力决定入口的展示或禁用状态。连接凭据和上游地址只由 Backend 的 provider 处理。
-
-通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口。入口按设备 ID 打开桌面路由；没有注册 VNC provider 的设备类型无法创建会话。
-
-### 云设备 VNC 实现
-
-具备云桌面能力的设备在“设置 → 连接”和项目工作区中提供桌面入口。两个入口都在 Wework 的 Chromium 渲染进程中打开共享 React viewer，并使用 `@novnc/novnc`；Electron Main 只提供受焦点和 lease 约束的系统剪贴板能力。
-
-建连前，页面调用 `POST /api/devices/{device_id}/vnc`。Backend 返回 `/vnc-proxy/sessions/{session_id}` 下的短时 WebSocket 地址和一次性 ticket。React 路由不会收到上游地址、provider 凭证或长期用户 JWT。断开后必须申请新会话，不能复用已经消费的 ticket。
-
-Viewer 只有在收到真实 noVNC framebuffer update 后才设置首帧标记。断开或连接失败时提供重连入口。云桌面页面不提供网页批注模式，会话 WebSocket 地址也不得作为通用网页链接导出。安全、渲染、剪贴板和部署约束详见 [Wework 云设备 VNC 桌面](./wework-device-vnc-desktop.md)。
-
-#### 代码归属与宿主边界
-
-通用 VNC 协议、短时会话和渲染能力位于可开源层；具体云服务的上游地址、凭证和设备状态解析由发行版 provider 实现。
-
-- `backend/app/api/endpoints/devices.py`、`backend/app/api/vnc_websocket_middleware.py` 和 `backend/app/services/device/vnc_session_service.py` 提供通用会话 API、一次性 ticket、WebSocket 代理和按设备类型注册的 provider 契约。
-- `wework/dsh/ui-cloud-work/client.js` 注册桌面路由；`wework/dsh/ui-cloud-work/src/device-desktop/` 提供 Chromium viewer、桌面页、设备剪贴板命令桥接和入口组件。`wework/src/extensions/cloud-desktop.tsx`、`wework/src/extensions/cloud-desktop-contract.ts` 及 `wework/src/pages/deviceDesktopRoute.ts` 是宿主集成契约。`wework/electron/` 负责隔离的渲染 surface 与剪贴板 lease，不持有云服务凭证。
-- 发行版代码只向公开的 provider registry 注册其云设备实现；没有 provider 的设备类型在 Backend 失败关闭。公共代码不能直接依赖具体云服务的 URL、签名或 sandbox 标识。
-- 桌面 E2E 的发行版场景通过可选模块接入公共 checkpoint runner；公共 runner 不直接导入发行版实现。
-
 ## 批注流程
 
 右侧浏览器地址栏旁提供批注图标。批注实现分为三层：

@@ -1,8 +1,8 @@
 import { File, FileDiff, Globe2, Loader2, SquareTerminal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { cloudDesktopExtension } from '@extensions/cloud-desktop'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
 import { getRuntimeConfig } from '@/config/runtime'
-import type { CloudDesktopLaunchAction } from '@/extensions/cloud-desktop-contract'
+import type { DeviceSurfaceLaunchAction } from '@/extensions/device-surface-contract'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -10,7 +10,6 @@ import {
   supportsLocalTerminalLaunch,
   supportsRemoteSessions,
   supportsRemoteTerminalSessions,
-  supportsVncDesktop,
 } from '@/lib/device-capabilities'
 import {
   closeLocalTerminal,
@@ -120,7 +119,7 @@ export function WorkspacePanelCards({
   onMenuActionsChange,
   workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
   const testId = useCallback(
     (value: string) => (testIdsEnabled ? value : undefined),
     [testIdsEnabled]
@@ -151,11 +150,15 @@ export function WorkspacePanelCards({
   const cloudToolsAvailable = Boolean(
     projectDevice && supportsCloudSessions(projectDevice, activeWorkspaceDeviceId)
   )
-  const cloudDesktopAvailable = Boolean(
-    cloudToolsAvailable &&
-    cloudDesktopExtension.available &&
+  const deviceSurfaceAvailable = Boolean(
+    deviceSurfaceExtension.available &&
     projectDevice &&
-    supportsVncDesktop(projectDevice, activeWorkspaceDeviceId)
+    deviceSurfaceExtension.supportsDevice(projectDevice, activeWorkspaceDeviceId)
+  )
+  const language = i18n.resolvedLanguage ?? i18n.language
+  const deviceSurfaceMenuItem = useMemo(
+    () => deviceSurfaceExtension.workspaceMenuItem(language),
+    [language]
   )
   const remoteSessionTarget = Boolean(
     projectDevice &&
@@ -238,7 +241,7 @@ export function WorkspacePanelCards({
         preferLocalTerminal ? 'local' : 'configured',
       ].join(':')
     : ''
-  const cloudDesktopLaunchActionRef = useRef<CloudDesktopLaunchAction | null>(null)
+  const deviceSurfaceLaunchActionRef = useRef<DeviceSurfaceLaunchAction | null>(null)
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
@@ -614,7 +617,7 @@ export function WorkspacePanelCards({
     }
   }
 
-  const handleDesktopBusyChange = useCallback(
+  const handleExtensionBusyChange = useCallback(
     (busy: boolean) => {
       setLoadingToolState(current => {
         if (busy) return { tool: 'extension', projectKey }
@@ -624,13 +627,16 @@ export function WorkspacePanelCards({
     [projectKey]
   )
 
-  const handleDesktopOpened = useCallback(() => {
+  const handleExtensionOpened = useCallback(() => {
     onRequestClose?.()
   }, [onRequestClose])
 
-  const handleDesktopLaunchActionChange = useCallback((action: CloudDesktopLaunchAction | null) => {
-    cloudDesktopLaunchActionRef.current = action
-  }, [])
+  const handleExtensionLaunchActionChange = useCallback(
+    (action: DeviceSurfaceLaunchAction | null) => {
+      deviceSurfaceLaunchActionRef.current = action
+    },
+    []
+  )
 
   const menuActions = useMemo<WorkspacePanelMenuActions>(
     () => ({
@@ -641,17 +647,22 @@ export function WorkspacePanelCards({
           ? t('workbench.project_terminal_unavailable_tooltip')
           : undefined,
       },
-      desktop: {
-        visible: cloudDesktopAvailable,
-        disabled: toolsDisabled || projectDevice?.status !== 'online',
-        run: async () => {
-          await cloudDesktopLaunchActionRef.current?.({ notifyOpened: false })
-        },
-      },
+      extension:
+        deviceSurfaceAvailable && deviceSurfaceMenuItem
+          ? {
+              ...deviceSurfaceMenuItem,
+              visible: true,
+              disabled: toolsDisabled || projectDevice?.status !== 'online',
+              run: async () => {
+                await deviceSurfaceLaunchActionRef.current?.({ notifyOpened: false })
+              },
+            }
+          : null,
     }),
     [
       availableTools.terminal,
-      cloudDesktopAvailable,
+      deviceSurfaceAvailable,
+      deviceSurfaceMenuItem,
       projectDevice?.status,
       projectTerminalAvailable,
       showTerminalEntry,
@@ -784,7 +795,7 @@ export function WorkspacePanelCards({
               </p>
             </div>
           )}
-          {(showTerminalEntry || cloudDesktopAvailable) && (
+          {(showTerminalEntry || deviceSurfaceAvailable) && (
             <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
               {showTerminalEntry && (
                 <button
@@ -818,15 +829,15 @@ export function WorkspacePanelCards({
                   </span>
                 </button>
               )}
-              {cloudDesktopAvailable && activeWorkspaceDeviceId && (
-                <cloudDesktopExtension.WorkspaceAction
+              {deviceSurfaceAvailable && activeWorkspaceDeviceId && (
+                <deviceSurfaceExtension.WorkspaceAction
                   contextKey={projectKey}
                   deviceId={activeWorkspaceDeviceId}
                   disabled={toolsDisabled || projectDevice?.status !== 'online'}
-                  onBusyChange={handleDesktopBusyChange}
+                  onBusyChange={handleExtensionBusyChange}
                   onErrorChange={setProjectError}
-                  onLaunchActionChange={handleDesktopLaunchActionChange}
-                  onOpened={handleDesktopOpened}
+                  onLaunchActionChange={handleExtensionLaunchActionChange}
+                  onOpened={handleExtensionOpened}
                   testIdsEnabled={testIdsEnabled && !activeTerminalSession}
                 />
               )}

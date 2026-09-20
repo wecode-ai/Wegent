@@ -281,7 +281,7 @@ export function createElectronCapabilityRouter(
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
-  let activeVncClipboardLease: string | null = null
+  let activeIsolatedClipboardLease: string | null = null
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -489,29 +489,29 @@ export function createElectronCapabilityRouter(
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
   )
-  router.register('vncClipboard.activate', params => {
+  router.register('isolatedClipboard.activate', params => {
     const leaseId = stringParam(params, 'leaseId')
     const targetWindow = requiredWindow(window)
     if (!targetWindow.isFocused()) {
       throw new HostCapabilityError(
         'window_not_focused',
-        'The VNC clipboard is available only while the Wework window is focused'
+        'The isolated clipboard is available only while the Wework window is focused'
       )
     }
-    activeVncClipboardLease = leaseId
+    activeIsolatedClipboardLease = leaseId
     return { active: true }
   })
-  router.register('vncClipboard.deactivate', params => {
+  router.register('isolatedClipboard.deactivate', params => {
     const leaseId = stringParam(params, 'leaseId')
-    if (activeVncClipboardLease === leaseId) activeVncClipboardLease = null
+    if (activeIsolatedClipboardLease === leaseId) activeIsolatedClipboardLease = null
     return { active: false }
   })
-  router.register('vncClipboard.readText', params => {
-    requireActiveVncClipboardLease(activeVncClipboardLease, params, window)
+  router.register('isolatedClipboard.readText', params => {
+    requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     return clipboard.readText()
   })
-  router.register('vncClipboard.writeText', params => {
-    requireActiveVncClipboardLease(activeVncClipboardLease, params, window)
+  router.register('isolatedClipboard.writeText', params => {
+    requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
@@ -1356,7 +1356,7 @@ function requiredWindow(resolveWindow: () => BrowserWindow | null): BrowserWindo
   return target
 }
 
-function requireActiveVncClipboardLease(
+function requireActiveIsolatedClipboardLease(
   activeLease: string | null,
   params: Record<string, unknown>,
   resolveWindow: () => BrowserWindow | null
@@ -1364,14 +1364,14 @@ function requireActiveVncClipboardLease(
   const leaseId = stringParam(params, 'leaseId')
   if (activeLease !== leaseId) {
     throw new HostCapabilityError(
-      'vnc_clipboard_inactive',
-      'The VNC clipboard lease is no longer active'
+      'isolated_clipboard_inactive',
+      'The isolated clipboard lease is no longer active'
     )
   }
   if (!requiredWindow(resolveWindow).isFocused()) {
     throw new HostCapabilityError(
       'window_not_focused',
-      'The VNC clipboard is available only while the Wework window is focused'
+      'The isolated clipboard is available only while the Wework window is focused'
     )
   }
 }

@@ -940,7 +940,7 @@ def create_socketio_asgi_app():
     Create combined ASGI app with Socket.IO mounted.
 
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
-    and everything else to FastAPI.
+    and everything else through registered distribution wrappers to FastAPI.
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
@@ -969,15 +969,15 @@ def create_socketio_asgi_app():
 
     socketio_app = create_socketio_app(sio)
 
-    # VNC WebSockets must be intercepted before FastAPI handles other paths.
-    from app.api.vnc_websocket_middleware import create_vnc_interceptor_app
+    # Distribution-specific WebSocket handlers wrap FastAPI before Socket.IO.
+    from app.core.asgi_extensions import wrap_asgi_app
 
-    vnc_interceptor_app = create_vnc_interceptor_app(_fastapi_app)
+    wrapped_app = wrap_asgi_app(_fastapi_app)
 
     # Create combined ASGI app
     return socketio.ASGIApp(
         sio,
-        other_asgi_app=vnc_interceptor_app,
+        other_asgi_app=wrapped_app,
         socketio_path="/socket.io",
     )
 

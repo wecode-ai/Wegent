@@ -45,9 +45,10 @@ const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
 }))
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
+const deviceSurfaceExtensionMock = vi.hoisted(() => ({
   available: true,
   DeviceAction: vi.fn(),
+  supportsDevice: vi.fn((device: { device_type: string }) => device.device_type === 'cloud'),
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
@@ -60,8 +61,8 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: deviceSurfaceExtensionMock,
 }))
 
 vi.mock('@extensions/remote-device-onboarding', () => ({
@@ -172,19 +173,6 @@ function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
       ubuntuInitialPassword: 'initial-password-1',
     },
     ...overrides,
-  }
-}
-
-function vncDesktopRuntimeFeatures(): NonNullable<DeviceInfo['runtime_features']> {
-  return {
-    schemaVersion: 4,
-    desktop: {
-      version: 1,
-      available: true,
-      protocol: 'rfb',
-      transport: 'websocket',
-      clipboard: 'extended-text',
-    },
   }
 }
 
@@ -326,16 +314,16 @@ describe('ConnectionsSettingsPage', () => {
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
-    cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+    deviceSurfaceExtensionMock.available = true
+    deviceSurfaceExtensionMock.DeviceAction.mockImplementation(
       ({ deviceId, disabled, onOpened }) => (
         <button
           type="button"
-          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          data-testid={`connection-device-surface-button-${deviceId}`}
           disabled={disabled}
           onClick={onOpened}
         >
-          桌面
+          设备界面
         </button>
       )
     )
@@ -1937,9 +1925,7 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test('warns about active work and disables sessions while a cloud device restarts', async () => {
-    api.getAllDevices.mockResolvedValue([
-      cloudDevice({ slot_used: 1, runtime_features: vncDesktopRuntimeFeatures() }),
-    ])
+    api.getAllDevices.mockResolvedValue([cloudDevice({ slot_used: 1 })])
     api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -1950,7 +1936,7 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent('当前有任务运行')
     expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent(
-      '终端、IDE 和桌面不可用'
+      '终端、IDE 等设备连接不可用'
     )
 
     await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
@@ -1959,7 +1945,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(notice).toHaveTextContent('设备将短暂离线')
     expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
-    expect(screen.getByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-device-surface-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
     expect(
       within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
@@ -2111,18 +2097,14 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('connection-upgrade-badge-device-1')).toBeVisible()
   })
 
-  test('keeps connection settings open after the cloud desktop extension opens', async () => {
+  test('keeps connection settings open after the device surface extension opens', async () => {
     const onBack = vi.fn()
-    api.getAllDevices.mockResolvedValue([
-      cloudDevice({
-        runtime_features: vncDesktopRuntimeFeatures(),
-      }),
-    ])
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={onBack} />)
 
-    const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
-    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+    const button = await screen.findByTestId('connection-device-surface-button-device-1')
+    expect(deviceSurfaceExtensionMock.DeviceAction).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
         disabled: false,
@@ -2135,43 +2117,40 @@ describe('ConnectionsSettingsPage', () => {
     expect(onBack).not.toHaveBeenCalled()
   })
 
-  test('does not render a desktop action for a remote device', async () => {
-    api.getAllDevices.mockResolvedValue([
-      remoteDevice({
-        runtime_features: vncDesktopRuntimeFeatures(),
-      }),
-    ])
+  test('does not render a device surface action for an unsupported remote device', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     await screen.findByTestId('connection-device-remote-device')
     expect(
-      screen.queryByTestId('connection-cloud-desktop-button-remote-device')
+      screen.queryByTestId('connection-device-surface-button-remote-device')
     ).not.toBeInTheDocument()
   })
 
-  test('does not render a cloud desktop action when the extension is unavailable', async () => {
-    cloudDesktopExtensionMock.available = false
+  test('does not render a device surface action when the extension is unavailable', async () => {
+    deviceSurfaceExtensionMock.available = false
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     await screen.findByTestId('connection-device-device-1')
-    expect(screen.queryByTestId('connection-cloud-desktop-button-device-1')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('connection-device-surface-button-device-1')
+    ).not.toBeInTheDocument()
   })
 
-  test('passes an offline device as disabled to the cloud desktop action', async () => {
+  test('passes an offline device as disabled to the device surface action', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
         status: 'offline',
-        runtime_features: vncDesktopRuntimeFeatures(),
       }),
     ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
-    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+    expect(await screen.findByTestId('connection-device-surface-button-device-1')).toBeDisabled()
+    expect(deviceSurfaceExtensionMock.DeviceAction).toHaveBeenCalledWith(
       expect.objectContaining({ deviceId: 'device-1', disabled: true }),
       undefined
     )

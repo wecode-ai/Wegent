@@ -184,29 +184,6 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 - Page action scripts may only perform behavior that matches the current tool semantics. Do not wrap arbitrary DOM mutations in internal evaluate calls to bypass safety checks.
 - macOS App Transport Security permits HTTP only for embedded web content. An invalid server certificate must first fail system trust evaluation; only then may the browser continue that server-trust challenge and publish risk state containing the native WebView identity and origin to the frontend. Register the TLS handler before the first navigation so initial loading cannot race asynchronous `with_webview` configuration. Keep the warning across same-origin pages, and clear it after cross-origin navigation or WebView closure.
 
-## Cloud Device Desktop
-
-Public Wework's built-in DSH plugin `@wegent/dsh-ui-cloud-work` provides the generic VNC viewer, cloud-device desktop page, and entry points. The workbench and device settings use `wework/src/extensions/cloud-desktop-contract.ts` and show or disable the entry point according to device type, online state, and desktop capability. Only the Backend provider handles connection credentials and upstream addresses.
-
-The contract exposes `DeviceAction` and `WorkspaceAction` entry points for settings and project workspaces. Each entry opens the desktop route for a device ID. Device types without a registered VNC provider cannot create a session.
-
-### Cloud device VNC implementation
-
-Cloud devices with desktop capability have a Desktop action under **Settings → Connections** and in project workspaces. Both entries open the shared React viewer inside Wework's Chromium renderer. The viewer uses `@novnc/novnc`; Electron Main provides clipboard access constrained by focus and a lease.
-
-Before connecting, the page calls `POST /api/devices/{device_id}/vnc`. Backend returns a short-lived WebSocket URL under `/vnc-proxy/sessions/{session_id}` with a single-use ticket. The React route receives no upstream URL, provider credentials, or long-lived user JWT. A disconnect requires the page to request a fresh session instead of reusing the consumed ticket.
-
-The viewer sets its first-frame marker only after a real noVNC framebuffer update. Disconnect and connection-error paths expose a reconnect action. Cloud desktop pages do not support web annotation mode, and the session WebSocket URL must not be exported as a general-purpose web link. See [Wework Cloud Device VNC Desktop](./wework-device-vnc-desktop.md) for the security, rendering, clipboard, and deployment contracts.
-
-#### Code ownership and host boundary
-
-The generic VNC protocol, short-lived sessions, and rendering capability live in the public layer. A distribution provider implements the upstream address, credentials, and device status for its cloud service.
-
-- `backend/app/api/endpoints/devices.py`, `backend/app/api/vnc_websocket_middleware.py`, and `backend/app/services/device/vnc_session_service.py` provide the generic session API, single-use ticket, WebSocket proxy, and provider registry keyed by device type.
-- `wework/dsh/ui-cloud-work/client.js` registers the desktop route. `wework/dsh/ui-cloud-work/src/device-desktop/` provides the Chromium viewer, page, device-command clipboard bridge, and entry components. `wework/src/extensions/cloud-desktop.tsx`, `wework/src/extensions/cloud-desktop-contract.ts`, and `wework/src/pages/deviceDesktopRoute.ts` form the host integration contract. `wework/electron/` owns the isolated rendering surface and clipboard lease, without cloud-service credentials.
-- Distribution code registers its cloud-device implementation with the public provider registry. Device types without a provider fail closed. Public code must not depend directly on a specific cloud service's URL, signature, or sandbox identifier.
-- Distribution-specific desktop E2E scenarios join the public checkpoint runner through an optional module. The public runner does not import the distribution implementation directly.
-
 ## Annotation Flow
 
 The browser address bar includes an annotation icon. The implementation has three layers:

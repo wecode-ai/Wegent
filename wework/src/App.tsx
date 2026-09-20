@@ -146,7 +146,7 @@ import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { DEVICE_DESKTOP_PATH, isIsolatedDeviceDesktopSurface } from '@/pages/deviceDesktopRoute'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
@@ -654,8 +654,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
-  if (path === DEVICE_DESKTOP_PATH && isIsolatedDeviceDesktopSurface(search)) {
-    const route = registeredRoutes.find(entry => entry.path === DEVICE_DESKTOP_PATH)
+  if (deviceSurfaceExtension.isIsolatedSurface(path, search)) {
+    const route = registeredRoutes.find(entry => entry.path === path)
     return (
       <WorkbenchProvider
         lifecycleStore={lifecycleStore}
@@ -671,10 +671,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       >
         <div
           className="h-dvh min-h-0 overflow-hidden bg-background"
-          data-testid="vnc-surface-route"
+          data-testid="isolated-surface-route"
         >
           {route ? (
-            <DshRouteSurface route={route} search={search} workspaceTabId="vnc-isolated-surface" />
+            <DshRouteSurface route={route} search={search} workspaceTabId="isolated-surface" />
           ) : (
             <UnavailableWorkspaceRoute path={path} />
           )}
@@ -821,8 +821,7 @@ function AppShell() {
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
   const showChromeTitlebar = (isDesktop || isElectron) && !isPopoutWindow
-  const isIsolatedVncSurface =
-    path === DEVICE_DESKTOP_PATH && isIsolatedDeviceDesktopSurface(search)
+  const isIsolatedSurface = deviceSurfaceExtension.isIsolatedSurface(path, search)
   useEffect(() => {
     const startupRouteReady =
       path === '/login' || path === '/login/oidc' || path === '/auth/wework/authorize'
@@ -1124,7 +1123,7 @@ function AppShell() {
     return <AppRoutes />
   }
 
-  if (isIsolatedVncSurface) {
+  if (isIsolatedSurface) {
     const isolatedShell = (
       <div data-testid="app-shell" className="fixed inset-0 overflow-hidden bg-background">
         <div data-testid="app-route-host" className="h-full min-h-0 overflow-hidden">

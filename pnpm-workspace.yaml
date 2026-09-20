@@ -1,6 +1,8 @@
 packages:
   - frontend
+  - frontend/wecode
   - wework
+  - wework/wecode/dsh/*
   - packages/*
 confirmModulesPurge: false
 allowBuilds:
@@ -49,4 +51,3 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-invariants@0.1.0-rc.8'
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': patches/@file-viewer__renderer-drawing@2.1.26.patch
-  '@novnc/novnc@1.7.0': patches/@novnc__novnc@1.7.0.patch

@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     BaseModel,
@@ -109,22 +109,22 @@ class RuntimeInteractiveSessionFeatures(BaseModel):
     terminal: bool = True
 
 
-class RuntimeDesktopFeatures(BaseModel):
-    """Live desktop capability exposed by the connected Runtime."""
+_runtime_feature_normalizers: dict[str, Callable[[Any], Any | None]] = {}
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    version: int = Field(..., ge=1)
-    available: bool
-    protocol: Literal["rfb"]
-    transport: Literal["websocket"]
-    clipboard: Literal["none", "text", "extended-text"] = "none"
+def register_runtime_feature_normalizer(
+    name: str, normalizer: Callable[[Any], Any | None]
+) -> None:
+    """Allow a distribution to validate one optional Runtime feature."""
+    if not name or name in _runtime_feature_normalizers:
+        raise ValueError(f"Runtime feature '{name}' is already registered")
+    _runtime_feature_normalizers[name] = normalizer
 
 
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     schema_version: int = Field(..., ge=1, alias="schemaVersion")
     runtime_task_create: Optional[RuntimeTaskCreateFeatures] = Field(
@@ -135,20 +135,27 @@ class RuntimeFeatures(BaseModel):
         default=None,
         alias="interactiveSessions",
     )
-    desktop: Optional[RuntimeDesktopFeatures] = None
     worktrees: Optional[RuntimeWorktreeFeatures] = None
 
-    @field_validator("desktop", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def normalize_desktop(cls, value: Any) -> Any:
-        """Ignore only malformed optional desktop metadata."""
-
-        if value is None:
-            return None
-        try:
-            return RuntimeDesktopFeatures.model_validate(value)
-        except ValidationError:
-            return None
+    def normalize_extensions(cls, value: Any) -> Any:
+        """Keep only registered extension features after validation."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        known = set(cls.model_fields)
+        known.update(field.alias for field in cls.model_fields.values() if field.alias)
+        for name in tuple(normalized):
+            if name in known:
+                continue
+            normalizer = _runtime_feature_normalizers.get(name)
+            result = normalizer(normalized[name]) if normalizer else None
+            if result is None:
+                normalized.pop(name)
+            else:
+                normalized[name] = result
+        return normalized
 
 
 def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:

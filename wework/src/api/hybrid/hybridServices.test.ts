@@ -4,6 +4,13 @@ import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbe
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
 
+const extensionCommandRouting = vi.hoisted(() =>
+  vi.fn((commandKey: string) => commandKey === 'extension_command')
+)
+vi.mock('@extensions/device-command-routing', () => ({
+  shouldUseCloudDeviceCommand: extensionCommandRouting,
+}))
+
 const mocks = vi.hoisted(() => {
   const localCreateRuntimeTask = vi.fn()
   const cloudCreateRuntimeTask = vi.fn()
@@ -1189,7 +1196,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
   })
 
-  it('routes fixed VNC clipboard commands through the Backend command API', async () => {
+  it('routes extension commands through the Backend command API', async () => {
     mocks.cloudServices.deviceApi.executeCommand.mockResolvedValueOnce({
       success: true,
       exit_code: 0,
@@ -1199,13 +1206,11 @@ describe('createHybridWorkbenchServices', () => {
     const services = createServices()
 
     await services.deviceApi.executeCommand('cloud-device', {
-      command_key: 'vnc_clipboard_write',
-      env: { WEWORK_VNC_CLIPBOARD_BASE64: 'dGV4dA==' },
+      command_key: 'extension_command',
     })
 
     expect(mocks.cloudServices.deviceApi.executeCommand).toHaveBeenCalledWith('cloud-device', {
-      command_key: 'vnc_clipboard_write',
-      env: { WEWORK_VNC_CLIPBOARD_BASE64: 'dGV4dA==' },
+      command_key: 'extension_command',
     })
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
   })

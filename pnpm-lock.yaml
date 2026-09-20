@@ -8,7 +8,6 @@ packageExtensionsChecksum: sha256-7xSR3ISjHMO1s2SGAymiUIjUjIMF2cWdsXI0XROK3UY=
 
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': f4d00a3f3f86eacb4f5fbd6447a7e743af72865c6a01fa193ee9337984b1bf68
-  '@novnc/novnc@1.7.0': 0fd3538b26aa0370bd144525d231a998397db790a4c1f061ea0a5e8c47fd0221
 
 importers:
 
@@ -701,9 +700,6 @@ importers:
       '@mantine/hooks':
         specifier: ^8.3.18
         version: 8.3.18(react@19.2.7)
-      '@novnc/novnc':
-        specifier: 1.7.0
-        version: 1.7.0(patch_hash=0fd3538b26aa0370bd144525d231a998397db790a4c1f061ea0a5e8c47fd0221)
       '@pierre/diffs':
         specifier: ^1.2.11
         version: 1.2.11(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -2537,9 +2533,6 @@ packages:
   '@nolyfill/is-core-module@1.0.39':
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
-
-  '@novnc/novnc@1.7.0':
-    resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
   '@open-draft/deferred-promise@2.2.0':
     resolution: {integrity: sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA==}
@@ -11107,8 +11100,6 @@ snapshots:
       fastq: 1.20.1
 
   '@nolyfill/is-core-module@1.0.39': {}
-
-  '@novnc/novnc@1.7.0(patch_hash=0fd3538b26aa0370bd144525d231a998397db790a4c1f061ea0a5e8c47fd0221)': {}
 
   '@open-draft/deferred-promise@2.2.0': {}
 

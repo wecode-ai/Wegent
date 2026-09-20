@@ -114,19 +114,11 @@ export interface RuntimeInteractiveSessionCapability {
   terminal?: boolean
 }
 
-export interface RuntimeDesktopCapability {
-  version: number
-  available: boolean
-  protocol: 'rfb'
-  transport: 'websocket'
-  clipboard: 'none' | 'text' | 'extended-text'
-}
-
 export interface RuntimeFeatureSet {
   schemaVersion: number
   interactiveSessions?: RuntimeInteractiveSessionCapability | null
-  desktop?: RuntimeDesktopCapability | null
   worktrees?: RuntimeWorktreeCapability | null
+  [feature: string]: unknown
 }
 
 export type DeviceRuntimeRouteKind = 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'

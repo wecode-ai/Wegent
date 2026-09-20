@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { cloudDesktopExtension } from '@extensions/cloud-desktop'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -47,7 +47,6 @@ import {
   supportsCloudSessions,
   supportsDeviceMetrics,
   supportsRemoteSessions,
-  supportsVncDesktop,
 } from '@/lib/device-capabilities'
 import {
   type DeviceLifecyclePhase,
@@ -83,7 +82,7 @@ import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 
-const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
+const DeviceSurfaceDeviceAction = deviceSurfaceExtension.DeviceAction
 const keepConnectionsSettingsOpen = () => undefined
 const VERSION_INFO_RETRY_DELAY_MS = 1_500
 
@@ -875,13 +874,14 @@ function DeviceCard({
                       : undefined
                   }
                 />
-                {supportsVncDesktop(device) && cloudDesktopExtension.available && (
-                  <CloudDesktopDeviceAction
-                    deviceId={device.device_id}
-                    disabled={lifecyclePending || !isOnline}
-                    onOpened={keepConnectionsSettingsOpen}
-                  />
-                )}
+                {deviceSurfaceExtension.available &&
+                  deviceSurfaceExtension.supportsDevice(device) && (
+                    <DeviceSurfaceDeviceAction
+                      deviceId={device.device_id}
+                      disabled={lifecyclePending || !isOnline}
+                      onOpened={keepConnectionsSettingsOpen}
+                    />
+                  )}
               </>
             )}
             {canUseCloudLifecycleActions && (

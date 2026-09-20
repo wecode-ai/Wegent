@@ -229,7 +229,7 @@ def setup_logging() -> None:
         uvicorn_error_logger.addFilter(WebsocketProtocolDebugFilter())
 
     # The websockets protocol logger includes every binary frame at DEBUG.
-    # VNC sessions are high-throughput, so keep protocol frames out of the
+    # Binary streams are high-throughput, so keep protocol frames out of the
     # application debug log while preserving connection-level INFO messages.
     logging.getLogger("websockets").setLevel(max(log_level, logging.INFO))
 

@@ -199,7 +199,7 @@ function createWebContents(input: {
   return { capturePage, contents, debuggerSession }
 }
 
-function createVncClipboardRouter(focused = true) {
+function createIsolatedClipboardRouter(focused = true) {
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => focused),
@@ -596,27 +596,27 @@ describe('registerDesktopServiceCapabilities', () => {
   })
 })
 
-describe('VNC clipboard capabilities', () => {
+describe('isolated surface clipboard capabilities', () => {
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
   })
 
   test('read and write require a focused window with the active lease', async () => {
-    const { router } = createVncClipboardRouter()
+    const { router } = createIsolatedClipboardRouter()
 
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.readText', { leaseId: 'lease-1' })
-    ).rejects.toMatchObject({ code: 'vnc_clipboard_inactive' })
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.readText', { leaseId: 'lease-1' })
+    ).rejects.toMatchObject({ code: 'isolated_clipboard_inactive' })
 
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.activate', { leaseId: 'lease-1' })
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.activate', { leaseId: 'lease-1' })
     ).resolves.toEqual({ active: true })
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.readText', { leaseId: 'lease-1' })
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.readText', { leaseId: 'lease-1' })
     ).resolves.toBe('native text')
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.writeText', {
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.writeText', {
         leaseId: 'lease-1',
         text: '  remote text\n',
       })
@@ -626,22 +626,22 @@ describe('VNC clipboard capabilities', () => {
     expect(clipboard.writeText).toHaveBeenCalledWith('  remote text\n')
 
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.readText', { leaseId: 'lease-2' })
-    ).rejects.toMatchObject({ code: 'vnc_clipboard_inactive' })
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.readText', { leaseId: 'lease-2' })
+    ).rejects.toMatchObject({ code: 'isolated_clipboard_inactive' })
   })
 
-  test('rejects VNC clipboard activation and access when the Wework window is unfocused', async () => {
-    const { router } = createVncClipboardRouter(false)
+  test('rejects clipboard activation and access when the Wework window is unfocused', async () => {
+    const { router } = createIsolatedClipboardRouter(false)
 
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.activate', { leaseId: 'lease-1' })
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.activate', { leaseId: 'lease-1' })
     ).rejects.toMatchObject({ code: 'window_not_focused' })
     await expect(
-      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.writeText', {
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.writeText', {
         leaseId: 'lease-1',
         text: 'remote text',
       })
-    ).rejects.toMatchObject({ code: 'vnc_clipboard_inactive' })
+    ).rejects.toMatchObject({ code: 'isolated_clipboard_inactive' })
 
     expect(clipboard.writeText).not.toHaveBeenCalled()
   })

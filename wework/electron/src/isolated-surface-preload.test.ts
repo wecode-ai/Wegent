@@ -2,13 +2,13 @@ import { readFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
-describe('VNC surface preload', () => {
+describe('isolated surface preload', () => {
   test('exposes only the cloud access token refresh capability', async () => {
     const sourcePath = resolve(
       process.cwd(),
       basename(process.cwd()) === 'electron'
-        ? 'src/vnc-surface-preload.cts'
-        : 'electron/src/vnc-surface-preload.cts'
+        ? 'src/isolated-surface-preload.cts'
+        : 'electron/src/isolated-surface-preload.cts'
     )
     const source = await readFile(sourcePath, 'utf8')
 

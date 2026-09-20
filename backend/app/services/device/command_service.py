@@ -22,7 +22,9 @@ from app.services.device.command_post_processor import (
 )
 from app.services.device.command_registry import (
     CommandRegistryError,
+    LocalDeviceCommandDefinition,
     build_local_device_command_argv,
+    register_local_device_command,
     resolve_local_device_command,
 )
 from app.services.device.remote_control_policy import (
@@ -90,12 +92,24 @@ REMOTE_DEVICE_COMMAND_KEYS = (
     | REMOTE_MUTATING_COMMAND_KEYS
     | RUNTIME_AUTH_COMMAND_KEYS
 )
-CLOUD_ONLY_COMMAND_KEYS = frozenset({"vnc_clipboard_read", "vnc_clipboard_write"})
-CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | CLOUD_ONLY_COMMAND_KEYS
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 INTERNAL_DEVICE_COMMAND_KEYS = frozenset(
     {"environment_prepare", "sync_git_credentials"}
 )
+_registered_command_scopes: dict[str, frozenset[DeviceType]] = {}
+
+
+def register_device_command(
+    key: str,
+    definition: LocalDeviceCommandDefinition,
+    *,
+    allowed_device_types: frozenset[DeviceType],
+) -> None:
+    """Register a trusted distribution command and its device-type policy."""
+    if not allowed_device_types or key in _registered_command_scopes:
+        raise ValueError(f"Invalid device command registration: {key}")
+    register_local_device_command(key, definition)
+    _registered_command_scopes[key] = allowed_device_types
 
 
 class DeviceCommandError(RuntimeError):
@@ -144,7 +158,8 @@ async def _resolve_dispatch_device_id(
     if not allow_app_device and not remote_control_is_enabled(device_type):
         raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
-    if command_key in CLOUD_ONLY_COMMAND_KEYS and device_type != DeviceType.CLOUD:
+    scope = _registered_command_scopes.get(command_key)
+    if scope is not None and device_type not in scope:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"
@@ -162,11 +177,9 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    allowed_keys = (
-        CLOUD_DEVICE_COMMAND_KEYS
-        if device_type == DeviceType.CLOUD
-        else REMOTE_DEVICE_COMMAND_KEYS
-    )
+    allowed_keys = REMOTE_DEVICE_COMMAND_KEYS | {
+        key for key, types in _registered_command_scopes.items() if device_type in types
+    }
     if command_key not in allowed_keys:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "

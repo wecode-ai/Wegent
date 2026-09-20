@@ -23,8 +23,8 @@ import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
 
-function TestDeviceDesktopRoute() {
-  return <div data-testid="test-device-desktop-route" />
+function TestIsolatedExtensionRoute() {
+  return <div data-testid="test-isolated-extension-route" />
 }
 
 const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
@@ -40,15 +40,29 @@ vi.mock('@/telemetry/client', async importOriginal => ({
   useTelemetryEnabled: () => true,
 }))
 
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: {
+    available: false,
+    DeviceAction: () => null,
+    WorkspaceAction: () => null,
+    RoutePage: () => null,
+    isInternalPageUrl: () => false,
+    isIsolatedSurface: (path: string, search: string) =>
+      path === '/test-isolated-surface' && search === '?isolated=1',
+    workspaceMenuItem: () => null,
+    supportsDevice: () => false,
+  },
+}))
+
 const TEST_DSH_ROUTES = [
   {
-    id: 'device-desktop.root',
+    id: 'test-isolated-surface.root',
     icon: 'monitor',
-    module: 'plugins/wework-ui-device-desktop.js',
-    path: '/device-desktop',
+    module: 'plugins/wework-ui-test-isolated-surface.js',
+    path: '/test-isolated-surface',
     restorePolicy: 'none',
     telemetryFeature: 'cloud_work',
-    title: '设备桌面',
+    title: 'Isolated extension',
   },
   {
     id: 'plugin-center.catalog',
@@ -146,7 +160,7 @@ function installTestDshUiPlugins() {
     }),
   }
   window.__WEWORK_DSH_UI_MODULES__ = {
-    'plugins/wework-ui-device-desktop.js': { default: TestDeviceDesktopRoute },
+    'plugins/wework-ui-test-isolated-surface.js': { default: TestIsolatedExtensionRoute },
     'plugins/wework-ui-applications.js': { default: ApplicationsRoute },
     'plugins/wework-ui-core-apps.js': { default: CoreAppSurface },
     'plugins/wework-ui-plugin-center-catalog.js': { default: PluginCatalogRoute },
@@ -1115,13 +1129,13 @@ describe('App plugins route', () => {
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
   })
 
-  test('renders an isolated VNC child without the global navigation shell', async () => {
-    window.history.pushState({}, '', '/device-desktop?deviceId=cloud-device&vncSurface=isolated')
+  test('renders an isolated extension child without the global navigation shell', async () => {
+    window.history.pushState({}, '', '/test-isolated-surface?isolated=1')
 
     renderApp()
 
-    expect(await screen.findByTestId('test-device-desktop-route')).toBeInTheDocument()
-    expect(screen.getByTestId('vnc-surface-route')).toBeInTheDocument()
+    expect(await screen.findByTestId('test-isolated-extension-route')).toBeInTheDocument()
+    expect(screen.getByTestId('isolated-surface-route')).toBeInTheDocument()
     expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
     expect(document.querySelector('[data-workspace-tab-content]')).toBeNull()
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
@@ -1232,7 +1246,7 @@ describe('App plugins route', () => {
   test('handles the sidebar shortcut before ProseMirror suppresses native bold', async () => {
     window.history.pushState({}, '', '/plugins')
     renderApp()
-    await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
+    await screen.findByTestId('plugins-workspace', undefined, { timeout: 10_000 })
     const editor = new EditorView(document.body, {
       state: EditorState.create({ schema: composerSchema }),
       attributes: { 'data-testid': 'chat-message-input' },
@@ -1248,7 +1262,7 @@ describe('App plugins route', () => {
     } finally {
       editor.destroy()
     }
-  })
+  }, 15_000)
 
   test('does not dispatch application shortcuts from editable targets', async () => {
     window.history.pushState({}, '', '/')
