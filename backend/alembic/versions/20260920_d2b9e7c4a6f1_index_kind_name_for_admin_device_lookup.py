@@ -17,7 +17,7 @@ down_revision = "c9d4e7f1a2b3"
 branch_labels = None
 depends_on = None
 
-INDEX_NAME = "ix_kinds_name_kind_ns_active"
+INDEX_NAME = "idx_kinds_name_kind_ns_active"
 
 
 def upgrade() -> None:

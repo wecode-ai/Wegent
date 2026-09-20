@@ -379,4 +379,4 @@ def test_exact_name_query_uses_composite_index(test_db: Session) -> None:
         ),
         {"device_id": "cloud-1"},
     ).all()
-    assert "ix_kinds_name_kind_ns_active" in " ".join(str(row) for row in plan)
+    assert "idx_kinds_name_kind_ns_active" in " ".join(str(row) for row in plan)
