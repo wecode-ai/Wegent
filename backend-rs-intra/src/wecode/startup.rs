@@ -13,6 +13,22 @@ brz_http_server::registry!(
 );
 
 /// Retain the existing public state and create private services once at startup.
+///
+/// # Database session collation
+///
+/// The shared MySQL service is opened from `DATABASE_URL` and optional
+/// `DATABASE_SLAVE_URL` by `wegent_backend_rs::build_app_state` before this
+/// runs, so the session
+/// collation must be pinned on that URL. It has to match the collation the
+/// source driver's session ends up with: PyMySQL issues `SET NAMES utf8mb4`
+/// when it connects, which leaves `collation_connection` at the server's
+/// default collation for the `utf8mb4` character set (`utf8mb4_0900_ai_ci` on
+/// MySQL 8.0). A server-derived string compared against a schema column
+/// inherits the session collation, so `resource_members.entity_id =
+/// CAST(namespace.id AS CHAR)` in the `GET /api/teams` union raises
+/// `ER_CANT_AGGREGATE_2COLLATIONS` (1267) whenever the two differ. Pin the
+/// collation on the connection URL rather than adding per-statement collations
+/// to the migrated SQL.
 pub async fn build(mut app: AppState) -> Result<SharedWecodeAppState> {
     // Customize the owned public state before any handlers clone it.
     // with_route shares the existing pool; it does not create a second pool.
@@ -54,6 +70,13 @@ pub async fn build(mut app: AppState) -> Result<SharedWecodeAppState> {
     app.video_result_urls = Arc::new(super::video_result_urls::WeiboVideoResultUrls::new(
         tauth_redis.clone(),
     ));
+    // `SERVICE_EXTENSION=wecode.cache` replaces `userReader` with the cached
+    // reader (`wecode/cache/users.py`): `user:v2:data` read-through with the
+    // public SQL fallback. The cache client comes from `get_redis_client()`,
+    // which builds an independent client from `REDIS_URL` and optional
+    // `REDIS_SLAVE_URL`.
+    let user_cache_redis = app.redis.clone();
+    super::user_cache::install(&mut app, user_cache_redis);
     let app = Arc::new(app);
     let aigc_quota_endpoint = super::aigc::build_endpoint(super::aigc::AIGC_QUOTA_URL)
         .context("failed to build AIGC quota endpoint")?;
