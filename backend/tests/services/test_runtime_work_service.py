@@ -2890,6 +2890,33 @@ def test_runtime_create_payload_preserves_additional_skill_refs(
     assert "user_selected_skills" not in payload["executionRequest"]
 
 
+def test_runtime_create_merges_agent_and_project_plugins() -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    execution_request = SimpleNamespace(
+        project_plugin_ids=["agent-tool@official", "shared-tool@official"]
+    )
+    request = RuntimeTaskCreateRequest(
+        deviceId="cloud-device-1",
+        workspacePath="/srv/workspaces/Wegent",
+        runtime="codex",
+        message="Review the implementation",
+        projectPlugins=[
+            {"id": "shared-tool@official"},
+            {"id": "project-tool@team-market"},
+        ],
+    )
+
+    runtime_work_service._apply_runtime_create_request(execution_request, request)
+
+    assert execution_request.project_plugin_ids == [
+        "agent-tool@official",
+        "shared-tool@official",
+        "project-tool@team-market",
+    ]
+
+
 def test_materialize_runtime_task_requires_team_intent(
     test_db,
     test_user,

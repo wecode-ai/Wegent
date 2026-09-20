@@ -35,6 +35,7 @@ describe("project agent configuration model", () => {
     ).toEqual({
       id: "agent-1",
       name: "Codex",
+      displayName: "Codex",
       runtime: "codex",
       status: "active",
       version: 3,

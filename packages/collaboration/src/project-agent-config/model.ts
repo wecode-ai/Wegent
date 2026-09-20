@@ -8,6 +8,7 @@ import type { CollaborationOwnedAgent } from "../types";
 export interface ProjectAgentConfigurationRecord {
   id: string;
   name: string;
+  displayName: string;
   runtime: "codex" | "claude_code" | "wegent";
   status: "active" | "archived";
   version: number;
@@ -41,9 +42,12 @@ export function normalizeProjectAgent(
   );
   const rawTeamId = value(row, "wegentTeamId", "wegent_team_id");
   const rawDeviceId = value(row, "executionDeviceId", "execution_device_id");
+  const name = String(row.name ?? "");
+  const displayName = String(value(row, "displayName", "display_name") ?? name);
   return {
     id: String(row.id),
-    name: String(row.name ?? ""),
+    name,
+    displayName,
     runtime:
       runtime === "wegent"
         ? "wegent"

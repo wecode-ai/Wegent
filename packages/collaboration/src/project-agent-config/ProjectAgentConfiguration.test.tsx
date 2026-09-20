@@ -158,6 +158,18 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
       </button>
     );
   },
+  renderLocalAgentCreator({ onCreated, projectId }) {
+    return (
+      <button
+        data-project-id={projectId}
+        data-testid="hosted-local-agent-create"
+        onClick={() => void onCreated()}
+        type="button"
+      >
+        创建本地智能体
+      </button>
+    );
+  },
   renderAgentEditor({ agent, namespace, onClose, onSaved, workspaceName }) {
     return (
       <div data-testid="hosted-agent-editor">
@@ -262,14 +274,18 @@ describe("ProjectAgentConfiguration", () => {
 
   async function renderHosted(
     api: SharedWorkspaceApi,
-    options: { onAgentsChange?(): void; scope?: "project" | "workspace" } = {},
+    options: {
+      onAgentsChange?(): void;
+      scope?: "project" | "workspace";
+      target?: CollaborationProject;
+    } = {},
   ) {
     await act(async () => {
       root.render(
         <ProjectAgentConfiguration
           api={api}
           host={hostedCreationHost}
-          project={project}
+          project={options.target ?? project}
           resourceContext={{
             name: "研发空间",
             namespace: "engineering",
@@ -340,6 +356,66 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
   });
 
+  it("reuses the root local-Agent creator in local workspace settings", async () => {
+    const onAgentsChange = vi.fn();
+    const { api, create, list } = createApi({ agents: [] });
+    await renderHosted(api, {
+      onAgentsChange,
+      scope: "workspace",
+      target: {
+        ...project,
+        id: "local-workspace",
+        project_store: "local",
+      },
+    });
+
+    await click("project-agent-add");
+
+    expect(element("hosted-local-agent-create")).toBeTruthy();
+    expect(
+      element("hosted-local-agent-create").dataset.projectId,
+    ).toBeUndefined();
+    expect(
+      document.querySelector('[data-testid="hosted-agent-create"]'),
+    ).toBeNull();
+
+    await click("hosted-local-agent-create");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(onAgentsChange).toHaveBeenCalledOnce();
+    expect(
+      document.querySelector('[data-testid="hosted-local-agent-create"]'),
+    ).toBeNull();
+  });
+
+  it("creates a local project Agent in the current project", async () => {
+    const onAgentsChange = vi.fn();
+    const { api, create, list } = createApi({ agents: [] });
+    await renderHosted(api, {
+      onAgentsChange,
+      target: {
+        ...project,
+        project_store: "local",
+      },
+    });
+
+    await click("project-agent-add");
+
+    expect(element("hosted-local-agent-create").dataset.projectId).toBe(
+      project.id,
+    );
+    expect(
+      document.querySelector('[data-testid="hosted-agent-create"]'),
+    ).toBeNull();
+
+    await click("hosted-local-agent-create");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(onAgentsChange).toHaveBeenCalledOnce();
+  });
+
   it("edits the Agent resource behind a configured project Agent", async () => {
     const onAgentsChange = vi.fn();
     const { api, update } = createApi({
@@ -385,7 +461,8 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("offers no edit action for project Agents without an editable resource", async () => {    const { api } = createApi({
+  it("offers no edit action for project Agents without an editable resource", async () => {
+    const { api } = createApi({
       agents: [projectAgent({ runtime: "claude_code" })],
       workspaceAgents: [],
     });
@@ -470,6 +547,26 @@ describe("ProjectAgentConfiguration", () => {
     expect(
       element("project-agent-capabilities-project-agent-1").textContent,
     ).toContain("1 Skill · 项目空间 MCP + 1 MCP");
+  });
+
+  it("shows an Agent display name without replacing its resource name", async () => {
+    const { api } = createApi({
+      agents: [
+        projectAgent({
+          displayName: "本地能力智能体",
+          name: "local-capability-agent",
+          runtime: "codex",
+        }),
+      ],
+    });
+    await render(api);
+
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "本地能力智能体",
+    );
+    expect(
+      element("project-agent-row-project-agent-1").textContent,
+    ).not.toContain("local-capability-agent");
   });
 
   it("keeps creation separate from the configured Agent list", async () => {

@@ -5,6 +5,7 @@
 import { apiClient } from './client'
 import { Bot, PaginationParams, SuccessMessage } from '../types/api'
 import type { CheckRunningTasksResponse } from './common'
+import type { UnifiedAgentPluginRef } from '@wegent/collaboration'
 
 export interface SkillRefMeta {
   skill_id: number
@@ -24,6 +25,8 @@ export interface CreateBotRequest {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  plugins?: UnifiedAgentPluginRef[]
+  capability_mode?: 'follow_device' | 'manual'
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>
@@ -41,6 +44,8 @@ export interface UpdateBotRequest {
   agent_config?: Record<string, unknown>
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
+  plugins?: UnifiedAgentPluginRef[]
+  capability_mode?: 'follow_device' | 'manual'
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>

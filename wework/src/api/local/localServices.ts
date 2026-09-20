@@ -3315,7 +3315,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       ])
       const apps = appsResult.status === 'fulfilled' ? appsResult.value : []
       const installed = installedResult.status === 'fulfilled' ? installedResult.value.items : []
-      return buildProjectPluginCatalog(installed, apps)
+      return buildProjectPluginCatalog(installed, apps).map(plugin => ({
+        ...plugin,
+        catalogSource: 'local' as const,
+      }))
     },
   }
   const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
