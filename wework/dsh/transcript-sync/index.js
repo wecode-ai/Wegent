@@ -41,7 +41,8 @@ export async function apply(ctx) {
   await state.load()
   const outbox = new SqliteSyncOutbox(join(home, 'wework-transcript-sync-outbox.sqlite3'))
   const secure = ctx.weworkSecureStorage.scope('wework-transcript-sync')
-  let clientId = await secure.get('client-id')
+  let clientId = process.env.WEGENT_APP_IPC_DEVICE_ID?.trim()
+  if (!clientId) clientId = await secure.get('client-id')
   if (typeof clientId !== 'string' || !clientId) {
     clientId = randomUUID()
     await secure.set('client-id', clientId)
@@ -420,7 +421,7 @@ export class WeworkSync {
 
   async pullTranscripts() {
     if (!this.enabled) return
-    const response = await this.request('/wework-transcripts?includeArchived=true')
+    const response = await this.request('/wework-transcripts?includeArchived=false')
     for (const transcript of response.items ?? []) {
       if (!this.enabled) return
       const current = this.state.value.transcripts[transcript.transcriptId]
@@ -430,8 +431,9 @@ export class WeworkSync {
         downloadedArchiveIds: current?.downloadedArchiveIds ?? [],
       }
       if (this.outbox.hasPendingTranscript(transcript.transcriptId)) continue
+      if (transcript.writerClientId === this.clientId) continue
       const targetStatus = await this.target.status(transcript)
-      if (!targetStatus?.available) continue
+      if (!targetStatus?.available || targetStatus.reason !== 'restore_required') continue
       let after = targetStatus.importedThrough ?? 0
       if (after < transcript.currentSequence) {
         const archives = restorableSegments(transcript.archives ?? [], transcript.currentSequence)

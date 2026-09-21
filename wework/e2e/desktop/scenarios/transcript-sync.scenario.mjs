@@ -172,7 +172,7 @@ function summary(transcriptId, transcript) {
     state: 'active',
     currentSequence: transcript.currentSequence,
     archivedThroughSequence: latestSnapshot?.toSequence ?? 0,
-    writerClientId: null,
+    writerClientId: transcript.writerClientId,
     writerLeaseExpiresAt: null,
     archives: transcript.archives,
     createdAt: '2026-09-08T00:00:00.000Z',
@@ -286,10 +286,12 @@ export function createDesktopScenario({
           title: body.title ?? transcriptId,
           parentTranscriptId: body.parentTranscriptId ?? null,
           forkedAtSequence: body.forkedAtSequence ?? null,
+          writerClientId: body.clientId,
           currentSequence: 0,
           archives: [],
           turns: [],
         }
+        transcript.writerClientId = body.clientId
         transcripts.set(transcriptId, transcript)
         fencingToken += 1
         leases.set(transcriptId, { clientId: body.clientId, fencingToken })

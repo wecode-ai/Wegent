@@ -304,7 +304,7 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
     state: state(),
     target: {
       async status() {
-        return { available: true, importedThrough: 0 }
+        return { available: true, importedThrough: 0, reason: 'restore_required' }
       },
       async restore(transcript, segments, options) {
         restored.push({
@@ -323,13 +323,14 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
     desktop: {
       weworkSync: {
         async request(request) {
-          if (request.path === '/wework-transcripts?includeArchived=true') {
+          if (request.path === '/wework-transcripts?includeArchived=false') {
             return {
               status: 200,
               body: {
                 items: [
                   {
                     transcriptId: 'shared',
+                    writerClientId: 'client-1',
                     currentSequence: 2,
                     archives: [
                       {
@@ -398,7 +399,7 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
     state: state(),
     target: {
       async status() {
-        return { available: true, importedThrough: 0 }
+        return { available: true, importedThrough: 0, reason: 'restore_required' }
       },
       async restore(transcript) {
         restored.push(transcript.transcriptId)
@@ -408,7 +409,7 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
     desktop: {
       weworkSync: {
         async request(request) {
-          if (request.path === '/wework-transcripts?includeArchived=true') {
+          if (request.path === '/wework-transcripts?includeArchived=false') {
             return {
               status: 200,
               body: {
@@ -458,6 +459,60 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
   assert.deepEqual(restored, ['available'])
   assert.equal(sync.state.value.transcripts.missing.downloadedThrough, 0)
   assert.equal(sync.state.value.transcripts.available.downloadedThrough, 1)
+})
+
+test('the most recent writer never restores its own cloud transcript', async () => {
+  const restored = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-2',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {
+      async status() {
+        throw new Error('The origin device must not inspect a restore target')
+      },
+      async restore(transcript) {
+        restored.push(transcript.transcriptId)
+        return { available: true, importedThrough: transcript.currentSequence }
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          assert.equal(request.path, '/wework-transcripts?includeArchived=false')
+          return {
+            status: 200,
+            body: {
+              items: [
+                {
+                  transcriptId: 'created-here',
+                  writerClientId: 'client-2',
+                  currentSequence: 1,
+                  archives: [
+                    {
+                      id: 1,
+                      fromSequence: 0,
+                      toSequence: 1,
+                      sha256: 'a'.repeat(64),
+                      sizeBytes: 32,
+                      format: 'codex-snapshot.v1.tgz.aes256gcm',
+                    },
+                  ],
+                },
+              ],
+            },
+          }
+        },
+      },
+    },
+  })
+
+  await sync.pullTranscripts()
+
+  assert.deepEqual(restored, [])
+  assert.equal(sync.state.value.transcripts['created-here'].downloadedThrough, 0)
 })
 
 test('branches deterministically when the cloud causal head changed', async () => {
@@ -892,7 +947,7 @@ test('does not restore over a transcript with an unresolved local turn', async (
     desktop: {
       weworkSync: {
         async request(request) {
-          assert.equal(request.path, '/wework-transcripts?includeArchived=true')
+          assert.equal(request.path, '/wework-transcripts?includeArchived=false')
           return {
             status: 200,
             body: {

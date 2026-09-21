@@ -70,12 +70,21 @@ Each cloud sequence maps to exactly one object:
   128 MiB threshold can therefore keep uploading while the pending segment
   remains within the limit.
 
-Two computers may keep Wework open at the same time. Clients poll cloud progress
-every five seconds and acquire a short writer lease only while uploading, then
-release it immediately. An idle office computer does not hold the lease, and a
-running local task is never overwritten by restore. If both computers complete
-the same sequence concurrently, the first commit remains on the main line and
-the second becomes a deterministic branch, preserving both results.
+Two computers may keep Wework open at the same time. Wework persists one stable
+device ID for each desktop installation. While a lease is active,
+`writer_client_id` identifies the current writer; after release, it remains as
+the most recent writer, while `writer_lease_expires_at` alone determines whether
+the lease is active. Clients poll only unarchived cloud progress every five
+seconds. The most recent writer uploads that transcript without restoring it,
+while another device automatically restores an unarchived transcript that is
+missing locally. A fresh device therefore restores all unarchived tasks from
+other devices without making the synchronization source repeatedly download
+its own workspaces. Archived tasks are not restored automatically. Clients
+acquire a short writer lease only while uploading, then release it immediately.
+An idle office computer does not hold the lease, and a running or already bound
+local task is never overwritten by restore. If both computers complete the same
+sequence concurrently, the first commit remains on the main line and the second
+becomes a deterministic branch, preserving both results.
 
 The existing `wework_transcript_turns` table remains in place with the previous
 summary fields. Restore ignores this table, and it cannot replace the native
@@ -99,7 +108,7 @@ stateDiagram-v2
     Reconcile --> BranchSnapshot: object or summary missing/mismatched
     BranchSnapshot --> LeaseHeld: create deterministic fork transcript
 
-    [*] --> RestoreRequired: transcript missing or behind locally
+    [*] --> RestoreRequired: non-writer device lacks an unarchived transcript
     RestoreRequired --> Downloading: stream latest snapshot and contiguous deltas through Backend
     Downloading --> Staging: download and verify SHA-256
     Staging --> Bound: restore workspace, rollout, thread metadata, and dynamic tools
