@@ -8,6 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wecode.models.erp_user import WecodeErpUser
+from wecode.service.erp_entity_resolver import (
+    EmployeeIdResolution,
+    EmployeeIdResolutionStatus,
+)
 from wecode.service.external_knowledge.client import ApKnowledgeMcpClient
 from wecode.service.external_knowledge.providers.ap import (
     LIST_KNOWLEDGE_BASES_TOOL,
@@ -272,4 +276,27 @@ def test_no_employee_id_returns_guidance_without_calling_ap(
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "employee_id_required"
+    mock_call.assert_not_called()
+
+
+def test_employee_sync_in_progress_returns_retryable_error(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+):
+    mock_call = AsyncMock()
+    with (
+        patch.object(
+            external_knowledge_service._erp_resolver,
+            "resolve_employee_id_result",
+            return_value=EmployeeIdResolution(EmployeeIdResolutionStatus.IN_PROGRESS),
+        ),
+        patch.object(ApKnowledgeMcpClient, "call_tool", mock_call),
+    ):
+        response = test_client.get(
+            "/api/wecode/external-knowledge/ap/knowledge-bases",
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "employee_id_unavailable"
     mock_call.assert_not_called()

@@ -10,7 +10,8 @@ org_department entity type by checking ERP department membership.
 """
 
 import logging
-import time
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 import orjson
@@ -20,12 +21,25 @@ from sqlalchemy.orm import Session
 from app.core.distributed_lock import distributed_lock
 from app.models.user import User
 from app.services.external_entity_resolver import IExternalEntityResolver
-from wecode.cache.base import get_redis_client
+from wecode.cache.base import NULL_MARKER, get_redis_client
 from wecode.models.erp_user import WecodeErpUser
-from wecode.service.erp_client import erp_client
+from wecode.service.erp_client import EmployeeSearchOutcome, erp_client
 from wecode.service.erp_user_service import ErpUserService
 
 logger = logging.getLogger(__name__)
+
+
+class EmployeeIdResolutionStatus(str, Enum):
+    RESOLVED = "resolved"
+    NOT_FOUND = "not_found"
+    IN_PROGRESS = "in_progress"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class EmployeeIdResolution:
+    status: EmployeeIdResolutionStatus
+    employee_id: Optional[str] = None
 
 
 class ErpEntityResolver(IExternalEntityResolver):
@@ -37,6 +51,11 @@ class ErpEntityResolver(IExternalEntityResolver):
     """
 
     _CACHE_TTL = 900  # 15 minutes; user-department relationships change infrequently
+    # "This account has no directory identity" is a much longer-lived fact than
+    # a department membership, so the miss is cached far longer. The check is
+    # skipped entirely once a profile row exists, so a later CAS/OIDC login
+    # still resolves immediately without invalidating this entry.
+    _NO_PROFILE_CACHE_TTL = 86400  # 24 hours
 
     def __init__(self):
         # Defer redis client acquisition so a transient startup outage
@@ -67,14 +86,16 @@ class ErpEntityResolver(IExternalEntityResolver):
             logger.warning(f"erp cache get {key} failed: {e}")
             return None
 
-    def _cache_set(self, key: str, value) -> None:
+    def _cache_set(self, key: str, value, ttl: Optional[int] = None) -> bool:
+        """Write a cache entry, returning the client's SET result."""
         client = self._redis_client
         if client is None:
-            return
+            return False
         try:
-            client.set(key, orjson.dumps(value), ex=self._CACHE_TTL)
+            return client.set(key, orjson.dumps(value), ex=ttl or self._CACHE_TTL)
         except Exception as e:
             logger.warning(f"erp cache set {key} failed: {e}")
+            return False
 
     def _get_membership_with_cache(
         self, user_id: int, ssn: str, dept_ids: list[str]
@@ -92,29 +113,24 @@ class ErpEntityResolver(IExternalEntityResolver):
 
         cache_key = f"erp:membership:{user_id}:{ssn}"
         cached = self._cache_get(cache_key)
+        known = cached if isinstance(cached, dict) else {}
 
-        if cached and isinstance(cached, dict):
-            missing = [d for d in dept_ids if d not in cached]
-            if not missing:
-                return {d: cached[d] for d in dept_ids}
+        missing = [d for d in dept_ids if d not in known]
+        if not missing:
+            return {d: known[d] for d in dept_ids}
 
-            # Partial hit: query only missing departments and rebuild a fresh
-            # cache scoped to the current request, so stale entries from
-            # previous requests do not survive indefinitely.
-            result = erp_client.batch_check_membership(ssn, missing)
-            fresh: dict[str, bool] = {}
-            for d in dept_ids:
-                if d in result:
-                    fresh[d] = result[d]
-                else:
-                    fresh[d] = cached.get(d, False)
-            self._cache_set(cache_key, fresh)
-            return fresh
+        result = erp_client.batch_check_membership(ssn, missing)
+        if result is None:
+            # Incomplete check: return the best-known answer without
+            # caching, so a transient ERP failure is retried instead of
+            # being locked in as "not a member" for the cache TTL.
+            return {d: known.get(d, False) for d in dept_ids}
 
-        # Cache miss: query all and store
-        result = erp_client.batch_check_membership(ssn, dept_ids)
-        self._cache_set(cache_key, result)
-        return result
+        # Rebuild the cache scoped to the current request, so stale
+        # entries from previous requests do not survive indefinitely.
+        fresh = {d: result.get(d, known.get(d, False)) for d in dept_ids}
+        self._cache_set(cache_key, fresh)
+        return fresh
 
     @property
     def requires_display_name_snapshot(self) -> bool:
@@ -134,7 +150,7 @@ class ErpEntityResolver(IExternalEntityResolver):
             return []
         if not dept_ids:
             return []
-        ssn = self._get_user_ssn(db, user_id, user_context)
+        ssn = self.resolve_employee_id(db, user_id, user_context)
         if not ssn:
             return []
         membership = self._get_membership_with_cache(user_id, ssn, dept_ids)
@@ -241,81 +257,124 @@ class ErpEntityResolver(IExternalEntityResolver):
             return profile.employee_id
         return None
 
+    def _no_profile_cache_key(self, user_id: int) -> str:
+        """Cache key marking that the directory has no identity for the user."""
+        return f"erp:no_profile:{user_id}"
+
     def resolve_employee_id(
         self, db: Session, user_id: int, user_context: Optional[dict] = None
     ) -> Optional[str]:
         """Resolve a user's employee_id from profile or ERP lazy sync."""
-        return self._get_user_ssn(db, user_id, user_context)
+        return self._resolve_employee_id_result(db, user_id, user_context).employee_id
 
-    def resolve_employee_id_for_user(
+    def resolve_employee_id_result(
+        self, db: Session, user_id: int, user_context: Optional[dict] = None
+    ) -> EmployeeIdResolution:
+        """Resolve employee identity without conflating temporary failures."""
+        return self._resolve_employee_id_result(db, user_id, user_context)
+
+    def resolve_employee_id_result_for_user(
         self, user_id: int, user_context: Optional[dict] = None
-    ) -> Optional[str]:
-        """Resolve a user's employee_id with a short-lived database session."""
+    ) -> EmployeeIdResolution:
+        """Resolve identity status with a short-lived database session."""
         from app.db.session import SessionLocal
 
         db = SessionLocal()
         try:
-            return self.resolve_employee_id(db, user_id, user_context)
+            return self.resolve_employee_id_result(db, user_id, user_context)
         finally:
             db.close()
 
-    def _get_user_ssn(
+    def _resolve_employee_id_result(
         self, db: Session, user_id: int, user_context: Optional[dict] = None
-    ) -> Optional[str]:
+    ) -> EmployeeIdResolution:
         """Get user SSN (employee_id) from context or database.
 
         If no profile exists, attempt lazy-sync from ERP OpenSearch API.
         Uses distributed locking to prevent concurrent ERP API storms.
+
+        A failed lookup is cached so repeated requests for an account the
+        directory does not know (service identities, for example) stop paying
+        for the upstream search and its lock contention. The profile read
+        below stays authoritative: once a profile row exists, this method
+        returns before the cached miss is consulted.
         """
         if user_context and "employee_id" in user_context:
-            return user_context["employee_id"]
+            return EmployeeIdResolution(
+                EmployeeIdResolutionStatus.RESOLVED,
+                user_context["employee_id"],
+            )
 
         existing = self._read_profile_employee_id(db, user_id)
         if existing:
-            return existing
+            return EmployeeIdResolution(EmployeeIdResolutionStatus.RESOLVED, existing)
+
+        no_profile_key = self._no_profile_cache_key(user_id)
+        if self._cache_get(no_profile_key) == NULL_MARKER:
+            logger.debug(
+                f"Skipping ERP profile sync for user_id={user_id}: "
+                f"no directory identity (cached)"
+            )
+            return EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND)
 
         # Resolve user email BEFORE acquiring the lock so we don't hold the
-        # caller's db connection across network I/O / sleeps.
+        # caller's db connection across network I/O.
         user = db.query(User).filter(User.id == user_id).first()
         user_email = user.email if user else None
         if not user_email:
             logger.info(
                 f"No email found for user_id={user_id}, cannot sync ERP profile"
             )
-            return None
+            return EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND)
 
         lock_name = f"erp_profile_sync:{user_id}"
         with distributed_lock.acquire_context(lock_name, expire_seconds=30) as acquired:
             if not acquired:
-                # Another worker is syncing; back off and retry the read a
-                # few times before giving up.
-                for delay in (0.5, 1.0, 2.0):
-                    time.sleep(delay)
-                    existing = self._read_profile_employee_id(db, user_id)
-                    if existing:
-                        return existing
-                return None
-
-            # Double-check after acquiring the lock in case another worker
-            # finished syncing between our first read and lock acquisition.
-            existing = self._read_profile_employee_id(db, user_id)
-            if existing:
-                return existing
+                logger.info(
+                    "ERP profile sync skipped: user_id=%s outcome=lock_busy",
+                    user_id,
+                )
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.IN_PROGRESS)
 
             try:
-                erp_employee = erp_client.search_employee(user_email)
+                search_result = erp_client.search_employee_result(user_email)
             except Exception as e:
                 logger.warning(
-                    f"Failed to lazy-sync ERP profile for user_id={user_id}: {e}"
+                    "ERP profile sync failed: user_id=%s outcome=request_failed "
+                    "error_type=%s",
+                    user_id,
+                    type(e).__name__,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
+
+            if search_result.outcome is EmployeeSearchOutcome.REQUEST_FAILED:
+                logger.warning(
+                    "ERP profile sync failed: user_id=%s outcome=request_failed",
+                    user_id,
+                )
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
+
+            erp_employee = search_result.employee
+            if search_result.outcome is EmployeeSearchOutcome.NOT_FOUND:
+                cached = self._cache_set(
+                    no_profile_key,
+                    NULL_MARKER,
+                    ttl=self._NO_PROFILE_CACHE_TTL,
+                )
+                logger.info(
+                    "ERP profile sync completed: user_id=%s outcome=not_found "
+                    "no_profile_cache_written=%s",
+                    user_id,
+                    cached,
+                )
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.NOT_FOUND)
 
             if not (erp_employee and erp_employee.ssn):
-                logger.info(
-                    f"No ERP employee found for user_id={user_id} "
-                    f"with email={user_email}"
+                logger.warning(
+                    "ERP profile sync failed: user_id=%s outcome=invalid_response",
+                    user_id,
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
 
             # Use an independent session so commits do not affect the
             # caller's transaction.
@@ -335,7 +394,10 @@ class ErpEntityResolver(IExternalEntityResolver):
                     f"Lazy-synced ERP profile for user_id={user_id}: "
                     f"emp={self._mask_ssn(erp_employee.ssn)}"
                 )
-                return erp_employee.ssn
+                return EmployeeIdResolution(
+                    EmployeeIdResolutionStatus.RESOLVED,
+                    erp_employee.ssn,
+                )
             except IntegrityError:
                 indb.rollback()
                 # Another request may have created the profile concurrently
@@ -345,13 +407,16 @@ class ErpEntityResolver(IExternalEntityResolver):
                     .first()
                 )
                 if concurrent and concurrent.employee_id:
-                    return concurrent.employee_id
-                return None
+                    return EmployeeIdResolution(
+                        EmployeeIdResolutionStatus.RESOLVED,
+                        concurrent.employee_id,
+                    )
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
             except Exception as e:
                 indb.rollback()
                 logger.warning(
                     f"Failed to lazy-sync ERP profile for user_id={user_id}: {e}"
                 )
-                return None
+                return EmployeeIdResolution(EmployeeIdResolutionStatus.UNAVAILABLE)
             finally:
                 indb.close()
