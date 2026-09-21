@@ -234,6 +234,7 @@ import { consumeWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceL
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
+import { ConversationHeaderTitle } from './ConversationHeaderTitle'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import {
   SupervisorSuggestionCards,
@@ -1143,9 +1144,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
-  const currentRuntimeProject = state.runtimeWork?.projects.find(
+  const currentRuntimeProjectWork = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
-  )?.project
+  )
+  const currentRuntimeProject = currentRuntimeProjectWork?.project
   const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
   const paneKeyRef = useRef(paneKey)
@@ -4611,6 +4613,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
+  const conversationHeaderTitle =
+    currentRuntimeConversationSource && runtimeTaskSummary && !activeLocalHarnessSession ? (
+      <ConversationHeaderTitle
+        key={paneKey}
+        title={runtimeTaskSummary.title}
+        displayTitle={workbenchTitle ?? runtimeTaskSummary.title}
+        address={currentRuntimeConversationSource}
+        projectWork={currentRuntimeProjectWork}
+      />
+    ) : (
+      <span className="block min-w-0 truncate">{workbenchTitle}</span>
+    )
   const paneTaskTitle =
     workbenchTitle && !isDesktop ? (
       <div
@@ -4622,7 +4636,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )}
         style={{ width: paneTitleWidth }}
       >
-        <span className="block w-full min-w-0 truncate">{workbenchTitle}</span>
+        {conversationHeaderTitle}
       </div>
     ) : undefined
   const topBarLeftActions = !isDesktop ? (
@@ -4772,7 +4786,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
         >
-          <span className="block min-w-0 truncate">{workbenchTitle}</span>
+          {conversationHeaderTitle}
         </div>
       ) : (
         <div className="min-w-0 flex-1" />
@@ -5347,7 +5361,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 deviceId: currentRuntimeTask.deviceId,
                                 workspacePath,
                               },
-                              { lastTurnId: message.turnId }
+                              {
+                                source: currentRuntimeConversationSource ?? currentRuntimeTask,
+                                lastTurnId: message.turnId,
+                              }
                             )
                           }
                         : undefined

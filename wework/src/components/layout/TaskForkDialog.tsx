@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useMemo, useState } from 'react'
 import { ArrowLeftRight, Check, FolderPlus, HardDrive, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -184,6 +185,14 @@ export function TaskForkDialog({
   const projectForBinding: ProjectWithTasks | null =
     currentProject ?? (sourceProjectWork ? runtimeProjectToProject(sourceProjectWork) : null)
 
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    () => {
+      if (!submitting) onOpenChange(false)
+    },
+    open && Boolean(source),
+    '[data-testid="task-fork-confirm-button"]:not([disabled])'
+  )
+
   if (!open || !source) return null
 
   const handleSubmit = async () => {
@@ -235,6 +244,7 @@ export function TaskForkDialog({
         }}
       >
         <section
+          ref={dialogRef}
           data-testid="task-fork-dialog"
           role="dialog"
           aria-modal="true"

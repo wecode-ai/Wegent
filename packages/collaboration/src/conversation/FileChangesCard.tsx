@@ -6,7 +6,7 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TurnFileChangesSummary } from "@wegent/chat-core/runtime";
 import { useConversationTranslation } from "./ConversationTranslation";
@@ -246,7 +246,14 @@ function ConfirmRevertDialog({
 }) {
   const { t } = useConversationTranslation();
   const portalTheme = useCollaborationPortalTheme();
-  useEscapeKey(onClose, open && !submitting);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEscapeKey(
+    () => {
+      if (!submitting) onClose();
+    },
+    open,
+    dialogRef,
+  );
 
   if (!open) return null;
 
@@ -256,6 +263,7 @@ function ConfirmRevertDialog({
       className={`fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4 ${portalTheme.className}`}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-revert-file-changes-title"

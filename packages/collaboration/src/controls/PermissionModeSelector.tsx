@@ -135,7 +135,7 @@ function FullAccessConfirmDialog({
   const portalTheme = useCollaborationPortalTheme();
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
-  useEscapeKey(onCancel);
+  useEscapeKey(onCancel, true, dialogRef);
 
   useEffect(() => {
     cancelButtonRef.current?.focus();

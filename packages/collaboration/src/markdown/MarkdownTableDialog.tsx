@@ -20,7 +20,7 @@ export function MarkdownTableDialog({
   const { translate: t } = useMarkdownServices();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  useEscapeKey(onClose);
+  useEscapeKey(onClose, true, dialogRef);
 
   useEffect(() => {
     const trigger = triggerRef.current;

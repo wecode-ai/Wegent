@@ -125,7 +125,7 @@ export function ProjectChatAgentEditor({
   )
 
   const save = async () => {
-    if (busy || !name.trim()) return
+    if (busy || loadingAgent || !name.trim()) return
     setBusy(true)
     setError(null)
     try {
@@ -163,7 +163,9 @@ export function ProjectChatAgentEditor({
 
   return (
     <CloudTodoModal
-      onClose={busy ? () => undefined : onClose}
+      onSubmit={save}
+      pending={busy}
+      onClose={onClose}
       title={
         editing
           ? t('workbench.project_chat_agents_edit', { name })
@@ -403,8 +405,7 @@ export function ProjectChatAgentEditor({
           className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-40"
           data-testid="cloud-project-chat-agent-save"
           disabled={busy || loadingAgent || !name.trim()}
-          onClick={() => void save()}
-          type="button"
+          type="submit"
         >
           {t('workbench.project_chat_agent_save')}
         </button>

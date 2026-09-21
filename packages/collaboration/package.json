@@ -425,6 +425,10 @@
     "./project-board/ProjectBoardDragOverlay": {
       "types": "./src/project-board/ProjectBoardDragOverlay.tsx",
       "import": "./src/project-board/ProjectBoardDragOverlay.tsx"
+    },
+    "./controls/DialogForm": {
+      "types": "./src/controls/DialogForm.tsx",
+      "import": "./src/controls/DialogForm.tsx"
     }
   },
   "scripts": {

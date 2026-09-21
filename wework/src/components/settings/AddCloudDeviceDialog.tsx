@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Check, Cloud, Copy, Plus, Server, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createHttpClient } from '@/api/http'
@@ -175,6 +176,10 @@ export function AddCloudDeviceDialog({
     }
   }, [remoteCommand, t])
 
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(() => {
+    if (!loading && !remoteLoading) onClose()
+  }, open)
+
   if (!open) return null
 
   return (
@@ -185,6 +190,10 @@ export function AddCloudDeviceDialog({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('workbench.add_device_dialog_title')}
         data-testid="add-cloud-device-dialog"
         className="max-h-[calc(100vh-32px)] w-full max-w-[800px] overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
         onClick={e => e.stopPropagation()}
