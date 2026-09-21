@@ -520,6 +520,16 @@ describe('local delivery API', () => {
   test('routes project and task operations through executor IPC', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'projects.list') return [projectRecord]
+      if (method === 'projects.import_code_project') {
+        return {
+          ...projectRecord,
+          metadata: {
+            ...projectRecord.metadata,
+            code_project_key: 'runtime-project',
+            workspace_roots: ['/workspace/project'],
+          },
+        }
+      }
       if (method === 'projects.update') {
         return { ...projectRecord, name: 'Renamed board', version: 2 }
       }
@@ -531,10 +541,34 @@ describe('local delivery API', () => {
     const api = createLocalDeliveryApi(request)
 
     await expect(api.listCloudProjects()).resolves.toMatchObject({
-      items: [{ id: 'project-1', name: 'Local board' }],
+      items: [
+        {
+          id: 'project-1',
+          name: 'Local board',
+          metadata: { task_provider: 'local', tags: [] },
+        },
+      ],
     })
     await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1', title: 'First task', tags: ['local'] }],
+    })
+    await expect(
+      api.importLocalCodeProject({
+        runtimeProjectKey: 'runtime-project',
+        name: 'Local board',
+        roots: ['/workspace/project'],
+      })
+    ).resolves.toMatchObject({
+      id: 'project-1',
+      metadata: {
+        code_project_key: 'runtime-project',
+        workspace_roots: ['/workspace/project'],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('projects.import_code_project', {
+      project_key: 'runtime-project',
+      name: 'Local board',
+      roots: ['/workspace/project'],
     })
     await expect(
       api.updateCloudProject('project-1', { name: 'Renamed board', version: 1 })

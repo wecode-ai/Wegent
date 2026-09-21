@@ -6,7 +6,9 @@ import type { ReactNode } from "react";
 
 import type {
   CollaborationDefaultAssistant,
+  CollaborationProject,
   CollaborationView,
+  CollaborationWorkspace,
 } from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
@@ -69,6 +71,13 @@ export interface CollaborationPlatformHostAdapter {
     hasCloudDevice: boolean;
     onClose(): void;
     onCreated(deviceId?: number): Promise<void>;
+  }): ReactNode;
+  renderProjectImporter?(input: {
+    workspace: CollaborationWorkspace;
+    mode: "folder" | "existing";
+    projects: CollaborationProject[];
+    onClose(): void;
+    onImported(project: CollaborationProject): Promise<void>;
   }): ReactNode;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;

@@ -12,14 +12,11 @@ pub(crate) fn sync_local_collaboration_projects(
     let mut workspace_paths = HashSet::new();
     let mut duplicate_keys = HashSet::new();
     for project in CodexGlobalProjectIndex::load().projects() {
-        // Match workspace_response: the first project for a main directory owns
-        // the sidebar row. Additional writable roots never create project rows.
-        let first_for_path =
-            workspace_paths.insert(normalize_workspace_path(&project.workspace_path));
         if project.remote_host_id.is_some() || project.kind != "local" {
             continue;
         }
-        if !first_for_path {
+        let workspace_path = normalize_workspace_path(&project.workspace_path);
+        if workspace_paths.contains(&workspace_path) {
             duplicate_keys.insert(project.key.clone());
             continue;
         }
@@ -28,7 +25,11 @@ pub(crate) fn sync_local_collaboration_projects(
                 .then(|| space.get("projectId").and_then(|value| value.as_str()))
                 .flatten()
         });
-        store.ensure_code_project(&project.key, &project.name, &project.roots, bound_local_id)?;
+        // An archived alias remains a tombstone, but it must not hide the next
+        // active alias for the same directory.
+        if store.ensure_code_project(&project.key, &project.name, &project.roots, bound_local_id)? {
+            workspace_paths.insert(workspace_path);
+        }
     }
     Ok(duplicate_keys)
 }

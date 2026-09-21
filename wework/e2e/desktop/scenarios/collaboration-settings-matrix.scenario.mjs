@@ -10,7 +10,10 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -197,6 +200,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   }
 
   async function createProject(control, workspace, name) {
+    if (workspace.location === 'local') {
+      await createLocalCollaborationProject(control, ACTIVE_WORKBENCH_SELECTOR, name)
+      return null
+    }
     await openWorkspace(control, workspace.id)
     await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
     await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
@@ -214,7 +221,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       text: name,
       timeoutMs: uiTimeoutMs,
     })
-    if (workspace.location === 'local') return null
     const project = await waitForValue(
       async () => {
         const response = await request(`/api/v1/workspaces/${workspace.id}/projects`)

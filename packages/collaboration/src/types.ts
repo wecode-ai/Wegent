@@ -55,6 +55,7 @@ export interface CollaborationProject {
   version: number
   created_at: string
   updated_at: string
+  metadata?: Record<string, unknown>
 }
 
 export type LocalCollaborationProject = CollaborationProject & {
