@@ -662,6 +662,7 @@ function runtimeTranscriptRequestKey(
     afterCursor: options.afterCursor ?? null,
     refresh: options.refresh ?? null,
     includeFullContent: options.includeFullContent ?? null,
+    conversationContextOnly: options.conversationContextOnly ?? null,
     navigationOnly: options.navigationOnly ?? null,
   })
 }

@@ -439,7 +439,7 @@ impl ResponsesEventBuilder {
         )
     }
 
-    fn envelope(&self, event_type: &str, data: Value) -> EventEnvelope {
+    pub(crate) fn envelope(&self, event_type: &str, data: Value) -> EventEnvelope {
         EventEnvelope {
             event_type: event_type.to_owned(),
             task_id: self.task_id.clone(),

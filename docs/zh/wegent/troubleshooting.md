@@ -570,6 +570,27 @@ docker ps | grep executor
 docker logs -f <executor-container-id>
 ```
 
+需要排查 Claude Code 或 Codex 的流式输出时，在 Executor 进程环境中设置
+`WEGENT_DEBUG_CLAUDE_STDOUT=1`。两个执行器共用此开关，默认关闭；设为
+`0`、`false`、`no` 或 `off` 可关闭。
+
+由 Executor Manager 创建容器时，在 Manager 的启动环境中设置该变量并重启
+Manager；开关会传给之后新建的容器。运行镜像需包含此功能。
+
+容器内日志按任务追加到以下文件，每条 JSONL 记录包含 `received_at`：
+
+- Claude Code：`/tmp/wegent-claude-stdout-<task_id>-<subtask_id>.jsonl`
+- Codex：`/tmp/wegent-codex-stdout-<task_id>-<subtask_id>.jsonl`
+
+Codex 记录收到的 JSON-RPC 响应和通知，包括摘要、正文、工具与结束事件，
+凭据字段会脱敏。Wework 共享 Codex 进程使用 `wegent-codex-stdout-<pid>.jsonl`，
+可按事件中的 `threadId` 区分会话。本机运行时文件位于系统临时目录，实际路径会
+记录在 Executor 日志的 `debug_stdout_path` 中。
+
+```bash
+docker exec <executor-container-id> tail -f /tmp/wegent-codex-stdout-<task_id>-<subtask_id>.jsonl
+```
+
 **3. 常见失败原因**:
 
 | 错误类型 | 可能原因 | 解决方案 |

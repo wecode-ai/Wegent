@@ -338,7 +338,9 @@ class ContextService:
         binary_data: bytes,
         subtask_id: int = 0,
         storage_purpose: str = "default",
+        *,
         lifecycle_owner: str | None = None,
+        commit: bool = True,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
@@ -351,6 +353,7 @@ class ContextService:
             subtask_id: Subtask ID to link to (0 means unlinked)
             storage_purpose: Explicit purpose used to select external storage
             lifecycle_owner: Optional owner used by a scoped orphan reaper
+            commit: Commit locally; False leaves the transaction to the caller
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
@@ -428,32 +431,32 @@ class ContextService:
                 )
         except Exception as exc:
             logger.exception(f"Failed to save context {context.id} to storage: {exc}")
-            db.rollback()
+            if commit:
+                db.rollback()
             raise
 
         if external_storage is not None and stored.skip_parsing:
             context.status = ContextStatus.READY.value
+            truncation_info = None
+        else:
+            context.status = ContextStatus.PARSING.value
+            db.flush()
+            try:
+                truncation_info = self._parse_and_update_context(
+                    context=context,
+                    binary_data=binary_data,
+                    extension=extension,
+                )
+            except DocumentParseError:
+                if commit:
+                    db.commit()
+                raise
+
+        if commit:
             db.commit()
             db.refresh(context)
-            return context, None
-
-        # Update status to PARSING
-        context.status = ContextStatus.PARSING.value
-        db.flush()
-
-        # Parse document
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError as e:
-            db.commit()
-            raise
-
-        db.commit()
-        db.refresh(context)
+        else:
+            db.flush()
 
         logger.info(
             f"Attachment uploaded successfully: id={context.id}, "

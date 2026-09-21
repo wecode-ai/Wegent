@@ -1258,8 +1258,27 @@ async function verifySkillMentionRendering({ control, fixture }) {
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, ACTIVE_COMPOSER_SELECTOR)
   control.setScenario('skill_mention_display')
+  for (const path of [
+    '~/.agents/skills/test-skill/SKILL.md',
+    'C:/Users/me/skills/instructions.md',
+    './skills/instructions.md',
+  ]) {
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `[$test-skill](${path})`,
+    })
+    await control.command('waitFor', '[data-testid="local-skill-chip-test-skill"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `[test-label](${path})`,
+    })
+    await control.command('waitFor', '[data-testid="composer-path-chip-test-label"]', {
+      text: 'test-label',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-    value: `[$${qualifiedSkillName}](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
+    value: `[$${qualifiedSkillName}](${fixture.skillPath}) [test-label](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
   })
   await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1308,11 +1327,33 @@ async function verifySkillMentionRendering({ control, fixture }) {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"][aria-disabled="false"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await assertMentionRenderedAsToken(control, {
     tokenSelector: `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
     plainTextMention: `$${qualifiedSkillName}`,
     errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
   })
+  await control.command(
+    'waitFor',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"]',
+    {
+      text: 'test-label',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"] svg[data-testid="assistant-markdown-link-icon"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await captureVerificationScreenshot(control, 'skill-mention-01-reloaded.png')
 }
 

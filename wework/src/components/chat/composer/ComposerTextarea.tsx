@@ -14,15 +14,13 @@ import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { navigateTo } from '@/lib/navigation'
 import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import { useOptionalAppearance } from '@/features/appearance'
-import {
-  canOpenNativeWorkspacePathPicker,
-  openNativeWorkspacePathPicker,
-} from '@/lib/native-workspace-path-picker'
+import { canOpenNativeWorkspacePathPicker } from '@/lib/native-workspace-path-picker'
 import type { LocalDeviceApp } from '@/types/api'
 import { useComposerCatalogBinding } from './ComposerCatalogContext'
 import {
   getDesktopComposerEditorServices,
   desktopComposerTransferServices,
+  pickComposerWorkspacePaths,
 } from './desktopComposerServices'
 import { useDesktopComposerBindings } from './useDesktopComposerBindings'
 import { useDesktopComposerContributions } from './useDesktopComposerContributions'
@@ -94,7 +92,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
           onPickWorkspacePaths={
             canOpenNativeWorkspacePathPicker() &&
             props.workspaceTarget?.workspaceSource !== 'remote'
-              ? openNativeWorkspacePathPicker
+              ? pickComposerWorkspacePaths
               : undefined
           }
           {...contributions}

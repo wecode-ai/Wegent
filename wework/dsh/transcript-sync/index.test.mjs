@@ -388,6 +388,78 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
   assert.equal(downloadPaths.length, 2)
 })
 
+test('skips a missing cloud archive and continues restoring other transcripts', async () => {
+  const restored = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-2',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {
+      async status() {
+        return { available: true, importedThrough: 0 }
+      },
+      async restore(transcript) {
+        restored.push(transcript.transcriptId)
+        return { available: true, importedThrough: transcript.currentSequence }
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path === '/wework-transcripts?includeArchived=true') {
+            return {
+              status: 200,
+              body: {
+                items: ['missing', 'available'].map((transcriptId, index) => ({
+                  transcriptId,
+                  currentSequence: 1,
+                  archives: [
+                    {
+                      id: index + 1,
+                      fromSequence: 0,
+                      toSequence: 1,
+                      sha256: 'a'.repeat(64),
+                      sizeBytes: 32,
+                      format: 'codex-snapshot.v1.tgz.aes256gcm',
+                    },
+                  ],
+                })),
+              },
+            }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.includes('/missing/')) {
+            return {
+              status: 404,
+              body: {
+                detail: {
+                  code: 'archive_not_found',
+                  message: 'Wework transcript segment not found',
+                },
+              },
+            }
+          }
+          await writeFile(request.downloadPath, 'available')
+          return { status: 200, body: { path: request.downloadPath } }
+        },
+      },
+    },
+  })
+
+  await sync.pullTranscripts()
+
+  assert.deepEqual(restored, ['available'])
+  assert.equal(sync.state.value.transcripts.missing.downloadedThrough, 0)
+  assert.equal(sync.state.value.transcripts.available.downloadedThrough, 1)
+})
+
 test('branches deterministically when the cloud causal head changed', async () => {
   const source = await segmentSource()
   const pending = turn({
@@ -698,6 +770,36 @@ test('continues download and preference phases after an upload phase failure', a
 
   await assert.rejects(sync.flush(), /upload failed/u)
   assert.deepEqual(phases, ['upload', 'download', 'preferences'])
+})
+
+test('reports every failed synchronization phase in the status error', async () => {
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {},
+    desktop: {},
+  })
+  sync.flushPending = async () => {
+    throw new Error('upload unavailable')
+  }
+  sync.pullTranscripts = async () => {
+    throw new Error('download unavailable')
+  }
+  sync.syncPreferences = async () => {
+    throw new Error('preferences unavailable')
+  }
+
+  await assert.rejects(
+    sync.flush(),
+    /Conversation upload: upload unavailable; Conversation download: download unavailable; Preference synchronization: preferences unavailable/u
+  )
+  assert.equal(
+    sync.service().status().lastError,
+    'Conversation upload: upload unavailable; Conversation download: download unavailable; Preference synchronization: preferences unavailable'
+  )
 })
 
 test('preserves a failed sync result when synchronization is disabled between phases', async () => {

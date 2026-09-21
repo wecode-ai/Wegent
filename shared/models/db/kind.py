@@ -45,6 +45,10 @@ class Kind(Base):
         # Composite index for group resources query:
         # SELECT * FROM kinds WHERE kind=? AND namespace=? AND is_active=1
         Index("ix_kinds_kind_ns_active", "kind", "namespace", "is_active"),
+        # Exact resource-name lookups across users, including admin device APIs.
+        Index(
+            "idx_kinds_name_kind_ns_active", "name", "kind", "namespace", "is_active"
+        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

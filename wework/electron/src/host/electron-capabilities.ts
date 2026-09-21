@@ -45,6 +45,7 @@ import type { SchemeQueue } from './scheme-queue.js'
 import {
   listLocalWorkspaceOpeners,
   openLocalWorkspace,
+  openFileInWorkspaceApp,
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
@@ -280,6 +281,7 @@ export function createElectronCapabilityRouter(
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
+  let activeIsolatedClipboardLease: string | null = null
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -484,7 +486,35 @@ export function createElectronCapabilityRouter(
       ...fallbackPaths,
     ])
   })
-  router.register('clipboard.writeText', params => clipboard.writeText(stringParam(params, 'text')))
+  router.register('clipboard.writeText', params =>
+    clipboard.writeText(rawStringParam(params, 'text'))
+  )
+  router.register('isolatedClipboard.activate', params => {
+    const leaseId = stringParam(params, 'leaseId')
+    const targetWindow = requiredWindow(window)
+    if (!targetWindow.isFocused()) {
+      throw new HostCapabilityError(
+        'window_not_focused',
+        'The isolated clipboard is available only while the Wework window is focused'
+      )
+    }
+    activeIsolatedClipboardLease = leaseId
+    return { active: true }
+  })
+  router.register('isolatedClipboard.deactivate', params => {
+    const leaseId = stringParam(params, 'leaseId')
+    if (activeIsolatedClipboardLease === leaseId) activeIsolatedClipboardLease = null
+    return { active: false }
+  })
+  router.register('isolatedClipboard.readText', params => {
+    requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
+    return clipboard.readText()
+  })
+  router.register('isolatedClipboard.writeText', params => {
+    requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
+    clipboard.writeText(rawStringParam(params, 'text'))
+    return { written: true }
+  })
   router.register('computerUse.status', () => computerUse.status())
   router.register('computerUse.setEnabled', async params => {
     const enabled = booleanParam(params, 'enabled') ?? false
@@ -790,6 +820,12 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  router.register('workspace.openFile', params =>
+    openFileInWorkspaceApp(stringParam(params, 'opener'), stringParam(params, 'path'), {
+      open: (opener, path) => openLocalWorkspace(opener, path, app.getPath('userData')),
+      reveal: path => shell.showItemInFolder(path),
+    })
+  )
   router.register(
     'workspace.takePendingOpenRequests',
     () => desktopServices.takePendingWorkspaceOpenRequests?.() ?? []
@@ -1320,12 +1356,40 @@ function requiredWindow(resolveWindow: () => BrowserWindow | null): BrowserWindo
   return target
 }
 
+function requireActiveIsolatedClipboardLease(
+  activeLease: string | null,
+  params: Record<string, unknown>,
+  resolveWindow: () => BrowserWindow | null
+): void {
+  const leaseId = stringParam(params, 'leaseId')
+  if (activeLease !== leaseId) {
+    throw new HostCapabilityError(
+      'isolated_clipboard_inactive',
+      'The isolated clipboard lease is no longer active'
+    )
+  }
+  if (!requiredWindow(resolveWindow).isFocused()) {
+    throw new HostCapabilityError(
+      'window_not_focused',
+      'The isolated clipboard is available only while the Wework window is focused'
+    )
+  }
+}
+
 function stringParam(params: Record<string, unknown>, key: string): string {
   const value = params[key]
   if (typeof value !== 'string' || !value.trim()) {
     throw new HostCapabilityError('invalid_params', `${key} is required`)
   }
   return value.trim()
+}
+
+function rawStringParam(params: Record<string, unknown>, key: string): string {
+  const value = params[key]
+  if (typeof value !== 'string') {
+    throw new HostCapabilityError('invalid_params', `${key} must be a string`)
+  }
+  return value
 }
 
 function messageBoxOptions(params: Record<string, unknown>): MessageBoxOptions {

@@ -228,7 +228,7 @@ async fn codex_app_server_engine_rejects_a_stale_thread_provider_before_turn_sta
     );
 }
 
-async fn codex_shared_app_server_recovers_a_stale_resumed_thread_provider() {
+async fn codex_shared_app_server_rejects_a_cross_provider_resume() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-stale-resume-provider-{}.jsonl",
@@ -252,7 +252,7 @@ async fn codex_shared_app_server_recovers_a_stale_resumed_thread_provider() {
         ..ExecutionRequest::default()
     };
 
-    let turn = client
+    let error = client
         .run_turn_with_cancel(
             request,
             CodexAppServerTurnOptions {
@@ -261,13 +261,12 @@ async fn codex_shared_app_server_recovers_a_stale_resumed_thread_provider() {
             },
         )
         .await
-        .expect("stale loaded provider should recover through an idle app-server restart");
+        .expect_err("a thread must not resume through a different model provider");
 
     assert_eq!(
-        turn.outcome,
-        ExecutionOutcome::Completed {
-            content: "done".to_owned()
-        }
+        error,
+        "codex app-server thread/resume applied unexpected model provider: \
+         expected=wework-router, actual=openai"
     );
     let messages = read_json_lines(&log_path);
     assert_eq!(
@@ -275,21 +274,21 @@ async fn codex_shared_app_server_recovers_a_stale_resumed_thread_provider() {
             .iter()
             .filter(|message| message["method"] == "initialize")
             .count(),
-        2
+        1
     );
     assert_eq!(
         messages
             .iter()
             .filter(|message| message["method"] == "thread/resume")
             .count(),
-        2
+        1
     );
     assert_eq!(
         messages
             .iter()
             .filter(|message| message["method"] == "turn/start")
             .count(),
-        1
+        0
     );
 }
 
@@ -472,6 +471,11 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let _lock = env_lock().await;
+    let _debug = EnvGuard::set("WEGENT_DEBUG_CLAUDE_STDOUT", "1");
+    let stdout_path = std::env::temp_dir().join(format!(
+        "wegent-codex-stdout-{}.jsonl",
+        std::process::id()
+    ));
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-shared-proxy-rpc-{}.jsonl",
         std::process::id()
@@ -503,6 +507,13 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
         )
         .await
         .expect("task should reuse the proxy-configured app-server");
+
+    let stdout = read_json_lines(&stdout_path);
+    assert!(stdout.iter().any(|line| line["id"] == 1));
+    assert!(stdout.iter().any(|line| line["method"] == "turn/completed"));
+    assert!(stdout.iter().all(|line| line["received_at"].is_string()));
+    client.restart().await;
+    fs::remove_file(stdout_path).unwrap();
 
     assert_eq!(
         turn.outcome,
@@ -1133,6 +1144,15 @@ fn shared_test_runtime() -> &'static Runtime {
     })
 }
 
+/// Point the executor and Codex homes at a per-run directory before any test
+/// can use them.
+///
+/// The engine persists the Codex thread it started under
+/// `<executor home>/sessions/<task id>/.codex_thread_id` and resumes it on the
+/// next run. These tests use fixed task ids, so a marker left in a developer's
+/// real home turns an expected `thread/start` into a `thread/resume` that the
+/// fake binaries never answer, and the run times out. Every test takes the
+/// `env_lock` first, so setting the variables there is ordered ahead of any read.
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     static EXECUTOR_HOME: OnceLock<PathBuf> = OnceLock::new();

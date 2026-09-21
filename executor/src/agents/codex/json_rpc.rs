@@ -6,16 +6,17 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{ChildStdin, ChildStdout},
+    io::AsyncWriteExt,
+    process::ChildStdin,
     time::{timeout_at, Instant},
 };
 
 use crate::runner::ExecutionOutcome;
 
 use super::{
-    codex_error_message, codex_notification_has_initial_progress,
-    codex_turn_startup_timeout_seconds, is_mcp_tool_call_approval_request, json_rpc_request_id,
+    codex_approval_result, codex_error_message, codex_notification_has_initial_progress,
+    codex_turn_startup_timeout_seconds, debug_stdout::CodexStdout,
+    is_codex_approval_request_method, is_mcp_tool_call_approval_request, json_rpc_request_id,
     log_codex_raw_turn_message, mcp_tool_call_request_user_input_response, message_params,
     receive_mcp_server_elicitation_response, request_user_input_result, response_id,
     response_result, CodexNotificationSender, CodexRequestUserInputReceiver, CodexRunState,
@@ -23,24 +24,20 @@ use super::{
 
 pub(super) struct JsonRpcConnection {
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdout: CodexStdout,
     next_id: u64,
 }
 
 impl JsonRpcConnection {
-    pub(super) fn new(stdin: ChildStdin, stdout: ChildStdout) -> Self {
-        Self::new_with_next_id(stdin, stdout, 1)
-    }
-
-    pub(super) fn new_with_next_id(stdin: ChildStdin, stdout: ChildStdout, next_id: u64) -> Self {
+    pub(super) fn new(stdin: ChildStdin, stdout: CodexStdout, next_id: u64) -> Self {
         Self {
             stdin,
-            stdout: BufReader::new(stdout),
+            stdout,
             next_id,
         }
     }
 
-    pub(super) fn into_parts(self) -> (ChildStdin, BufReader<ChildStdout>, u64) {
+    pub(super) fn into_parts(self) -> (ChildStdin, CodexStdout, u64) {
         (self.stdin, self.stdout, self.next_id)
     }
 
@@ -112,6 +109,7 @@ impl JsonRpcConnection {
         notifications: Option<CodexNotificationSender>,
         mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
         auto_approve_mcp_tool_calls: bool,
+        defer_interactive_forms: bool,
     ) -> Result<ExecutionOutcome, String> {
         let mut saw_turn_response = false;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
@@ -148,6 +146,22 @@ impl JsonRpcConnection {
                     let _ = sender.send(message.clone());
                 }
             }
+            if defer_interactive_forms
+                && !state.is_subagent_message(message_params(&message))
+                && super::mcp_form::deferred_form(&message).is_some()
+            {
+                // End this native turn before accepting a form answer as a new turn.
+                // Wait for the interrupted turn to settle so its tool history is saved.
+                super::with_rpc_timeout(
+                    "defer interactive form",
+                    super::codex_rpc_timeout_seconds(),
+                    self.finish_deferred_form(message_params(&message)),
+                )
+                .await?;
+                return Ok(ExecutionOutcome::WaitingForUserInput {
+                    stop_reason: "tool_deferred".to_owned(),
+                });
+            }
             if message
                 .get("method")
                 .and_then(Value::as_str)
@@ -174,11 +188,44 @@ impl JsonRpcConnection {
                 .await?;
                 continue;
             }
+            if message
+                .get("method")
+                .and_then(Value::as_str)
+                .is_some_and(is_codex_approval_request_method)
+            {
+                self.answer_approval(&message, &mut request_user_input_answers)
+                    .await?;
+                continue;
+            }
             if let Some(outcome) = state.handle_message(&message) {
                 return Ok(outcome);
             }
             if !saw_turn_response {
                 continue;
+            }
+        }
+    }
+
+    async fn finish_deferred_form(&mut self, params: &Value) -> Result<(), String> {
+        let thread_id = params.get("threadId").ok_or("Form has no thread ID")?;
+        let turn_id = params.get("turnId").ok_or("Form has no turn ID")?;
+        let request_id = self
+            .send_request(
+                "turn/interrupt",
+                json!({"threadId": thread_id, "turnId": turn_id}),
+            )
+            .await?;
+        loop {
+            let message = self.read_message().await?;
+            if response_id(&message) == Some(request_id) {
+                response_result(message)?;
+                continue;
+            }
+            if message["method"] == "turn/completed"
+                && message.pointer("/params/threadId") == Some(thread_id)
+                && message.pointer("/params/turn/id") == Some(turn_id)
+            {
+                return Ok(());
             }
         }
     }
@@ -213,6 +260,27 @@ impl JsonRpcConnection {
         self.write_message(json!({
             "id": request_id,
             "result": request_user_input_result(response),
+        }))
+        .await
+    }
+
+    async fn answer_approval(
+        &mut self,
+        message: &Value,
+        answers: &mut Option<CodexRequestUserInputReceiver>,
+    ) -> Result<(), String> {
+        let request_id =
+            json_rpc_request_id(message).ok_or("approval request is missing JSON-RPC id")?;
+        let response = match answers {
+            Some(receiver) => receiver
+                .recv()
+                .await
+                .ok_or("approval response channel closed")?,
+            None => json!({}),
+        };
+        self.write_message(json!({
+            "id": request_id,
+            "result": codex_approval_result(message, &response)?,
         }))
         .await
     }

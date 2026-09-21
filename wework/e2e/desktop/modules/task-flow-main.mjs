@@ -4219,7 +4219,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPastedWorkspacePaths({ composerSelector, control, workspacePath })
 
       phase = 'dropped-workspace-paths'
-      await verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath })
+      await verifyDroppedWorkspacePaths({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('workspace-attachments')) {
         console.log(
           `Wework desktop workspace-attachments checkpoint passed. Evidence: ${resultDir}`
