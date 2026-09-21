@@ -434,10 +434,19 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
+    if !registry.routes.contains_key(token) {
+        return Err("local model proxy task route is not registered".to_owned());
+    }
+    let mut reassigned_routes = 0;
+    for (registered_token, registered) in &mut registry.routes {
+        if registered_token != token && registered.thread_ids.remove(thread_id) {
+            reassigned_routes += 1;
+        }
+    }
     let registered = registry
         .routes
         .get_mut(token)
-        .ok_or_else(|| "local model proxy task route is not registered".to_owned())?;
+        .expect("validated local model proxy task route should exist");
     registered.thread_ids.insert(thread_id.to_owned());
     registered.last_used = Instant::now();
     log_executor_event(
@@ -445,6 +454,7 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
         &[
             ("thread_id", thread_id.to_owned()),
             ("bound_threads", registered.thread_ids.len().to_string()),
+            ("reassigned_routes", reassigned_routes.to_string()),
         ],
     );
     Ok(())
@@ -3810,7 +3820,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_route_rejects_unbound_and_ambiguous_codex_threads() {
+    fn generic_route_rejects_unbound_threads_and_uses_the_latest_binding() {
         let unbound_error =
             bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-unbound-thread"}}"#)
                 .expect_err("unbound thread must not resolve");
@@ -3835,10 +3845,19 @@ mod tests {
         bind_thread(&first, "generic-ambiguous-thread").expect("first route should bind");
         bind_thread(&second, "generic-ambiguous-thread").expect("second route should bind");
 
-        let ambiguous_error =
+        assert_eq!(
             bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-ambiguous-thread"}}"#)
-                .expect_err("ambiguous thread must not resolve");
-        assert_eq!(ambiguous_error.status, StatusCode::CONFLICT);
+                .expect("the latest route binding should replace the stale binding"),
+            second
+        );
+        let entries = registry().lock().expect("registry lock");
+        assert!(!entries
+            .routes
+            .get(&first)
+            .expect("first route")
+            .thread_ids
+            .contains("generic-ambiguous-thread"));
+        drop(entries);
 
         unregister(&first);
         unregister(&second);
