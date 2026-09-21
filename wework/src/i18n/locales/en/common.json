@@ -577,6 +577,7 @@
     "task_fork_stop_notice": "This task is running. The current response will be stopped before copying.",
     "task_fork_no_target": "No execution target available",
     "task_fork_failed": "Failed to copy task",
+    "task_fork_setup_failed": "Task {{taskId}} was created, but setup did not finish: {{error}}",
     "task_fork_submitting": "Copying",
     "task_fork_stop_and_confirm": "Stop and copy",
     "task_fork_confirm": "Copy",

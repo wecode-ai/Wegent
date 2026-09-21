@@ -1800,6 +1800,57 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
 }
 
 #[test]
+fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("fork-router");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let mut request = ExecutionRequest {
+        task_id: "fork-router-source-task".to_owned(),
+        model_config: json!({
+            "model_id": "source-model",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    let cold_fork = build_codex_launch_config_for_fork(&request, "fork-router-source-thread")
+        .expect("fork must not require an in-memory source route");
+    let source = build_codex_launch_config(&request).expect("source route should register");
+    bind_local_proxy_thread(&source, "fork-router-source-thread")
+        .expect("source thread should bind");
+    request.model_config["model_id"] = json!("selected-model");
+    let warm_fork = build_codex_launch_config_for_fork(&request, "fork-router-source-thread")
+        .expect("fork must accept the current model independently of the source route");
+    let token = |config: &CodexLaunchConfig| {
+        config
+            .local_proxy_registration
+            .as_ref()
+            .expect("proxy route")
+            .0
+            .clone()
+    };
+    assert_ne!(token(&cold_fork), token(&source));
+    assert_ne!(token(&warm_fork), token(&source));
+    assert_ne!(token(&warm_fork), token(&cold_fork));
+    assert!(warm_fork
+        .config_overrides
+        .contains(&"model=selected-model".to_owned()));
+
+    local_model_proxy::bind_fork_thread(&token(&warm_fork), "fork-router-new-thread")
+        .expect("new thread should own the fork route");
+    request.task_id = "fork-router-new-thread".to_owned();
+    let resumed = build_codex_launch_config(&request).expect("fork follow-up should register");
+    assert_eq!(token(&resumed), token(&warm_fork));
+    assert_ne!(token(&resumed), token(&source));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
     let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
     let luna_request = ExecutionRequest {
