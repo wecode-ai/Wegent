@@ -24,6 +24,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
+import { useDeviceChatSidecar } from '@extensions/device-chat-sidecar'
 import { Monitor, WifiOff } from 'lucide-react'
 import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
@@ -189,6 +190,7 @@ export default function DeviceChatPage() {
     // Close VNC panel and reset fullscreen when switching devices
     setIsVncOpen(false)
     setIsVncFullscreen(false)
+    sidecar.reset()
     const nextParams = new URLSearchParams(searchParams.toString())
     nextParams.set('deviceId', deviceId)
     nextParams.delete('device_id')
@@ -216,6 +218,17 @@ export default function DeviceChatPage() {
 
   // Check if selected device is OpenClaw type (used for conditional rendering)
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
+  const sidecar = useDeviceChatSidecar({
+    selectedDevice,
+    selectedDeviceId: activeDeviceId,
+    isMobile,
+    hideFilesTab: isOpenClaw,
+  })
+
+  // The split layout follows whichever VNC sidecar is active: the Wecode hook
+  // or a distribution-supplied device-chat sidecar.
+  const sidecarOpen = Boolean(showVncPanel) || sidecar.open
+  const sidecarFullscreen = isVncFullscreen || sidecar.fullscreen
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -286,6 +299,7 @@ export default function DeviceChatPage() {
           {isCloudDevice && sandboxId && (
             <CloudDeviceVncPanel isVncOpen={isVncOpen} onToggleVnc={handleToggleVnc} />
           )}
+          {sidecar.toolbar}
           {shareButton}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
@@ -297,9 +311,9 @@ export default function DeviceChatPage() {
             <div
               className="transition-all duration-300 ease-in-out flex flex-col min-h-0 overflow-hidden"
               style={{
-                width: showVncPanel ? (isVncFullscreen ? '0%' : '50%') : '100%',
-                opacity: showVncPanel && isVncFullscreen ? 0 : 1,
-                pointerEvents: showVncPanel && isVncFullscreen ? 'none' : 'auto',
+                width: sidecarOpen ? (sidecarFullscreen ? '0%' : '50%') : '100%',
+                opacity: sidecarOpen && sidecarFullscreen ? 0 : 1,
+                pointerEvents: sidecarOpen && sidecarFullscreen ? 'none' : 'auto',
               }}
             >
               <ChatArea
@@ -334,6 +348,7 @@ export default function DeviceChatPage() {
                 exitFullscreenLabel={t('vnc_exit_fullscreen')}
               />
             )}
+            {sidecar.panel}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">

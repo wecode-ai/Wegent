@@ -5,7 +5,7 @@ import { resetEmbeddedBrowserDownloadStoreForTests } from '@/lib/embedded-browse
 import type { BrowserAnnotationState } from '@/types/browser-annotation'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
+const deviceSurfaceExtensionMock = vi.hoisted(() => ({
   available: true,
   DeviceAction: vi.fn(),
   isInternalPageUrl: vi.fn((value: string) => {
@@ -18,8 +18,8 @@ const cloudDesktopExtensionMock = vi.hoisted(() => ({
   open: vi.fn(),
 }))
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: deviceSurfaceExtensionMock,
 }))
 
 const embeddedBrowserMocks = vi.hoisted(() => ({

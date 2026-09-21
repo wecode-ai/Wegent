@@ -300,6 +300,25 @@ export function createDeviceApi(client: HttpClient) {
         : client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/code-server`)
     },
 
+    async startExtensionSession(
+      deviceId: string,
+      sessionType: string
+    ): Promise<DeviceSessionResponse> {
+      if (!/^[a-z][a-z0-9-]*$/.test(sessionType)) {
+        throw new Error('Invalid device session type')
+      }
+      return client.post<DeviceSessionResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/${sessionType}`
+      )
+    },
+
+    async revokeExtensionSession(sessionType: string, sessionId: string): Promise<void> {
+      if (!/^[a-z][a-z0-9-]*$/.test(sessionType)) {
+        throw new Error('Invalid device session type')
+      }
+      return client.delete(`/devices/${sessionType}-sessions/${encodeURIComponent(sessionId)}`)
+    },
+
     async openLocalTerminal(deviceId: string, cwd?: string): Promise<void> {
       const args = cwd?.trim() ? [cwd.trim()] : []
       const response = await client.post<DeviceCommandResponse>(

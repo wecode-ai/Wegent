@@ -84,6 +84,7 @@ import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuil
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
 from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
+from app.core.asgi_extensions import register_asgi_wrapper
 from app.core.config import settings
 from wecode.api.admin_published_apps import router as admin_published_apps_router
 from wecode.api.agent_usage import router as agent_usage_router
@@ -112,11 +113,16 @@ from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
 from wecode.api.transition_page import router as transition_page_router
 from wecode.api.user_search_with_erp import router as user_search_with_erp_router
+from wecode.api.vnc_websocket_middleware import create_vnc_interceptor_app
 from wecode.config.task_sharding_config import task_sharding_settings
 from wecode.runtime import initialize_internal_runtime
 from wecode.video.api.router import router as aigc_video_router
 
 initialize_internal_runtime()
+
+# Register the Wecode VNC WebSocket interceptor as a distribution-owned ASGI
+# wrapper so ``app.main`` can apply it without importing internal modules.
+register_asgi_wrapper("device-vnc", create_vnc_interceptor_app)
 
 task_sharding_store_patch = None
 if (

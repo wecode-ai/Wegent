@@ -1793,6 +1793,17 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
 }
 
 
+def register_local_device_command(
+    key: str, definition: LocalDeviceCommandDefinition
+) -> None:
+    """Add a distribution-owned command without replacing public defaults."""
+    if not key or key in DEFAULT_LOCAL_DEVICE_COMMANDS:
+        raise CommandRegistryError(
+            f"Local device command '{key}' is already registered"
+        )
+    DEFAULT_LOCAL_DEVICE_COMMANDS[key] = definition
+
+
 def resolve_local_device_command(
     command_key: str,
     configured_commands: Mapping[str, Any] | None = None,

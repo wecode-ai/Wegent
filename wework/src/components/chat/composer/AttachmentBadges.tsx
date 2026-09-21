@@ -1,12 +1,19 @@
 import { MessageSquare, X } from 'lucide-react'
+import { useState } from 'react'
 import { ComposerAttachmentBadges } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, AttachmentUploadProgress } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { useAttachmentImageServices } from '../useAttachmentImageServices'
 import { CodeCommentPreview } from '../CodeCommentPreview'
+import { useComposerAttachmentPreview } from './ComposerAttachmentPreview'
+import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
+
+// These formats use the composer's viewer branch; ordinary local files use the host opener.
+const previewFileExtension = /\.(csv|docx|ipynb|pdf|pptx|tex|tsv|xlsm|xlsx|mp4|ogv|webm)$/i
 
 interface AttachmentBadgesProps {
+  workspacePath?: string
   attachments: Attachment[]
   uploadingFiles: Map<string, AttachmentUploadProgress>
   errors: Map<string, string>
@@ -55,25 +62,64 @@ function CodeCommentBadge({
 }
 
 export function AttachmentBadges({
+  workspacePath,
   codeComments = [],
   onClearCodeComments,
   ...props
 }: AttachmentBadgesProps) {
   const { t } = useTranslation('common')
   const imageServices = useAttachmentImageServices()
-  return (
-    <ComposerAttachmentBadges
-      {...props}
-      imageServices={imageServices}
-      labels={{
-        showText: t('workbench.show_text_attachment_in_composer'),
-        appshot: t('workbench.appshot_attachment_label', '应用快照'),
-      }}
-      leading={
-        codeComments.length ? (
-          <CodeCommentBadge comments={codeComments} onRemove={onClearCodeComments} />
-        ) : undefined
+  const openPreview = useComposerAttachmentPreview()
+  const [openError, setOpenError] = useState<{ filename: string; message: string } | null>(null)
+  const openAttachment = async (attachment: Attachment) => {
+    setOpenError(null)
+    if (
+      attachment.local_path &&
+      !attachment.workspace_file &&
+      !previewFileExtension.test(attachment.filename)
+    ) {
+      try {
+        await openLocalFileInWorkspaceApp(attachment.local_path, workspacePath)
+      } catch (error) {
+        setOpenError({
+          filename: attachment.filename,
+          message: error instanceof Error ? error.message : String(error),
+        })
       }
-    />
+      return
+    }
+    try {
+      openPreview(attachment)
+    } catch (error) {
+      setOpenError({
+        filename: attachment.filename,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+  return (
+    <>
+      <ComposerAttachmentBadges<Attachment>
+        {...props}
+        imageServices={imageServices}
+        onOpenAttachment={attachment => void openAttachment(attachment)}
+        errors={
+          openError
+            ? new Map([...props.errors, [openError.filename, openError.message]])
+            : props.errors
+        }
+        labels={{
+          showText: t('workbench.show_text_attachment_in_composer'),
+          addingText: t('workbench.adding_pasted_text_attachment'),
+          pastedText: t('workbench.pasted_text_attachment'),
+          appshot: t('workbench.appshot_attachment_label', '应用快照'),
+        }}
+        leading={
+          codeComments.length ? (
+            <CodeCommentBadge comments={codeComments} onRemove={onClearCodeComments} />
+          ) : undefined
+        }
+      />
+    </>
   )
 }

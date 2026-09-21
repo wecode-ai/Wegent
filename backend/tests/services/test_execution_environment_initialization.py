@@ -708,6 +708,72 @@ def test_device_state_merge_keeps_other_devices_and_drops_legacy_state() -> None
     assert merged == {"repositories": [], "devices": {"device-a": ready}}
 
 
+def test_saving_environment_keeps_device_states_only_for_matching_config() -> None:
+    definition = {"repositories": [PRIMARY_REPOSITORY], "setup_steps": []}
+    prepared = execution_environment_initialization.preparing_execution_environment(
+        definition
+    )
+    ready = {
+        "status": "ready",
+        "workspace_path": "/workspace/remote",
+        "prepared_at": "2026-09-16T00:00:00+00:00",
+        "error": "",
+    }
+    prepared["devices"]["remote-device"] = ready
+
+    unchanged = execution_environment_initialization.preparing_execution_environment(
+        definition, prepared
+    )
+    assert unchanged["devices"] == {"remote-device": ready}
+    assert unchanged["devices"] is not prepared["devices"]
+
+    changed = execution_environment_initialization.preparing_execution_environment(
+        {
+            **definition,
+            "setup_steps": [{"command": "pnpm install", "working_directory": "wegent"}],
+        },
+        prepared,
+    )
+    assert changed["devices"] == {}
+
+
+@pytest.mark.asyncio
+async def test_initialization_explains_missing_legacy_executor_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "sync_git_accounts_to_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        AsyncMock(
+            return_value={
+                "success": False,
+                "exit_code": None,
+                "stderr": "",
+                "error": "No such file or directory (os error 2)",
+            }
+        ),
+    )
+    db = MagicMock()
+    db.get.return_value = object()
+
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=db,
+            device=_remote_device(),
+            environment_id="project-1",
+            definition={"repositories": [PRIMARY_REPOSITORY], "setup_steps": []},
+        )
+    )
+
+    assert result["status"] == "error"
+    assert "Upgrade or repair the Executor" in result["error"]
+
+
 def test_definition_accepts_multiple_repositories_and_repository_scoped_steps() -> None:
     definition = ExecutionEnvironmentDefinition.model_validate(
         {

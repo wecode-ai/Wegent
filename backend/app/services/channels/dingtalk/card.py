@@ -1,64 +1,94 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
-#
 # SPDX-License-Identifier: Apache-2.0
 
-"""SDK card rendering with bounded, checked HTTP updates."""
+"""SDK card rendering with cancellable asynchronous delivery."""
 
-import uuid
 from typing import Any
+from uuid import uuid4
 
-import requests
 from dingtalk_stream import AIMarkdownCardInstance
-from dingtalk_stream.utils import DINGTALK_OPENAPI_ENDPOINT
+from dingtalk_stream.card_replier import AICardStatus
+
+from app.services.channels.dingtalk.card_transport import (
+    DingTalkCardTransport,
+    card_delivery_data,
+)
 
 
 class DingTalkMarkdownCard(AIMarkdownCardInstance):
-    """Retain SDK rendering while propagating update errors to the emitter."""
+    """Reuse SDK payload rendering without invoking its synchronous HTTP methods."""
 
-    def _put(self, path: str, payload: dict[str, Any]) -> None:
-        token = self.dingtalk_client.get_access_token()
-        if not token:
-            raise RuntimeError("Cannot update DingTalk card without an access token")
-        # SDK update methods swallow failures and omit timeouts. Terminal delivery
-        # must only succeed when its HTTP request succeeds.
-        with requests.put(
-            f"{DINGTALK_OPENAPI_ENDPOINT}{path}",
-            headers=self.get_request_header(token),
-            json=payload,
-            timeout=(5, 10),
-        ) as response:
-            response.raise_for_status()
+    def __init__(self, client: Any, message: Any):
+        super().__init__(client, message)
+        self._transport = DingTalkCardTransport(client)
+        self._track_id = uuid4().hex
+        self._created = False
 
-    def put_card_data(
-        self, card_instance_id: str, card_data: dict, **kwargs: Any
-    ) -> None:
-        self._put(
-            "/v1.0/card/instances",
+    async def ai_start(self) -> None:
+        if self.card_instance_id:
+            return
+        delivery = card_delivery_data(
+            self.dingtalk_client, self.incoming_message, self._track_id
+        )
+        if not self._created:
+            await self._transport.request(
+                "POST",
+                "instances",
+                {
+                    "cardTemplateId": self.card_template_id,
+                    "outTrackId": self._track_id,
+                    "cardData": {
+                        "cardParamMap": {"flowStatus": AICardStatus.PROCESSING}
+                    },
+                    "callbackType": "STREAM",
+                    "imGroupOpenSpaceModel": {"supportForward": True},
+                    "imRobotOpenSpaceModel": {"supportForward": True},
+                },
+                require_success=False,
+            )
+            self._created = True
+        await self._transport.request(
+            "POST", "instances/deliver", delivery, require_success=False
+        )
+        self.card_instance_id = self._track_id
+
+    async def _put_status(self, status: str) -> None:
+        await self._transport.request(
+            "PUT",
+            "instances",
             {
-                "outTrackId": card_instance_id,
-                "cardData": {"cardParamMap": card_data},
-                **kwargs,
+                "outTrackId": self.card_instance_id,
+                "cardData": {"cardParamMap": self.get_card_data(status)},
             },
+            require_success=False,
         )
 
-    def streaming(
-        self,
-        card_instance_id: str,
-        content_key: str,
-        content_value: str,
-        append: bool,
-        finished: bool,
-        failed: bool,
-    ) -> None:
-        self._put(
-            "/v1.0/card/streaming",
+    async def ai_streaming(self, markdown: str, append: bool = False) -> None:
+        if not self.inputing_status:
+            await self._put_status(AICardStatus.INPUTING)
+            self.inputing_status = True
+        self.markdown = self.markdown + markdown if append else markdown
+        await self._transport.request(
+            "PUT",
+            "streaming",
             {
-                "outTrackId": card_instance_id,
-                "guid": str(uuid.uuid4()),
-                "key": content_key,
-                "content": content_value,
-                "isFull": not append,
-                "isFinalize": finished,
-                "isError": failed,
+                "outTrackId": self.card_instance_id,
+                "guid": uuid4().hex,
+                "key": "msgContent",
+                "content": self.markdown,
+                "isFull": True,
+                "isFinalize": False,
+                "isError": False,
             },
+            require_success=False,
         )
+
+    async def ai_finish(self, markdown: str) -> None:
+        self.markdown = markdown
+        await self._put_status(AICardStatus.FINISHED)
+
+    async def ai_fail(self) -> None:
+        await self._put_status(AICardStatus.FAILED)
+
+    async def close(self) -> None:
+        await self._transport.close()

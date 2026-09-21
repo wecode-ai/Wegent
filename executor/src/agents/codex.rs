@@ -31,6 +31,7 @@ use crate::{
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
+    prompt_mentions::{is_skill_reference, skill_name},
     protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     runner::ExecutionOutcome,
     server::{
@@ -515,39 +516,6 @@ impl CodexAppServerClient {
             state.process.take()
         };
         drop(process);
-        Ok(())
-    }
-
-    async fn restart_if_no_competing_work(
-        &self,
-        active_thread_id: &str,
-    ) -> Result<(), (usize, usize)> {
-        let process = {
-            let mut state = self.state.lock().await;
-            let active_turn_count = state.active_threads.values().sum::<usize>();
-            let Some(process) = state.process.as_ref() else {
-                state
-                    .thread_generations
-                    .retain(|thread_id, _| thread_id == active_thread_id);
-                state.idle_thread_generations.clear();
-                return Ok(());
-            };
-            let pending_request_count = process.pending.lock().await.len();
-            let current_thread_is_only_active = state.active_threads.len() == 1
-                && state.active_threads.get(active_thread_id) == Some(&1);
-            if !current_thread_is_only_active || pending_request_count > 0 {
-                return Err((active_turn_count, pending_request_count));
-            }
-            state
-                .thread_generations
-                .retain(|thread_id, _| thread_id == active_thread_id);
-            state.idle_thread_generations.clear();
-            state.process_environment.clear();
-            state.process.take()
-        };
-        if let Some(process) = process {
-            drop(process);
-        }
         Ok(())
     }
 
@@ -1789,15 +1757,12 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_fields.push(("operation", operation.to_owned()));
                 thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
-                let thread_id = request_shared_thread_id_with_provider_recovery(
-                    client,
+                let response = client.request(operation, params).await?;
+                let thread_id = thread_id_from_response(
                     operation,
-                    params,
-                    &launch_config,
-                    &request.task_id,
-                    &request.subtask_id,
-                )
-                .await?;
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
                 thread_id
@@ -5548,75 +5513,6 @@ fn validate_codex_model_provider(
     }
 }
 
-async fn request_shared_thread_id_with_provider_recovery(
-    client: &CodexAppServerClient,
-    operation: &'static str,
-    params: Value,
-    launch_config: &CodexLaunchConfig,
-    task_id: &str,
-    subtask_id: &str,
-) -> Result<String, String> {
-    let response = client.request(operation, params.clone()).await?;
-    let provider_error = match thread_id_from_response(
-        operation,
-        &response,
-        launch_config.model_provider.as_deref(),
-    ) {
-        Ok(thread_id) => return Ok(thread_id),
-        Err(error) => error,
-    };
-    if operation != "thread/resume"
-        || validate_codex_model_provider(
-            operation,
-            &response,
-            launch_config.model_provider.as_deref(),
-        )
-        .is_ok()
-    {
-        return Err(provider_error);
-    }
-    let active_thread_id = params
-        .get("threadId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "codex app-server thread/resume params missing threadId".to_owned())?;
-
-    let mut fields = task_fields(task_id, subtask_id);
-    fields.push(("operation", operation.to_owned()));
-    fields.push(("error", provider_error.clone()));
-    match client.restart_if_no_competing_work(active_thread_id).await {
-        Ok(()) => {
-            log_executor_event(
-                "codex shared stale thread provider recovery restarting",
-                &fields,
-            );
-        }
-        Err((active_turn_count, pending_request_count)) => {
-            fields.push(("active_turn_count", active_turn_count.to_string()));
-            fields.push(("pending_request_count", pending_request_count.to_string()));
-            log_executor_event(
-                "codex shared stale thread provider recovery unavailable",
-                &fields,
-            );
-            return Err(provider_error);
-        }
-    }
-
-    client
-        .ensure_process_for_launch_config(launch_config)
-        .await?;
-    let response = client.request(operation, params).await?;
-    let thread_id = thread_id_from_response(
-        operation,
-        &response,
-        launch_config.model_provider.as_deref(),
-    )?;
-    log_executor_event(
-        "codex shared stale thread provider recovery completed",
-        &fields,
-    );
-    Ok(thread_id)
-}
-
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
     params.insert(
@@ -5977,6 +5873,7 @@ fn text_input(text: String) -> Value {
 }
 
 fn skill_input(name: &str, path: &str) -> Value {
+    let name = skill_name(name);
     json!({"type": "skill", "name": name, "path": normalize_skill_path(path)})
 }
 
@@ -6003,18 +5900,13 @@ fn extract_structured_mentions(
     let mut seen_paths = std::collections::BTreeSet::new();
     let mut cursor = 0;
 
-    while let Some(relative_start) = text[cursor..].find("[$") {
-        let start = cursor + relative_start;
-        let Some(label_end) = text[start + 2..].find("](").map(|index| start + 2 + index) else {
-            break;
+    for reference in crate::prompt_mentions::prompt_mentions(text) {
+        let Some(name) = reference.name() else {
+            continue;
         };
-        let uri_start = label_end + 2;
-        let Some(uri_end) = text[uri_start..].find(')').map(|index| uri_start + index) else {
-            break;
-        };
-
-        let name = &text[start + 2..label_end];
-        let uri = &text[uri_start..uri_end];
+        let start = reference.start;
+        let uri_end = reference.end - 1;
+        let uri = reference.href.as_str();
         if let Some(path) = composer_file_reference_path(uri) {
             output.push_str(&text[cursor..start]);
             if path.chars().any(char::is_whitespace) && !path.contains('"') {
@@ -6100,25 +5992,20 @@ fn structured_mention_dedup_key(uri: &str) -> String {
     }
 }
 
-fn is_skill_reference(uri: &str) -> bool {
-    uri.starts_with("skill://") || is_absolute_skill_path(uri)
-}
-
-fn is_absolute_skill_path(path: &str) -> bool {
-    let path = std::path::Path::new(path);
-    path.is_absolute() && path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
-}
-
 fn visible_mention_text(name: &str, uri: &str) -> String {
     if uri.starts_with("plugin://") {
         format!("@{name}")
+    } else if is_skill_reference(uri) {
+        format!("${}", skill_name(name))
     } else {
         format!("${name}")
     }
 }
 
 fn normalize_skill_path(path: &str) -> String {
-    path.strip_prefix("skill://").unwrap_or(path).to_owned()
+    super::git_workspace::expand_tilde(path.strip_prefix("skill://").unwrap_or(path))
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn response_id(message: &Value) -> Option<u64> {

@@ -91,6 +91,19 @@ export function createWeworkSyncRequestSignal(
   return AbortSignal.timeout(timeoutMs)
 }
 
+export function describeWeworkSyncRequestFailure(error: unknown): string {
+  const messages: string[] = []
+  let current = error
+  while (current instanceof Error && messages.length < 3) {
+    const message = current.message
+      .replace(/\b(?:https?|wss?):\/\/[^\s<>"']+/gi, '[URL removed]')
+      .trim()
+    if (message && messages[messages.length - 1] !== message) messages.push(message)
+    current = current.cause
+  }
+  return `Wework cloud request failed${messages.length ? `: ${messages.join(': ')}` : ''}`
+}
+
 export function createWeworkSyncDownloadTimeout(timeoutMs = WEWORK_SYNC_REQUEST_TIMEOUT_MS): {
   signal: AbortSignal
   refresh: () => void

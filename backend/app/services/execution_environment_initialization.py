@@ -82,11 +82,19 @@ def execution_environment_fingerprint(definition: dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def preparing_execution_environment(definition: dict[str, Any]) -> dict[str, Any]:
+def preparing_execution_environment(
+    definition: dict[str, Any], previous: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    fingerprint = execution_environment_fingerprint(definition)
+    devices: dict[str, Any] = {}
+    if isinstance(previous, dict) and previous.get("fingerprint") == fingerprint:
+        previous_devices = previous.get("devices")
+        if isinstance(previous_devices, dict):
+            devices = dict(previous_devices)
     return {
         **definition,
-        "fingerprint": execution_environment_fingerprint(definition),
-        "devices": {},
+        "fingerprint": fingerprint,
+        "devices": devices,
     }
 
 
@@ -191,13 +199,20 @@ async def initialize_execution_environment(
                 allow_internal=True,
             )
             if not bool(result.get("success")) or result.get("exit_code") != 0:
-                raise RuntimeError(
-                    str(
-                        result.get("stderr")
-                        or result.get("error")
-                        or "Execution environment initialization failed"
-                    )
+                error_message = str(
+                    result.get("stderr")
+                    or result.get("error")
+                    or "Execution environment initialization failed"
                 )
+                if (
+                    result.get("exit_code") is None
+                    and result.get("error") == "No such file or directory (os error 2)"
+                ):
+                    error_message = (
+                        "The device Executor could not start environment "
+                        "initialization. Upgrade or repair the Executor, then retry."
+                    )
+                raise RuntimeError(error_message)
         except Exception as error:
             return {
                 "status": "error",

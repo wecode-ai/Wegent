@@ -45,6 +45,7 @@ export interface RuntimePaneTranscriptLoadOptions {
   afterCursor?: string | null
   refresh?: boolean
   includeFullContent?: boolean
+  conversationContextOnly?: boolean
   navigationOnly?: boolean
 }
 
