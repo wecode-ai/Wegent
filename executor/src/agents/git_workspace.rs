@@ -869,6 +869,8 @@ mod tests {
 
     #[test]
     fn expands_platform_home_relative_paths() {
+        // Serialize against the git_auth tests that repoint HOME process-wide.
+        let _env = crate::test_env::lock();
         let home = home_dir().expect("test user has a home directory");
         assert_eq!(expand_tilde("~"), home);
         assert_eq!(expand_tilde("~/test/SKILL.md"), home.join("test/SKILL.md"));
