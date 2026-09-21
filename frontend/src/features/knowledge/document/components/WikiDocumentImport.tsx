@@ -124,6 +124,11 @@ export function WikiDocumentImport({
   const [pickerPageSize, setPickerPageSize] = useState(DEFAULT_PICKER_PAGE_SIZE)
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
+  const connectionIdRef = useRef('')
+  const projectPathRef = useRef('')
+  const branchRef = useRef('')
+  const projectsRequestIdRef = useRef(0)
+  const branchesRequestIdRef = useRef(0)
   const pagesRequestIdRef = useRef(0)
   const selectedConnection = useMemo(
     () => connections.find(item => item.id === connectionId),
@@ -137,6 +142,59 @@ export function WikiDocumentImport({
     capabilities?.supports_project_selection && capabilities.resource_kind === 'page'
   const selectedConnector = getWikiConnectorPresentation(selectedConnection?.connector_type)
   const SelectedConnectorIcon = selectedConnector.Icon
+
+  const resetConnectionScope = useCallback((nextConnectionId: string, nextSiteUrl: string) => {
+    connectionIdRef.current = nextConnectionId
+    projectPathRef.current = ''
+    branchRef.current = ''
+    projectsRequestIdRef.current += 1
+    branchesRequestIdRef.current += 1
+    pagesRequestIdRef.current += 1
+    setConnectionId(nextConnectionId)
+    setSiteUrl(nextSiteUrl)
+    setConnectionError(null)
+    setProjects([])
+    setProjectPath('')
+    setBranches([])
+    setBranch('')
+    setPages(null)
+    setPageWarnings([])
+    setSelected(new Set())
+    setExpandedDirectories(new Set())
+    setPickerPage(1)
+    setScopeLoading(false)
+    setPagesLoading(false)
+  }, [])
+
+  const resetProjectScope = useCallback((nextProjectPath: string) => {
+    projectPathRef.current = nextProjectPath
+    branchRef.current = ''
+    branchesRequestIdRef.current += 1
+    pagesRequestIdRef.current += 1
+    setProjectPath(nextProjectPath)
+    setBranches([])
+    setBranch('')
+    setPages(null)
+    setPageWarnings([])
+    setSelected(new Set())
+    setExpandedDirectories(new Set())
+    setPickerPage(1)
+    setConnectionError(null)
+    setPagesLoading(false)
+  }, [])
+
+  const resetBranchScope = useCallback((nextBranch: string) => {
+    branchRef.current = nextBranch
+    pagesRequestIdRef.current += 1
+    setBranch(nextBranch)
+    setPages(null)
+    setPageWarnings([])
+    setSelected(new Set())
+    setExpandedDirectories(new Set())
+    setPickerPage(1)
+    setConnectionError(null)
+    setPagesLoading(false)
+  }, [])
 
   const loadBound = useCallback(async () => {
     try {
@@ -157,23 +215,40 @@ export function WikiDocumentImport({
         const response = await wikiApis.listConnections()
         const available = response.connections.filter(item => item.enabled && item.site_url)
         setConnections(available)
-        setConnectionId(available[0]?.id || '')
-        setSiteUrl(available[0]?.site_url || '')
+        resetConnectionScope(available[0]?.id || '', available[0]?.site_url || '')
         setConnected(available.length > 0)
       } catch {
+        setConnections([])
+        resetConnectionScope('', '')
         setConnected(false)
       }
     }
     load()
     void loadBoundRef.current()
-  }, [knowledgeBaseId])
+  }, [knowledgeBaseId, resetConnectionScope])
 
   const loadPages = useCallback(
-    async (refresh = false, directoryPath = '', targetProject = '', targetBranch = '') => {
+    async (
+      refresh = false,
+      directoryPath = '',
+      targetProject = '',
+      targetBranch = '',
+      targetConnectionId = connectionIdRef.current
+    ) => {
+      if (!targetConnectionId || targetConnectionId !== connectionIdRef.current) return
       if (capabilities?.supports_project_selection && !targetProject) return
       if (capabilities?.supports_branch_selection && !targetBranch) return
+      if (capabilities?.supports_project_selection && targetProject !== projectPathRef.current) {
+        return
+      }
+      if (capabilities?.supports_branch_selection && targetBranch !== branchRef.current) return
       const requestId = pagesRequestIdRef.current + 1
       pagesRequestIdRef.current = requestId
+      const isCurrentRequest = () =>
+        requestId === pagesRequestIdRef.current &&
+        targetConnectionId === connectionIdRef.current &&
+        (!capabilities?.supports_project_selection || targetProject === projectPathRef.current) &&
+        (!capabilities?.supports_branch_selection || targetBranch === branchRef.current)
       try {
         setPagesLoading(true)
         const loadedPages: WikiPageSummary[] = []
@@ -185,20 +260,21 @@ export function WikiDocumentImport({
           visitedOffsets.add(offset)
           const response = await wikiApis.listPages({
             limit: WIKI_API_PAGE_SIZE,
-            connection_id: connectionId || undefined,
+            connection_id: targetConnectionId,
             project_path: targetProject || undefined,
             branch: targetBranch || undefined,
             path: directoryPath || undefined,
             ...(offset ? { offset } : {}),
             ...(refresh && firstRequest ? { refresh: true } : {}),
           })
+          if (!isCurrentRequest()) return
           loadedPages.push(...response.pages)
           response.warnings.forEach(warning => loadedWarnings.add(warning))
           firstRequest = false
           if (response.next_offset === null) break
           offset = response.next_offset
         }
-        if (requestId !== pagesRequestIdRef.current) return
+        if (!isCurrentRequest()) return
         const uniquePages = [...new Map(loadedPages.map(page => [page.id, page])).values()]
         setPages(current => {
           if (!directoryPath) return uniquePages
@@ -216,7 +292,7 @@ export function WikiDocumentImport({
           return next.size === current.size ? current : next
         })
       } catch (error) {
-        if (requestId !== pagesRequestIdRef.current) return
+        if (!isCurrentRequest()) return
         const message = (error as Error)?.message || t('wikiSection.load_tree_failed')
         setConnectionError(message)
         toast({
@@ -226,48 +302,72 @@ export function WikiDocumentImport({
         setPages([])
         setPageWarnings([])
       } finally {
-        if (requestId === pagesRequestIdRef.current) setPagesLoading(false)
+        if (isCurrentRequest()) setPagesLoading(false)
       }
     },
-    [capabilities, connectionId, isRepository, toast, t]
+    [capabilities, isRepository, toast, t]
   )
 
-  const loadProjects = useCallback(async () => {
-    if (!connectionId) return
-    try {
-      setScopeLoading(true)
-      const loaded: WikiProjectSummary[] = []
-      let offset = 0
-      const visited = new Set<number>()
-      while (!visited.has(offset)) {
-        visited.add(offset)
-        const response = await wikiApis.listProjects({
-          connection_id: connectionId,
-          limit: WIKI_API_PAGE_SIZE,
-          ...(offset ? { offset } : {}),
+  const loadProjects = useCallback(
+    async (targetConnectionId: string) => {
+      if (!targetConnectionId || targetConnectionId !== connectionIdRef.current) return
+      const requestId = projectsRequestIdRef.current + 1
+      projectsRequestIdRef.current = requestId
+      const isCurrentRequest = () =>
+        requestId === projectsRequestIdRef.current && targetConnectionId === connectionIdRef.current
+      try {
+        setScopeLoading(true)
+        const loaded: WikiProjectSummary[] = []
+        let offset = 0
+        const visited = new Set<number>()
+        while (!visited.has(offset)) {
+          visited.add(offset)
+          const response = await wikiApis.listProjects({
+            connection_id: targetConnectionId,
+            limit: WIKI_API_PAGE_SIZE,
+            ...(offset ? { offset } : {}),
+          })
+          if (!isCurrentRequest()) return
+          loaded.push(...response.projects)
+          if (response.next_offset === null) break
+          offset = response.next_offset
+        }
+        if (!isCurrentRequest()) return
+        setProjects(loaded)
+        resetProjectScope(loaded[0]?.path || '')
+        if (!loaded.length) setPages([])
+      } catch (error) {
+        if (!isCurrentRequest()) return
+        setProjects([])
+        resetProjectScope('')
+        setPages([])
+        toast({
+          variant: 'destructive',
+          title: (error as Error)?.message || t('wikiSection.load_projects_failed'),
         })
-        loaded.push(...response.projects)
-        if (response.next_offset === null) break
-        offset = response.next_offset
+      } finally {
+        if (isCurrentRequest()) setScopeLoading(false)
       }
-      setProjects(loaded)
-      setProjectPath(loaded[0]?.path || '')
-      if (!loaded.length) setPages([])
-    } catch (error) {
-      setProjects([])
-      setPages([])
-      toast({
-        variant: 'destructive',
-        title: (error as Error)?.message || t('wikiSection.load_projects_failed'),
-      })
-    } finally {
-      setScopeLoading(false)
-    }
-  }, [connectionId, t, toast])
+    },
+    [resetProjectScope, t, toast]
+  )
 
   const loadBranches = useCallback(
-    async (targetProject: string) => {
-      if (!connectionId || !targetProject) return
+    async (targetConnectionId: string, targetProject: string, projectDefault: string | null) => {
+      if (
+        !targetConnectionId ||
+        targetConnectionId !== connectionIdRef.current ||
+        !targetProject ||
+        targetProject !== projectPathRef.current
+      ) {
+        return
+      }
+      const requestId = branchesRequestIdRef.current + 1
+      branchesRequestIdRef.current = requestId
+      const isCurrentRequest = () =>
+        requestId === branchesRequestIdRef.current &&
+        targetConnectionId === connectionIdRef.current &&
+        targetProject === projectPathRef.current
       try {
         setScopeLoading(true)
         const loaded: WikiBranchSummary[] = []
@@ -276,18 +376,19 @@ export function WikiDocumentImport({
         while (!visited.has(offset)) {
           visited.add(offset)
           const response = await wikiApis.listBranches({
-            connection_id: connectionId,
+            connection_id: targetConnectionId,
             project_path: targetProject,
             limit: WIKI_API_PAGE_SIZE,
             ...(offset ? { offset } : {}),
           })
+          if (!isCurrentRequest()) return
           loaded.push(...response.branches)
           if (response.next_offset === null) break
           offset = response.next_offset
         }
+        if (!isCurrentRequest()) return
         setBranches(loaded)
-        const projectDefault = projects.find(item => item.path === targetProject)?.default_branch
-        setBranch(
+        resetBranchScope(
           loaded.find(item => item.name === projectDefault)?.name ||
             loaded.find(item => item.is_default)?.name ||
             loaded[0]?.name ||
@@ -295,57 +396,43 @@ export function WikiDocumentImport({
         )
         if (!loaded.length) setPages([])
       } catch (error) {
+        if (!isCurrentRequest()) return
         setBranches([])
-        setBranch('')
+        resetBranchScope('')
         setPages([])
         toast({
           variant: 'destructive',
           title: (error as Error)?.message || t('wikiSection.load_branches_failed'),
         })
       } finally {
-        setScopeLoading(false)
+        if (isCurrentRequest()) setScopeLoading(false)
       }
     },
-    [connectionId, projects, t, toast]
+    [resetBranchScope, t, toast]
   )
 
   useEffect(() => {
-    const connection = connections.find(item => item.id === connectionId)
-    setSiteUrl(connection?.site_url || '')
-    setConnectionError(null)
-    setPages(null)
-    setPageWarnings([])
-    setSelected(new Set())
-    setExpandedDirectories(new Set())
-    setProjects([])
-    setProjectPath('')
-    setBranches([])
-    setBranch('')
-    setPickerPage(1)
-  }, [connectionId, connections])
-
-  useEffect(() => {
     if (!connected || !connectionId || !capabilities) return
-    if (capabilities.supports_project_selection) void loadProjects()
-    else void loadPages()
+    if (capabilities.supports_project_selection) void loadProjects(connectionId)
+    else void loadPages(false, '', '', '', connectionId)
   }, [capabilities, connected, connectionId, loadPages, loadProjects])
 
   useEffect(() => {
     if (!projectPath || !capabilities?.supports_project_selection) return
-    setPages(null)
-    setSelected(new Set())
-    setExpandedDirectories(new Set())
-    if (capabilities.supports_branch_selection) void loadBranches(projectPath)
-    else void loadPages(false, '', projectPath)
-  }, [capabilities, loadBranches, loadPages, projectPath])
+    const project = projects.find(item => item.path === projectPath)
+    if (!project) return
+    if (capabilities.supports_branch_selection) {
+      void loadBranches(connectionId, projectPath, project.default_branch)
+    } else {
+      void loadPages(false, '', projectPath, '', connectionId)
+    }
+  }, [capabilities, connectionId, loadBranches, loadPages, projectPath, projects])
 
   useEffect(() => {
     if (!branch || !capabilities?.supports_branch_selection) return
-    setPages(null)
-    setSelected(new Set())
-    setExpandedDirectories(new Set())
-    void loadPages(false, '', projectPath, branch)
-  }, [branch, capabilities, loadPages, projectPath])
+    if (!branches.some(item => item.name === branch)) return
+    void loadPages(false, '', projectPath, branch, connectionId)
+  }, [branch, branches, capabilities, connectionId, loadPages, projectPath])
 
   useEffect(() => {
     onDraftChange(selected.size > 0)
@@ -519,7 +606,11 @@ export function WikiDocumentImport({
             <span>{t('wikiSection.connection')}</span>
             <select
               value={connectionId}
-              onChange={event => setConnectionId(event.target.value)}
+              onChange={event => {
+                const nextConnectionId = event.target.value
+                const connection = connections.find(item => item.id === nextConnectionId)
+                resetConnectionScope(nextConnectionId, connection?.site_url || '')
+              }}
               className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3"
               data-testid="wiki-import-connection-select"
             >
@@ -536,7 +627,7 @@ export function WikiDocumentImport({
             <span>{t('wikiSection.project')}</span>
             <select
               value={projectPath}
-              onChange={event => setProjectPath(event.target.value)}
+              onChange={event => resetProjectScope(event.target.value)}
               disabled={scopeLoading || projects.length === 0}
               className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3"
               data-testid="wiki-import-project-select"
@@ -555,7 +646,7 @@ export function WikiDocumentImport({
             <span>{t('wikiSection.branch')}</span>
             <select
               value={branch}
-              onChange={event => setBranch(event.target.value)}
+              onChange={event => resetBranchScope(event.target.value)}
               disabled={scopeLoading || branches.length === 0}
               className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3"
               data-testid="wiki-import-branch-select"
@@ -697,7 +788,7 @@ export function WikiDocumentImport({
               size="sm"
               type="button"
               className="min-h-11 shrink-0 px-3 md:min-h-8"
-              onClick={() => void loadPages(true, '', projectPath, branch)}
+              onClick={() => void loadPages(true, '', projectPath, branch, connectionId)}
               disabled={pagesLoading || !connectionId}
               data-testid="wiki-import-refresh-button"
             >
@@ -804,7 +895,9 @@ export function WikiDocumentImport({
                       const hasLoadedChildren = pages?.some(
                         page => page.path !== path && page.path.startsWith(`${path}/`)
                       )
-                      if (!hasLoadedChildren) void loadPages(false, path, projectPath, branch)
+                      if (!hasLoadedChildren) {
+                        void loadPages(false, path, projectPath, branch, connectionId)
+                      }
                     }}
                     onToggleDirectorySelection={updateSelection}
                   />
