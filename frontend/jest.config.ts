@@ -78,7 +78,7 @@ const resolveJestConfig = async () => {
   const resolved = await createJestConfig(config)()
   return {
     ...resolved,
-    transformIgnorePatterns: resolved.transformIgnorePatterns?.map(pattern =>
+    transformIgnorePatterns: resolved.transformIgnorePatterns?.map((pattern: string) =>
       pattern.startsWith('/node_modules/')
         ? pattern.replace(
             '/node_modules/',

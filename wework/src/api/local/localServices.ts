@@ -150,6 +150,7 @@ import {
   CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
   CODEX_RUNTIME_MODEL_ID,
   type CodexOfficialModel,
+  type CodexOfficialModelList,
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
@@ -1392,6 +1393,7 @@ async function buildLocalRuntimeExecutionRequest(
     skill_names: deployedSkillNames,
     preload_skills: preloadSkills,
     user_selected_skills: preloadSkills,
+    additional_skills: input.additionalSkills ?? [],
     ...(workspaceProject
       ? {
           workspace: {
@@ -1452,18 +1454,25 @@ async function executeLocalDeviceCommand(
 
 async function loadLocalCodexAuthConfigured(
   request: LocalAppServicesDeps['request']
-): Promise<boolean> {
-  if (!request) return false
+): Promise<boolean | null> {
+  if (!request) return null
   try {
     const response = await request<DeviceCommandResponse>('device.execute_command', {
       command_key: 'runtime_auth_status',
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
-    return response.success === true && recordValue(response.stdout).exists === true
+    if (response.success !== true) return null
+    return recordValue(response.stdout).exists === true
   } catch {
-    return false
+    return null
   }
+}
+
+function codexModelCatalogError(models: CodexOfficialModelList): string | null {
+  const provider = models.providers.find(item => !item.available)
+  if (!provider) return null
+  return provider.error || 'Codex model list is unavailable'
 }
 
 async function prepareLocalRuntimeWorkspace(
@@ -3315,9 +3324,22 @@ function summarizeLocalModelOptions(
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
   const localPluginApi = createLocalCodexPluginApi()
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
-    async listPlugins() {
-      const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
-      return buildProjectPluginCatalog(installed.items)
+    async listPlugins(deviceId: string) {
+      if (deviceId) {
+        const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
+        return buildProjectPluginCatalog(installed.items).map(plugin => ({
+          ...plugin,
+          catalogSource: 'local' as const,
+        }))
+      }
+      const [apps, installed] = await Promise.all([
+        localPluginApi.listApps(),
+        localPluginApi.listInstalledPlugins({ requireComplete: true }).then(result => result.items),
+      ])
+      return buildProjectPluginCatalog(installed, apps).map(plugin => ({
+        ...plugin,
+        catalogSource: 'local' as const,
+      }))
     },
   }
   const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
@@ -3545,6 +3567,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const teamApi = {
     listTeams: async () => [],
   }
+  let rememberedCodexModels: CodexOfficialModel[] = []
+  let rememberedCodexAuthConfigured: boolean | null = null
   const modelApi = {
     listModels: async () => {
       let codexOfficialModels: CodexOfficialModel[]
@@ -3562,13 +3586,38 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           ),
           loadLocalCodexAuthConfigured(request),
         ])
-        codexOfficialModels = codexOfficialResult.value?.models ?? []
-        codexOfficialError = codexOfficialResult.error
-        codexAuthConfigured = nextCodexAuthConfigured
+        const listedModels = codexOfficialResult.value
+        const catalogError = listedModels ? codexModelCatalogError(listedModels) : null
+
+        if (nextCodexAuthConfigured !== null) {
+          rememberedCodexAuthConfigured = nextCodexAuthConfigured
+        }
+        if (!catalogError && listedModels && listedModels.models.length > 0) {
+          rememberedCodexModels = listedModels.models
+        }
+
+        codexOfficialModels =
+          catalogError || !listedModels ? rememberedCodexModels : listedModels.models
+        codexOfficialError =
+          rememberedCodexModels.length > 0 ? null : catalogError || codexOfficialResult.error
+        const resolvedAuthConfigured = nextCodexAuthConfigured ?? rememberedCodexAuthConfigured
+        if (resolvedAuthConfigured === null) {
+          codexAuthConfigured = true
+          codexOfficialError = codexOfficialError || 'Unable to verify local Codex authentication'
+        } else {
+          codexAuthConfigured = resolvedAuthConfigured
+        }
       } catch (error) {
-        codexOfficialModels = []
+        codexOfficialModels = rememberedCodexModels
         codexOfficialError = error instanceof Error ? error.message : String(error)
-        codexAuthConfigured = false
+        if (rememberedCodexAuthConfigured === false) {
+          codexAuthConfigured = false
+        } else {
+          codexAuthConfigured = true
+          if (rememberedCodexModels.length > 0) {
+            codexOfficialError = null
+          }
+        }
       }
       return {
         data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
@@ -3697,6 +3746,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         deliveryApi,
         projectChatClient: localProjectChatClient,
         projectChatAgentApi: localProjectChatAgentApi,
+        localProjectChatAgentApi,
         loopItemExecutionApi: localLoopItemExecutionApi,
         localProjectAutomationApi: createLocalProjectAutomationApi(request, runtimeWorkApi),
         deviceApi,

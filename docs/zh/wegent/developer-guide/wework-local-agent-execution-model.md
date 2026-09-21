@@ -41,8 +41,8 @@ flowchart LR
 
 - `localDelivery.ts`：本地项目、Issue、智能体和执行 API。
 - `localWorkspaceApi.ts`：共享协作界面的本地适配，包括每次看板刷新时加载智能体。
-- `LocalProjectAgentForm.tsx`：编辑本地运行时、模型、代码工作区、指令、审批、
-  Skills、MCP 和 Plugin。
+- `ProjectChatAgentEditor.tsx`：复用统一智能体表单，编辑本地运行时、模型、
+  提示词、能力来源、Skills、MCP 和 Plugin。
 - `LocalTaskStore`：SQLite、版本冲突检查、执行身份、领取租约、停止、状态回写。
 - `local_automation.rs`：将本地自动处理规则转成已有队列记录或顺序工作流。
 - `localRobotQueueDispatcher.ts`：领取任务并提交给现有 Runtime API；本地与云端

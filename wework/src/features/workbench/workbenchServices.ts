@@ -91,6 +91,7 @@ export interface ProjectSpaceDetailServices {
   deliveryApi: DeliveryApi
   projectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localProjectAutomationApi?: ReturnType<typeof createLocalProjectAutomationApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>

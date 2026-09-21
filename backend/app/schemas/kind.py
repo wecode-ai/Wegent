@@ -181,6 +181,7 @@ class GhostSpec(BaseModel):
 
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
+    plugins: Optional[List[Dict[str, Any]]] = None
     defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
@@ -467,6 +468,7 @@ class BotSpec(BaseModel):
     ghostRef: GhostRef
     shellRef: ShellRef
     modelRef: Optional[ModelRef] = None
+    capability_mode: str = "follow_device"
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "

@@ -359,11 +359,12 @@ class Settings(BaseSettings):
     EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS: int = 20
     EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
-    # External Wiki synchronized import and page-picker configuration.
+    # External Wiki import, page-picker, and scheduled refresh configuration.
     WIKIJS_GRAPHQL_TIMEOUT_SECONDS: int = 30  # Wiki.js connector per-request timeout
     WIKI_TREE_MAX_PAGES: int = Field(
         default=5000, ge=1
     )  # Tree browse page-list upper bound
+    # Controls scheduled refresh only; manual import and refresh remain available.
     EXTERNAL_DOC_SYNC_ENABLED: bool = False
     EXTERNAL_DOC_SYNC_CRON: str = "0 21 * * *"
     EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE: int = 500

@@ -477,6 +477,9 @@ importers:
       jest-environment-jsdom:
         specifier: ^29.7.0
         version: 29.7.0
+      jszip:
+        specifier: 3.10.2
+        version: 3.10.2
       lint-staged:
         specifier: ^15.2.11
         version: 15.5.2

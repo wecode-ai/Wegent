@@ -6195,6 +6195,78 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
   })
 
+  test('shows the unavailable Codex entry for an existing task whose local model is missing', async () => {
+    const unavailableModel: UnifiedModel = {
+      name: 'codex-official-unavailable',
+      type: 'runtime',
+      displayName: 'CodeX 模型不可用',
+      provider: 'local',
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'unavailable',
+      config: {
+        weworkModelKind: 'codex-official',
+        unavailableReason: 'Codex model list is unavailable',
+      },
+    }
+    const cloudModel: UnifiedModel = {
+      name: 'deepseek-v4-flash-responses(公网)',
+      type: 'public',
+      provider: 'cloud',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      modelSelection: {
+                        modelName: 'gpt-5.6-sol',
+                        modelType: 'runtime',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: [unavailableModel, cloudModel] }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('active-model')).toHaveTextContent('codex-official-unavailable')
+    )
+    expect(screen.getByTestId('selected-model')).toBeEmptyDOMElement()
+  })
+
   test('blocks interrupt-and-send when the runtime task model is unavailable', async () => {
     const deepseekModel: UnifiedModel = {
       name: 'deepseek-v4-flash-responses(公网)',

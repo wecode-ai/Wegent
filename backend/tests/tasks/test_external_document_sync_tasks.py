@@ -71,3 +71,9 @@ def test_sync_task_uses_dedicated_time_limits() -> None:
         < sync_external_documents_task.time_limit
         < settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS
     )
+
+
+def test_sync_task_is_disabled_by_scheduled_sync_switch(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "EXTERNAL_DOC_SYNC_ENABLED", False)
+
+    assert sync_external_documents_task() == {"status": "disabled"}

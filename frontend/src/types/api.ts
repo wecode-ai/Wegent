@@ -110,6 +110,8 @@ export interface Bot {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  plugins?: import('@wegent/collaboration').UnifiedAgentPluginRef[]
+  capability_mode?: 'follow_device' | 'manual'
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[] // Skills associated with this bot
   skill_refs?: Record<string, SkillRefMeta>
