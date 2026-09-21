@@ -33,6 +33,7 @@ import type {
 import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
+import { getDocumentDisplayUpdatedAt } from '../utils/documentUtils'
 import { formatSelectionSummary } from '../utils/selection-summary'
 
 const DEFAULT_PAGE_SIZE = 100
@@ -62,7 +63,9 @@ function getDocumentSortValue(
     case 'size':
       return document.file_size
     case 'updatedAt':
-      return Date.parse(document.updated_at) || 0
+      // Effective time (wiki rows prefer the source page time) so the sort
+      // order matches the timestamps users see in the list.
+      return Date.parse(getDocumentDisplayUpdatedAt(document) ?? '') || 0
     case 'createdAt':
     default:
       return Date.parse(document.created_at) || 0
