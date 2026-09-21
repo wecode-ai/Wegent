@@ -399,11 +399,9 @@ function WindowedMarkdownChunk({
   children: ReactNode;
 }) {
   const chunkRef = useRef<HTMLDivElement>(null);
-  const wasEagerRef = useRef(eager);
-  if (eager) wasEagerRef.current = true;
-  const keepStreamedAtomicChunkMounted =
-    wasEagerRef.current && isOversizedAtomicMarkdownChunk(content);
-  const effectiveEager = eager || keepStreamedAtomicChunkMounted;
+  // An indivisible long chunk cannot use an estimated-height placeholder:
+  // reopening a transcript must preserve its full scrollable content too.
+  const effectiveEager = eager || isOversizedAtomicMarkdownChunk(content);
   const [nearViewport, setNearViewport] = useState(
     () => typeof IntersectionObserver === "undefined" || effectiveEager,
   );
@@ -431,14 +429,15 @@ function WindowedMarkdownChunk({
   }, [effectiveEager]);
 
   const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content);
+  const shouldRender = effectiveEager || nearViewport;
 
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={nearViewport ? undefined : { minHeight: reservedHeight }}
+      style={shouldRender ? undefined : { minHeight: reservedHeight }}
     >
-      {nearViewport ? (
+      {shouldRender ? (
         children
       ) : (
         <div

@@ -612,6 +612,10 @@ async function verifyBackgroundTaskWindowLifecycle({
 
   setPhase('completed-task-scroll-position')
   const middleParagraphSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`
+  await control.command('waitFor', middleParagraphSelector, {
+    text: WINDOW_LIFECYCLE_SCROLL_MARKER,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('scrollIntoViewAsUser', middleParagraphSelector, {
     text: WINDOW_LIFECYCLE_SCROLL_MARKER,
   })
