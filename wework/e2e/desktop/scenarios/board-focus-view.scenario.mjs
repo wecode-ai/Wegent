@@ -18,6 +18,7 @@ import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '专注视图验证'
 const ISSUE_NAME = '优化运行中卡片的进度展示'
+const SECOND_ISSUE_NAME = '验证卡片操作按钮独立显示'
 const TASK_PROMPT = 'BOARD_FOCUS_VIEW_RUNNING_CARD_E2E'
 const SHORT_PROCESS_TEXT = '正在读取运行中卡片的界面状态。'
 const PROCESS_TEXT = [
@@ -52,8 +53,8 @@ async function waitForValue(read, predicate, message, timeoutMs) {
   throw new Error(message)
 }
 
-function boardItemTestId(snapshot) {
-  return snapshot.testIds.find(testId =>
+function boardItemTestIds(snapshot) {
+  return snapshot.testIds.filter(testId =>
     /^collaboration-issue-(?!create(?:-|$)|detail(?:-|$)|save$|close$|comment(?:-|$)|table(?:-|$)|children-).+/u.test(
       testId
     )
@@ -232,11 +233,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
       )
       const createdSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-      const itemTestId = boardItemTestId(createdSnapshot)
+      const itemTestId = boardItemTestIds(createdSnapshot)[0]
       assert.ok(itemTestId, 'The board focus fixture did not create an Issue card')
       const itemId = itemTestId.slice('collaboration-issue-'.length)
       const cardSelector = `${ACTIVE_BOARD} [data-testid="${itemTestId}"]`
-      const progressTrigger = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-progress-trigger-${itemId}"]`
+      const cardSurfaceSelector = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-drop-${itemId}"]`
 
       await control.command('click', cardSelector)
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
@@ -307,6 +308,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       const processSelector = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-process-${itemId}"]`
       const toolSelector = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-tool-line-${itemId}"]`
+      const openTask = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-open-task-${itemId}"]`
       const progressPopup = `[data-testid="cloud-todo-card-progress-popup-${itemId}"]`
       await control.command('waitFor', processSelector, {
         text: SHORT_PROCESS_TEXT,
@@ -334,6 +336,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         text: SHORT_PROCESS_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="collaboration-issue-create"]`)
+      await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-title"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', `${ACTIVE_BOARD} [data-testid="cloud-todo-title"]`, {
+        value: SECOND_ISSUE_NAME,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        `${ACTIVE_BOARD} [data-testid="cloud-todo-create-confirm"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', `${ACTIVE_BOARD} [data-testid^="collaboration-issue-"]`, {
+        text: SECOND_ISSUE_NAME,
+        timeoutMs: uiTimeoutMs,
+      })
+      const twoCardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
+      const secondItemTestId = boardItemTestIds(twoCardSnapshot).find(
+        testId => testId !== itemTestId
+      )
+      assert.ok(secondItemTestId, 'The board focus fixture did not create a second Issue card')
+      const secondItemId = secondItemTestId.slice('collaboration-issue-'.length)
+      const secondCardSurfaceSelector = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-drop-${secondItemId}"]`
+      await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail-close"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail-close"]`, {
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_BOARD} [data-testid="collaboration-issue-detail"]`,
+        {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('hover', '[data-testid="cloud-board-focus-running"]')
 
       const [shortProcessMetrics] = JSON.parse(
@@ -380,6 +422,66 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       await control.command('scrollIntoView', cardSelector, { visible: true })
       await control.command('click', processSelector, { visible: true })
+      await control.command('waitFor', progressPopup, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-card-progress-popup-${itemId}-close"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command('waitFor', progressPopup, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      const cardSurfaceClass = await control.command('getAttribute', cardSurfaceSelector, {
+        value: 'class',
+      })
+      const secondCardSurfaceClass = await control.command(
+        'getAttribute',
+        secondCardSurfaceSelector,
+        { value: 'class' }
+      )
+      const openTaskClass = await control.command('getAttribute', openTask, {
+        value: 'class',
+      })
+      const secondCardMenuClass = await control.command(
+        'getAttribute',
+        `${ACTIVE_BOARD} [data-testid="cloud-todo-card-more-${secondItemId}"]`,
+        { value: 'class' }
+      )
+      for (const [label, className] of [
+        ['running card', cardSurfaceClass],
+        ['second card', secondCardSurfaceClass],
+      ]) {
+        assert.ok(
+          className.includes('group/issue-board-card'),
+          `The ${label} did not define an isolated action hover scope`
+        )
+      }
+      for (const [label, className] of [
+        ['task-page shortcut', openTaskClass],
+        ['second card menu', secondCardMenuClass],
+      ]) {
+        assert.ok(
+          className.includes('group-hover/issue-board-card:opacity-100'),
+          `The ${label} did not use the card-local hover scope`
+        )
+        assert.ok(
+          !className.split(/\s+/u).includes('group-hover:opacity-100'),
+          `The ${label} still used the unscoped hover state`
+        )
+      }
+
+      await control.command('click', openTask)
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
         visible: true,
         timeoutMs: uiTimeoutMs,
@@ -398,7 +500,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${ACTIVE_BOARD} [data-testid="cloud-todo-card-${itemId}"]`,
         processSelector,
         toolSelector,
-        progressTrigger,
+        openTask,
         `${ACTIVE_BOARD} [data-testid="cloud-board-focus-running"]`,
         `${ACTIVE_BOARD} [data-testid="collaboration-board-settings"]`,
       ]) {
@@ -417,10 +519,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `[data-testid="cloud-todo-card-drop-${itemId}"]`,
         { value: 'transform' }
       )
-      await control.command('hover', cardSelector)
+      await control.command('hover', cardSurfaceSelector)
       await new Promise(resolve => setTimeout(resolve, 800))
       await control.command('waitFor', progressPopup, { visible: false, timeoutMs: uiTimeoutMs })
-      await control.command('click', progressTrigger, {
+      await control.command('click', cardSurfaceSelector, {
         visible: true,
       })
       await control.command('waitFor', progressPopup, {

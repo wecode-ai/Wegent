@@ -581,7 +581,7 @@ describe('CloudTodoBoardCard', () => {
     )
 
     expect(screen.queryByTestId(/cloud-todo-card-goal-/)).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-card-progress-trigger-WEG-85')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-open-task-WEG-85')).not.toBeInTheDocument()
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     await new Promise(resolve => window.setTimeout(resolve, 500))
@@ -683,7 +683,7 @@ describe('CloudTodoBoardCard', () => {
       '第六行：等待确认'
     )
 
-    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')
     expect(conversation).toHaveAttribute('data-device-id', 'local')
@@ -758,7 +758,7 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85')).toBeInTheDocument()
 
     await act(async () => vi.advanceTimersByTime(2999))
@@ -796,7 +796,7 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     await act(async () => vi.advanceTimersByTime(2000))
 
     fireEvent.click(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85-close'))
@@ -852,7 +852,7 @@ describe('CloudTodoBoardCard', () => {
       '让用户在看板悬浮态快速理解当前会话正在完成什么'
     )
 
-    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-85-85')).toHaveTextContent(
       '让用户在看板悬浮态快速理解当前会话正在完成什么'
@@ -890,7 +890,7 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     expect(await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
       'data-model-name',
@@ -925,8 +925,7 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    const progressTrigger = screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85')
-    fireEvent.click(progressTrigger)
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     expect(onClick).not.toHaveBeenCalled()
     expect(onPreviewPinnedChange).toHaveBeenNthCalledWith(1, true)
@@ -969,7 +968,7 @@ describe('CloudTodoBoardCard', () => {
       'Fix the board popup'
     )
 
-    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
     expect(popup).toHaveClass('w-[480px]', 'overflow-x-hidden')
     expect(popup).toHaveAttribute('role', 'dialog')
