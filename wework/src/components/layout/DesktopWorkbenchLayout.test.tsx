@@ -1429,7 +1429,11 @@ describe('DesktopWorkbenchLayout', () => {
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
       services: {
-        deviceApi: { readWorkspaceFileChunk: vi.fn() },
+        deviceApi: {
+          listDevices: vi.fn(async () => []),
+          listSkills: vi.fn(async () => []),
+          readWorkspaceFileChunk: vi.fn(),
+        },
         ...(deliveryApiMock.available
           ? {
               deliveryApi: {
