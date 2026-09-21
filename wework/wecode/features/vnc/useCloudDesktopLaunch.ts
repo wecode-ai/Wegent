@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import type { CloudDesktopLaunchOptions } from '@/extensions/cloud-desktop-contract'
+import type { DeviceSurfaceLaunchOptions } from '@/extensions/device-surface-contract'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { openCloudDesktop } from './openCloudDesktop'
 import type { CloudDesktopOpenTarget } from './types'
@@ -20,7 +20,7 @@ interface UseCloudDesktopLaunchResult {
   disabled: boolean
   error: string | null
   loading: boolean
-  open: (options?: CloudDesktopLaunchOptions) => Promise<void>
+  open: (options?: DeviceSurfaceLaunchOptions) => Promise<void>
 }
 
 interface CloudDesktopRequestContext {
@@ -106,7 +106,7 @@ export function useCloudDesktopLaunch({
   ])
 
   const open = useCallback(
-    async (options?: CloudDesktopLaunchOptions) => {
+    async (options?: DeviceSurfaceLaunchOptions) => {
       if (disabled || loading || !cloudConnection.isConnected) return
 
       const requestGeneration = requestGenerationRef.current + 1

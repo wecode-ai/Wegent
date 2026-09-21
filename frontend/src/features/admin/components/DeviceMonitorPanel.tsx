@@ -60,7 +60,6 @@ import { useSocket } from '@/contexts/SocketContext'
 import { useAdminDeviceMonitorExtension } from '@extensions/admin-device-monitor'
 import { DeviceUpgradeStatusPayload, ServerEvents } from '@/types/socket'
 import { cn, isCompleteVersionString, isVersionAtLeast } from '@/lib/utils'
-import { useAdminDeviceMonitorVncExtension } from '@wecode/hooks'
 
 // Minimum version required for auto-upgrade support
 const MIN_AUTO_UPGRADE_VERSION = '1.6.5'
@@ -198,7 +197,6 @@ export function DeviceMonitorPanel() {
   const [appliedVersionFilter, setAppliedVersionFilter] = useState('')
   const [page, setPage] = useState(1)
   const limit = 20
-  const deviceMonitorVncExtension = useAdminDeviceMonitorVncExtension(devices)
 
   useEffect(() => {
     if (statusFilter === 'offline' && versionFilter) {
@@ -985,7 +983,7 @@ export function DeviceMonitorPanel() {
                           </Tooltip>
                         )}
 
-                        {deviceMonitorVncExtension.renderAction(device)}
+                        {deviceMonitorExtension.renderAction(device)}
 
                         {/* Restart Button - cloud only */}
                         {isCloud && (
@@ -1035,7 +1033,6 @@ export function DeviceMonitorPanel() {
                           </Tooltip>
                         )}
                       </TooltipProvider>
-                      {deviceMonitorExtension.renderAction(device)}
                     </div>
                   </div>
                 </Card>
@@ -1045,7 +1042,7 @@ export function DeviceMonitorPanel() {
         )}
       </div>
 
-      {deviceMonitorVncExtension.renderPanel()}
+      {deviceMonitorExtension.renderPanel()}
 
       {/* Pagination */}
       {totalPages > 1 && (
@@ -1086,7 +1083,6 @@ export function DeviceMonitorPanel() {
           </div>
         </div>
       )}
-      {deviceMonitorExtension.renderPanel()}
     </div>
   )
 }

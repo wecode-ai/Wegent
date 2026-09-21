@@ -7,7 +7,7 @@ import React from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 
 import type { AdminDeviceInfo } from '@/apis/admin'
-import { useAdminDeviceMonitorVncExtension } from '@wecode/hooks'
+import { useAdminDeviceMonitorExtension } from '@extensions/admin-device-monitor'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -68,7 +68,7 @@ function buildDevice(overrides: Partial<AdminDeviceInfo> = {}): AdminDeviceInfo 
 }
 
 function ExtensionHarness({ devices }: { devices: AdminDeviceInfo[] }) {
-  const extension = useAdminDeviceMonitorVncExtension(devices)
+  const extension = useAdminDeviceMonitorExtension(devices)
 
   return (
     <div>
@@ -84,7 +84,7 @@ function ExtensionHarness({ devices }: { devices: AdminDeviceInfo[] }) {
   )
 }
 
-describe('useAdminDeviceMonitorVncExtension', () => {
+describe('useAdminDeviceMonitorExtension', () => {
   it('renders the VNC action and opens the panel for online cloud Claude Code devices', () => {
     const devices = [
       buildDevice({

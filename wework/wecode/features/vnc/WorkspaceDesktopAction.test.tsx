@@ -6,7 +6,7 @@ import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import type { CloudDesktopLaunchAction } from '@/extensions/cloud-desktop-contract'
+import type { DeviceSurfaceLaunchAction } from '@/extensions/device-surface-contract'
 import { openCloudDesktop } from './openCloudDesktop'
 import { WorkspaceDesktopAction } from './WorkspaceDesktopAction'
 
@@ -55,7 +55,7 @@ function renderAction({
   contextKey?: string
   onBusyChange?: (busy: boolean) => void
   onErrorChange?: (message: string | null) => void
-  onLaunchActionChange?: (action: CloudDesktopLaunchAction | null) => void
+  onLaunchActionChange?: (action: DeviceSurfaceLaunchAction | null) => void
   onOpened?: () => void
 } = {}) {
   return {
@@ -124,7 +124,7 @@ describe('WorkspaceDesktopAction', () => {
   })
 
   test('exposes a launch action that can keep the shared host open', async () => {
-    const onLaunchActionChange = vi.fn<(action: CloudDesktopLaunchAction | null) => void>()
+    const onLaunchActionChange = vi.fn<(action: DeviceSurfaceLaunchAction | null) => void>()
     const onOpened = vi.fn()
     renderAction({ onLaunchActionChange, onOpened })
 
