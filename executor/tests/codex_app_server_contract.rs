@@ -1144,6 +1144,15 @@ fn shared_test_runtime() -> &'static Runtime {
     })
 }
 
+/// Point the executor and Codex homes at a per-run directory before any test
+/// can use them.
+///
+/// The engine persists the Codex thread it started under
+/// `<executor home>/sessions/<task id>/.codex_thread_id` and resumes it on the
+/// next run. These tests use fixed task ids, so a marker left in a developer's
+/// real home turns an expected `thread/start` into a `thread/resume` that the
+/// fake binaries never answer, and the run times out. Every test takes the
+/// `env_lock` first, so setting the variables there is ordered ahead of any read.
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     static EXECUTOR_HOME: OnceLock<PathBuf> = OnceLock::new();

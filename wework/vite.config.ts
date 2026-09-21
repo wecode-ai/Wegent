@@ -1,6 +1,7 @@
 import path from 'path'
 import fs from 'fs'
-import { createLogger, defineConfig } from 'vite'
+import { pathToFileURL } from 'node:url'
+import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
@@ -28,9 +29,29 @@ const packageJson = JSON.parse(
   version?: string
 }
 const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
-const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
+const extensionsDir = fs.existsSync(internalExtensionsDir)
   ? internalExtensionsDir
   : path.resolve(__dirname, './src/extensions')
+const internalVitePluginsPath = path.resolve(__dirname, './wecode/vitePlugins.mjs')
+const internalVitePluginsUrl = fs.existsSync(internalVitePluginsPath)
+  ? pathToFileURL(internalVitePluginsPath)
+  : null
+if (internalVitePluginsUrl) {
+  internalVitePluginsUrl.searchParams.set(
+    'version',
+    String(fs.statSync(internalVitePluginsPath).mtimeMs)
+  )
+}
+const internalViteModule = internalVitePluginsUrl
+  ? ((await import(internalVitePluginsUrl.href)) as {
+      createWecodeVitePlugins: () => Promise<Plugin[]>
+      createWecodeViteEntries?: () => Record<string, string>
+    })
+  : null
+const internalVitePlugins = internalViteModule
+  ? await internalViteModule.createWecodeVitePlugins()
+  : []
+const internalViteEntries = internalViteModule?.createWecodeViteEntries?.() ?? {}
 const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
@@ -84,6 +105,7 @@ export default defineConfig({
   customLogger: logger,
   plugins: [
     react(),
+    ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
       preset: 'auto',
@@ -154,6 +176,7 @@ export default defineConfig({
           __dirname,
           'dsh/ui-outputs/src/conversation-summary.tsx'
         ),
+        ...internalViteEntries,
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
           'dsh/ui-plugin-center/src/catalog-route.tsx'

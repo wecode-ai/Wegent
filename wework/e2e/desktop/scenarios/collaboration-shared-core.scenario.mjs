@@ -443,6 +443,8 @@ export function createDesktopScenario({
         assert.notEqual(updatedIssue.status, 'inbox')
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
         await verifyCollaborationLocalProjectImport(control, {
+          cloudProjectId: project.id,
+          cloudWorkspaceId: workspace.id,
           executorHome,
           scoped,
           workbenchReadyTimeoutMs,

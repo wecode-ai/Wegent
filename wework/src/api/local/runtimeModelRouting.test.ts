@@ -62,6 +62,40 @@ describe('local model requests with PAC', () => {
     )
   })
 
+  test('keeps local project continuation local even with an old cloud Team handle', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const materializeRuntimeTask = vi
+      .fn()
+      .mockRejectedValue(new Error('Backend must not be called'))
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue(ready),
+      request,
+      subscribe: vi.fn(),
+      materializeRuntimeTask,
+    })
+    const origin = {
+      type: 'project_automation' as const,
+      projectStore: 'local' as const,
+      cloudProjectId: 'local-project',
+      loopItemId: 'local-issue',
+    }
+    await services.runtimeWorkApi!.sendRuntimeMessage({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/tmp/project',
+        taskId: 'local-task',
+        runtime: 'claude_code',
+        runtimeHandle: { origin, wegentTeam: { id: 17 } },
+      },
+      message: 'continue',
+    })
+    expect(materializeRuntimeTask).not.toHaveBeenCalled()
+    const sent = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')![1]
+    expect(sent.executionRequest.origin).toEqual(origin)
+    expect(sent.executionRequest.backend_url).toBeUndefined()
+    expect(sent.executionRequest.auth_token).toBeUndefined()
+  })
+
   test('resolves a custom model request path again after PAC changes', async () => {
     saveLocalModelConfig({
       id: 'pac-custom',

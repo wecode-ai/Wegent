@@ -1,5 +1,6 @@
 import { createDeviceApi } from '@/api/devices'
 import type { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
+import type { createLocalProjectAutomationApi } from '@/api/local/localProjectAutomations'
 import type { createAgentResourceApi } from '@/api/agentResources'
 import { createDeliveryApi } from '@/api/deliveries'
 import type { AITableApi } from '@/api/aitable'
@@ -68,6 +69,11 @@ export interface WorkspaceSessionApi {
   startProjectCodeServer: (projectId: number) => Promise<ProjectDeviceSessionResponse>
   startDeviceTerminal: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
   startDeviceCodeServer: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
+  startDeviceExtensionSession: (
+    deviceId: string,
+    sessionType: string
+  ) => Promise<DeviceSessionResponse>
+  revokeDeviceExtensionSession?: (sessionType: string, sessionId: string) => Promise<void>
   createRemoteTerminalClient: RemoteTerminalClientFactory
 }
 
@@ -85,6 +91,7 @@ export interface ProjectSpaceDetailServices {
   deliveryApi: DeliveryApi
   projectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjectAutomationApi?: ReturnType<typeof createLocalProjectAutomationApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
@@ -163,6 +170,8 @@ export interface WorkbenchServices {
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  /** Backend-free execution ports for locally owned projects in a connected workbench. */
+  localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
   pluginApi?: ProjectPluginCatalogApi
   automationApi?: AutomationApi

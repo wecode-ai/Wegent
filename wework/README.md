@@ -53,6 +53,25 @@ turn has settled. While output is streaming, Wework keeps the processing layout
 stable so the completed state cannot repeatedly appear and disappear or make
 following text flicker.
 
+## Collaboration Loading
+
+协作侧栏的空间与项目摘要是跨页面复用的导航状态。进入 Issue 首页、项目或空间时不得清空或
+重新请求已有导航；本地与云端数据源分别完成后合并展示，一个数据源的加载或失败不得移除
+另一个数据源的现有条目。页面数据按当前视图加载：成员、智能体、协作组、设备和运行记录
+只能在消费它们的页面请求。空间首页可以后台渐进加载各项目的 Issue 摘要，但不得等待所有
+项目完成后才显示空间框架。Wework 的本地项目 Issue 操作必须始终路由到本地适配器。
+
+Collaboration workspace and project summaries are reusable navigation state
+across pages. Opening the Issue home, a project, or a workspace must not clear
+or refetch navigation that is already available. Local and cloud sources merge
+as each source completes; loading or failure in one source must not remove
+existing entries from the other. Page data is loaded only by the view that
+consumes it: members, agents, collaboration groups, devices, and executions
+must not be fetched for unrelated pages. A workspace home may progressively
+load per-project Issue summaries in the background, but it must render the
+workspace shell without waiting for every project. Issue operations for local
+Wework projects must always use the local adapter.
+
 ## Development
 
 Requires Node.js 20+ and pnpm.

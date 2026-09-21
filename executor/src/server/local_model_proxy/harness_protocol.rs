@@ -369,7 +369,13 @@ fn encode_responses_request(request: &HarnessRequest, model_id: Option<&str>) ->
         } else {
             "user"
         };
+        // The upstream pairs a `function_call` with the `function_call_output` that
+        // follows it, and reports "No tool output found for tool call …" when a
+        // message item sits in between. Keep this turn's message item outside the
+        // call/output group: an assistant turn's text precedes its calls (the order
+        // the model itself emits), a user turn's text follows its results.
         let mut content = Vec::new();
+        let mut calls = Vec::new();
         for block in &message.content {
             match block {
                 ContentBlock::Text(text) | ContentBlock::Thinking(text) => content.push(json!({
@@ -380,7 +386,7 @@ fn encode_responses_request(request: &HarnessRequest, model_id: Option<&str>) ->
                     "type": "input_image",
                     "image_url": format!("data:{media_type};base64,{data}")
                 })),
-                ContentBlock::ToolUse { id, name, input: arguments } => input.push(json!({
+                ContentBlock::ToolUse { id, name, input: arguments } => calls.push(json!({
                     "type": "function_call",
                     "call_id": id,
                     "name": name,
@@ -389,15 +395,21 @@ fn encode_responses_request(request: &HarnessRequest, model_id: Option<&str>) ->
                 ContentBlock::ToolResult {
                     tool_use_id,
                     content,
-                } => input.push(json!({
+                } => calls.push(json!({
                     "type": "function_call_output",
                     "call_id": tool_use_id,
                     "output": content
                 })),
             }
         }
-        if !content.is_empty() {
-            input.push(json!({"type": "message", "role": role, "content": content}));
+        let message_item = (!content.is_empty())
+            .then(|| json!({"type": "message", "role": role, "content": content}));
+        if message.role == Role::Assistant {
+            input.extend(message_item);
+            input.extend(calls);
+        } else {
+            input.extend(calls);
+            input.extend(message_item);
         }
     }
     compact_object(json!({
@@ -924,6 +936,91 @@ mod tests {
         assert_eq!(
             messages["messages"][0]["content"][0]["cache_control"]["type"],
             "ephemeral"
+        );
+    }
+
+    fn responses_input_shape(source: &[u8]) -> Vec<(String, Option<String>)> {
+        let responses: Value = serde_json::from_slice(
+            &adapt_messages_request(source, "openai-responses", Some("gpt-test")).unwrap(),
+        )
+        .unwrap();
+        responses["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| {
+                (
+                    item.get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    item.get("role").and_then(Value::as_str).map(str::to_owned),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn keeps_tool_calls_adjacent_to_their_outputs() {
+        let source = serde_json::to_vec(&json!({
+            "model": "harness-alias",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "build the dashboard"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "I'll start by inspecting the data."},
+                    {"type": "tool_use", "id": "call-1", "name": "shell", "input": {"command": "pwd"}},
+                    {"type": "tool_use", "id": "call-2", "name": "shell", "input": {"command": "ls"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-1", "content": "workspace"},
+                    {"type": "tool_result", "tool_use_id": "call-2", "content": "files"}
+                ]}
+            ],
+            "tools": [{"name": "shell", "description": "Run shell", "input_schema": {"type": "object"}}]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            responses_input_shape(&source),
+            vec![
+                ("message".to_owned(), Some("user".to_owned())),
+                ("message".to_owned(), Some("assistant".to_owned())),
+                ("function_call".to_owned(), None),
+                ("function_call".to_owned(), None),
+                ("function_call_output".to_owned(), None),
+                ("function_call_output".to_owned(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_tool_calls_adjacent_when_the_assistant_turn_also_has_thinking() {
+        let source = serde_json::to_vec(&json!({
+            "model": "harness-alias",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "build the dashboard"},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "The data needs inspecting first."},
+                    {"type": "tool_use", "id": "call-1", "name": "shell", "input": {"command": "pwd"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-1", "content": "workspace"}
+                ]}
+            ],
+            "tools": [{"name": "shell", "description": "Run shell", "input_schema": {"type": "object"}}]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            responses_input_shape(&source),
+            vec![
+                ("message".to_owned(), Some("user".to_owned())),
+                ("message".to_owned(), Some("assistant".to_owned())),
+                ("function_call".to_owned(), None),
+                ("function_call_output".to_owned(), None),
+            ]
         );
     }
 
