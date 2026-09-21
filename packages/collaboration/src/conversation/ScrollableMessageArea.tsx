@@ -211,22 +211,25 @@ function ScrollableMessagePaneContent({
     }
     const pendingAssistantResponseStarted =
       pendingAssistantResponseStartRef.current && !autoScrollIsSuspended
-    // Anything the reader did themselves (sending a message, applying guidance, starting a
-    // turn) still has to bring the newest content into view.
-    const userActionBringsNewestIntoView =
+    // Anything the reader did themselves (sending a message, applying guidance) still has to bring the
+    // newest content into view.
+    const readerActionBringsNewestIntoView =
       guidanceMessageApplied ||
-      waitingForAssistantStarted ||
       latestUserMessageChanged ||
-      assistantResponseStarted ||
-      pendingAssistantResponseStarted ||
       (lastMessageChanged && lastMessage?.role === 'user')
+    // The assistant's turn starting is not the reader's action, so it may only take the viewport while
+    // the reader has not parked in the history above it. `assistantResponseStarted` already carried that
+    // gate; `waitingForAssistantStarted` did not, and a parked reader was dragged to the bottom the
+    // moment their queued turn began answering.
+    const assistantTurnStarted =
+      waitingForAssistantStarted || assistantResponseStarted || pendingAssistantResponseStarted
     // While the reader is parked in the history of the conversation they are already in, a
     // transcript (re)load must not restore the snapshot taken before they scrolled up: that
     // stale distance can be pinned to the bottom and yank the viewport back down.
     const readerOwnsViewport =
       !conversationChanged &&
       userScrollPausedAutoFollowRef.current &&
-      !userActionBringsNewestIntoView
+      !readerActionBringsNewestIntoView
     const shouldRestoreScroll = Boolean(
       initialScrollPosition === 'restore' &&
       currentScrollKey &&
@@ -238,7 +241,10 @@ function ScrollableMessagePaneContent({
     const shouldForceBottom =
       !shouldRestoreScroll &&
       !readerOwnsViewport &&
-      (conversationChanged || messagesLoaded || userActionBringsNewestIntoView)
+      (conversationChanged ||
+        messagesLoaded ||
+        readerActionBringsNewestIntoView ||
+        (assistantTurnStarted && !userScrollPausedAutoFollowRef.current))
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
@@ -376,6 +382,9 @@ function ScrollableMessagePaneContent({
     }
 
     pendingAssistantResponseStartRef.current = false
+    // The reader may have taken the viewport over while the response start was held back; a turn that
+    // begins answering never gets to take it away from them.
+    if (userScrollPausedAutoFollowRef.current) return
     if (streamingFollowActive) {
       followStreamingToBottom()
     } else {
