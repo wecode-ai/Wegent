@@ -798,8 +798,8 @@ fn token_route_token(token: String, body: &[u8]) -> Result<String, HttpError> {
         return Ok(token);
     }
     let identity = request_thread_identity(body).ok_or_else(|| HttpError {
-        status: StatusCode::CONFLICT,
-        detail: "Codex Responses request is missing task thread metadata".to_owned(),
+        status: StatusCode::NOT_FOUND,
+        detail: "unknown or expired local model proxy token".to_owned(),
     })?;
     let recovered = bound_thread_token_in_registry(&registry, &identity)?;
     log_executor_event(
@@ -3795,6 +3795,18 @@ mod tests {
         );
 
         unregister(&token);
+    }
+
+    #[test]
+    fn token_route_keeps_unknown_token_semantics_without_thread_metadata() {
+        let error = token_route_token(
+            "task-unknown".to_owned(),
+            br#"{"input":"request without task thread metadata"}"#,
+        )
+        .expect_err("unknown token without thread metadata must remain not found");
+
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert_eq!(error.detail, "unknown or expired local model proxy token");
     }
 
     #[test]
