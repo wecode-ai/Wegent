@@ -152,6 +152,33 @@ async function readPersistedExecutions(
         return runs
       await new Promise(resolve => setTimeout(resolve, 100))
     }
+    const cloud = { backendUrl, authToken }
+    const [devices, executions] = await Promise.all([
+      requestJson(cloud, '/api/devices/online'),
+      requestJson(cloud, `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`),
+    ])
+    console.error(
+      '[board-reply-model] Runtime delivery diagnostics',
+      JSON.stringify({
+        devices: devices.items.map(device => ({
+          id: device.id,
+          deviceId: device.device_id,
+          type: device.device_type,
+          instance: device.runtime_instance_id,
+          used: device.slot_used,
+          limit: device.slot_max,
+        })),
+        executions: executions.items.map(execution => ({
+          id: execution.id,
+          status: execution.status,
+          deviceId: execution.executionDeviceId,
+          runtimeDeviceId: execution.runtimeDeviceId,
+          runtimeTaskId: execution.runtimeTaskId,
+          approvalStatus: execution.approvalStatus,
+          error: execution.errorMessage,
+        })),
+      })
+    )
     assert.fail(`A fresh client could not read persisted executions for ${prompts.join(', ')}`)
   } finally {
     socket.disconnect()
