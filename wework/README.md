@@ -53,6 +53,14 @@ turn has settled. While output is streaming, Wework keeps the processing layout
 stable so the completed state cannot repeatedly appear and disappear or make
 following text flicker.
 
+## Embedded Browser Navigation
+
+内嵌浏览器首次加载实际页面时会移除初始化用的 `about:blank` 历史项，
+避免后退到空白宿主页；后续页面的前进、后退记录正常保留。
+
+The embedded browser removes its bootstrap `about:blank` history entry when the
+first real page commits. Later navigation retains normal Back and Forward history.
+
 ## Collaboration Loading
 
 协作侧栏的空间与项目摘要是跨页面复用的导航状态。进入 Issue 首页、项目或空间时不得清空或

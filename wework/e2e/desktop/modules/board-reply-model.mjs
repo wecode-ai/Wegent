@@ -22,8 +22,13 @@ async function requestJson(cloud, path, options = {}) {
     ...options,
     headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
   })
-  assert.equal(response.ok, true, `${path} returned ${response.status}`)
-  return response.json()
+  const body = await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${path} returned ${response.status}: ${JSON.stringify(body.detail)}`
+  )
+  return body
 }
 
 async function verifyMemberReply(cloud, issue, rootId) {
@@ -226,6 +231,15 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         const devices = await requestJson(cloud, '/api/devices/online')
         const device = devices.items.find(item => item.device_type === 'app')
         assert.ok(device, 'The real desktop executor must be registered')
+        const environment = await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/execution-environments`,
+          { method: 'POST', body: JSON.stringify({ device_id: device.id }) }
+        )
+        assert.ok(
+          environment.device_key,
+          'The project execution environment must have a device key'
+        )
         await requestJson(
           cloud,
           `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
@@ -236,7 +250,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
               model: CLOUD_PUBLIC_MODEL_NAME,
               modelType: 'public',
               executionMode: 'auto',
-              executionDeviceId: device.execution_target_id || device.device_id,
+              executionDeviceId: environment.device_key,
             }),
           }
         )
