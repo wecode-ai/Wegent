@@ -7,6 +7,18 @@ export interface IssueMentionOption {
   label: string
 }
 
+/** One popup section: the members and robots a composer can mention. */
+export interface IssueMentionGroup {
+  label: string
+  items: {
+    id: string
+    name: string
+    avatar?: string
+    testId?: string
+    mention?: IssueMentionOption
+  }[]
+}
+
 /** One mentioned target that has been inserted into the current comment. */
 export interface IssueMentionSelection {
   mention: IssueMentionOption

@@ -1,33 +1,14 @@
 import { Paperclip, SlidersHorizontal } from "lucide-react";
-import {
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import {
-  filterIssueMentionOptions,
-  findIssueMentionQuery,
-  insertIssueMentionText,
-  pruneIssueMentionSelections,
-  type IssueMentionOption,
-  type IssueMentionQuery,
-  type IssueMentionSelection,
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type {
+  IssueMentionGroup,
+  IssueMentionOption,
 } from "./issueCommentMentions";
 import { IssueCommentComposer } from "./IssueActivityPresentation";
+import { IssueMentionPopup } from "./IssueMentionPopup";
+import { useIssueCommentMentions } from "./useIssueCommentMentions";
 
-export interface IssueMentionGroup {
-  label: string;
-  items: {
-    id: string;
-    name: string;
-    avatar?: string;
-    testId?: string;
-    mention?: IssueMentionOption;
-  }[];
-}
+export type { IssueMentionGroup } from "./issueCommentMentions";
 
 export interface IssueMainCommentTestIds {
   form: string;
@@ -92,35 +73,8 @@ export function IssueMainCommentComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const caret = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mentionQuery, setMentionQuery] = useState<IssueMentionQuery | null>(null);
-  const mentionSelections = useRef<IssueMentionSelection[]>([]);
+  const mention = useIssueCommentMentions({ mentionGroups });
   const canSend = !disabled && !sending && !uploading && Boolean(value.trim());
-  const mentionOptions = useMemo(
-    () =>
-      mentionGroups.flatMap((group) =>
-        group.items.flatMap((item) => (item.mention ? [item.mention] : [])),
-      ),
-    [mentionGroups],
-  );
-  const mentionCandidates = useMemo(
-    () =>
-      mentionQuery === null
-        ? []
-        : filterIssueMentionOptions(
-            mentionOptions,
-            mentionQuery.query,
-            mentionSelections.current.map((selection) => selection.mention),
-          ),
-    [mentionOptions, mentionQuery],
-  );
-  const mentionsOpen = mentionQuery !== null && mentionCandidates.length > 0;
-
-  function syncMentionSelections(nextValue: string) {
-    mentionSelections.current = pruneIssueMentionSelections(
-      nextValue,
-      mentionSelections.current,
-    );
-  }
 
   useLayoutEffect(() => {
     if (caret.current === null) return;
@@ -131,38 +85,20 @@ export function IssueMainCommentComposer({
 
   function changeValue(nextValue: string, selectionStart: number) {
     onChange(nextValue);
-    setMentionQuery(findIssueMentionQuery(nextValue, selectionStart));
-    syncMentionSelections(nextValue);
+    mention.handleChange(nextValue, selectionStart);
   }
 
   function insertMention(option: IssueMentionOption) {
     const start = input.current?.selectionStart ?? value.length;
     const end = input.current?.selectionEnd ?? start;
-    const query = mentionQuery ?? { start, query: "" };
-    const inserted = insertIssueMentionText(value, query, option, end);
-    const nextSelections = [
-      ...mentionSelections.current.filter(
-        (selection) =>
-          !(
-            selection.mention.type === option.type &&
-            selection.mention.id === option.id
-          ),
-      ),
-      inserted.selection,
-    ];
-    mentionSelections.current = nextSelections;
+    const inserted = mention.insert(option, value, start, end);
+    if (!inserted) return;
     caret.current = inserted.cursor;
-    setMentionQuery(null);
     onChange(inserted.value);
   }
 
   function submitComment() {
-    setMentionQuery(null);
-    mentionSelections.current = pruneIssueMentionSelections(
-      value,
-      mentionSelections.current,
-    );
-    onSubmit(mentionSelections.current.map((selection) => selection.mention));
+    onSubmit(mention.submit(value));
   }
 
   return (
@@ -170,7 +106,7 @@ export function IssueMainCommentComposer({
       data-testid={testIds.form}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-          setMentionQuery(null);
+          mention.close();
       }}
       canSend={canSend}
       onSubmit={submitComment}
@@ -190,12 +126,31 @@ export function IssueMainCommentComposer({
             onChange={(event) => {
               changeValue(event.target.value, event.target.selectionStart);
             }}
+            onKeyUp={(event) =>
+              mention.handleCaret(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart,
+              )
+            }
             onKeyDown={(event) => {
-              if (event.key === "Escape" && mentionsOpen) {
-                event.preventDefault();
-                event.stopPropagation();
-                setMentionQuery(null);
-                return;
+              if (mention.open) {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  mention.moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  const row = mention.highlighted;
+                  if (row?.mention) insertMention(row.mention);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  mention.close();
+                  return;
+                }
               }
               if (
                 event.key === "Enter" &&
@@ -217,46 +172,14 @@ export function IssueMainCommentComposer({
               }
             }}
           />
-          {mentionsOpen ? (
-            <div className="issue-comment-mention">
-              <div
-                className="issue-comment-mention-popup"
-                data-testid={testIds.mentions}
-              >
-                {mentionGroups
-                  .map((group) => ({
-                    ...group,
-                    items: group.items.filter((item) =>
-                      mentionCandidates.some(
-                        (candidate) =>
-                          candidate.type === item.mention?.type &&
-                          candidate.id === item.mention?.id,
-                      ),
-                    ),
-                  }))
-                  .filter((group) => group.items.length)
-                  .map((group) => (
-                    <section key={group.label}>
-                      <h4>{group.label}</h4>
-                      {group.items.map((item) => (
-                        <button
-                          type="button"
-                          key={item.id}
-                          data-testid={
-                            item.testId ?? `issue-comment-mention-${item.id}`
-                          }
-                          onClick={() => {
-                            if (item.mention) insertMention(item.mention);
-                          }}
-                        >
-                          <span>{item.avatar ?? item.name.slice(0, 1)}</span>
-                          {item.name}
-                        </button>
-                      ))}
-                    </section>
-                  ))}
-              </div>
-            </div>
+          {mention.open ? (
+            <IssueMentionPopup
+              groups={mention.groups}
+              highlightedId={mention.highlighted?.id ?? null}
+              testId={testIds.mentions}
+              onHighlight={mention.highlight}
+              onPick={insertMention}
+            />
           ) : null}
         </>
       }

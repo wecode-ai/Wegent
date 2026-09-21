@@ -393,4 +393,112 @@ describe("shared desktop reply composer", () => {
     expect(input.value).toBe("@bob ");
     expect(document.activeElement).toBe(input);
   });
+
+  it("walks the mention popup with the arrow keys and inserts on Enter", async () => {
+    act(() =>
+      root.render(
+        <IssueThreadReplyComposer
+          rootId="root"
+          disabled={false}
+          labels={labels}
+          onSend={vi.fn().mockResolvedValue({ ok: true })}
+          mentionGroups={[
+            {
+              label: "Members",
+              items: [
+                {
+                  id: "member-8",
+                  name: "bob",
+                  mention: { type: "user", id: "8", label: "bob" },
+                },
+                {
+                  id: "member-7",
+                  name: "alice",
+                  mention: { type: "user", id: "7", label: "alice" },
+                },
+              ],
+            },
+          ]}
+        />,
+      ),
+    );
+
+    const input = write("@");
+    const highlighted = () =>
+      container.querySelector('[role="option"][aria-selected="true"]');
+    const bob = container.querySelector(
+      '[data-testid="issue-comment-mention-member-8"]',
+    );
+    const alice = container.querySelector(
+      '[data-testid="issue-comment-mention-member-7"]',
+    );
+    const press = (key: string) =>
+      act(() => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key }),
+        );
+      });
+
+    // The first candidate is highlighted so Enter has a target immediately.
+    expect(highlighted()).toBe(bob);
+
+    press("ArrowDown");
+    expect(highlighted()).toBe(alice);
+    press("ArrowUp");
+    expect(highlighted()).toBe(bob);
+
+    press("ArrowDown");
+    press("Enter");
+
+    expect(input.value).toBe("@alice ");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-chat-reply-mentions-root"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("inserts the highlighted mention with Tab", async () => {
+    act(() =>
+      root.render(
+        <IssueThreadReplyComposer
+          rootId="root"
+          disabled={false}
+          labels={labels}
+          onSend={vi.fn().mockResolvedValue({ ok: true })}
+          mentionGroups={[
+            {
+              label: "Members",
+              items: [
+                {
+                  id: "member-8",
+                  name: "bob",
+                  mention: { type: "user", id: "8", label: "bob" },
+                },
+                {
+                  id: "member-7",
+                  name: "alice",
+                  mention: { type: "user", id: "7", label: "alice" },
+                },
+              ],
+            },
+          ]}
+        />,
+      ),
+    );
+
+    const input = write("@");
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Tab" }),
+      );
+    });
+
+    expect(input.value).toBe("@alice ");
+  });
 });

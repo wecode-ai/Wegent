@@ -3,7 +3,7 @@ import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { useBrowserIssueReplies } from './browserIssueRepliesContext'
-import type { IssueMentionGroup } from './IssueMainCommentComposer'
+import type { IssueMentionGroup } from './issueCommentMentions'
 
 export function BrowserIssueReplyComposer({
   rootId,

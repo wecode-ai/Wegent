@@ -1689,17 +1689,29 @@
 }
 
 .issue-comment-mention {
-  display: block;
-  position: relative;
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  /* Only the popup itself is interactive; the empty area stays click-through. */
+  pointer-events: none;
+}
+
+/* Align the popup with the draft it belongs to instead of covering it. */
+.task-detail-new-comment .issue-comment-mention {
+  padding: 0 12px;
+}
+
+.task-detail-comment-card-composer .issue-comment-mention {
+  padding: 0 16px;
 }
 
 .issue-comment-mention-popup {
-  position: absolute;
-  z-index: 20;
-  bottom: calc(100% + 8px);
-  left: 0;
+  pointer-events: auto;
   width: min(260px, calc(100vw - 48px));
-  max-height: 280px;
+  max-height: min(280px, 40vh);
   overflow-y: auto;
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
@@ -1737,7 +1749,8 @@
   text-align: left;
 }
 
-.issue-comment-mention-popup section > button:hover {
+.issue-comment-mention-popup section > button:hover,
+.issue-comment-mention-popup section > button.is-highlighted {
   background: rgb(var(--color-bg-muted));
 }
 
@@ -1989,6 +2002,7 @@
 }
 
 .task-detail-comment-card-composer {
+  position: relative;
   padding: 8px 16px;
   border-top: 1px solid rgb(var(--color-border));
 }
@@ -2202,6 +2216,7 @@
 }
 
 .task-detail-new-comment {
+  position: relative;
   width: 100%;
   padding: 12px;
   border: 1px solid rgb(var(--color-border));

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { CollaborationMember, CollaborationAgent } from '../types'
 import type { CollaborationTranslate } from '../i18n'
-import type { IssueMentionGroup } from './IssueMainCommentComposer'
+import type { IssueMentionGroup } from './issueCommentMentions'
 
 /** Build the @-mention popup content from the project members and agents. */
 export function useIssueMentionGroups(
