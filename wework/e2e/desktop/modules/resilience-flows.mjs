@@ -1,4 +1,5 @@
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { sendPromptWithButton } from './conversation-navigation.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -184,11 +185,20 @@ async function verifyModelProxyRestartRecovery({
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPromptUntilScenarioRequest(
+  const followUpRequest = control.awaitNextScenarioRequest(
+    'model_proxy_restart',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await sendPromptWithButton(
     control,
     composerSelector,
     MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
-    'model_proxy_restart'
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await withTimeout(
+    followUpRequest,
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The model service did not receive the post-restart model proxy request'
   )
   await control.command(
     'waitFor',
