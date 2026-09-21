@@ -17,11 +17,15 @@ const SAFE_PROPERTY_NAMES = new Set([
   'executor_location',
   'failure_stage',
   'plugin_distribution',
+  'plugin_id',
   'source',
   'scope',
   'surface',
   'enabled',
 ])
+const SAFE_STRING_PROPERTY_PATTERNS = {
+  plugin_id: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+}
 
 export function routeEventName(domain, feature) {
   return feature === 'app' ? `${domain}_opened` : `${domain}_${feature}_opened`
@@ -154,10 +158,18 @@ function validateEntry(entry, kind, keys) {
     if (!SAFE_PROPERTY_NAMES.has(property.name)) {
       throw new Error(`unknown public property: ${property.name}`)
     }
-    if (property.type !== 'enum') throw new Error(`public property ${property.name} must be enum`)
-    assertArray(property.values, `public property ${property.name} values`)
-    if (property.values.length === 0)
-      throw new Error(`public property ${property.name} values empty`)
+    if (property.type === 'enum') {
+      assertArray(property.values, `public property ${property.name} values`)
+      if (property.values.length === 0)
+        throw new Error(`public property ${property.name} values empty`)
+      continue
+    }
+    if (property.type !== 'string' || !(property.name in SAFE_STRING_PROPERTY_PATTERNS)) {
+      throw new Error(`public property ${property.name} must be an approved enum or string`)
+    }
+    if (!Number.isInteger(property.maxLength) || property.maxLength < 1) {
+      throw new Error(`public property ${property.name} maxLength must be a positive integer`)
+    }
   }
 }
 
@@ -211,7 +223,9 @@ async function renderTypeScript(catalog, registryName) {
   const constraints = Object.fromEntries(
     catalog.events.map(event => [
       event.name,
-      Object.fromEntries(event.properties.map(property => [property.name, property.values])),
+      Object.fromEntries(
+        event.properties.map(property => [property.name, propertyConstraint(property)])
+      ),
     ])
   )
 
@@ -224,15 +238,27 @@ async function renderTypeScript(catalog, registryName) {
 
 function renderPropertiesType(properties) {
   const values = properties.map(property => {
-    const valueType = property.values.map(value => renderTypeScriptValue(value)).join(' | ')
+    const valueType =
+      property.type === 'string'
+        ? 'string'
+        : property.values.map(value => renderTypeScriptValue(value)).join(' | ')
     return `${property.name}: ${valueType}`
   })
   return `{ ${values.join('; ')} }`
 }
 
+function propertyConstraint(property) {
+  if (property.type === 'enum') return property.values
+  return {
+    maxLength: property.maxLength,
+    pattern: SAFE_STRING_PROPERTY_PATTERNS[property.name],
+  }
+}
+
 function renderTypeScriptValue(value, indentation = 0) {
   if (typeof value === 'string') return `'${value.replaceAll("'", "\\'")}'`
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (value instanceof RegExp) return value.toString()
   if (Array.isArray(value)) {
     if (value.length === 0) return '[]'
     const nestedIndentation = ' '.repeat(indentation + 2)

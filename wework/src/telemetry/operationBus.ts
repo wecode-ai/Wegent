@@ -8,6 +8,7 @@ export interface OperationResult {
   readonly failureStage?: string
   readonly key: OperationKey
   readonly outcome: 'failed' | 'succeeded'
+  readonly properties?: Readonly<Record<string, unknown>>
 }
 
 export interface OperationAttempt {
@@ -18,6 +19,7 @@ export interface OperationAttempt {
 
 export interface OperationResultDetail {
   readonly context?: WeworkTelemetryContext
+  readonly properties?: Readonly<Record<string, unknown>>
 }
 
 export type OperationKey = SmartAppOperationKey | PluginOperationKey
@@ -26,11 +28,21 @@ const definitions = [...SMART_APP_OPERATION_DEFINITIONS, ...PLUGIN_OPERATION_DEF
 
 const listeners = new Set<(result: OperationResult) => void>()
 
-export function beginOperation(key: OperationKey): OperationAttempt {
+export function beginOperation(
+  key: OperationKey,
+  baseDetail: OperationResultDetail = {}
+): OperationAttempt {
   const definition = definitions.find(operation => operation.key === key)
   if (!definition) throw new Error(`Unknown telemetry operation: ${key}`)
 
   let completed = false
+  const mergeDetail = (detail: OperationResultDetail): OperationResultDetail => ({
+    ...baseDetail,
+    ...detail,
+    ...(baseDetail.properties || detail.properties
+      ? { properties: { ...baseDetail.properties, ...detail.properties } }
+      : {}),
+  })
   const finish = (result: OperationResult): boolean => {
     if (completed) return false
     completed = true
@@ -52,9 +64,19 @@ export function beginOperation(key: OperationKey): OperationAttempt {
       if (!definition.failureStages.includes(failureStage as never)) {
         throw new Error(`Unsupported failure stage for ${key}: ${failureStage}`)
       }
-      return finish({ ...detail, failureStage, key, outcome: 'failed' })
+      return finish({
+        ...mergeDetail(detail),
+        failureStage,
+        key,
+        outcome: 'failed',
+      })
     },
-    succeed: (detail = {}) => finish({ ...detail, key, outcome: 'succeeded' }),
+    succeed: (detail = {}) =>
+      finish({
+        ...mergeDetail(detail),
+        key,
+        outcome: 'succeeded',
+      }),
   }
 }
 

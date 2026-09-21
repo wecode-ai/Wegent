@@ -570,7 +570,15 @@
       "key": "plugin.plugin_installed",
       "kind": "observation",
       "name": "plugin_installed",
-      "properties": [{ "name": "source", "type": "enum", "values": ["local", "cloud", "unknown"] }],
+      "properties": [
+        { "name": "source", "type": "enum", "values": ["local", "cloud", "unknown"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
+      ],
       "title": { "zh-CN": "确认插件已安装", "en": "Confirmed plugin installed" }
     },
     {
@@ -579,7 +587,15 @@
       "key": "plugin.plugin_uninstalled",
       "kind": "observation",
       "name": "plugin_uninstalled",
-      "properties": [{ "name": "source", "type": "enum", "values": ["local", "cloud", "unknown"] }],
+      "properties": [
+        { "name": "source", "type": "enum", "values": ["local", "cloud", "unknown"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
+      ],
       "title": { "zh-CN": "确认插件卸载", "en": "Confirmed plugin uninstalled" }
     },
     {
@@ -591,7 +607,13 @@
       "properties": [
         { "name": "enabled", "type": "enum", "values": [true, false] },
         { "name": "scope", "type": "enum", "values": ["plugin", "component"] },
-        { "name": "source", "type": "enum", "values": ["local", "cloud", "unknown"] }
+        { "name": "source", "type": "enum", "values": ["local", "cloud", "unknown"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
       ],
       "title": { "zh-CN": "确认插件启停设置", "en": "Confirmed plugin enablement change" }
     },
@@ -620,7 +642,8 @@
           "name": "plugin_distribution",
           "type": "enum",
           "values": ["official", "enterprise", "personal", "unknown"]
-        }
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
       ],
       "title": { "zh-CN": "插件调用成功", "en": "Plugin invocation succeeded" }
     },
@@ -650,6 +673,7 @@
           "type": "enum",
           "values": ["official", "enterprise", "personal", "unknown"]
         },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 },
         {
           "name": "failure_stage",
           "type": "enum",
@@ -1015,7 +1039,15 @@
       "name": "plugin_authorize_succeeded",
       "operation": "authorize",
       "outcome": "succeeded",
-      "properties": [{ "name": "domain", "type": "enum", "values": ["plugin"] }],
+      "properties": [
+        { "name": "domain", "type": "enum", "values": ["plugin"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
+      ],
       "title": { "zh-CN": "完成插件连接认证", "en": "Complete plugin connector authorization" }
     },
     {
@@ -1032,6 +1064,12 @@
       "outcome": "failed",
       "properties": [
         { "name": "domain", "type": "enum", "values": ["plugin"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 },
         { "name": "failure_stage", "type": "enum", "values": ["request", "confirm"] }
       ],
       "title": { "zh-CN": "完成插件连接认证", "en": "Complete plugin connector authorization" }
@@ -1108,7 +1146,15 @@
       "name": "plugin_install_request_succeeded",
       "operation": "install_request",
       "outcome": "succeeded",
-      "properties": [{ "name": "domain", "type": "enum", "values": ["plugin"] }],
+      "properties": [
+        { "name": "domain", "type": "enum", "values": ["plugin"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
+      ],
       "title": { "zh-CN": "受理插件安装请求", "en": "Accept plugin installation request" }
     },
     {
@@ -1122,6 +1168,12 @@
       "outcome": "failed",
       "properties": [
         { "name": "domain", "type": "enum", "values": ["plugin"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 },
         { "name": "failure_stage", "type": "enum", "values": ["request", "confirm"] }
       ],
       "title": { "zh-CN": "受理插件安装请求", "en": "Accept plugin installation request" }
@@ -1137,7 +1189,15 @@
       "name": "plugin_device_install_succeeded",
       "operation": "device_install",
       "outcome": "succeeded",
-      "properties": [{ "name": "domain", "type": "enum", "values": ["plugin"] }],
+      "properties": [
+        { "name": "domain", "type": "enum", "values": ["plugin"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 }
+      ],
       "title": { "zh-CN": "确认设备插件安装结果", "en": "Confirm device plugin installation" }
     },
     {
@@ -1154,6 +1214,12 @@
       "outcome": "failed",
       "properties": [
         { "name": "domain", "type": "enum", "values": ["plugin"] },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        { "name": "plugin_id", "type": "string", "maxLength": 161 },
         { "name": "failure_stage", "type": "enum", "values": ["request", "confirm"] }
       ],
       "title": { "zh-CN": "确认设备插件安装结果", "en": "Confirm device plugin installation" }

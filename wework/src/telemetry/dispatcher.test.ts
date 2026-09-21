@@ -28,7 +28,7 @@ function smartAppFact(name: WeworkTelemetryFact['name']): WeworkTelemetryFact {
 }
 
 describe('telemetry dispatcher', () => {
-  test('strips private plugin properties and internal identity from public observations', () => {
+  test('keeps stable plugin identity while stripping private plugin details', () => {
     const accept = vi.fn()
     const dispatcher = createTelemetryDispatcher({
       distribution: 'public',
@@ -38,16 +38,26 @@ describe('telemetry dispatcher', () => {
     dispatcher.publish({
       name: 'plugin_installed',
       occurredAt: '2026-09-10',
-      properties: { source: 'local', path: '/private/plugin', plugin_name: 'private' },
+      properties: {
+        source: 'local',
+        plugin_distribution: 'personal',
+        plugin_id: 'personal/private-plugin',
+        path: '/private/plugin',
+        plugin_name: 'private',
+      },
       context: { user: { id: 7, email: 'private@example.invalid', userName: 'private' } },
     } as WeworkTelemetryFact)
     expect(accept).toHaveBeenCalledWith({
       name: 'plugin_installed',
-      properties: { source: 'local' },
+      properties: {
+        source: 'local',
+        plugin_distribution: 'personal',
+        plugin_id: 'personal/private-plugin',
+      },
     })
   })
 
-  test('keeps plugin invocation identity internal while projecting coarse public dimensions', () => {
+  test('projects the safe plugin id while keeping detailed invocation identity internal', () => {
     const accept = vi.fn()
     const dispatcher = createTelemetryDispatcher({
       distribution: 'public',
@@ -62,6 +72,7 @@ describe('telemetry dispatcher', () => {
         execution_surface: 'task',
         executor_location: 'local',
         plugin_distribution: 'personal',
+        plugin_id: 'personal/private-plugin',
       },
       context: {
         pluginInvocation: {
@@ -80,6 +91,7 @@ describe('telemetry dispatcher', () => {
         execution_surface: 'task',
         executor_location: 'local',
         plugin_distribution: 'personal',
+        plugin_id: 'personal/private-plugin',
       },
     })
   })

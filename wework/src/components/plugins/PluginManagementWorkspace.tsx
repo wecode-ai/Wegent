@@ -5,6 +5,7 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
 import { observeOperation } from '@/telemetry/observeOperation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
@@ -303,6 +304,7 @@ export function PluginManagementWorkspace({
           enabled: !plugin.enabled,
           scope: 'plugin',
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -346,6 +348,7 @@ export function PluginManagementWorkspace({
           enabled,
           scope: 'component',
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -420,6 +423,7 @@ export function PluginManagementWorkspace({
         }
         track('plugin_uninstalled', {
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch((error: unknown) => {

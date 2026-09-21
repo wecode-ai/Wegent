@@ -63,12 +63,31 @@ describe('connector OAuth client', () => {
         expect(results).toEqual(
           status === 'declined'
             ? []
-            : [{ key: 'plugin.authorize', outcome: 'failed', failureStage: 'confirm' }]
+            : [
+                {
+                  key: 'plugin.authorize',
+                  outcome: 'failed',
+                  failureStage: 'confirm',
+                  properties: {
+                    plugin_distribution: 'unknown',
+                    plugin_id: 'connector/github',
+                  },
+                },
+              ]
         )
         return
       }
       const connection = settled.value!
-      expect(results).toEqual([{ key: 'plugin.authorize', outcome: 'succeeded' }])
+      expect(results).toEqual([
+        {
+          key: 'plugin.authorize',
+          outcome: 'succeeded',
+          properties: {
+            plugin_distribution: 'unknown',
+            plugin_id: 'connector/github',
+          },
+        },
+      ])
 
       expect(connection.external_account_name).toBe('octocat')
       expect(openAuthorization).toHaveBeenCalledWith('https://github.com/login/oauth/authorize')

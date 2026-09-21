@@ -328,7 +328,14 @@ function flushPendingCaptures(): void {
   if (!posthog || !enabled) return
   const pending = pendingCaptures
   pendingCaptures = []
-  for (const event of pending) posthog.capture(event.name, event.properties)
+  for (const event of pending) {
+    try {
+      posthog.capture(event.name, event.properties)
+    } catch {
+      // Telemetry SDK failures must not surface as unhandled application errors
+      // or prevent later events in the same batch from being attempted.
+    }
+  }
 }
 
 // Defers the synchronous capture pipeline (before_send sanitization, event

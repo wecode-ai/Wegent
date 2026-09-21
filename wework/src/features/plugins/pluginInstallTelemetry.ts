@@ -1,6 +1,7 @@
 import type { InstalledPlugin } from '@/types/api'
 import { trackPluginEvent } from '@/telemetry/businessEvents'
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
 
 interface PendingInstallation {
   attempt: OperationAttempt
@@ -20,16 +21,17 @@ export function recordPluginInstallationAccepted(
   deviceId: string,
   source: 'local' | 'cloud'
 ): void {
+  const identity = installedPluginTelemetryIdentity(plugin)
   if (source === 'local') {
-    trackPluginEvent('plugin_installed', { source })
-    beginOperation('plugin.device_install').succeed()
+    trackPluginEvent('plugin_installed', { source, ...identity })
+    beginOperation('plugin.device_install', { properties: identity }).succeed()
     return
   }
   const key = installationKey(plugin, deviceId)
   if (key === null) return
   pending.get(key)?.attempt.cancel()
   pending.set(key, {
-    attempt: beginOperation('plugin.device_install'),
+    attempt: beginOperation('plugin.device_install', { properties: identity }),
     deviceId,
     releaseId: plugin.spec.releaseId ?? null,
   })
@@ -53,7 +55,10 @@ export function reconcilePluginInstallation(plugin: InstalledPlugin, deviceId: s
     pending.delete(key)
   } else if (device.state === 'installed' && device.actualReleaseId === device.desiredReleaseId) {
     entry.attempt.succeed()
-    trackPluginEvent('plugin_installed', { source: 'cloud' })
+    trackPluginEvent('plugin_installed', {
+      source: 'cloud',
+      ...installedPluginTelemetryIdentity(plugin),
+    })
     pending.delete(key)
   }
 }

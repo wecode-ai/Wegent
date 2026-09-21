@@ -22,6 +22,11 @@ import {
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import {
+  installedPluginTelemetryIdentity,
+  marketplacePluginTelemetryIdentity,
+  pluginTelemetryIdentityFromParts,
+} from '@/telemetry/pluginIdentity'
+import {
   isLocalBrowserConnector,
   isLocalConnector,
   localConnectorAuthHealth,
@@ -1335,6 +1340,7 @@ export function PluginsWorkspace({
           enabled,
           scope: 'component',
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -1467,6 +1473,9 @@ export function PluginsWorkspace({
       setMarketplaceRefreshTick(previous => previous + 1)
       track('plugin_uninstalled', {
         source: plugin && isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+        ...(plugin
+          ? installedPluginTelemetryIdentity(plugin.raw)
+          : pluginTelemetryIdentityFromParts({ marketplace: 'unknown', pluginKey: pluginName })),
       })
     }
     const isAccountUninstallSettledError = (error: unknown) => {
@@ -2070,7 +2079,9 @@ export function PluginsWorkspace({
         return preparedItem
       })
       .then(async preparedItem => {
-        installRequestAttempt = beginOperation('plugin.install_request')
+        installRequestAttempt = beginOperation('plugin.install_request', {
+          properties: marketplacePluginTelemetryIdentity(preparedItem),
+        })
         if (installFromLocal) {
           const plugin = await localPluginApi.installAvailablePlugin(
             preparedItem.id,

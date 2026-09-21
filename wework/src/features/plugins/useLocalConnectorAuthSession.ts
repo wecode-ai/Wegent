@@ -1,4 +1,5 @@
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import { pluginTelemetryIdentityFromParts } from '@/telemetry/pluginIdentity'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
@@ -111,7 +112,12 @@ export function useLocalConnectorAuthSession({
 
   useEffect(() => {
     if (!enabled) return
-    const attempt = beginOperation('plugin.authorize')
+    const attempt = beginOperation('plugin.authorize', {
+      properties: pluginTelemetryIdentityFromParts({
+        marketplace: 'local',
+        pluginKey,
+      }),
+    })
     attemptRef.current = attempt
     const session = ++sessionRef.current
     const isCurrent = () => sessionRef.current === session

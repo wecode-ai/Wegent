@@ -1,8 +1,12 @@
 import type { RuntimeEvent } from '@wegent/chat-core'
 import type { DeviceInfo, InstalledPlugin, RuntimeTaskSummary } from '@/types/api'
 import { trackPluginInvocationEvent } from '@/telemetry/businessEvents'
+import {
+  installedPluginTelemetryIdentity,
+  pluginTelemetryIdentityFromParts,
+  type PluginDistribution,
+} from '@/telemetry/pluginIdentity'
 
-type PluginDistribution = 'official' | 'enterprise' | 'personal' | 'unknown'
 type ExecutorLocation = 'local' | 'cloud' | 'remote' | 'unknown'
 type ExecutionSurface = 'task' | 'project_task' | 'automation' | 'unknown'
 type PluginCapabilityType = 'mcp' | 'skill'
@@ -46,32 +50,6 @@ function stringField(value: Record<string, unknown>, ...keys: string[]): string 
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
   }
   return null
-}
-
-function pluginDistribution(plugin: InstalledPlugin): PluginDistribution {
-  const payload = record(plugin.spec.sourcePayload)
-  const marketplace = String(
-    payload.marketplaceName ??
-      plugin.spec.source.marketplace ??
-      plugin.spec.source.providerKey ??
-      ''
-  ).toLowerCase()
-  if (
-    plugin.spec.visibility === 'personal' ||
-    plugin.spec.sourceProvider === 'user' ||
-    marketplace.includes('personal')
-  ) {
-    return 'personal'
-  }
-  if (plugin.spec.visibility === 'workspace' || marketplace === 'wegent') return 'enterprise'
-  if (
-    plugin.spec.sourceProvider === 'codex' ||
-    marketplace === 'wework' ||
-    marketplace.includes('openai')
-  ) {
-    return 'official'
-  }
-  return 'unknown'
 }
 
 function normalizedServerName(value: string): string {
@@ -154,8 +132,9 @@ export function publishPluginInvocationCatalog(
         'unknown'
     )
     const pluginKey = plugin.spec.source.pluginKey || String(plugin.metadata.name ?? 'unknown')
+    const identity = installedPluginTelemetryIdentity(plugin)
     const owner: PluginOwner = {
-      distribution: pluginDistribution(plugin),
+      distribution: identity.plugin_distribution,
       marketplace,
       pluginKey,
       version: plugin.spec.version ?? plugin.spec.desiredVersion ?? 'unknown',
@@ -352,6 +331,11 @@ function completeInvocation(
     execution_surface: context.executionSurface,
     executor_location: context.executorLocation,
     plugin_distribution: context.distribution,
+    plugin_id: pluginTelemetryIdentityFromParts({
+      distribution: context.distribution,
+      marketplace: context.marketplace,
+      pluginKey: context.pluginKey,
+    }).plugin_id,
   }
   const pluginInvocation = {
     ...(durationMs !== undefined && { durationMs }),

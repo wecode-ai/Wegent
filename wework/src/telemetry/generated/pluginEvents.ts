@@ -2,24 +2,36 @@
 
 export interface PluginGeneratedEventMap {
   plugin_center_opened: { surface: 'catalog' | 'management' }
-  plugin_installed: { source: 'local' | 'cloud' | 'unknown' }
-  plugin_uninstalled: { source: 'local' | 'cloud' | 'unknown' }
+  plugin_installed: {
+    source: 'local' | 'cloud' | 'unknown'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+  }
+  plugin_uninstalled: {
+    source: 'local' | 'cloud' | 'unknown'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+  }
   plugin_enabled_changed: {
     enabled: true | false
     scope: 'plugin' | 'component'
     source: 'local' | 'cloud' | 'unknown'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
   }
   plugin_invocation_succeeded: {
     capability_type: 'mcp' | 'skill'
     execution_surface: 'task' | 'project_task' | 'automation' | 'unknown'
     executor_location: 'local' | 'cloud' | 'remote' | 'unknown'
     plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
   }
   plugin_invocation_failed: {
     capability_type: 'mcp' | 'skill'
     execution_surface: 'task' | 'project_task' | 'automation' | 'unknown'
     executor_location: 'local' | 'cloud' | 'remote' | 'unknown'
     plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
     failure_stage: 'invoke' | 'timeout' | 'cancelled' | 'unknown'
   }
   plugin_create_request_succeeded: { domain: 'plugin' }
@@ -44,36 +56,65 @@ export interface PluginGeneratedEventMap {
   plugin_update_policy_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
   plugin_auto_update_succeeded: { domain: 'plugin' }
   plugin_auto_update_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
-  plugin_authorize_succeeded: { domain: 'plugin' }
-  plugin_authorize_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
+  plugin_authorize_succeeded: {
+    domain: 'plugin'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+  }
+  plugin_authorize_failed: {
+    domain: 'plugin'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+    failure_stage: 'request' | 'confirm'
+  }
   plugin_disconnect_succeeded: { domain: 'plugin' }
   plugin_disconnect_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
   plugin_trial_succeeded: { domain: 'plugin' }
   plugin_trial_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
-  plugin_install_request_succeeded: { domain: 'plugin' }
-  plugin_install_request_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
-  plugin_device_install_succeeded: { domain: 'plugin' }
-  plugin_device_install_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
+  plugin_install_request_succeeded: {
+    domain: 'plugin'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+  }
+  plugin_install_request_failed: {
+    domain: 'plugin'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+    failure_stage: 'request' | 'confirm'
+  }
+  plugin_device_install_succeeded: {
+    domain: 'plugin'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+  }
+  plugin_device_install_failed: {
+    domain: 'plugin'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    plugin_id: string
+    failure_stage: 'request' | 'confirm'
+  }
 }
 
 export type PluginGeneratedEventName = keyof PluginGeneratedEventMap
 
 export const PLUGIN_EVENT_PROPERTY_KEYS = {
   plugin_center_opened: ['surface'],
-  plugin_installed: ['source'],
-  plugin_uninstalled: ['source'],
-  plugin_enabled_changed: ['enabled', 'scope', 'source'],
+  plugin_installed: ['source', 'plugin_distribution', 'plugin_id'],
+  plugin_uninstalled: ['source', 'plugin_distribution', 'plugin_id'],
+  plugin_enabled_changed: ['enabled', 'scope', 'source', 'plugin_distribution', 'plugin_id'],
   plugin_invocation_succeeded: [
     'capability_type',
     'execution_surface',
     'executor_location',
     'plugin_distribution',
+    'plugin_id',
   ],
   plugin_invocation_failed: [
     'capability_type',
     'execution_surface',
     'executor_location',
     'plugin_distribution',
+    'plugin_id',
     'failure_stage',
   ],
   plugin_create_request_succeeded: ['domain'],
@@ -98,16 +139,16 @@ export const PLUGIN_EVENT_PROPERTY_KEYS = {
   plugin_update_policy_failed: ['domain', 'failure_stage'],
   plugin_auto_update_succeeded: ['domain'],
   plugin_auto_update_failed: ['domain', 'failure_stage'],
-  plugin_authorize_succeeded: ['domain'],
-  plugin_authorize_failed: ['domain', 'failure_stage'],
+  plugin_authorize_succeeded: ['domain', 'plugin_distribution', 'plugin_id'],
+  plugin_authorize_failed: ['domain', 'plugin_distribution', 'plugin_id', 'failure_stage'],
   plugin_disconnect_succeeded: ['domain'],
   plugin_disconnect_failed: ['domain', 'failure_stage'],
   plugin_trial_succeeded: ['domain'],
   plugin_trial_failed: ['domain', 'failure_stage'],
-  plugin_install_request_succeeded: ['domain'],
-  plugin_install_request_failed: ['domain', 'failure_stage'],
-  plugin_device_install_succeeded: ['domain'],
-  plugin_device_install_failed: ['domain', 'failure_stage'],
+  plugin_install_request_succeeded: ['domain', 'plugin_distribution', 'plugin_id'],
+  plugin_install_request_failed: ['domain', 'plugin_distribution', 'plugin_id', 'failure_stage'],
+  plugin_device_install_succeeded: ['domain', 'plugin_distribution', 'plugin_id'],
+  plugin_device_install_failed: ['domain', 'plugin_distribution', 'plugin_id', 'failure_stage'],
 } as const
 
 export const PLUGIN_EVENT_VALUE_CONSTRAINTS = {
@@ -116,26 +157,49 @@ export const PLUGIN_EVENT_VALUE_CONSTRAINTS = {
   },
   plugin_installed: {
     source: ['local', 'cloud', 'unknown'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_uninstalled: {
     source: ['local', 'cloud', 'unknown'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_enabled_changed: {
     enabled: [true, false],
     scope: ['plugin', 'component'],
     source: ['local', 'cloud', 'unknown'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_invocation_succeeded: {
     capability_type: ['mcp', 'skill'],
     execution_surface: ['task', 'project_task', 'automation', 'unknown'],
     executor_location: ['local', 'cloud', 'remote', 'unknown'],
     plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_invocation_failed: {
     capability_type: ['mcp', 'skill'],
     execution_surface: ['task', 'project_task', 'automation', 'unknown'],
     executor_location: ['local', 'cloud', 'remote', 'unknown'],
     plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
     failure_stage: ['invoke', 'timeout', 'cancelled', 'unknown'],
   },
   plugin_create_request_succeeded: {
@@ -217,9 +281,19 @@ export const PLUGIN_EVENT_VALUE_CONSTRAINTS = {
   },
   plugin_authorize_succeeded: {
     domain: ['plugin'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_authorize_failed: {
     domain: ['plugin'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
     failure_stage: ['request', 'confirm'],
   },
   plugin_disconnect_succeeded: {
@@ -238,16 +312,36 @@ export const PLUGIN_EVENT_VALUE_CONSTRAINTS = {
   },
   plugin_install_request_succeeded: {
     domain: ['plugin'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_install_request_failed: {
     domain: ['plugin'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
     failure_stage: ['request', 'confirm'],
   },
   plugin_device_install_succeeded: {
     domain: ['plugin'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
   },
   plugin_device_install_failed: {
     domain: ['plugin'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    plugin_id: {
+      maxLength: 161,
+      pattern: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+    },
     failure_stage: ['request', 'confirm'],
   },
 } as const

@@ -241,6 +241,16 @@
           "name": "domain",
           "type": "enum",
           "values": ["plugin"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     },
@@ -301,6 +311,16 @@
           "name": "domain",
           "type": "enum",
           "values": ["plugin"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     },
@@ -321,6 +341,16 @@
           "name": "domain",
           "type": "enum",
           "values": ["plugin"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     }
@@ -361,6 +391,16 @@
           "name": "source",
           "type": "enum",
           "values": ["local", "cloud", "unknown"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     },
@@ -380,6 +420,16 @@
           "name": "source",
           "type": "enum",
           "values": ["local", "cloud", "unknown"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     },
@@ -409,6 +459,16 @@
           "name": "source",
           "type": "enum",
           "values": ["local", "cloud", "unknown"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     },
@@ -443,6 +503,11 @@
           "name": "plugin_distribution",
           "type": "enum",
           "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         }
       ]
     },
@@ -477,6 +542,11 @@
           "name": "plugin_distribution",
           "type": "enum",
           "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "plugin_id",
+          "type": "string",
+          "maxLength": 161
         },
         {
           "name": "failure_stage",

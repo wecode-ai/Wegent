@@ -1,4 +1,5 @@
 import { beginOperation } from '@/telemetry/operationBus'
+import { pluginTelemetryIdentityFromParts } from '@/telemetry/pluginIdentity'
 import { observeOperation } from '@/telemetry/observeOperation'
 import { createHttpClient } from '@/api/http'
 import type { CloudAuthorizationHandle } from '@/features/cloud-connection/CloudConnectionContext'
@@ -142,7 +143,12 @@ export async function authorizeWegentConnector(
   slug: string,
   openAuthorizationUrl: (url: string) => Promise<CloudAuthorizationHandle | void>
 ): Promise<WegentConnectorConnection> {
-  const attempt = beginOperation('plugin.authorize')
+  const attempt = beginOperation('plugin.authorize', {
+    properties: pluginTelemetryIdentityFromParts({
+      marketplace: 'connector',
+      pluginKey: slug,
+    }),
+  })
   try {
     const session = await createConnectorOAuthSession(apiBaseUrl, token, slug)
     const authorizationHandle = await openAuthorizationUrl(session.authorize_url)

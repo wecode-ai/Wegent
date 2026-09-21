@@ -109,9 +109,13 @@ function operationEvent(result: OperationResult): DomainTelemetryEvent {
     result.outcome === 'failed'
       ? {
           name,
-          properties: { domain, failure_stage: result.failureStage! as never },
+          properties: {
+            ...result.properties,
+            domain,
+            failure_stage: result.failureStage! as never,
+          },
         }
-      : { name, properties: { domain } }
+      : { name, properties: { ...result.properties, domain } }
   ) as DomainTelemetryEvent
 }
 

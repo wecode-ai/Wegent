@@ -61,6 +61,32 @@ function event(
 describe('plugin invocation telemetry', () => {
   beforeEach(() => resetPluginInvocationTelemetryForTest())
 
+  test('does not let a failing telemetry observer interrupt plugin invocation handling', () => {
+    const events: string[] = []
+    const stopBroken = subscribeBusinessEvents(() => {
+      throw new Error('broken telemetry observer')
+    })
+    const stopRecording = subscribeBusinessEvents(value => events.push(value.name))
+    publishPluginInvocationCatalog('device-1', [plugin()], [])
+
+    expect(() => {
+      observeRuntimePluginInvocation(
+        event('response.block.created', {
+          block: {
+            id: 'call-1',
+            type: 'tool',
+            tool_name: 'mcp__private_server__search',
+            status: 'done',
+          },
+        })
+      )
+    }).not.toThrow()
+
+    expect(events).toEqual(['plugin_invocation_succeeded'])
+    stopBroken()
+    stopRecording()
+  })
+
   test('reports one successful terminal event for a plugin-owned MCP call', () => {
     const events: Array<{ name: string; properties: unknown }> = []
     const unsubscribe = subscribeBusinessEvents(value => events.push(value))
@@ -120,12 +146,55 @@ describe('plugin invocation telemetry', () => {
           execution_surface: 'project_task',
           executor_location: 'local',
           plugin_distribution: 'enterprise',
+          plugin_id: 'wegent/private-plugin',
         },
       },
     ])
-    expect(JSON.stringify(events[0]?.properties)).not.toMatch(
-      /private-plugin|private_server|private output/
+    expect(JSON.stringify(events[0]?.properties)).not.toMatch(/private_server|private output/)
+    unsubscribe()
+  })
+
+  test('reports OpenAI official plugin invocations with their public catalog id', () => {
+    const events: Array<{ name: string; properties: unknown }> = []
+    const unsubscribe = subscribeBusinessEvents(value => events.push(value))
+    publishPluginInvocationCatalog(
+      'device-1',
+      [
+        plugin({
+          source: {
+            type: 'marketplace',
+            providerKey: 'openai-curated-remote',
+            pluginKey: 'gmail',
+            marketplace: 'openai-curated-remote',
+          },
+          sourceProvider: 'codex',
+          visibility: 'public',
+        }),
+      ],
+      []
     )
+
+    observeRuntimePluginInvocation(
+      event('response.block.created', {
+        block: {
+          id: 'call-openai-1',
+          type: 'tool',
+          tool_name: 'mcp__private_server__search',
+          status: 'done',
+        },
+      })
+    )
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        name: 'plugin_invocation_succeeded',
+        properties: expect.objectContaining({
+          capability_type: 'mcp',
+          plugin_distribution: 'official',
+          plugin_id: 'openai-curated-remote/gmail',
+        }),
+      }),
+    ])
     unsubscribe()
   })
 
@@ -190,6 +259,7 @@ describe('plugin invocation telemetry', () => {
           execution_surface: 'unknown',
           executor_location: 'local',
           plugin_distribution: 'enterprise',
+          plugin_id: 'wegent/private-plugin',
         },
         context: {
           pluginInvocation: {
@@ -290,6 +360,7 @@ describe('plugin invocation telemetry', () => {
           execution_surface: 'unknown',
           executor_location: 'unknown',
           plugin_distribution: 'personal',
+          plugin_id: 'personal/private-plugin',
           failure_stage: 'invoke',
         },
       },

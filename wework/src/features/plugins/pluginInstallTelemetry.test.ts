@@ -10,7 +10,13 @@ import {
 function plugin(id: string, state: 'pending' | 'installed' | 'failed'): InstalledPlugin {
   return {
     metadata: { labels: { id } },
-    spec: { releaseId: 7, installState: 'installed' },
+    spec: {
+      releaseId: 7,
+      installState: 'installed',
+      source: { type: 'marketplace', marketplace: 'wegent', pluginKey: id },
+      sourceProvider: 'wegent',
+      visibility: 'workspace',
+    },
     status: {
       devices: [
         {
@@ -43,8 +49,25 @@ describe('plugin installation telemetry', () => {
       expect(events).toEqual([])
       reconcilePluginInstallation(plugin('pending-install', 'installed'), 'device')
       reconcilePluginInstallation(plugin('pending-install', 'installed'), 'device')
-      expect(events).toEqual([{ name: 'plugin_installed', properties: { source: 'cloud' } }])
+      expect(events).toEqual([
+        {
+          name: 'plugin_installed',
+          properties: {
+            source: 'cloud',
+            plugin_distribution: 'enterprise',
+            plugin_id: 'wegent/pending-install',
+          },
+        },
+      ])
       expect(results).toHaveLength(1)
+      expect(results).toContainEqual({
+        key: 'plugin.device_install',
+        outcome: 'succeeded',
+        properties: {
+          plugin_distribution: 'enterprise',
+          plugin_id: 'wegent/pending-install',
+        },
+      })
     } finally {
       stopEvents()
       stopResults()
@@ -63,6 +86,10 @@ describe('plugin installation telemetry', () => {
         key: 'plugin.device_install',
         outcome: 'failed',
         failureStage: 'confirm',
+        properties: {
+          plugin_distribution: 'enterprise',
+          plugin_id: 'wegent/failed-install',
+        },
       })
       recordPluginInstallationAccepted(plugin('failed-install', 'installed'), 'device', 'cloud')
       expect(events).toHaveLength(1)

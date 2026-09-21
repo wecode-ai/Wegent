@@ -127,7 +127,11 @@ describe('TelemetryAgent', () => {
       )
     )
     beginOperation('plugin.share').succeed()
-    trackPluginEvent('plugin_installed', { source: 'local' })
+    trackPluginEvent('plugin_installed', {
+      source: 'local',
+      plugin_distribution: 'personal',
+      plugin_id: 'personal/my-plugin',
+    })
     expect(mocks.publish).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'plugin_share_succeeded', properties: { domain: 'plugin' } })
     )
@@ -150,6 +154,31 @@ describe('TelemetryAgent', () => {
         expect.objectContaining({
           name: 'smart_app_install_failed',
           properties: { domain: 'smart_app', failure_stage: 'install' },
+        })
+      )
+    )
+  })
+
+  test('forwards plugin identity from operation results', async () => {
+    render(<TelemetryAgent />)
+    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+
+    beginOperation('plugin.authorize', {
+      properties: {
+        plugin_distribution: 'official',
+        plugin_id: 'openai-curated-remote/gmail',
+      },
+    }).succeed()
+
+    await waitFor(() =>
+      expect(mocks.publish).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          name: 'plugin_authorize_succeeded',
+          properties: {
+            domain: 'plugin',
+            plugin_distribution: 'official',
+            plugin_id: 'openai-curated-remote/gmail',
+          },
         })
       )
     )
