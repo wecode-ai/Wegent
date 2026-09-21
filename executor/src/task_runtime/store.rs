@@ -21,12 +21,21 @@ mod code_projects;
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
     ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
-    LocalExecutionClaim, LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind,
-    ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskUpdate,
+    LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
+    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind,
+    TaskReorder, TaskUpdate,
 };
 
-const LOCAL_SCHEMA_VERSION: i64 = 7;
+#[path = "local_automation.rs"]
+mod local_automation;
+
+#[path = "local_execution_activity.rs"]
+mod local_execution_activity;
+use local_execution_activity::{
+    create_execution_comment, create_local_execution, ensure_execution_binding, insert_task_binding,
+};
+
+const LOCAL_SCHEMA_VERSION: i64 = 9;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -322,6 +331,7 @@ impl LocalTaskStore {
             metadata["collaboration_groups"] = collaboration_groups;
         }
         if let Some(automatic_processing_rules) = input.automatic_processing_rules {
+            local_automation::validate_rules(&automatic_processing_rules)?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
         let connection = self.connection()?;
@@ -529,6 +539,7 @@ impl LocalTaskStore {
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
+        local_automation::on_event(&transaction, project_id, &id, "task.created", &[])?;
         transaction.commit()?;
         drop(connection);
         self.get_item(&id, "task")
@@ -572,6 +583,26 @@ impl LocalTaskStore {
         if let Some(Some(parent_id)) = input.parent_id.as_ref() {
             require_parent(&transaction, project_id, parent_id, Some(task_id))?;
         }
+        let added_tags = input
+            .tags
+            .as_ref()
+            .map(|tags| {
+                tags.iter()
+                    .filter(|tag| {
+                        !current.metadata["tags"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|existing| existing.as_str() == Some(tag.as_str()))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let status_changed = input
+            .status
+            .as_ref()
+            .is_some_and(|status| current.status.as_ref() != Some(status));
         let previous_parent_id = current.parent_id.clone();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
@@ -696,29 +727,25 @@ impl LocalTaskStore {
                     current.priority.as_deref().unwrap_or("none"),
                     input.execution_payload.unwrap_or(Value::Null),
                 )?;
-                let execution_id = transaction.last_insert_rowid();
-                // Mirror enqueue_execution: assignment-started runs need the
-                // optimistic agent comment so the finished outcome has a row to
-                // write back into the task thread.
-                insert_comment(
-                    &transaction,
-                    &LocalCommentCreate {
-                        project_id: project_id.to_owned(),
-                        task_id: task_id.to_owned(),
-                        client_message_id: None,
-                        sender_type: "agent".to_owned(),
-                        sender_id: agent_id.to_owned(),
-                        sender_name: agent
-                            .title
-                            .or(agent.name)
-                            .unwrap_or_else(|| "AI".to_owned()),
-                        content: String::new(),
-                        metadata: json!({ "execution_id": execution_id }),
-                        reply_to_message_id: None,
-                    },
-                    "streaming",
-                )?;
             }
+        }
+        if !added_tags.is_empty() {
+            local_automation::on_event(
+                &transaction,
+                project_id,
+                task_id,
+                "task.tag_added",
+                &added_tags,
+            )?;
+        }
+        if status_changed {
+            local_automation::on_event(
+                &transaction,
+                project_id,
+                task_id,
+                "task.status_changed",
+                &[],
+            )?;
         }
         transaction.commit()?;
         drop(connection);
@@ -982,6 +1009,86 @@ impl LocalTaskStore {
         insert_comment(&connection, create, "completed")
     }
 
+    pub fn start_runtime_comment(
+        &self,
+        input: &LocalRuntimeCommentStart<'_>,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        let LocalRuntimeCommentStart {
+            project_id,
+            task_id,
+            agent_id,
+            trigger_message_id,
+            runtime_device_id,
+            runtime_task_id,
+            prompt,
+            model,
+        } = *input;
+        let connection = self.connection()?;
+        if let Some(message_id) = connection
+            .query_row(
+                "SELECT message_id FROM loop_item_comments
+                 WHERE project_id=?1 AND task_id=?2 AND sender_type='agent'
+                   AND reply_to_message_id=?3
+                   AND json_extract(metadata,'$.runtime_address.deviceId')=?4
+                   AND json_extract(metadata,'$.runtime_address.taskId')=?5
+                   AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+                params![
+                    project_id,
+                    task_id,
+                    trigger_message_id,
+                    runtime_device_id,
+                    runtime_task_id
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return comment_row(&connection, &message_id);
+        }
+        let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+            TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+        })?;
+        insert_comment(
+            &connection,
+            &LocalCommentCreate {
+                project_id: project_id.to_owned(),
+                task_id: task_id.to_owned(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: agent_id.to_owned(),
+                sender_name: agent
+                    .title
+                    .or(agent.name)
+                    .unwrap_or_else(|| "AI".to_owned()),
+                content: String::new(),
+                metadata: json!({
+                    "runtime_address": {
+                        "deviceId": runtime_device_id,
+                        "taskId": runtime_task_id,
+                    },
+                    "prompt": prompt,
+                    "model": model,
+                }),
+                reply_to_message_id: Some(trigger_message_id.to_owned()),
+            },
+            "streaming",
+        )
+    }
+
+    pub fn fail_runtime_comment(
+        &self,
+        message_id: &str,
+        error: &str,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        let connection = self.connection()?;
+        connection.execute(
+            "UPDATE loop_item_comments SET status='failed', content=?1, updated_at=?2
+             WHERE message_id=?3 AND sender_type='agent' AND deleted_at IS NULL",
+            params![error, now(), message_id],
+        )?;
+        comment_row(&connection, message_id)
+    }
+
     pub fn update_agent_comment_for_execution(
         &self,
         execution_id: i64,
@@ -1005,34 +1112,7 @@ impl LocalTaskStore {
             params![status, content, now(), execution_id],
         )?;
         if changed == 0 {
-            // The optimistic comment row may be missing (for example runs
-            // started by assignment before comment creation existed); create
-            // it now so the finished outcome still appears in the task thread.
-            let agent = get_item_from(&connection, &execution.agent_id, "chat_agent")
-                .ok()
-                .flatten();
-            let sender_name = agent
-                .and_then(|agent| agent.title.or(agent.name))
-                .unwrap_or_else(|| "AI".to_owned());
-            let mut metadata = json!({ "execution_id": execution_id });
-            if let Some(address) = &runtime_address {
-                metadata["runtime_address"] = address.clone();
-            }
-            insert_comment(
-                &connection,
-                &LocalCommentCreate {
-                    project_id: execution.cloud_project_id.clone(),
-                    task_id: execution.loop_item_id.clone(),
-                    client_message_id: None,
-                    sender_type: "agent".to_owned(),
-                    sender_id: execution.agent_id.clone(),
-                    sender_name,
-                    content: content.to_owned(),
-                    metadata,
-                    reply_to_message_id: None,
-                },
-                status,
-            )?;
+            create_execution_comment(&connection, execution_id, status, content)?;
         }
         if let Some(address) = &runtime_address {
             connection.execute(
@@ -1517,7 +1597,8 @@ impl LocalTaskStore {
         runtime_task_id: &str,
         lease_seconds: u64,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        let connection = self.connection()?;
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = execution_row(&connection, execution_id)?;
         if current.status != "claimed"
             || current.start_requested_at.is_some()
@@ -1541,7 +1622,10 @@ impl LocalTaskStore {
         if changed != 1 {
             return Ok(None);
         }
-        execution_row(&connection, execution_id).map(Some)
+        ensure_execution_binding(&connection, execution_id)?;
+        let execution = execution_row(&connection, execution_id)?;
+        connection.commit()?;
+        Ok(Some(execution))
     }
 
     pub fn confirm_runtime_accepted(
@@ -1645,6 +1729,7 @@ impl LocalTaskStore {
             |row| row.get(0),
         )?;
         mark_local_workflow_stage_running(&connection, execution_id, &timestamp)?;
+        connection.execute("UPDATE loop_item_comments SET status='streaming', updated_at=?1 WHERE deleted_at IS NULL AND json_extract(metadata,'$.execution_id')=?2", params![timestamp, execution_id])?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -1855,24 +1940,7 @@ impl LocalTaskStore {
                 params![timestamp, error, execution_id],
             )?;
             let retry_id = transaction.last_insert_rowid();
-            insert_comment(
-                &transaction,
-                &LocalCommentCreate {
-                    project_id: current.cloud_project_id.clone(),
-                    task_id: current.loop_item_id.clone(),
-                    client_message_id: None,
-                    sender_type: "agent".to_owned(),
-                    sender_id: current.agent_id.clone(),
-                    sender_name: current.agent_name.clone(),
-                    content: String::new(),
-                    metadata: json!({
-                        "execution_id": retry_id,
-                        "previous_execution_id": execution_id,
-                    }),
-                    reply_to_message_id: None,
-                },
-                "pending",
-            )?;
+            create_execution_comment(&transaction, retry_id, "pending", "")?;
             transaction.commit()?;
             return execution_row(&connection, retry_id).map(Some);
         }
@@ -2010,16 +2078,23 @@ impl LocalTaskStore {
         project_id: &str,
         task_id: &str,
         agent_id: &str,
-        payload: Value,
+        mut payload: Value,
         trigger_message_id: Option<&str>,
     ) -> Result<LocalExecution, TaskRuntimeError> {
-        let connection = self.connection()?;
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
             TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
         })?;
         let task =
             get_item_from(&connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
-        create_local_execution(
+        if let Some(trigger) = trigger_message_id {
+            if !payload.is_object() {
+                payload = json!({});
+            }
+            payload["trigger_message_id"] = json!(trigger);
+        }
+        let execution_id = create_local_execution(
             &connection,
             task_id,
             project_id,
@@ -2028,29 +2103,9 @@ impl LocalTaskStore {
             task.priority.as_deref().unwrap_or("none"),
             payload.clone(),
         )?;
-        let execution_id = connection.last_insert_rowid();
-        insert_comment(
-            &connection,
-            &LocalCommentCreate {
-                project_id: project_id.to_owned(),
-                task_id: task_id.to_owned(),
-                client_message_id: None,
-                sender_type: "agent".to_owned(),
-                sender_id: agent_id.to_owned(),
-                sender_name: agent
-                    .title
-                    .or(agent.name)
-                    .unwrap_or_else(|| "AI".to_owned()),
-                content: String::new(),
-                metadata: json!({
-                    "execution_id": execution_id,
-                    "trigger_message_id": trigger_message_id,
-                }),
-                reply_to_message_id: trigger_message_id.map(ToOwned::to_owned),
-            },
-            "streaming",
-        )?;
-        execution_row(&connection, execution_id)
+        let execution = execution_row(&connection, execution_id)?;
+        connection.commit()?;
+        Ok(execution)
     }
 
     pub fn local_execution_payload(
@@ -2256,26 +2311,13 @@ impl LocalTaskStore {
                 params![now(), active.id],
             )?;
         }
-        let id = numeric_id();
-        let linked_at = now();
-        transaction.execute(
-            "INSERT INTO loop_items (
-                id, resource_type, project_space, cloud_project_id, loop_item_id,
-                task_user_id, device_id, task_id, task_title, backend_task_id,
-                linked_by_user_id, linked_at, metadata, version, created_at, updated_at
-             ) VALUES (?1, 'execution', 'default', ?2, ?3, 0, ?4, ?5, ?6, ?7,
-                       0, ?8, ?9, 1, ?8, ?8)",
-            params![
-                id,
-                local_project_id,
-                item_id,
-                input.device_id,
-                input.task_id,
-                input.task_title,
-                input.backend_task_id,
-                linked_at,
-                metadata.to_string(),
-            ],
+        let id = insert_task_binding(
+            &transaction,
+            local_project_id.as_deref(),
+            item_id,
+            &input,
+            &metadata,
+            &now(),
         )?;
         transaction.commit()?;
         drop(connection);
@@ -3007,6 +3049,8 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     for (column, definition) in [
+        // Earlier upgrades only added this field to newly created tables.
+        ("execution_payload", "TEXT"),
         ("attempt_no", "INTEGER NOT NULL DEFAULT 1"),
         ("previous_execution_id", "INTEGER"),
         ("execution_scope", "TEXT NOT NULL DEFAULT ''"),
@@ -3057,6 +3101,7 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
         [],
     )?;
     ensure_default_work_item_project(connection)?;
+    local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
         params![LOCAL_SCHEMA_VERSION, now()],
@@ -4246,66 +4291,6 @@ fn update_agent_comment(
     Ok(())
 }
 
-fn create_local_execution(
-    connection: &Connection,
-    item_id: &str,
-    project_id: &str,
-    agent_id: &str,
-    agent: &LoopItem,
-    priority: &str,
-    payload: Value,
-) -> Result<(), TaskRuntimeError> {
-    let metadata = &agent.metadata;
-    let mode = metadata
-        .get("execution_mode")
-        .and_then(Value::as_str)
-        .unwrap_or("auto");
-    let environment = metadata
-        .get("execution_environment")
-        .and_then(Value::as_str)
-        .unwrap_or("local");
-    let now = now();
-    let status = if mode == "manual_approval" {
-        "pending_approval"
-    } else {
-        "queued"
-    };
-    let approval = if status == "pending_approval" {
-        Some("pending")
-    } else {
-        None
-    };
-    connection.execute(
-        "INSERT INTO loop_item_executions (
-            loop_item_id, cloud_project_id, agent_id, execution_environment,
-            execution_device_id, assigner_user_id, status, priority_weight, queued_at,
-            approval_status, execution_payload, execution_scope,
-            version, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?8, ?8)",
-        params![
-            item_id,
-            project_id,
-            agent_id,
-            environment,
-            agent
-                .metadata
-                .get("execution_device_id")
-                .and_then(Value::as_str),
-            status,
-            priority_weight(priority),
-            now,
-            approval,
-            if payload.is_null() {
-                None::<String>
-            } else {
-                Some(payload.to_string())
-            },
-            format!("project_robot:{item_id}"),
-        ],
-    )?;
-    Ok(())
-}
-
 fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     let stored = execution
         .execution_payload
@@ -4366,6 +4351,7 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         "standaloneChatWorkspace": execution.agent_local_project_id.is_none(),
         "origin": {
             "type": "project_automation",
+            "projectStore": "local",
             "cloudProjectId": execution.cloud_project_id,
             "loopItemId": execution.loop_item_id,
             "workflowNodeId": workflow_node_id,
@@ -4373,7 +4359,7 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         "additionalContext": additional_context,
     });
     if let Some(local_project_id) = execution.agent_local_project_id {
-        payload["local_project_id"] = json!(local_project_id);
+        payload["projectId"] = json!(local_project_id);
     }
     payload
 }
@@ -4385,6 +4371,10 @@ fn enqueue_ready_local_workflow_stages(
     priority: &str,
     workflow: &mut Value,
 ) -> Result<usize, TaskRuntimeError> {
+    if workflow["cancelled"] == true {
+        return Ok(0);
+    }
+    let automation_run_id = workflow.get("automation_run_id").cloned();
     let nodes = workflow
         .get_mut("nodes")
         .and_then(Value::as_array_mut)
@@ -4444,7 +4434,7 @@ fn enqueue_ready_local_workflow_stages(
         } else {
             prompt
         };
-        create_local_execution(
+        let execution_id = create_local_execution(
             connection,
             item_id,
             project_id,
@@ -4454,9 +4444,9 @@ fn enqueue_ready_local_workflow_stages(
             json!({
                 "message": message,
                 "workflow_node_id": node_id,
+                "automation_run_id": automation_run_id,
             }),
         )?;
-        let execution_id = connection.last_insert_rowid();
         let execution = execution_row(connection, execution_id)?;
         nodes[index]["status"] = json!(if execution.status == "pending_approval" {
             "waiting"
@@ -4464,24 +4454,6 @@ fn enqueue_ready_local_workflow_stages(
             "queued"
         });
         nodes[index]["execution_id"] = json!(execution_id);
-        insert_comment(
-            connection,
-            &LocalCommentCreate {
-                project_id: project_id.to_owned(),
-                task_id: item_id.to_owned(),
-                client_message_id: None,
-                sender_type: "agent".to_owned(),
-                sender_id: assignee_id,
-                sender_name: execution.agent_name,
-                content: String::new(),
-                metadata: json!({
-                    "execution_id": execution_id,
-                    "workflow_node_id": node_id,
-                }),
-                reply_to_message_id: None,
-            },
-            "streaming",
-        )?;
         queued += 1;
     }
     Ok(queued)
@@ -4592,6 +4564,9 @@ fn advance_local_workflow_after_execution(
         .ok_or_else(|| {
             TaskRuntimeError::Invalid("workflow execution has no workflow".to_owned())
         })?;
+    if workflow["cancelled"] == true {
+        return Ok(true);
+    }
     let nodes = workflow
         .get_mut("nodes")
         .and_then(Value::as_array_mut)
@@ -4613,13 +4588,30 @@ fn advance_local_workflow_after_execution(
     node["status"] = json!("completed");
     node["execution_id"] = json!(execution_id);
     release_local_workflow_nodes(workflow)?;
-    enqueue_ready_local_workflow_stages(
+    let before_enqueue = workflow.clone();
+    connection.execute_batch("SAVEPOINT advance_local_workflow")?;
+    match enqueue_ready_local_workflow_stages(
         connection,
         &execution.loop_item_id,
         &execution.cloud_project_id,
         execution.task_priority.as_deref().unwrap_or("none"),
         workflow,
-    )?;
+    ) {
+        Ok(_) => connection.execute_batch("RELEASE advance_local_workflow")?,
+        Err(TaskRuntimeError::Invalid(error)) => {
+            connection.execute_batch(
+                "ROLLBACK TO advance_local_workflow; RELEASE advance_local_workflow",
+            )?;
+            *workflow = before_enqueue;
+            workflow["error"] = json!(error);
+            for node in workflow["nodes"].as_array_mut().into_iter().flatten() {
+                if node["status"] == "ready" && node["execution_mode"] == "robot" {
+                    node["status"] = json!("failed");
+                }
+            }
+        }
+        Err(error) => return Err(error),
+    }
     let nodes = workflow["nodes"]
         .as_array()
         .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
@@ -4836,7 +4828,7 @@ mod tests {
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].sender_type, "agent");
         assert_eq!(comments[0].sender_id, agent.id);
-        assert_eq!(comments[0].status, "streaming");
+        assert_eq!(comments[0].status, "pending");
         assert_eq!(
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
@@ -5064,7 +5056,7 @@ mod tests {
             .iter()
             .find(|comment| comment.sender_type == "agent")
             .unwrap();
-        assert_eq!(agent_comment.status, "streaming");
+        assert_eq!(agent_comment.status, "pending");
         assert_eq!(
             agent_comment.reply_to_message_id.as_deref(),
             Some(user_comment.message_id.as_str())
@@ -5086,6 +5078,49 @@ mod tests {
             .unwrap();
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].sender_type, "agent");
+
+        let follow_up = store
+            .create_comment(&LocalCommentCreate {
+                project_id: project.id.clone(),
+                task_id: task.id.clone(),
+                client_message_id: Some("cm-2".to_owned()),
+                sender_type: "user".to_owned(),
+                sender_id: "1".to_owned(),
+                sender_name: "Ada".to_owned(),
+                content: "我之前说了什么".to_owned(),
+                metadata: json!({}),
+                reply_to_message_id: Some(user_comment.message_id.clone()),
+            })
+            .unwrap();
+        let continuation = store
+            .start_runtime_comment(&LocalRuntimeCommentStart {
+                project_id: &project.id,
+                task_id: &task.id,
+                agent_id: &agent.id,
+                trigger_message_id: &follow_up.message_id,
+                runtime_device_id: "local-device",
+                runtime_task_id: "session-1",
+                prompt: Some("我之前说了什么"),
+                model: None,
+            })
+            .unwrap();
+        assert_eq!(continuation.status, "streaming");
+        assert_eq!(
+            continuation.thread_root_message_id,
+            user_comment.thread_root_message_id
+        );
+        store
+            .update_execution_progress("session-1", "你之前让我看一下")
+            .unwrap();
+        store
+            .finish_runtime_comment("session-1", "completed", "你之前让我看一下")
+            .unwrap();
+        let comments = store.list_comments(&project.id, &task.id, 0).unwrap();
+        let continued = comments.last().unwrap();
+        assert_eq!(continued.message_id, continuation.message_id);
+        assert_eq!(continued.status, "completed");
+        assert_eq!(continued.content, "你之前让我看一下");
+        assert_eq!(continued.metadata["runtime_address"]["taskId"], "session-1");
     }
 
     #[test]

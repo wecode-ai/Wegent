@@ -25,6 +25,12 @@ export interface ProjectAgentConfigurationHost {
    * library set it to false so the picker is never rendered.
    */
   supportsExistingAgentSelection?: boolean;
+  /** Manages a project-owned Agent without requiring a cloud resource identity. */
+  renderProjectAgentForm?(props: {
+    agentId: string | null;
+    onClose(): void;
+    onSaved(): Promise<void>;
+  }): ReactNode;
   renderAgentCreator?(props: {
     namespace: string;
     onClose(): void;
