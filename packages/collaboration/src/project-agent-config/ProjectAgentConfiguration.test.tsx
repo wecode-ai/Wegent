@@ -171,6 +171,26 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
       </button>
     );
   },
+  renderLocalAgentEditor({ onClose, onSaved, projectId, resourceId }) {
+    return (
+      <div
+        data-project-id={projectId}
+        data-resource-id={resourceId}
+        data-testid="hosted-local-agent-editor"
+      >
+        <button
+          data-testid="hosted-local-agent-save"
+          onClick={() => void onSaved()}
+          type="button"
+        >
+          保存
+        </button>
+        <button onClick={onClose} type="button">
+          关闭
+        </button>
+      </div>
+    );
+  },
   renderAgentEditor({ agent, namespace, onClose, onSaved, workspaceName }) {
     return (
       <div data-testid="hosted-agent-editor">
@@ -472,19 +492,22 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("offers no edit action for project Agents without an editable resource", async () => {
+  it("routes project Agent editing through the local Agent editor", async () => {
     const { api } = createApi({
       agents: [projectAgent({ runtime: "claude_code", wegent_team_id: null })],
       workspaceAgents: [],
     });
-    await renderHosted(api);
+    await renderHosted(api, {
+      target: { ...project, id: "local-project", project_store: "local" },
+    });
 
+    await click("project-agent-edit-project-agent-1");
+    expect(element("hosted-local-agent-editor").dataset.resourceId).toBe(
+      "project-agent-1",
+    );
     expect(
-      document.querySelector(
-        '[data-testid="project-agent-edit-project-agent-1"]',
-      ),
+      document.querySelector('[data-testid="hosted-agent-editor"]'),
     ).toBeNull();
-    expect(element("project-agent-archive-project-agent-1")).toBeTruthy();
   });
 
   it("archives an existing project agent with optimistic concurrency", async () => {

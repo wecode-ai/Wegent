@@ -769,6 +769,19 @@ impl LocalTaskStore {
         }
         validate_workspace_policy(&input.workspace_policy)?;
         validate_mcp_servers(&input.mcp_servers)?;
+        let capability_mode = input.capability_mode.unwrap_or_else(|| {
+            if !input.plugins.is_empty()
+                || !input.additional_skills.is_empty()
+                || input
+                    .mcp_servers
+                    .as_object()
+                    .is_some_and(|servers| !servers.is_empty())
+            {
+                "manual".to_owned()
+            } else {
+                "follow_device".to_owned()
+            }
+        });
         let connection = self.connection()?;
         let id = format!("LA-{}", Uuid::new_v4().simple());
         let now = now();
@@ -780,7 +793,7 @@ impl LocalTaskStore {
             "model_type": input.model_type,
             "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
             "capability_description": input.capability_description.unwrap_or_default(),
-            "capability_mode": input.capability_mode,
+            "capability_mode": capability_mode,
             "system_prompt": input.system_prompt.unwrap_or_default(),
             "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
             "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
@@ -4790,7 +4803,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Be careful.".to_owned()),
                     visibility: Some("creator_admin".to_owned()),
                     execution_environment: Some("local".to_owned()),
@@ -5581,7 +5594,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "manual".to_owned(),
+                    capability_mode: Some("manual".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5648,6 +5661,7 @@ mod tests {
         assert_eq!(agent.runtime, "claude_code");
         assert_eq!(agent.model_type.as_deref(), Some("public"));
         assert_eq!(agent.model_namespace, "default");
+        assert_eq!(agent.capability_mode, "manual");
         assert_eq!(agent.additional_skills[0]["name"], "architecture-review");
         assert_eq!(agent.mcp_servers["github"]["command"], "github-mcp-server");
         let listed = store.list_chat_agents(&project.id).unwrap();
@@ -5745,7 +5759,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5846,7 +5860,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5874,7 +5888,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5980,7 +5994,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6062,7 +6076,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6202,7 +6216,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6272,7 +6286,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6838,7 +6852,7 @@ mod tests {
                     model_type: None,
                     model_namespace: None,
                     capability_description: None,
-                    capability_mode: "follow_device".to_owned(),
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),

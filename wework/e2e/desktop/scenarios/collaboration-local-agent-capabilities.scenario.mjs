@@ -5,15 +5,18 @@ import { dirname, join } from 'node:path'
 import {
   assistantMessage,
   createSse,
+  mcpToolRequestEvents,
+  namespacedFunctionCall,
   readRequestBody,
+  requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  selectMcpTool,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
-const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const PROJECT_NAME = `本地智能体能力验收-${process.pid}`
 const AGENT_NAME = `本地能力智能体-${process.pid}`
 const AGENT_RESOURCE_NAME = `local-capability-agent-${process.pid}`
@@ -27,14 +30,12 @@ const PLUGIN_NAME = 'wework-space'
 const PLUGIN_MARKETPLACE = 'wework-personal'
 const PLUGIN_ID = `${PLUGIN_NAME}@${PLUGIN_MARKETPLACE}`
 const PLUGIN_TOOL = 'send_notification'
+const PLUGIN_SEARCH_CALL_ID = 'local-agent-plugin-search'
+const PLUGIN_TOOL_CALL_ID = 'local-agent-plugin-call'
 const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
-}
-
-function sidebarScoped(selector) {
-  return inCollaborationSidebar(selector)
 }
 
 function json(response, status, body) {
@@ -78,44 +79,6 @@ async function findStagedSkillFile(root, skillName) {
   return null
 }
 
-async function createLocalCollaborationProject(control, uiTimeoutMs, workbenchReadyTimeoutMs) {
-  await ensureExperimentalFeaturesEnabled(control)
-  await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-    timeoutMs: workbenchReadyTimeoutMs,
-  })
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-  await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command(
-    'click',
-    sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-workspace-project-create"]'),
-    {
-      timeoutMs: uiTimeoutMs,
-    }
-  )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-    value: PROJECT_NAME,
-  })
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-create-confirm"]'),
-    { timeoutMs: uiTimeoutMs }
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
-    text: PROJECT_NAME,
-    timeoutMs: uiTimeoutMs,
-  })
-}
-
 export async function createDesktopScenario({
   captureScreenshot,
   executorHome,
@@ -134,7 +97,7 @@ export async function createDesktopScenario({
         json(response, 200, {
           data: [
             {
-              name: 'desktop-e2e-public-model',
+              name: MODEL_NAME,
               type: 'public',
               displayName: 'Desktop E2E Public',
               namespace: 'default',
@@ -178,29 +141,62 @@ export async function createDesktopScenario({
         stagedSkill.content.includes(SKILL_MARKER),
         'The staged local Skill did not contain the selected Skill content'
       )
-      assert.ok(serialized.includes(PLUGIN_NAME), 'The local Agent did not receive its plugin')
       const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
       assert.ok(
         executorLog.includes(`[wework-space-mcp] stage=tools_list`) &&
           executorLog.includes(`tools=${PLUGIN_TOOL}`),
         'The local Agent plugin did not start and expose its MCP tool'
       )
-      verifiedRequest = body
+      let events
+      if (requestContainsToolOutput(body, PLUGIN_TOOL_CALL_ID)) {
+        assert.ok(
+          executorLog.includes(`stage=tool_call tool=${PLUGIN_TOOL}`),
+          'The selected local Agent plugin tool was not invoked'
+        )
+        verifiedRequest = body
+        events = [assistantMessage(COMPLETION_MARKER)]
+      } else if (requestContainsToolOutput(body, PLUGIN_SEARCH_CALL_ID)) {
+        const tool = selectMcpTool(body, 'wework_notifications', PLUGIN_TOOL, {
+          title: 'Local Agent E2E',
+          body: RUN_MARKER,
+        })
+        events = namespacedFunctionCall(
+          PLUGIN_TOOL_CALL_ID,
+          tool.namespace,
+          tool.name,
+          tool.arguments
+        )
+      } else {
+        const directToolName = (body.tools ?? [])
+          .map(tool => tool?.name ?? tool?.function?.name)
+          .find(name => name?.endsWith(`__${PLUGIN_TOOL}`))
+        events = mcpToolRequestEvents(body, {
+          toolName: PLUGIN_TOOL,
+          argumentsValue: {
+            title: 'Local Agent E2E',
+            body: RUN_MARKER,
+          },
+          directToolName,
+          searchCallId: PLUGIN_SEARCH_CALL_ID,
+          toolCallId: PLUGIN_TOOL_CALL_ID,
+        }).events
+      }
       const responseId = `local-agent-capability-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
-        createSse([
-          responseCreated(responseId),
-          assistantMessage(COMPLETION_MARKER),
-          responseCompleted(responseId),
-        ])
+        createSse([responseCreated(responseId), ...events, responseCompleted(responseId)])
       )
       return true
     },
 
     async verify(control) {
       active = true
-      await createLocalCollaborationProject(control, uiTimeoutMs, workbenchReadyTimeoutMs)
+      await ensureExperimentalFeaturesEnabled(control)
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await createLocalCollaborationProject(control, ACTIVE_WORKBENCH_SELECTOR, PROJECT_NAME)
       await captureScreenshot(
         control,
         'collaboration-local-agent-01-project-created.png',

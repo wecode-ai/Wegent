@@ -199,8 +199,7 @@ function summarizeModelRequest(body, serialized, issue, agent, ids) {
     toolCount: Array.isArray(body.tools) ? body.tools.length : 0,
     hasConfiguredSkill:
       serialized.includes(SKILL_NAME) || serialized.includes(SKILL_CONTENT_MARKER),
-    hasConfiguredPlugin:
-      serialized.includes(PLUGIN_NAME) || serialized.includes(PLUGIN_CONTENT_MARKER),
+    hasConfiguredPlugin: serialized.includes(PLUGIN_CONTENT_MARKER),
     completedCalls: ids
       ? Object.entries(ids)
           .filter(([, callId]) => requestContainsToolOutput(body, callId))
@@ -1535,7 +1534,7 @@ export async function createDesktopScenario({
       assert.ok(serialized.includes(SKILL_NAME), `${agent} did not receive its configured Skill`)
       if (agent === 'codex') {
         assert.ok(
-          serialized.includes(PLUGIN_NAME) || serialized.includes(PLUGIN_CONTENT_MARKER),
+          serialized.includes(PLUGIN_CONTENT_MARKER),
           `${agent} did not receive its configured plugin Skill`
         )
       }

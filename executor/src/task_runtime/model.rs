@@ -126,8 +126,8 @@ pub struct ChatAgentCreate {
     pub model_type: Option<String>,
     pub model_namespace: Option<String>,
     pub capability_description: Option<String>,
-    #[serde(default = "default_chat_agent_capability_mode")]
-    pub capability_mode: String,
+    #[serde(default)]
+    pub capability_mode: Option<String>,
     pub system_prompt: Option<String>,
     pub visibility: Option<String>,
     pub execution_environment: Option<String>,
@@ -285,10 +285,6 @@ fn default_workspace_policy() -> String {
 
 fn default_chat_agent_runtime() -> String {
     "codex".to_owned()
-}
-
-fn default_chat_agent_capability_mode() -> String {
-    "follow_device".to_owned()
 }
 
 fn default_mcp_servers() -> Value {

@@ -92,6 +92,22 @@ describe("project agent configuration model", () => {
     });
   });
 
+  it("falls back to the resource name when the display name is blank", () => {
+    expect(
+      normalizeProjectAgent({
+        id: "agent-blank-display-name",
+        name: "项目智能体",
+        display_name: "   ",
+        runtime: "codex",
+        status: "active",
+        version: 1,
+      } as WorkspaceProjectAgent),
+    ).toMatchObject({
+      name: "项目智能体",
+      displayName: "项目智能体",
+    });
+  });
+
   it("keeps a shared Agent source independent from a resolved executor type", () => {
     expect(
       normalizeProjectAgent({

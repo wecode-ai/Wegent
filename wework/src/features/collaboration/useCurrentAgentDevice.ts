@@ -4,6 +4,7 @@ import type {
   ProjectPluginCatalogApi,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/devices'
 
 type DeviceApi = Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
@@ -22,6 +23,7 @@ function selectCurrentDevice(devices: DeviceInfo[]): DeviceInfo | null {
 }
 
 export function useCurrentAgentDevice(deviceApi?: DeviceApi, pluginApi?: ProjectPluginCatalogApi) {
+  const { t } = useTranslation()
   const [device, setDevice] = useState<DeviceInfo | null>(null)
   const [pluginNames, setPluginNames] = useState<string[]>([])
   const [skillCount, setSkillCount] = useState(0)
@@ -47,6 +49,9 @@ export function useCurrentAgentDevice(deviceApi?: DeviceApi, pluginApi?: Project
         setSkillCount(skills.length)
         setPluginNames(plugins.map(plugin => plugin.displayName || plugin.pluginName).slice(0, 3))
       })
+      .catch(() => {
+        if (active) setDevice(null)
+      })
       .finally(() => {
         if (active) setLoading(false)
       })
@@ -59,14 +64,31 @@ export function useCurrentAgentDevice(deviceApi?: DeviceApi, pluginApi?: Project
   return useMemo(
     () => ({
       capabilityItems: device
-        ? [...pluginNames, ...(skillCount ? [`${skillCount} 个 Skill`] : []), '本地文件与桌面操作']
+        ? [
+            ...pluginNames,
+            ...(skillCount
+              ? [
+                  t('workbench.agent_creator_device_skill_count', '{{count}} Skills', {
+                    count: skillCount,
+                  }),
+                ]
+              : []),
+            t(
+              'workbench.agent_creator_device_local_capabilities',
+              'Local files and desktop control'
+            ),
+          ]
         : [],
       capabilitySummary: device
-        ? `${pluginNames.length} 个插件 · ${skillCount} 个 Skill · 本地文件与桌面操作`
+        ? t(
+            'workbench.agent_creator_device_capability_summary',
+            '{{plugins}} plugins · {{skills}} Skills · Local files and desktop control',
+            { plugins: pluginNames.length, skills: skillCount }
+          )
         : '',
       currentDevice: device ? { id: device.device_id, name: device.name } : null,
       loading,
     }),
-    [device, loading, pluginNames, skillCount]
+    [device, loading, pluginNames, skillCount, t]
   )
 }

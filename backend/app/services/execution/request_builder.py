@@ -1504,6 +1504,7 @@ class TaskRequestBuilder:
             return [], [], [], {}
 
         ghost_crd = Ghost.model_validate(ghost.json)
+        include_ghost_capabilities = bot_crd.spec.capability_mode != "follow_device"
         logger.info(
             "[_get_bot_skills] Ghost: name=%s, skills=%s, preload_skills=%s",
             ghost.name,
@@ -1519,12 +1520,16 @@ class TaskRequestBuilder:
         skill_refs: dict[str, dict] = {}
 
         # Build preload set from Ghost CRD
-        ghost_preload_set = set(ghost_crd.spec.preload_skills or [])
+        ghost_preload_set = (
+            set(ghost_crd.spec.preload_skills or [])
+            if include_ghost_capabilities
+            else set()
+        )
 
         # Process Ghost skills
         ghost_skill_refs = ghost_crd.spec.skill_refs or {}
         ghost_preload_skill_refs = ghost_crd.spec.preload_skill_refs or {}
-        if ghost_crd.spec.skills:
+        if include_ghost_capabilities and ghost_crd.spec.skills:
             for skill_name in ghost_crd.spec.skills:
                 ghost_skill_ref = ghost_skill_refs.get(skill_name)
                 if ghost_skill_ref:
@@ -2286,7 +2291,11 @@ Response template:
 
             if ghost and ghost.json:
                 ghost_crd = Ghost.model_validate(ghost.json)
-                mcp_servers_dict = ghost_crd.spec.mcpServers
+                mcp_servers_dict = (
+                    ghost_crd.spec.mcpServers
+                    if bot_crd.spec.capability_mode != "follow_device"
+                    else {}
+                )
 
                 if mcp_servers_dict:
                     # Convert dict format to list format for chat_shell compatibility

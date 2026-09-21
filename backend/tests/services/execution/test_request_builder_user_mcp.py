@@ -583,6 +583,7 @@ class TestUserScopedMcpInjection:
                 "spec": {
                     "ghostRef": {"name": "shared-agent-ghost", "namespace": "default"},
                     "shellRef": {"name": "Chat", "namespace": "default"},
+                    "capability_mode": "manual",
                 },
             },
         )
@@ -642,6 +643,65 @@ class TestUserScopedMcpInjection:
         assert skills == [{"name": "owner-private-skill"}]
         assert preload_skills == ["owner-private-skill"]
         assert user_selected_skills == ["owner-private-skill"]
+
+    def test_get_bot_skills_excludes_ghost_skills_when_following_device(
+        self, test_db, mocker
+    ):
+        builder = TaskRequestBuilder(test_db)
+        team = SimpleNamespace(user_id=7, namespace="default")
+        bot = SimpleNamespace(
+            name="shared-agent-bot",
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "shared-agent-bot", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {
+                        "name": "shared-agent-ghost",
+                        "namespace": "default",
+                    },
+                    "shellRef": {"name": "Chat", "namespace": "default"},
+                    "capability_mode": "follow_device",
+                },
+            },
+        )
+        ghost = SimpleNamespace(
+            name="shared-agent-ghost",
+            json={
+                "kind": "Ghost",
+                "metadata": {
+                    "name": "shared-agent-ghost",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "systemPrompt": "Use the configured private skill.",
+                    "skills": ["owner-private-skill"],
+                    "preload_skills": ["owner-private-skill"],
+                    "skill_refs": {
+                        "owner-private-skill": {
+                            "skill_id": 55,
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    },
+                },
+            },
+        )
+        mock_query = mocker.Mock()
+        mock_query.filter.return_value.first.return_value = ghost
+        mocker.patch.object(builder.db, "query", return_value=mock_query)
+        find_attached_skill_by_ref = mocker.patch.object(
+            builder, "_find_attached_skill_by_ref"
+        )
+
+        result = builder._get_bot_skills(
+            bot=bot,
+            team=team,
+            user=SimpleNamespace(id=99, preferences="{}"),
+            user_id=99,
+        )
+
+        find_attached_skill_by_ref.assert_not_called()
+        assert result == ([], [], [], {})
 
     def test_member_bot_skill_refs_resolve_as_agent_owner(self, test_db, mocker):
         builder = TaskRequestBuilder(test_db)

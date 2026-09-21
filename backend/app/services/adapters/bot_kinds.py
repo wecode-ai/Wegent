@@ -2447,6 +2447,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             skill_refs=skill_refs_meta,
             preload_skills=bot_dict.get("preload_skills"),
             preload_skill_refs=preload_skill_refs_meta,
+            plugins=bot_dict.get("plugins"),
+            capability_mode=bot_dict.get("capability_mode", "follow_device"),
             namespace=namespace,
         )
 

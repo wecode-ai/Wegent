@@ -582,7 +582,10 @@ export function ProjectAgentConfiguration({
                   {canManage ? (
                     <div className={styles.agentActions}>
                       {canEditAgentResource &&
-                      (usesLocalAgentCreator || agent.wegentTeamId !== null) ? (
+                      ((agent.definitionSource === "project" &&
+                        usesLocalAgentCreator) ||
+                        (agent.definitionSource === "shared_agent" &&
+                          agent.wegentTeamId !== null)) ? (
                         <button
                           className={styles.archiveButton}
                           data-testid={`project-agent-edit-${agent.id}`}
@@ -743,7 +746,10 @@ export function ProjectAgentConfiguration({
                 )
             : null}
 
-          {editingAgent && usesLocalAgentCreator && host?.renderLocalAgentEditor
+          {editingAgent &&
+          editingAgent.definitionSource === "project" &&
+          usesLocalAgentCreator &&
+          host?.renderLocalAgentEditor
             ? host.renderLocalAgentEditor({
                 projectId: localAgentProjectId,
                 resourceId: editingAgent.id,
@@ -755,6 +761,7 @@ export function ProjectAgentConfiguration({
                 },
               })
             : editingAgent &&
+                editingAgent.definitionSource === "shared_agent" &&
                 editingAgent.wegentTeamId !== null &&
                 host?.renderAgentEditor
               ? host.renderAgentEditor({

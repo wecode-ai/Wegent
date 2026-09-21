@@ -44,7 +44,10 @@ export function normalizeProjectAgent(
   const rawTeamId = value(row, "wegentTeamId", "wegent_team_id");
   const rawDeviceId = value(row, "executionDeviceId", "execution_device_id");
   const name = String(row.name ?? "");
-  const displayName = String(value(row, "displayName", "display_name") ?? name);
+  const configuredDisplayName = String(
+    value(row, "displayName", "display_name") ?? "",
+  ).trim();
+  const displayName = configuredDisplayName || name;
   return {
     id: String(row.id),
     name,
