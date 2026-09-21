@@ -361,6 +361,16 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
   grep -F 'prepare-platform-e2e-image' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
+    grep -F 'node scripts/prepare-codex-binary.mjs --materialize' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex' \
+      >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'test -x "$CODEX_BINARY_PATH"' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
     grep -F \
     'PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
       >/dev/null ||

@@ -10,13 +10,11 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
-const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const PROJECT_NAME = `本地智能体能力验收-${process.pid}`
 const AGENT_NAME = `本地能力智能体-${process.pid}`
-const AGENT_RESOURCE_NAME = `local-capability-agent-${process.pid}`
 const ISSUE_NAME = `本地智能体执行验收-${process.pid}`
 const RUN_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_RUN'
 const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
@@ -33,10 +31,6 @@ const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
-}
-
-function sidebarScoped(selector) {
-  return inCollaborationSidebar(selector)
 }
 
 function json(response, status, body) {
@@ -80,44 +74,6 @@ async function findStagedSkillFile(root, skillName) {
   return null
 }
 
-async function createLocalCollaborationProject(control, uiTimeoutMs, workbenchReadyTimeoutMs) {
-  await ensureExperimentalFeaturesEnabled(control)
-  await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-    timeoutMs: workbenchReadyTimeoutMs,
-  })
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-  await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command(
-    'click',
-    sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-workspace-project-create"]'),
-    {
-      timeoutMs: uiTimeoutMs,
-    }
-  )
-  await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
-  await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-    value: PROJECT_NAME,
-  })
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-project-create-confirm"]'),
-    { timeoutMs: uiTimeoutMs }
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
-    text: PROJECT_NAME,
-    timeoutMs: uiTimeoutMs,
-  })
-}
-
 export async function createDesktopScenario({
   captureScreenshot,
   executorHome,
@@ -136,7 +92,7 @@ export async function createDesktopScenario({
         json(response, 200, {
           data: [
             {
-              name: 'desktop-e2e-public-model',
+              name: MODEL_NAME,
               type: 'public',
               displayName: 'Desktop E2E Public',
               namespace: 'default',
@@ -217,7 +173,12 @@ export async function createDesktopScenario({
 
     async verify(control) {
       active = true
-      await createLocalCollaborationProject(control, uiTimeoutMs, workbenchReadyTimeoutMs)
+      await ensureExperimentalFeaturesEnabled(control)
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await createLocalCollaborationProject(control, ACTIVE_WORKBENCH_SELECTOR, PROJECT_NAME)
       await captureScreenshot(
         control,
         'collaboration-local-agent-01-project-created.png',
@@ -241,15 +202,16 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="cloud-project-chat-agent-name"]', {
-        value: AGENT_RESOURCE_NAME,
-      })
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: AGENT_NAME,
       })
       await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
         value: MODEL_NAME,
       })
+      await control.command(
+        'click',
+        '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]'
+      )
       await control.command(
         'click',
         '[data-testid="cloud-project-chat-agent-capability-mode-manual"]'

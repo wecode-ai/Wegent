@@ -38,6 +38,11 @@ export interface AgentFormLabels {
   owner: string;
 }
 
+export interface AgentFormAdvancedSummary {
+  description: string;
+  title: string;
+}
+
 export interface AgentFormTestIds {
   backdrop: string;
   close: string;
@@ -51,6 +56,7 @@ const fieldClassName =
 
 export function AgentFormDialog({
   advanced,
+  advancedSummary,
   busy,
   capabilities,
   description,
@@ -63,9 +69,9 @@ export function AgentFormDialog({
   mcp,
   model,
   name,
-  namespace,
   onClose,
   onSave,
+  owner,
   ownerLabel,
   prompt,
   promptEditor,
@@ -78,8 +84,9 @@ export function AgentFormDialog({
   title,
 }: {
   advanced?: ReactNode;
+  advancedSummary?: AgentFormAdvancedSummary;
   busy: boolean;
-  capabilities: ReactNode;
+  capabilities?: ReactNode;
   description: string;
   displayName?: AgentFormField;
   error?: string | null;
@@ -89,15 +96,16 @@ export function AgentFormDialog({
   loadingLabel?: string;
   mcp?: AgentFormField;
   model: AgentFormSelectField;
-  name: AgentFormField;
+  name?: AgentFormField;
   namespace?: string;
   onClose(): void;
   onSave(): void;
+  owner?: AgentFormSelectField;
   ownerLabel: string;
   prompt: AgentFormField;
   promptEditor?: ReactNode;
   capabilityMode?: ReactNode;
-  runtime: AgentFormSelectField;
+  runtime?: AgentFormSelectField;
   saveDisabled: boolean;
   saveLabel: string;
   savingLabel: string;
@@ -106,6 +114,8 @@ export function AgentFormDialog({
 }) {
   const titleId = `${testIds.dialog}-title`;
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const identityField = displayName ?? name;
+  const hasAdvancedSettings = Boolean(capabilityMode || capabilities || mcp);
 
   return (
     <div
@@ -167,49 +177,40 @@ export function AgentFormDialog({
               <Bot aria-hidden="true" className="h-7 w-7" />
             </div>
             <div className="min-w-0 space-y-3">
-              <div
-                className={classes(
-                  "grid gap-3",
-                  displayName ? "md:grid-cols-2" : "grid-cols-1",
-                )}
-              >
-                {displayName ? (
-                  <TextInput busy={busy} field={displayName} />
-                ) : null}
-                <TextInput busy={busy} field={name} />
-              </div>
-              <div className="flex min-h-5 items-center gap-2 text-xs text-text-muted">
-                <span>{labels.owner}</span>
-                <span aria-hidden="true">·</span>
-                <span className="truncate text-text-secondary">
-                  {ownerLabel}
-                </span>
-                {namespace ? (
-                  <>
-                    <span aria-hidden="true">/</span>
-                    <code className="truncate text-xs text-text-muted">
-                      {namespace}
-                    </code>
-                  </>
-                ) : null}
-              </div>
+              {identityField ? (
+                <TextInput busy={busy} field={identityField} />
+              ) : null}
+              {owner ? (
+                <SelectInput busy={busy} field={owner} />
+              ) : (
+                <div className="flex min-h-5 items-center gap-2 text-xs text-text-muted">
+                  <span>{labels.owner}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="truncate text-text-secondary">
+                    {ownerLabel}
+                  </span>
+                </div>
+              )}
             </div>
           </section>
 
           <section className="space-y-3">
             <SectionHeading>{labels.capabilitiesSection}</SectionHeading>
-            <div className="grid gap-3 md:grid-cols-2">
-              <SelectInput busy={busy} field={runtime} />
+            <div
+              className={classes(
+                "grid gap-3",
+                runtime ? "md:grid-cols-2" : "grid-cols-1",
+              )}
+            >
+              {runtime ? <SelectInput busy={busy} field={runtime} /> : null}
               <SelectInput busy={busy} field={model} />
             </div>
             {promptEditor ?? <TextareaInput busy={busy} field={prompt} />}
           </section>
 
-          {capabilityMode}
-          {capabilities}
           {advanced}
 
-          {mcp ? (
+          {hasAdvancedSettings ? (
             <section className="overflow-hidden rounded-xl border border-border">
               <button
                 aria-expanded={advancedOpen}
@@ -228,16 +229,23 @@ export function AgentFormDialog({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-text-primary">
-                    {labels.advanced}
+                    {advancedSummary?.title ?? labels.advanced}
                   </span>
                   <span className="mt-0.5 block text-xs text-text-muted">
-                    {labels.advancedDescription}
+                    {advancedSummary?.description ?? labels.advancedDescription}
                   </span>
                 </span>
+                {advancedSummary ? (
+                  <span className="shrink-0 text-xs text-text-muted">
+                    {labels.advanced}
+                  </span>
+                ) : null}
               </button>
               {advancedOpen ? (
-                <div className="border-t border-border px-4 py-3">
-                  <TextareaInput busy={busy} code field={mcp} />
+                <div className="space-y-4 border-t border-border px-4 py-4">
+                  {capabilityMode}
+                  {capabilities}
+                  {mcp ? <TextareaInput busy={busy} code field={mcp} /> : null}
                 </div>
               ) : null}
             </section>

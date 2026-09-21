@@ -3315,12 +3315,19 @@ function summarizeLocalModelOptions(
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
   const localPluginApi = createLocalCodexPluginApi()
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
-    async listPlugins() {
-      const [appsResult, installed] = await Promise.all([
-        localPluginApi.listApps().catch(() => []),
-        localPluginApi.listInstalledPlugins({ requireComplete: true }),
+    async listPlugins(deviceId: string) {
+      if (deviceId) {
+        const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
+        return buildProjectPluginCatalog(installed.items).map(plugin => ({
+          ...plugin,
+          catalogSource: 'local' as const,
+        }))
+      }
+      const [apps, installed] = await Promise.all([
+        localPluginApi.listApps(),
+        localPluginApi.listInstalledPlugins({ requireComplete: true }).then(result => result.items),
       ])
-      return buildProjectPluginCatalog(installed.items, appsResult).map(plugin => ({
+      return buildProjectPluginCatalog(installed, apps).map(plugin => ({
         ...plugin,
         catalogSource: 'local' as const,
       }))

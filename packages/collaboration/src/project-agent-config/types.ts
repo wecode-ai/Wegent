@@ -18,6 +18,11 @@ export interface ProjectAgentSelectOption {
   value: string;
 }
 
+export interface ProjectAgentOwnerOption {
+  label: string;
+  namespace: string;
+}
+
 export interface ProjectAgentConfigurationHost {
   /**
    * Whether the host lets the user pick an already existing Agent resource.
@@ -29,6 +34,7 @@ export interface ProjectAgentConfigurationHost {
     namespace: string;
     onClose(): void;
     onCreated(agent: { name: string; teamId: number }): Promise<void>;
+    ownerOptions?: ProjectAgentOwnerOption[];
     workspaceName: string;
   }): ReactNode;
   renderLocalAgentCreator?(props: {

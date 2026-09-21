@@ -64,6 +64,20 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Add more sensitive keys here as needed
     ]
 
+    @staticmethod
+    def _resolve_create_capability_mode(obj_in: BotCreate) -> str:
+        if obj_in.capability_mode is not None:
+            return obj_in.capability_mode
+        has_explicit_capabilities = any(
+            (
+                obj_in.mcp_servers,
+                obj_in.plugins,
+                obj_in.skills,
+                obj_in.preload_skills,
+            )
+        )
+        return "manual" if has_explicit_capabilities else "follow_device"
+
     def _require_bot_permission(
         self,
         db: Session,
@@ -556,7 +570,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "ghostRef": {"name": ghost_name, "namespace": namespace},
             "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
             "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
-            "capability_mode": obj_in.capability_mode,
+            "capability_mode": self._resolve_create_capability_mode(obj_in),
         }
         if obj_in.secondary_model_name:
             bot_spec["secondaryModelRef"] = {
@@ -2447,6 +2461,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             skill_refs=skill_refs_meta,
             preload_skills=bot_dict.get("preload_skills"),
             preload_skill_refs=preload_skill_refs_meta,
+            plugins=bot_dict.get("plugins"),
+            capability_mode=bot_dict.get("capability_mode", "follow_device"),
             namespace=namespace,
         )
 

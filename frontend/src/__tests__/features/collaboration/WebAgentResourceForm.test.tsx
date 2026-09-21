@@ -12,7 +12,8 @@ import { fetchUnifiedSkillsList } from '@/apis/skills'
 import { teamApis } from '@/apis/team'
 import { WebAgentResourceForm } from '@/features/collaboration/WebAgentResourceForm'
 
-const mockTranslate = (_key: string, fallback?: string) => fallback || _key
+const mockTranslate = (key: string, fallback?: string) =>
+  key === 'agent_form.follow_device_summary' ? '能力：跟随运行设备' : fallback || key
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: mockTranslate }),
@@ -111,23 +112,41 @@ describe('WebAgentResourceForm', () => {
         namespace="default"
         onClose={jest.fn()}
         onCreated={onCreated}
+        ownerOptions={[
+          { namespace: 'default', label: '个人空间' },
+          { namespace: 'engineering', label: 'Engineering' },
+        ]}
         workspaceName="我的空间"
       />
     )
 
+    await waitFor(() => expect(screen.getByTestId('web-agent-model')).not.toBeDisabled())
     expect(screen.getByTestId('web-agent-resource-creator')).toHaveAttribute(
       'data-agent-form',
       'shared'
     )
     expect(screen.getByTestId('web-agent-resource-creator')).toHaveClass('max-w-[700px]')
     expect(screen.queryByTestId('web-agent-skills-add')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('web-agent-resource-name')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('web-agent-runtime')).not.toBeInTheDocument()
+    expect(screen.getByText('能力：跟随运行设备')).toBeInTheDocument()
+    expect(screen.getByTestId('web-agent-owner')).toHaveValue('default')
+    fireEvent.change(screen.getByTestId('web-agent-owner'), {
+      target: { value: 'engineering' },
+    })
+    await waitFor(() =>
+      expect(modelApis.getUnifiedModels).toHaveBeenCalledWith(
+        'Codex',
+        false,
+        'group',
+        'engineering',
+        'llm'
+      )
+    )
+    fireEvent.click(screen.getByTestId('web-agent-resource-creator-advanced-toggle'))
     fireEvent.click(screen.getByTestId('web-agent-capability-mode-manual'))
     expect(screen.getByTestId('web-agent-skills-add')).toBeInTheDocument()
 
-    await waitFor(() => expect(screen.getByTestId('web-agent-model')).not.toBeDisabled())
-    fireEvent.change(screen.getByTestId('web-agent-resource-name'), {
-      target: { value: 'code-review-agent' },
-    })
     fireEvent.change(screen.getByTestId('web-agent-display-name'), {
       target: { value: '代码评审' },
     })
@@ -144,8 +163,10 @@ describe('WebAgentResourceForm', () => {
     await waitFor(() =>
       expect(botApis.createBot).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: 'code-review-agent-bot',
+          name: expect.stringMatching(/^agent-[a-z0-9]+-[a-z0-9]{6}-bot$/),
+          namespace: 'engineering',
           capability_mode: 'manual',
+          target_group_names: ['engineering'],
           plugins: [
             {
               id: 'company-mail@official',
@@ -160,9 +181,9 @@ describe('WebAgentResourceForm', () => {
     )
     expect(teamApis.createTeam).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'code-review-agent',
+        name: expect.stringMatching(/^agent-[a-z0-9]+-[a-z0-9]{6}$/),
         displayName: '代码评审',
-        namespace: 'default',
+        namespace: 'engineering',
       })
     )
     expect(onCreated).toHaveBeenCalledWith({

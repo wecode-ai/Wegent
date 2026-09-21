@@ -199,8 +199,7 @@ function summarizeModelRequest(body, serialized, issue, agent, ids) {
     toolCount: Array.isArray(body.tools) ? body.tools.length : 0,
     hasConfiguredSkill:
       serialized.includes(SKILL_NAME) || serialized.includes(SKILL_CONTENT_MARKER),
-    hasConfiguredPlugin:
-      serialized.includes(PLUGIN_NAME) || serialized.includes(PLUGIN_CONTENT_MARKER),
+    hasConfiguredPlugin: serialized.includes(PLUGIN_CONTENT_MARKER),
     completedCalls: ids
       ? Object.entries(ids)
           .filter(([, callId]) => requestContainsToolOutput(body, callId))
@@ -724,17 +723,11 @@ export async function createDesktopScenario({
     await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
       timeoutMs: uiTimeoutMs,
     })
-    const technicalName = `${nativeRuntime}-collaboration-${process.pid}`
-    await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-      value: technicalName,
-    })
     await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
-    await control.command('select', '[data-testid="wework-agent-runtime"]', {
-      value: shellRuntime,
-    })
     await control.command('select', '[data-testid="wework-agent-model"]', {
       value: String(publicModelIndex),
     })
+    await control.command('click', '[data-testid="wework-agent-resource-creator-advanced-toggle"]')
     await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
     await control.command('click', '[data-testid="wework-agent-skills-add"]')
     await control.command('click', `[data-testid="wework-agent-skill-${skill.id}"]`)
@@ -757,7 +750,6 @@ export async function createDesktopScenario({
       `Creating ${name} did not render its system prompt`,
       uiTimeoutMs
     )
-    await control.command('click', '[data-testid="wework-agent-resource-creator-advanced-toggle"]')
     await control.command('fill', '[data-testid="wework-agent-mcp"]', {
       value: '{}',
     })
@@ -773,6 +765,7 @@ export async function createDesktopScenario({
     assert.equal(agent.runtime, 'wegent')
     assert.ok(agent.wegentTeamId, `${name} did not persist its Team reference`)
     const team = await request(`/api/teams/${agent.wegentTeamId}`)
+    const technicalName = team.name
     assert.equal(team.displayName, name)
     assert.equal(team.bots.length, 1)
     const bot = await request(`/api/bots/${team.bots[0].bot.id}`)
@@ -838,11 +831,6 @@ export async function createDesktopScenario({
       name,
       `Editing ${name} did not load its persisted display name`
     )
-    assert.equal(
-      await control.command('getValue', '[data-testid="wework-agent-runtime"]'),
-      shellRuntime,
-      `Editing ${name} did not load its persisted runtime`
-    )
     await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -887,7 +875,7 @@ export async function createDesktopScenario({
     claudeAgent = await createProjectAgentThroughUi(control, {
       name: CLAUDE_AGENT_NAME,
       nativeRuntime: 'claude_code',
-      shellRuntime: 'ClaudeCode',
+      shellRuntime: 'Codex',
       systemMarker: CLAUDE_SYSTEM_MARKER,
     })
     assert.notEqual(codexAgent.id, claudeAgent.id)
@@ -1538,7 +1526,7 @@ export async function createDesktopScenario({
       assert.ok(serialized.includes(SKILL_NAME), `${agent} did not receive its configured Skill`)
       if (agent === 'codex') {
         assert.ok(
-          serialized.includes(PLUGIN_NAME) || serialized.includes(PLUGIN_CONTENT_MARKER),
+          serialized.includes(PLUGIN_CONTENT_MARKER),
           `${agent} did not receive its configured plugin Skill`
         )
       }

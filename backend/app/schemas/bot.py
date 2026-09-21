@@ -20,7 +20,7 @@ class BotCreate(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
-    capability_mode: str = "follow_device"
+    capability_mode: Optional[str] = None
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None

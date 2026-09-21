@@ -56,7 +56,7 @@ describe('createLocalAppServices', () => {
     resetLocalRuntimeChatStreamsForTests()
   })
 
-  test('loads project plugins from installed inventory when composer metadata is unavailable', async () => {
+  test('loads project plugins from installed inventory without the online app catalog', async () => {
     const api = codexPlugins.createLocalCodexPluginApi()
     const listApps = vi.fn().mockRejectedValue(new Error('Online app catalog unavailable'))
     const listInstalledPlugins = vi.fn().mockResolvedValue({ items: [] })
@@ -69,7 +69,7 @@ describe('createLocalAppServices', () => {
       const services = createLocalAppServices({ subscribe: vi.fn().mockResolvedValue(vi.fn()) })
       await expect(services.pluginApi!.listPlugins('local')).resolves.toEqual([])
       expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
-      expect(listApps).toHaveBeenCalledOnce()
+      expect(listApps).not.toHaveBeenCalled()
       listInstalledPlugins.mockRejectedValue(new Error('Installed inventory unavailable'))
       await expect(services.pluginApi!.listPlugins('local')).rejects.toThrow(
         'Installed inventory unavailable'

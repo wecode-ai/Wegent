@@ -156,7 +156,7 @@ export function createWeworkProjectAgentConfigurationHost(
       ? {
           supportsExistingAgentSelection: true,
           supportsCrossLocationAgentSelection: true,
-          renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
+          renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
@@ -164,6 +164,7 @@ export function createWeworkProjectAgentConfigurationHost(
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onCreated}
+                ownerOptions={ownerOptions}
                 pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />

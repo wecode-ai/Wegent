@@ -48,7 +48,7 @@ import type {
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
 import {
-  createWegentProjectAgentInput,
+  createSharedAgentBindingInput,
   ProjectAgentConfiguration,
 } from "../project-agent-config";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
@@ -110,11 +110,13 @@ const platformMessages = {
     chooseSpace: "选择使用空间",
     chooseSpaceHint: "空间只引用资源，不会改变资源的归属或存储位置。",
     createResourceAt: "新建资源",
-    createResourceAtHint: "选择存储位置；云端资源还需要选择个人或团队归属。",
+    createResourceAtHint: "选择保存在当前设备，还是保存到云端。",
     localWorkspaceResource: "本地空间",
     localWorkspaceResourceHint: "保存在当前设备的唯一本地空间中，可离线使用。",
     cloudPersonal: "云端个人资源",
     cloudPersonalHint: "保存在云端，仅你可见和管理，可跨设备使用。",
+    cloudGroups: "云端组资源",
+    cloudGroupsHint: "选择一个组，资源由组成员按权限共同管理。",
     cloudTeamHint: "保存在云端，由团队成员按权限共同管理。",
     noAvailableSpaces: "暂无可用空间",
     teamSpaceRequired: "请先创建此归属下的云端空间，再创建协作小组。",
@@ -304,13 +306,16 @@ const platformMessages = {
       "A space references the resource without changing its owner or storage location.",
     createResourceAt: "Create resource",
     createResourceAtHint:
-      "Choose where it is stored. Cloud resources also need a personal or team owner.",
+      "Choose whether to save on this device or in the cloud.",
     localWorkspaceResource: "Local space",
     localWorkspaceResourceHint:
       "Stored in this device's single local space and available offline.",
     cloudPersonal: "Cloud personal resource",
     cloudPersonalHint:
       "Stored in the cloud, visible only to you, and available across devices.",
+    cloudGroups: "Cloud group resource",
+    cloudGroupsHint:
+      "Choose a group. Members manage the resource according to their permissions.",
     cloudTeamHint:
       "Stored in the cloud and managed by team members according to permissions.",
     noAvailableSpaces: "No spaces available",
@@ -1174,7 +1179,9 @@ function ResourceCatalogPage({
     kind: ResourceCatalogKind,
     resourceId: string,
   ): Promise<void>;
-  onCreateAgent(namespace: string, ownerLabel: string): void;
+  onCreateAgent(
+    ownerOptions: Array<{ namespace: string; label: string }>,
+  ): void;
   onCreateDevice(source: ResourceSource, workspaceId?: string): void;
   onCreateLocalAgent(): void;
   onCreateTeam(workspaceId: string): void;
@@ -1296,62 +1303,88 @@ function ResourceCatalogPage({
       onSelect: cloudAccess.requestLogin,
     });
   } else if (kind === "devices") {
-    createOptions.push(
-      {
-        id: "default",
-        testId: "collaboration-devices-create-cloud-personal",
-        label: messages.cloudPersonal,
-        description: messages.cloudPersonalHint,
-        icon: <UserRound aria-hidden="true" />,
-        onSelect: () => onCreateDevice("cloud"),
-      },
-      ...cloudGroupWorkspaces.map((workspace) => ({
-        id: workspace.id,
-        testId: `collaboration-devices-create-workspace-${workspace.id}`,
-        label: workspace.name,
-        description: messages.cloudTeamHint,
+    createOptions.push({
+      id: "default",
+      testId: "collaboration-devices-create-cloud-personal",
+      label: messages.cloudPersonal,
+      description: messages.cloudPersonalHint,
+      icon: <UserRound aria-hidden="true" />,
+      onSelect: () => onCreateDevice("cloud"),
+    });
+    if (cloudGroupWorkspaces.length) {
+      createOptions.push({
+        id: "cloud-groups",
+        testId: "collaboration-devices-create-cloud-groups",
+        label: messages.cloudGroups,
+        description: messages.cloudGroupsHint,
         icon: <UsersRound aria-hidden="true" />,
-        onSelect: () => onCreateDevice("cloud", workspace.id),
-      })),
-    );
+        children: cloudGroupWorkspaces.map((workspace) => ({
+          id: workspace.id,
+          testId: `collaboration-devices-create-workspace-${workspace.id}`,
+          label: workspace.name,
+          description: messages.cloudTeamHint,
+          icon: <UsersRound aria-hidden="true" />,
+          onSelect: () => onCreateDevice("cloud", workspace.id),
+        })),
+      });
+    }
+  } else if (kind === "agents") {
+    createOptions.push({
+      id: "cloud",
+      testId: "collaboration-agents-create-cloud",
+      label: messages.cloudResources,
+      description: messages.cloudResourcesHint,
+      icon: <Cloud aria-hidden="true" />,
+      onSelect: () => onCreateAgent(resourceOwners),
+    });
   } else {
-    createOptions.push(
-      ...resourceOwners.map((owner) => {
-        const personal = owner.namespace === "default";
-        const workspace = cloudWorkspaces.find(
-          (candidate) => candidate.namespace === owner.namespace,
-        );
-        const disabled = kind === "teams" && !workspace;
-        return {
-          id: owner.namespace,
-          testId: personal
-            ? `collaboration-${kind}-create-cloud-personal`
-            : kind === "teams" && workspace
-              ? `collaboration-teams-create-workspace-${workspace.id}`
-              : `collaboration-${kind}-create-owner-${owner.namespace}`,
-          label: owner.label,
-          description: disabled
-            ? messages.teamSpaceRequired
-            : personal
-              ? messages.cloudPersonalHint
-              : messages.cloudTeamHint,
-          icon: personal ? (
-            <UserRound aria-hidden="true" />
-          ) : (
-            <UsersRound aria-hidden="true" />
-          ),
-          disabled,
-          onSelect: () => {
-            if (kind === "teams" && workspace) onCreateTeam(workspace.id);
-            else if (kind === "agents")
-              onCreateAgent(
-                owner.namespace,
-                personal ? messages.personalOwner : owner.label,
-              );
-          },
-        };
-      }),
+    const ownerDestinationOptions = resourceOwners.map((owner) => {
+      const personal = owner.namespace === "default";
+      const workspace = cloudWorkspaces.find(
+        (candidate) => candidate.namespace === owner.namespace,
+      );
+      const disabled = kind === "teams" && !workspace;
+      return {
+        id: owner.namespace,
+        testId: personal
+          ? `collaboration-${kind}-create-cloud-personal`
+          : kind === "teams" && workspace
+            ? `collaboration-teams-create-workspace-${workspace.id}`
+            : `collaboration-${kind}-create-owner-${owner.namespace}`,
+        label: owner.label,
+        description: disabled
+          ? messages.teamSpaceRequired
+          : personal
+            ? messages.cloudPersonalHint
+            : messages.cloudTeamHint,
+        icon: personal ? (
+          <UserRound aria-hidden="true" />
+        ) : (
+          <UsersRound aria-hidden="true" />
+        ),
+        disabled,
+        onSelect: () => {
+          if (kind === "teams" && workspace) onCreateTeam(workspace.id);
+        },
+      };
+    });
+    const personalOwner = ownerDestinationOptions.find(
+      (option) => option.id === "default",
     );
+    if (personalOwner) createOptions.push(personalOwner);
+    const groupOwners = ownerDestinationOptions.filter(
+      (option) => option.id !== "default",
+    );
+    if (groupOwners.length) {
+      createOptions.push({
+        id: "cloud-groups",
+        testId: `collaboration-${kind}-create-cloud-groups`,
+        label: messages.cloudGroups,
+        description: messages.cloudGroupsHint,
+        icon: <UsersRound aria-hidden="true" />,
+        children: groupOwners,
+      });
+    }
   }
   useEffect(() => {
     setSource(defaultSource);
@@ -1557,7 +1590,6 @@ function ResourceCatalogPage({
 
       <div className="collaboration-resource-catalog-toolbar">
         <div className="collaboration-resource-filter-stack">
-          <span>{messages.storageLocation}</span>
           <div
             className="collaboration-resource-source-filter"
             role="group"
@@ -1586,32 +1618,29 @@ function ResourceCatalogPage({
             ))}
           </div>
           {source === "cloud" ? (
-            <>
-              <span>{messages.resourceSource}</span>
-              <div
-                className="collaboration-resource-scope-filter"
-                role="group"
-                aria-label={messages.resourceSource}
-              >
-                {(["all", "mine", "shared"] as const).map((candidate) => (
-                  <button
-                    type="button"
-                    className={scope === candidate ? "active" : undefined}
-                    aria-pressed={scope === candidate}
-                    data-testid={`collaboration-${kind}-scope-${candidate}`}
-                    key={candidate}
-                    onClick={() => setScope(candidate)}
-                  >
-                    {candidate === "all"
-                      ? messages.allSources
-                      : candidate === "mine"
-                        ? messages.createdByMe
-                        : messages.teamShared}
-                    <em>{scopeCounts[candidate]}</em>
-                  </button>
-                ))}
-              </div>
-            </>
+            <div
+              className="collaboration-resource-scope-filter"
+              role="group"
+              aria-label={messages.resourceSource}
+            >
+              {(["all", "mine", "shared"] as const).map((candidate) => (
+                <button
+                  type="button"
+                  className={scope === candidate ? "active" : undefined}
+                  aria-pressed={scope === candidate}
+                  data-testid={`collaboration-${kind}-scope-${candidate}`}
+                  key={candidate}
+                  onClick={() => setScope(candidate)}
+                >
+                  {candidate === "all"
+                    ? messages.allSources
+                    : candidate === "mine"
+                      ? messages.createdByMe
+                      : messages.teamShared}
+                  <em>{scopeCounts[candidate]}</em>
+                </button>
+              ))}
+            </div>
           ) : null}
         </div>
         <label className="collaboration-resource-catalog-search">
@@ -2938,6 +2967,7 @@ export function CollaborationPlatformApp({
     source: ResourceSource;
     namespace: string;
     ownerLabel: string;
+    ownerOptions?: Array<{ namespace: string; label: string }>;
     resourceId?: string;
     teamId?: number;
   } | null>(null);
@@ -3348,12 +3378,15 @@ export function CollaborationPlatformApp({
           ownerOptions={host.workspaceOwnerOptions}
           messages={messages}
           onAddToWorkspace={bindRootResource}
-          onCreateAgent={(namespace, ownerLabel) =>
+          onCreateAgent={(ownerOptions) =>
             setRootAgentForm({
               mode: "create",
               source: "cloud",
-              namespace,
-              ownerLabel,
+              namespace: "default",
+              ownerLabel:
+                ownerOptions.find((owner) => owner.namespace === "default")
+                  ?.label ?? messages.personalOwner,
+              ownerOptions,
             })
           }
           onCreateDevice={(source, workspaceId) =>
@@ -3904,7 +3937,7 @@ export function CollaborationPlatformApp({
                       selectedAgents.map((agent) =>
                         api.agents.create(
                           project.id,
-                          createWegentProjectAgentInput(agent),
+                          createSharedAgentBindingInput(agent),
                         ),
                       ),
                     );
@@ -3945,6 +3978,7 @@ export function CollaborationPlatformApp({
       host.projectAgentConfiguration?.renderAgentCreator
         ? host.projectAgentConfiguration.renderAgentCreator({
             namespace: rootAgentForm.namespace,
+            ownerOptions: rootAgentForm.ownerOptions,
             workspaceName: rootAgentForm.ownerLabel,
             onClose: () => setRootAgentForm(null),
             onCreated: async () => {
