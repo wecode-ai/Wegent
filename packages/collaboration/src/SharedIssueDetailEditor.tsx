@@ -69,7 +69,6 @@ import type {
   CollaborationDefaultAssistant,
   CollaborationIssue,
   CollaborationMember,
-  CollaborationPriority,
   CollaborationProject,
   CollaborationStatus,
 } from "./types";
