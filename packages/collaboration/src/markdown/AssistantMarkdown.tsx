@@ -1,4 +1,4 @@
-import { FileReferenceIcon } from '../composer/FileReferenceIcon';
+import { FileReferenceIcon } from "../composer/FileReferenceIcon";
 import {
   Fragment,
   createContext,
@@ -14,7 +14,7 @@ import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from "react";
 import { Folder, Link2 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { ComposerLinkChip } from "./ComposerLinkChip";
-import { unescapeMarkdownReference } from '../composer/composerReference'
+import { unescapeMarkdownReference } from "../composer/composerReference";
 import "streamdown/styles.css";
 import {
   classifyMarkdownLink,
@@ -54,7 +54,8 @@ const WEWORK_MARKDOWN_FILE_LINK_PATH = "/markdown-file";
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`;
 const WEWORK_MARKDOWN_IMAGE_PATH = "/markdown-image";
 const WEWORK_MARKDOWN_IMAGE_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_IMAGE_PATH}?path=`;
-const MARKDOWN_LINK_PATTERN = /(!?)\[((?:\\[^\r\n]|[^\]\\\r\n])+)\]\(((?:\\[^\r\n]|[^)\\\r\n])+)\)/g;
+const MARKDOWN_LINK_PATTERN =
+  /(!?)\[((?:\\[^\r\n]|[^\]\\\r\n])+)\]\(((?:\\[^\r\n]|[^)\\\r\n])+)\)/g;
 const tableMarkdownRehypePlugins = createTableMarkdownRehypePlugins(
   restoreLocalMarkdownLinks,
 );
@@ -333,7 +334,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             <WindowedMarkdownChunk
               key={`markdown-${index}`}
               content={part.content}
-              eager={index === 0 || index === contentParts.length - 1}
+              eager={
+                isStreaming &&
+                (index === 0 || index === contentParts.length - 1)
+              }
             >
               <MarkdownStreamingContext.Provider
                 value={isStreaming && index === contentParts.length - 1}
@@ -628,7 +632,7 @@ function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(
     MARKDOWN_LINK_PATTERN,
     (match, imageMarker, label, rawHref) => {
-      const href = unescapeMarkdownReference(String(rawHref).trim())
+      const href = unescapeMarkdownReference(String(rawHref).trim());
       if (imageMarker) {
         const { destination, titleSuffix } =
           splitMarkdownImageDestination(href);
@@ -739,7 +743,13 @@ function getMarkdownFileOpenOptions(
 }
 
 function getMarkdownFileIcon(path: string): ReactNode {
-  return <FileReferenceIcon path={path} className="h-3.5 w-3.5 shrink-0" data-testid="assistant-markdown-link-icon" />;
+  return (
+    <FileReferenceIcon
+      path={path}
+      className="h-3.5 w-3.5 shrink-0"
+      data-testid="assistant-markdown-link-icon"
+    />
+  );
 }
 
 function AssistantMarkdownLink({

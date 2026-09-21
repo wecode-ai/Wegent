@@ -1125,6 +1125,58 @@ describe('MessageList', () => {
     expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
+  test('releases eager Markdown chunks after streaming completes', () => {
+    runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1600px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    const content = Array.from(
+      { length: 60 },
+      (_, index) => `### Completed section ${index + 1}\n\n${'content '.repeat(40)}\n`
+    ).join('\n')
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-completed-windowed',
+            role: 'assistant',
+            content,
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
+    expect(chunks.length).toBeGreaterThan(2)
+    expect(
+      chunks.every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+
+    act(() => {
+      intersectionCallbacks.at(-1)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+
+    expect(chunks.at(-1)?.querySelector('[data-markdown-window-placeholder]')).toBeNull()
+    expect(chunks[0].querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
+  })
+
   test('keeps message row containment during a plain text click', () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     getSelectionSpy.mockReturnValue({

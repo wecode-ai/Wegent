@@ -340,8 +340,6 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     CONCURRENT_MEMORY_TASK_COUNT,
     'The sidebar did not expose ten tasks'
   )
-  await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
-
   const samples = await captureStableTotalMemorySamples(control, 'running')
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
@@ -352,6 +350,7 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledSampleRangeKiB = memorySampleRangeKiB(settledWindow)
+  await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
 
   const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
