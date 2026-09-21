@@ -4838,8 +4838,6 @@
     "failed": "Could not update notifications. Try again.",
     "loading": "Loading…",
     "empty": "No notifications yet",
-    "assignment_title": "Issue assigned to you",
-    "assignment_body": "{{assigner}} assigned “{{item}}” on the “{{project}}” board to you",
     "unread": "Unread",
     "more": "Load more",
     "ask_title": "Notify the assignee?",

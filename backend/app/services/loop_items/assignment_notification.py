@@ -2,6 +2,7 @@
 
 from sqlalchemy.orm import Session
 
+from app.services.notification_copy import assignment_copy
 from app.services.wework_notifications import create_notification
 
 
@@ -16,13 +17,18 @@ def notify_project_task_assignee(
     item_title: str,
     assigner_name: str,
 ) -> None:
+    copy = assignment_copy(
+        assigner_name=assigner_name,
+        item_title=item_title,
+        project_name=project_name,
+    )
     create_notification(
         db,
         user_id=user_id,
         actor_user_id=actor_user_id,
         kind="assignment",
-        title="看板任务分配",
-        body=f"{assigner_name} 将「{project_name}」看板的「{item_title}」分配给了你",
+        title=copy.title,
+        body=copy.body,
         project_id=project_id,
         item_id=item_id,
         payload={

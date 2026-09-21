@@ -122,6 +122,7 @@ async def deliver_notification(notification_id: str) -> None:
                     db,
                     session,
                     notification.body,
+                    title=notification.title,
                     url=notification.url,
                 )
                 if not result.get("success"):

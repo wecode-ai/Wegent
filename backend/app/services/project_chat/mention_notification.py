@@ -7,6 +7,7 @@ from app.models.delivery import CloudProject, LoopItem
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.project_chat import ProjectChatMention
+from app.services.notification_copy import mention_copy
 from app.services.wework_notifications import create_notification
 
 MENTION_KIND = "mention"
@@ -37,6 +38,13 @@ def notify_project_chat_mentions(
         return
 
     preview = _comment_preview(content)
+    item_title = item.title if item is not None else None
+    copy = mention_copy(
+        actor_name=actor_name,
+        item_title=item_title,
+        project_name=project.name,
+        preview=preview,
+    )
     for recipient_id in _mentioned_member_ids(mentions, member_ids):
         if recipient_id == actor_user_id:
             continue
@@ -45,15 +53,15 @@ def notify_project_chat_mentions(
             user_id=recipient_id,
             actor_user_id=actor_user_id,
             kind=MENTION_KIND,
-            title=f"{actor_name} 在评论中提到了你",
-            body=f"{preview}\n\n—— {actor_name}",
+            title=copy.title,
+            body=copy.body,
             project_id=str(project.id),
             item_id=item.id if item is not None else None,
             payload={
                 "projectId": str(project.id),
                 "projectName": project.name,
                 "itemId": item.id if item is not None else None,
-                "itemTitle": item.title if item is not None else None,
+                "itemTitle": item_title,
                 "actorName": actor_name,
                 "commentPreview": preview,
             },

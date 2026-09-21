@@ -14,6 +14,11 @@ from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.session_service import im_session_service
+from app.services.notification_copy import (
+    RUNTIME_REPLY_HINT,
+    notification_message,
+    runtime_update_copy,
+)
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -33,7 +38,6 @@ SENSITIVE_CONFIG_KEYS = {
     "encoding_aes_key",
     "bot_token",
 }
-DINGTALK_RUNTIME_REPLY_HINT = "引用本通知回复，即可继续该任务。"
 NOTIFICATION_LINK_LABEL = "查看详情"
 
 
@@ -83,12 +87,12 @@ class IMNotificationDispatcher:
             user_id=user_id,
             address=address,
         )
-        message = _runtime_task_update_message(
-            title=title,
-            local_task_id=str(address.get("localTaskId") or "本地任务"),
+        copy = runtime_update_copy(
+            task_title=title or str(address.get("localTaskId") or "本地任务"),
             status=status,
             content=content,
         )
+        message = notification_message(copy.title, copy.body)
         return await self._send_to_sessions(
             db,
             sessions,
@@ -171,17 +175,19 @@ class IMNotificationDispatcher:
         session: IMPrivateSession,
         text: str,
         *,
+        title: str = "",
         url: str = "",
         link_label: str = NOTIFICATION_LINK_LABEL,
     ) -> dict[str, Any]:
         """Send one inbox notification, linking it when the channel supports it.
 
-        DingTalk renders markdown links, so the destination stays clickable
-        there. Other channels receive the address as plain text.
+        The headline is kept with the body so a pushed notification mirrors the
+        inbox row it came from: DingTalk bolds it above a clickable link, other
+        channels receive the two as plain text followed by the address.
         """
 
         if not url:
-            return await self.send_text(db, session, text)
+            return await self.send_text(db, session, notification_message(title, text))
         try:
             channel = self._get_channel(db, session.channel_id)
             if channel is None:
@@ -202,8 +208,11 @@ class IMNotificationDispatcher:
                     markdown=True,
                     url=url,
                     link_label=link_label,
+                    headline=title,
                 )
-            return await self.send_text(db, session, f"{text}\n\n{url}")
+            return await self.send_text(
+                db, session, f"{notification_message(title, text)}\n\n{url}"
+            )
         except Exception as exc:
             logger.exception(
                 "[IMNotificationDispatcher] Failed to send notification link: "
@@ -268,7 +277,7 @@ class IMNotificationDispatcher:
         for session in _dedupe_sessions(sessions):
             outbound_message = message
             if runtime_task is not None and session.channel_type == "dingtalk":
-                outbound_message = f"{message}\n\n{DINGTALK_RUNTIME_REPLY_HINT}"
+                outbound_message = f"{message}\n\n{RUNTIME_REPLY_HINT}"
             result = await self.send_text(db, session, outbound_message)
             result.setdefault("session_key", session.session_key)
             results.append(result)
@@ -312,6 +321,7 @@ class IMNotificationDispatcher:
         markdown: bool = False,
         url: str = "",
         link_label: str = NOTIFICATION_LINK_LABEL,
+        headline: str = "",
     ) -> dict[str, Any]:
         from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
@@ -336,11 +346,13 @@ class IMNotificationDispatcher:
 
         sender = DingTalkRobotSender(client_id, client_secret)
         if markdown:
-            title = _notification_preview_title(text)
+            content = f"**{headline}**\n\n{text}" if headline else text
+            if url:
+                content = f"{content}\n\n[{link_label}]({url})"
             result = await sender.send_markdown_message(
                 user_ids=[recipient_id],
-                title=title,
-                text=text if not url else f"{text}\n\n[{link_label}]({url})",
+                title=_notification_preview_title(headline or text),
+                text=content,
             )
         else:
             result = await sender.send_text_message(
@@ -524,27 +536,6 @@ def _notification_db_session() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-
-def _runtime_task_update_message(
-    *,
-    title: str,
-    local_task_id: str,
-    status: str,
-    content: str,
-) -> str:
-    task_title = title or local_task_id or "本地任务"
-    if status == "waiting_user_input":
-        body = content or "任务需要你的输入或确认后才能继续。"
-        return f"任务「{task_title}」需要你确认：\n\n{body}"
-    if status in {"failed", "FAILED"}:
-        body = content or "任务执行失败。"
-        return f"任务「{task_title}」执行失败：\n\n{body}"
-    if status in {"cancelled", "CANCELLED"}:
-        return f"任务「{task_title}」已取消。"
-
-    body = content or "任务有新的更新，请打开 Wework 查看完整对话。"
-    return f"任务「{task_title}」有新的 AI 回复：\n\n{body}"
 
 
 im_notification_dispatcher = IMNotificationDispatcher()

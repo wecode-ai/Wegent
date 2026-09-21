@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem
 from app.models.loop_item_execution import LoopItemExecution
+from app.services.notification_copy import NotificationCopy, detail_with_board
 from app.services.wework_notifications import create_notification
 
 logger = logging.getLogger(__name__)
@@ -64,14 +65,19 @@ def _notify_execution_lifecycle(
     if project is None:
         return
 
-    title, body = _notification_copy(item, status=status, content=content)
+    copy = _notification_copy(
+        item,
+        status=status,
+        content=content,
+        project_name=project.name,
+    )
     create_notification(
         db,
         user_id=int(recipient_id),
         actor_user_id=int(execution.executor_owner_user_id or recipient_id),
         kind=EXECUTION_KIND,
-        title=title,
-        body=body,
+        title=copy.title,
+        body=copy.body,
         project_id=str(project.id),
         item_id=item.id,
         payload={
@@ -90,27 +96,37 @@ def _notification_copy(
     *,
     status: str,
     content: str,
-) -> tuple[str, str]:
+    project_name: str | None = None,
+) -> NotificationCopy:
     item_title = item.title or "任务"
     if status == "pending_approval":
-        return (
+        return _board_copy(
             f"「{item_title}」等待你审批",
             "机器人任务已进入队列，需要你确认后才会开始执行。",
+            project_name,
         )
     if status == "waiting_runtime":
-        return (
+        return _board_copy(
             f"「{item_title}」需要选择运行设备",
             "任务已就绪，选择设备和模型后即可开始执行。",
+            project_name,
         )
     if status in {"failed", "cancelled"}:
         body = content.strip() or (
             "任务执行失败。" if status == "failed" else "任务已取消。"
         )
-        return (f"「{item_title}」执行未成功", body)
+        return _board_copy(f"「{item_title}」执行未成功", body, project_name)
     if status == "completed":
         body = content.strip() or "任务已完成，请打开任务查看结果。"
-        return (f"「{item_title}」已完成", body)
-    return (
+        return _board_copy(f"「{item_title}」已完成", body, project_name)
+    return _board_copy(
         f"「{item_title}」已开始执行",
-        f"{item.title or '任务'} 已进入执行，完成后会再次通知你。",
+        f"{item_title} 已进入执行，完成后会再次通知你。",
+        project_name,
     )
+
+
+def _board_copy(title: str, detail: str, project_name: str | None) -> NotificationCopy:
+    """Attach the board to an execution notice so it reads like every other one."""
+
+    return NotificationCopy(title=title, body=detail_with_board(detail, project_name))

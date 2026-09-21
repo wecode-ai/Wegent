@@ -204,19 +204,9 @@ function ConnectedNotificationCenter({ baseUrl, token }: { baseUrl: string; toke
               )}
               onClick={() => openNotification(notification)}
             >
-              <span className="block text-sm font-medium">
-                {notification.kind === 'assignment'
-                  ? t('notifications.assignment_title')
-                  : notification.title}
-              </span>
+              <span className="block text-sm font-medium">{notification.title}</span>
               <span className="mt-1 block whitespace-pre-wrap text-sm text-text-primary">
-                {notification.kind === 'assignment'
-                  ? t('notifications.assignment_body', {
-                      assigner: notification.payload.assignerName,
-                      project: notification.payload.projectName,
-                      item: notification.payload.itemTitle,
-                    })
-                  : notification.body}
+                {notification.body}
               </span>
               <span className="mt-1 block text-xs text-text-secondary">
                 {!notification.read_at && `${t('notifications.unread')} · `}

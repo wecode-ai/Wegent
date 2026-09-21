@@ -512,7 +512,7 @@ async def run() -> None:
         assert notification_harness.messages == [
             (
                 session_key,
-                "任务「CI notification task」有新的 AI 回复：\n\n"
+                "任务「CI notification task」有新的 AI 回复\n\n"
                 "CI runtime update\n\n"
                 "引用本通知回复，即可继续该任务。",
             )

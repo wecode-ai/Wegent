@@ -268,6 +268,7 @@ async def test_im_receives_message_even_when_live_push_fails(
     ):
         await deliver_notification(row.id)
     assert send.call_args.args[2] == "Review failed"
+    assert send.call_args.kwargs["title"] == "Review"
     assert send.call_args.kwargs["url"] == row.url
 
 
