@@ -123,7 +123,7 @@ async function initPostHog(): Promise<void> {
     disable_compression: import.meta.env.VITE_WEWORK_E2E === 'true',
     disableDeviceModel: true,
     disable_session_recording: true,
-    advanced_disable_feature_flags: true,
+    advanced_disable_flags: true,
     opt_out_persistence_by_default: true,
     persistence: 'localStorage',
     person_profiles: 'never',
@@ -319,7 +319,6 @@ async function initialize(): Promise<void> {
   initializing = Promise.allSettled([initPostHog(), initSentry()]).then(() => {
     initialized = true
     initializing = null
-    flushQueuedEvents()
   })
   return initializing
 }
@@ -375,6 +374,8 @@ export async function installTelemetry(initiallyEnabled: boolean): Promise<void>
   setTelemetryEnabledFlag(initiallyEnabled)
   if (!enabled) return
   await initialize()
+  posthog?.opt_in_capturing()
+  flushQueuedEvents()
 }
 
 export function track<EventName extends AnalyticsEventName>(
@@ -440,6 +441,7 @@ async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   if (nextEnabled) {
     await initialize()
     posthog?.opt_in_capturing()
+    flushQueuedEvents()
     track('telemetry_preference_changed', { enabled: true })
     return
   }

@@ -238,8 +238,10 @@ describe('telemetry client', () => {
     const { installTelemetry } = await import('./client')
     await installTelemetry(true)
 
+    expect(posthogMocks.optIn).toHaveBeenCalledTimes(1)
     expect(posthogMocks.init.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
+        advanced_disable_flags: true,
         opt_out_persistence_by_default: true,
         person_profiles: 'never',
         request_batching: true,
