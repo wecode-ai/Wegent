@@ -112,7 +112,7 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('execution_target')
   })
 
-  test('drops unrecognized AI model and provider values', async () => {
+  test('keeps the catalog model name and drops malformed model names and providers', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
 
@@ -120,7 +120,7 @@ describe('telemetry client', () => {
       $ai_generation_id: 'd9222e05-8708-41b8-98ea-d4a21849e761',
       $ai_trace_id: telemetryTraceId('task-42'),
       $ai_parent_id: telemetryTraceId('task-42'),
-      $ai_model: '私人 prompt 内容' as never,
+      $ai_model: 'ali-deepseek-v3.1(国内)',
       $ai_provider: 'https://user.example.com/secret?token=abc' as never,
       $ai_latency: 1.5,
       result: 'success',
@@ -129,8 +129,30 @@ describe('telemetry client', () => {
     await flushPostHogCaptures()
 
     const call = posthogMocks.capture.mock.calls.find(call => call[0] === '$ai_generation')
-    expect(call?.[1]).not.toHaveProperty('$ai_model')
+    expect(call?.[1].$ai_model).toBe('ali-deepseek-v3.1(国内)')
     expect(call?.[1]).not.toHaveProperty('$ai_provider')
+  })
+
+  test('drops an AI model name that is not a single bounded line', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    for (const $ai_model of ['gpt-4o\n$set', 'm'.repeat(129)]) {
+      track('$ai_generation', {
+        $ai_generation_id: 'd9222e05-8708-41b8-98ea-d4a21849e761',
+        $ai_trace_id: telemetryTraceId('task-42'),
+        $ai_parent_id: telemetryTraceId('task-42'),
+        $ai_model,
+        $ai_provider: 'openai',
+        $ai_latency: 1.5,
+        result: 'success',
+      })
+
+      await flushPostHogCaptures()
+
+      const call = posthogMocks.capture.mock.calls.at(-1)
+      expect(call?.[1]).not.toHaveProperty('$ai_model')
+    }
   })
 
   test('captures $ai_trace start and end with bounded properties', async () => {

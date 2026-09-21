@@ -337,7 +337,10 @@ type PropertyValueConstraint<Property> =
   | ReadonlyArray<Property>
   | { enum?: ReadonlyArray<Property>; maxLength?: number; pattern?: RegExp }
 
-const SAFE_LABEL_PATTERN = /^[A-Za-z0-9._+-]+$/
+// `$ai_model` carries the model name from the app's model catalog, so it can be
+// non-ASCII (`ali-deepseek-v3.1(国内)`); the bound is a single-line string
+// instead of an ASCII label.
+const MODEL_NAME_PATTERN = /^[^\p{Cc}]+$/u
 
 // telemetryTraceId() hashes produce `t-<base36>`; requiring that prefix at the
 // boundary means an un-hashed raw task id can never be transmitted as a trace
@@ -365,7 +368,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     $ai_generation_id: { maxLength: 128, pattern: TELEMETRY_GENERATION_ID_PATTERN },
     $ai_trace_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
     $ai_parent_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
-    $ai_model: { maxLength: 128, pattern: SAFE_LABEL_PATTERN },
+    $ai_model: { maxLength: 128, pattern: MODEL_NAME_PATTERN },
     $ai_provider: KNOWN_AI_PROVIDERS,
     result: ['success', 'failure', 'cancelled'],
   },
