@@ -24,6 +24,21 @@ function searchItem(title: string, snippet: string) {
 }
 
 describe('WorkbenchSearchDialog', () => {
+  test('closes with Escape after focus leaves the search input', async () => {
+    const onClose = vi.fn()
+    render(
+      <WorkbenchSearchDialog
+        open
+        onClose={onClose}
+        onSearchRuntimeWork={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+    screen.getByTestId('workbench-search-close-button').focus()
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   afterEach(() => {
     vi.useRealTimers()
   })

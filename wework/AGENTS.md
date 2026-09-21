@@ -115,3 +115,4 @@ pnpm --filter wework ai:verify stop --session <session-path>
 
 - Keep the local runtime and desktop UI isolated from a developer's normal Codex home. Do not copy or log credentials.
 - Local coding tasks and desktop workbench behavior must remain functional when the cloud connection is unavailable; do not hide primary-path state or synchronization bugs behind fallback behavior.
+- Keep project-space conversation semantics identical for cloud and local projects. Each top-level activity comment owns one independent executor session; replies inside that activity thread continue the owning session; a new top-level comment starts a new session. Cloud and local implementations may differ in storage and dispatch, but must not differ in these user-visible session boundaries.

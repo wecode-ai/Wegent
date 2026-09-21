@@ -937,6 +937,13 @@ fn connection_snapshot_from_config(config: &LocalBackendConfig) -> Option<Connec
 }
 
 fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {
+    if request.is_local_project() {
+        request.clear_backend_credentials();
+        if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
+            request.device_id = Some(config.device_id.clone());
+        }
+        return;
+    }
     if request
         .backend_url
         .as_deref()
