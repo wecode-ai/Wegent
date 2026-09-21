@@ -68,8 +68,8 @@ jest.mock('@/contexts/SocketContext', () => ({
   }),
 }))
 
-jest.mock('@wecode/hooks', () => ({
-  useAdminDeviceMonitorVncExtension: () => ({
+jest.mock('@extensions/admin-device-monitor', () => ({
+  useAdminDeviceMonitorExtension: () => ({
     renderAction: () => null,
     renderPanel: () => null,
   }),

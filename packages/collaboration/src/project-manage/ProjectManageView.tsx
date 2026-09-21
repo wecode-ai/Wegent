@@ -409,6 +409,17 @@ export function ProjectManageView<
       setMembers((current) => [...current, member]);
       setMemberQuery("");
       host.trackCompleted("member_invite");
+      try {
+        const nextMembers = await api.listMembers(scope.projectId);
+        if (projectScopeRef.current !== scope) return;
+        setMembers(nextMembers);
+      } catch (cause) {
+        if (projectScopeRef.current !== scope) return;
+        reportError(
+          cause,
+          host.translate("todo.load_project_failed", "加载项目失败"),
+        );
+      }
     } catch (cause) {
       if (projectScopeRef.current !== scope) return;
       host.trackFailed();

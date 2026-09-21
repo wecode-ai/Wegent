@@ -1,11 +1,11 @@
 import { Monitor } from 'lucide-react'
 
 import { DeviceActionButton } from '@/components/settings/DeviceActionButton'
-import type { CloudDesktopActionProps } from '@/extensions/cloud-desktop-contract'
+import type { DeviceSurfaceActionProps } from '@/extensions/device-surface-contract'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useCloudDesktopLaunch } from './useCloudDesktopLaunch'
 
-export function VncDesktopButton({ deviceId, disabled, onOpened }: CloudDesktopActionProps) {
+export function VncDesktopButton({ deviceId, disabled, onOpened }: DeviceSurfaceActionProps) {
   const { t } = useTranslation('vnc')
   const launch = useCloudDesktopLaunch({
     contextKey: `connection:${deviceId}`,

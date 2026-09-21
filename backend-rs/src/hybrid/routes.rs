@@ -99,7 +99,7 @@ mod tests {
         collect!(__http_registry_remote_workspace_tree);
         assert!(selected.is_subset(&registered));
         assert!(selected.contains(&("GET".to_owned(), "/api/quota".to_owned())));
-        assert!(selected.contains(&("GET".to_owned(), "/api/quota/*path".to_owned())));
+        assert!(!selected.contains(&("GET".to_owned(), "/api/quota/*path".to_owned())));
 
         let table = load(&path).unwrap();
         for (method, path) in &selected {

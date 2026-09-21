@@ -4,6 +4,13 @@ import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbe
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
 
+const extensionCommandRouting = vi.hoisted(() =>
+  vi.fn((commandKey: string) => commandKey === 'extension_command')
+)
+vi.mock('@extensions/device-command-routing', () => ({
+  shouldUseCloudDeviceCommand: extensionCommandRouting,
+}))
+
 const mocks = vi.hoisted(() => {
   const localCreateRuntimeTask = vi.fn()
   const cloudCreateRuntimeTask = vi.fn()
@@ -1187,6 +1194,25 @@ describe('createHybridWorkbenchServices', () => {
       'cloud-device'
     )
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('routes extension commands through the Backend command API', async () => {
+    mocks.cloudServices.deviceApi.executeCommand.mockResolvedValueOnce({
+      success: true,
+      exit_code: 0,
+      stdout: '',
+      stderr: '',
+    })
+    const services = createServices()
+
+    await services.deviceApi.executeCommand('cloud-device', {
+      command_key: 'extension_command',
+    })
+
+    expect(mocks.cloudServices.deviceApi.executeCommand).toHaveBeenCalledWith('cloud-device', {
+      command_key: 'extension_command',
+    })
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
   })
 
   it('resolves an uncached cloud executor before running workspace commands', async () => {

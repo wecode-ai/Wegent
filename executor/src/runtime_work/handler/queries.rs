@@ -44,7 +44,6 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn list_tasks(&self, payload: &Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
-        let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
         let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
@@ -60,6 +59,17 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
+        self.list_tasks_with_project_index(payload, &project_index, started_at)
+            .await
+    }
+
+    pub(super) async fn list_tasks_with_project_index(
+        &self,
+        payload: &Value,
+        project_index: &CodexGlobalProjectIndex,
+        started_at: Instant,
+    ) -> Result<Value, AppIpcError> {
+        let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         let stage_started_at = Instant::now();
         let collected_links = if prefer_cached {
             self.collect_cached_links(false)
@@ -76,7 +86,7 @@ impl RuntimeWorkRpcHandler {
             &[("links", collected_links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let links = self.visible_links_for_projects(collected_links, &project_index);
+        let links = self.visible_links_for_projects(collected_links, project_index);
         log_runtime_work_list_diagnostic(
             "project_filter_applied",
             started_at,
@@ -84,7 +94,7 @@ impl RuntimeWorkRpcHandler {
             &[("visible_links", links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
+        let workspaces = workspace_response(links, codex_project_workspaces(project_index));
         let task_count = workspaces
             .iter()
             .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
@@ -247,6 +257,9 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
+        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
+            .or_else(|| bool_field(&payload, "conversation_context_only"))
+            .unwrap_or(false);
         let navigation_only = bool_field(&payload, "navigationOnly")
             .or_else(|| bool_field(&payload, "navigation_only"))
             .unwrap_or(false);
@@ -359,6 +372,9 @@ impl RuntimeWorkRpcHandler {
                         false,
                         false,
                     );
+                    if conversation_context_only {
+                        project_conversation_context_messages(&mut messages);
+                    }
                     log_runtime_transcript_finished(RuntimeTranscriptLog {
                         started_at,
                         local_task_id: &local_task_id,
@@ -389,7 +405,10 @@ impl RuntimeWorkRpcHandler {
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
         }) {
-            let messages = cached_runtime_transcript_messages(link);
+            let mut messages = cached_runtime_transcript_messages(link);
+            if conversation_context_only {
+                project_conversation_context_messages(&mut messages);
+            }
             log_runtime_transcript_finished(RuntimeTranscriptLog {
                 started_at,
                 local_task_id: &local_task_id,
@@ -440,6 +459,7 @@ impl RuntimeWorkRpcHandler {
                 running: local_execution_running,
                 pagination,
                 full_content: include_full_content,
+                conversation_context_only,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
                 turn_navigation: Vec::new(),
             }));
@@ -615,6 +635,7 @@ impl RuntimeWorkRpcHandler {
                 },
             },
             full_content: include_full_content,
+            conversation_context_only,
             turn_item_source: TranscriptTurnItemSource::CodexItems,
             turn_navigation,
         });

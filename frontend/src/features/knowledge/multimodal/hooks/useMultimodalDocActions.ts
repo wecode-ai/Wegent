@@ -11,7 +11,6 @@
  * - handleReanalyze event handler
  * - handleMultimodalDownload (routes videos to the knowledge-base video-download endpoint)
  *
- * Pattern follows useDeviceVncState.
  */
 
 import { useCallback } from 'react'

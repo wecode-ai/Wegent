@@ -230,7 +230,9 @@ export function ProjectExecutionEnvironments({
     setConfigVersion(incomingVersion);
     setDeviceStates(incomingDevices);
     const errorKey = environmentErrorDeviceKey.current;
-    setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? "") : "");
+    setEnvironmentError(
+      errorKey ? (incomingDevices[errorKey]?.error ?? "") : "",
+    );
   }, [incomingVersion, incomingDevices]);
 
   const loadRepositoryOptions = useCallback(async () => {
@@ -551,7 +553,7 @@ export function ProjectExecutionEnvironments({
       setEnvironmentError(
         translate(
           "todo.execution_environment_primary_repository_required",
-          "请先为主仓库选择 Git 仓库，再创建环境。",
+          "请先为主仓库选择 Git 仓库，再初始化环境。",
         ),
       );
       return;
@@ -639,8 +641,8 @@ export function ProjectExecutionEnvironments({
               ? "todo.workspace_execution_environments_description"
               : "todo.project_execution_environments_description",
             isWorkspaceScope
-              ? "管理空间级环境配置，并在在线设备上创建可供项目复用的执行环境。"
-              : "管理项目环境配置，并在在线设备上创建实际的执行环境。",
+              ? "管理空间级环境配置，并在在线设备上初始化可供项目复用的执行环境。"
+              : "管理项目环境配置，并在在线设备上初始化执行环境。",
           )}
         </p>
 
@@ -655,7 +657,7 @@ export function ProjectExecutionEnvironments({
             <p className="mt-1 text-sm text-text-muted">
               {translate(
                 "todo.execution_environment_configuration_description",
-                "定义创建执行环境时使用的代码来源和初始化命令。",
+                "定义初始化执行环境时使用的代码来源和初始化命令。",
               )}
             </p>
 
@@ -1165,7 +1167,8 @@ export function ProjectExecutionEnvironments({
                     const deviceState = deviceStates[deviceKey];
                     const isPreparingDevice =
                       initializingDeviceId === environment.device_id;
-                    const hasEnvironment = isPreparingDevice || deviceState != null;
+                    const hasEnvironment =
+                      isPreparingDevice || deviceState != null;
                     const instanceStatus = isPreparingDevice
                       ? "preparing"
                       : deviceState?.status === "ready"
@@ -1214,16 +1217,16 @@ export function ProjectExecutionEnvironments({
                             : instanceStatus === "preparing"
                               ? translate(
                                   "todo.execution_environment_preparing",
-                                  "正在创建环境",
+                                  "正在初始化环境",
                                 )
                               : instanceStatus === "error"
                                 ? translate(
                                     "todo.execution_environment_initialization_error",
-                                    "环境创建失败",
+                                    "环境初始化失败",
                                   )
                                 : translate(
                                     "todo.execution_environment_uninitialized",
-                                    "尚未创建环境",
+                                    "环境未初始化",
                                   )}
                         </span>
                         {canManage && environment.status === "online" ? (
@@ -1239,11 +1242,11 @@ export function ProjectExecutionEnvironments({
                             {hasEnvironment
                               ? translate(
                                   "todo.execution_environment_reinitialize",
-                                  "重新创建",
+                                  "重新初始化",
                                 )
                               : translate(
                                   "todo.execution_environment_create",
-                                  "创建环境",
+                                  "初始化环境",
                                 )}
                           </button>
                         ) : null}
@@ -1368,12 +1371,12 @@ export function ProjectExecutionEnvironments({
               <p className="text-sm text-text-muted">
                 {translate(
                   "todo.execution_environment_create_hint",
-                  "填写配置后，在一台在线设备上点击“创建环境”；创建过程会同时保存配置并完成初始化。",
+                  "填写配置后，在一台在线设备上点击“初始化环境”；初始化过程会同时保存配置。",
                 )}
               </p>
               {configSaved ? (
                 <span className="shrink-0 text-sm text-green-600" role="status">
-                  {translate("common.saved", "环境已创建")}
+                  {translate("common.saved", "环境已初始化")}
                 </span>
               ) : null}
             </div>

@@ -27,6 +27,7 @@ export function projectEnvelope({ catalog, distinctId, envelope, runtime } = {})
     $geoip_disable: true,
     ...eventProperties.value,
     event_schema_version: catalogEvent.eventSchemaVersion,
+    telemetry_source: 'internal_plugin',
     app_version: runtime.appVersion,
     platform: runtime.platform,
     release_channel: runtime.releaseChannel,

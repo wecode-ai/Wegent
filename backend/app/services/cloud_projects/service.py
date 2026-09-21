@@ -318,7 +318,8 @@ class CloudProjectService:
                 and values.execution_environment is not None
             ):
                 metadata["execution_environment"] = preparing_execution_environment(
-                    values.execution_environment.model_dump()
+                    values.execution_environment.model_dump(),
+                    metadata.get("execution_environment"),
                 )
                 updates.pop("execution_environment", None)
             if (

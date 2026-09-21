@@ -9,3 +9,14 @@ export function isWindowsDriveAbsolutePath(value: string): boolean {
 export function isAbsoluteWorkspacePath(value: string): boolean {
   return value.startsWith('/') || isWindowsDriveAbsolutePath(value)
 }
+
+export async function resolveHomeRelativeWorkspacePath(
+  path: string,
+  deviceId: string,
+  getHomeDirectory: (deviceId: string) => Promise<string>
+): Promise<string> {
+  if (!path.startsWith('~/')) return path
+  const home = (await getHomeDirectory(deviceId)).trim().replace(/\\/g, '/')
+  if (!isAbsoluteWorkspacePath(home)) throw new Error('Invalid device home directory')
+  return `${home.replace(/\/+$/, '')}/${path.slice(2)}`
+}

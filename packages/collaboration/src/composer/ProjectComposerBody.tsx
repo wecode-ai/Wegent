@@ -28,9 +28,9 @@ import {
   ProjectChatComposerSurface,
   PROJECT_CHAT_EDITOR_CLASS,
   PROJECT_CHAT_TOOLBAR_CLASS,
+  PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
   DOCUMENT_EDITOR_CLASS,
 } from './ProjectChatComposerSurface'
-import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
@@ -124,7 +124,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
     ref
   ) {
     const editorRef = useRef<ComposerInputHandle>(null)
-    const textareaRef = useAutoResizeTextarea(value, presentation === 'document' ? null : 112)
+    const textareaRef = useRef<HTMLElement>(null)
     const [hasText, setHasText] = useState(Boolean(value.trim()))
     const [isDraggingFiles, setDraggingFiles] = useState(false)
     const [transferError, setTransferError] = useState<string | null>(null)
@@ -196,6 +196,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       <>
         <ComposerErrorBanner error={transferError} />
         <ProjectChatComposerSurface
+          footer={renderToolbar({
+            canSend,
+            className: presentation === 'document' ? 'pt-3' : PROJECT_CHAT_TOOLBAR_CLASS,
+            onSubmit: submit,
+          })}
           presentation={presentation}
           workBar={workBar}
           canCollapseInShortPane={canCollapse}
@@ -284,6 +289,8 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
             onPasteFiles: onFileSelect,
             className:
               presentation === 'document' ? DOCUMENT_EDITOR_CLASS : PROJECT_CHAT_EDITOR_CLASS,
+            scrollContainerClassName:
+              presentation === 'document' ? undefined : PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
             sendKey,
             followUpBehavior,
             isStreaming,
@@ -303,11 +310,6 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
               onDismissInputLeadingContext()
               return true
             },
-          })}
-          {renderToolbar({
-            canSend,
-            className: presentation === 'document' ? 'pt-3' : PROJECT_CHAT_TOOLBAR_CLASS,
-            onSubmit: submit,
           })}
         </ProjectChatComposerSurface>
       </>

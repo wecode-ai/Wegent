@@ -55,6 +55,7 @@ test('projects an opened smart app with allowlisted runtime and app identity', (
         $geoip_disable: true,
         domain: 'smart_app',
         event_schema_version: 1,
+        telemetry_source: 'internal_plugin',
         app_version: '2.0.0',
         platform: 'mac',
         release_channel: 'stable',
@@ -77,6 +78,18 @@ test('projects a cloud email prefix as the PostHog distinct id', () => {
 
   assert.equal(projected.ok, true)
   assert.equal(projected.value.properties.distinct_id, 'cloud-user')
+})
+
+test('marks events emitted by the internal telemetry plugin', () => {
+  const projected = projectEnvelope({
+    catalog: eventCatalog,
+    distinctId: DISTICT_ID,
+    envelope: smartAppEnvelope(),
+    runtime: RUNTIME,
+  })
+
+  assert.equal(projected.ok, true)
+  assert.equal(projected.value.properties.telemetry_source, 'internal_plugin')
 })
 
 test('projects a plugin-enriched smart app name without requiring frontend context', () => {

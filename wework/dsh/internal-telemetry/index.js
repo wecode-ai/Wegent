@@ -1,21 +1,27 @@
 import { createBatchQueue } from './batch-queue.js'
 import { eventCatalog, INTERNAL_TELEMETRY_CATALOG_VERSION } from './catalog.js'
-import { loadTelemetryConfig } from './config.js'
 import { deriveDistinctId } from './identity.js'
 import { createPostHogClient } from './posthog-client.js'
 import { projectEnvelope } from './projection.js'
+import { createSmartAppRegistry } from './smart-app-registry.js'
 
 export const name = 'wework-internal-telemetry'
 export const inject = ['weworkDesktop', 'weworkPluginRuntime']
 export const TELEMETRY_SINK_PROTOCOL = 'telemetry-sink/v1'
 
 const PLUGIN_VERSION = '0.1.0'
+const POSTHOG_HOST = 'https://posthog.intra.weibo.com'
+const POSTHOG_PROJECT_KEY = 'phc_yVhzq3MARecWUuBmJJS3gdXbUWjLbdXjnqxa6V67DFsR'
+const RELEASE_CHANNEL = 'development'
+const REQUEST_TIMEOUT_MS = 5000
+const BATCH_SIZE = 20
+const FLUSH_INTERVAL_MS = 5000
+const MAX_QUEUE_SIZE = 500
 
 export async function apply(ctx) {
   await applyWithDependencies(ctx, {
     createBatchQueue,
     createPostHogClient,
-    loadConfig: loadTelemetryConfig,
     platform: process.platform,
   })
 }
@@ -25,36 +31,34 @@ export async function applyWithDependencies(
   {
     createBatchQueue: createQueue,
     createPostHogClient: createClient,
-    loadConfig,
+    createSmartAppRegistry: createRegistry = createSmartAppRegistry,
     logger = console,
     platform,
   }
 ) {
-  const config = await loadConfig()
   const metrics = {
     projected: 0,
     received: 0,
     rejected: 0,
   }
   let active = true
-  let enabled = config.public.enabled
-  let error = config.public.error
+  let enabled = true
+  let error = null
   let queue = null
   let runtime = null
+  const smartAppRegistry = createRegistry()
 
-  if (enabled) {
-    runtime = await resolveRuntime(ctx.weworkDesktop, config.public.releaseChannel, platform)
-    if (!runtime) {
-      enabled = false
-      error = 'runtime_unavailable'
-    }
+  runtime = await resolveRuntime(ctx.weworkDesktop, RELEASE_CHANNEL, platform)
+  if (!runtime) {
+    enabled = false
+    error = 'runtime_unavailable'
   }
 
   if (enabled) {
     const client = createClient({
-      host: config.private.posthogHost,
-      projectKey: config.private.posthogProjectKey,
-      timeoutMs: config.public.requestTimeoutMs,
+      host: POSTHOG_HOST,
+      projectKey: POSTHOG_PROJECT_KEY,
+      timeoutMs: REQUEST_TIMEOUT_MS,
       logger: {
         warn(_message, metadata) {
           logger?.warn?.('[wework-internal-telemetry] batch failed', {
@@ -65,9 +69,9 @@ export async function applyWithDependencies(
     })
     queue = createQueue({
       sendBatch: events => client.sendBatch(events),
-      batchSize: config.public.batchSize,
-      flushIntervalMs: config.public.flushIntervalMs,
-      maxQueueSize: config.public.maxQueueSize,
+      batchSize: BATCH_SIZE,
+      flushIntervalMs: FLUSH_INTERVAL_MS,
+      maxQueueSize: MAX_QUEUE_SIZE,
       retryDelaysMs: [1000, 5000, 30000],
     })
   } else {
@@ -99,7 +103,7 @@ export async function applyWithDependencies(
     }
   }
 
-  async function accept({ envelope, identity } = {}) {
+  async function accept({ envelope, identity, smartAppInstallationId } = {}) {
     if (!active || !enabled || !queue || !runtime) {
       return { accepted: false, reason: 'disabled' }
     }
@@ -108,10 +112,7 @@ export async function applyWithDependencies(
     let distinctId
     try {
       const hostIdentity = await readCloudIdentity(ctx.weworkDesktop)
-      distinctId = deriveDistinctId(
-        hostIdentity ?? identity ?? envelope?.context?.user,
-        config.private.identityHmacKey
-      )
+      distinctId = deriveDistinctId(hostIdentity ?? identity ?? envelope?.context?.user)
     } catch {
       metrics.rejected += 1
       return { accepted: false, reason: 'identity_unavailable' }
@@ -119,10 +120,15 @@ export async function applyWithDependencies(
 
     let projected
     try {
+      const enrichedEnvelope = await enrichSmartAppEnvelope(
+        envelope,
+        smartAppInstallationId,
+        smartAppRegistry
+      )
       projected = projectEnvelope({
         catalog: eventCatalog,
         distinctId,
-        envelope,
+        envelope: enrichedEnvelope,
         runtime,
       })
     } catch {
@@ -153,6 +159,33 @@ export async function applyWithDependencies(
       rejected: metrics.rejected,
       ...queueStatus,
     }
+  }
+}
+
+async function enrichSmartAppEnvelope(envelope, installationId, registry) {
+  if (
+    !isRecord(envelope) ||
+    isRecord(envelope.context?.smartApp) ||
+    !isBoundedString(installationId) ||
+    !registry
+  ) {
+    return envelope
+  }
+
+  let smartApp
+  try {
+    smartApp = await registry.find(installationId)
+  } catch {
+    return envelope
+  }
+  if (!isSmartAppIdentity(smartApp)) return envelope
+
+  return {
+    ...envelope,
+    context: {
+      ...(isRecord(envelope.context) ? envelope.context : {}),
+      smartApp,
+    },
   }
 }
 
@@ -187,6 +220,24 @@ async function resolveRuntime(desktop, releaseChannel, platform) {
   } catch {
     return null
   }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isBoundedString(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+}
+
+function isSmartAppIdentity(value) {
+  return (
+    isRecord(value) &&
+    isBoundedString(value.key) &&
+    isBoundedString(value.name) &&
+    isBoundedString(value.version) &&
+    ['managed', 'linked', 'market'].includes(value.source)
+  )
 }
 
 function mapPlatform(value) {
