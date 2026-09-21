@@ -166,6 +166,133 @@ test('uploads a native snapshot and persists only its locator', async () => {
   assert.equal(upload.fileContent, 'native-codex-state')
 })
 
+test('reuploads the same native segment when its commit was already recorded', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    transcriptId: 'shared',
+    taskId: 'shared',
+    baseSequence: 0,
+    cloudSequence: 1,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const requests = []
+  const acknowledgements = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source,
+    state: state(),
+    target: {
+      async acknowledge(value) {
+        acknowledgements.push(value)
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.file) {
+            request.fileContent = await readFile(request.file.path, 'utf8')
+          }
+          requests.push(request)
+          if (request.path.endsWith('/lease')) {
+            return { status: 200, body: { fencingToken: 2, currentSequence: 1 } }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.endsWith('/segments')) {
+            return { status: 200, body: { currentSequence: 1, appended: 0 } }
+          }
+          return { status: 200, body: { released: true } }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  assert.equal(acknowledgements.length, 1)
+  const upload = requests.find(request => request.path.endsWith('/segments'))
+  assert.equal(upload.body.turnId, pending.turnId)
+  assert.equal(upload.body.sequence, 1)
+  assert.equal(upload.fileContent, 'native-codex-state')
+  assert.equal(
+    requests.some(
+      request =>
+        request.path === '/wework-transcripts/shared' ||
+        request.path.startsWith('/wework-transcripts/shared/turns')
+    ),
+    false
+  )
+})
+
+test('retries a pending delta as a snapshot when the cloud recovery chain is missing', async () => {
+  const source = await segmentSource()
+  const pending = turn({
+    sequence: 2,
+    turnId: 'turn-2',
+    baseSequence: 1,
+    cloudSequence: 2,
+  })
+  const outbox = new MemorySyncOutbox([pending])
+  const uploads = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox,
+    source,
+    state: state(),
+    target: { async acknowledge() {} },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path.endsWith('/lease')) {
+            return { status: 200, body: { fencingToken: 3, currentSequence: 1 } }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.endsWith('/segments')) {
+            uploads.push(structuredClone(request.body))
+            if (uploads.length === 1) {
+              return {
+                status: 409,
+                body: {
+                  detail: {
+                    code: 'snapshot_required',
+                    message: 'The cloud transcript recovery chain is incomplete',
+                  },
+                },
+              }
+            }
+            return { status: 200, body: { currentSequence: 2, appended: 1 } }
+          }
+          return { status: 200, body: { released: true } }
+        },
+      },
+    },
+  })
+
+  await sync.flushPending()
+
+  assert.equal(outbox.count(), 0)
+  assert.equal(uploads.length, 2)
+  assert.equal(uploads[0].format, 'codex-delta.v1.tgz.aes256gcm')
+  assert.equal(uploads[1].format, 'codex-snapshot.v1.tgz.aes256gcm')
+  assert.deepEqual(
+    source.calls.map(call => call.options.snapshot),
+    [false, true]
+  )
+})
+
 test('restores the latest snapshot and contiguous native deltas', async () => {
   const restored = []
   const downloadPaths = []
@@ -261,6 +388,78 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
   assert.equal(downloadPaths.length, 2)
 })
 
+test('skips a missing cloud archive and continues restoring other transcripts', async () => {
+  const restored = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-2',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {
+      async status() {
+        return { available: true, importedThrough: 0 }
+      },
+      async restore(transcript) {
+        restored.push(transcript.transcriptId)
+        return { available: true, importedThrough: transcript.currentSequence }
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path === '/wework-transcripts?includeArchived=true') {
+            return {
+              status: 200,
+              body: {
+                items: ['missing', 'available'].map((transcriptId, index) => ({
+                  transcriptId,
+                  currentSequence: 1,
+                  archives: [
+                    {
+                      id: index + 1,
+                      fromSequence: 0,
+                      toSequence: 1,
+                      sha256: 'a'.repeat(64),
+                      sizeBytes: 32,
+                      format: 'codex-snapshot.v1.tgz.aes256gcm',
+                    },
+                  ],
+                })),
+              },
+            }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.includes('/missing/')) {
+            return {
+              status: 404,
+              body: {
+                detail: {
+                  code: 'archive_not_found',
+                  message: 'Wework transcript segment not found',
+                },
+              },
+            }
+          }
+          await writeFile(request.downloadPath, 'available')
+          return { status: 200, body: { path: request.downloadPath } }
+        },
+      },
+    },
+  })
+
+  await sync.pullTranscripts()
+
+  assert.deepEqual(restored, ['available'])
+  assert.equal(sync.state.value.transcripts.missing.downloadedThrough, 0)
+  assert.equal(sync.state.value.transcripts.available.downloadedThrough, 1)
+})
+
 test('branches deterministically when the cloud causal head changed', async () => {
   const source = await segmentSource()
   const pending = turn({
@@ -297,6 +496,17 @@ test('branches deterministically when the cloud causal head changed', async () =
             return {
               status: 200,
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.includes('/shared/') && request.path.endsWith('/segments')) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'segment_conflict',
+                  message: 'A different native segment already exists at this sequence',
+                },
+              },
             }
           }
           return { status: 200, body: {} }
@@ -348,6 +558,17 @@ test('branches from the available cloud head when the cached causal base is newe
             return {
               status: 200,
               body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          if (request.path.includes('/shared/') && request.path.endsWith('/segments')) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'segment_conflict',
+                  message: 'A different native segment already exists at this sequence',
+                },
+              },
             }
           }
           return { status: 200, body: {} }
@@ -549,6 +770,36 @@ test('continues download and preference phases after an upload phase failure', a
 
   await assert.rejects(sync.flush(), /upload failed/u)
   assert.deepEqual(phases, ['upload', 'download', 'preferences'])
+})
+
+test('reports every failed synchronization phase in the status error', async () => {
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {},
+    desktop: {},
+  })
+  sync.flushPending = async () => {
+    throw new Error('upload unavailable')
+  }
+  sync.pullTranscripts = async () => {
+    throw new Error('download unavailable')
+  }
+  sync.syncPreferences = async () => {
+    throw new Error('preferences unavailable')
+  }
+
+  await assert.rejects(
+    sync.flush(),
+    /Conversation upload: upload unavailable; Conversation download: download unavailable; Preference synchronization: preferences unavailable/u
+  )
+  assert.equal(
+    sync.service().status().lastError,
+    'Conversation upload: upload unavailable; Conversation download: download unavailable; Preference synchronization: preferences unavailable'
+  )
 })
 
 test('preserves a failed sync result when synchronization is disabled between phases', async () => {

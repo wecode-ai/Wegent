@@ -129,6 +129,54 @@ describe('local delivery API', () => {
     })
   })
 
+  test.each([
+    ['user', '7', { assignee_user_id: 7 }, { assignee_user_id: 7 }, { assignee_user_id: 7 }],
+    [
+      'agent',
+      'LA-1',
+      { assignee_agent_id: 'LA-1' },
+      { assignee_agent_id: 'LA-1' },
+      { assignee_agent_id: 'LA-1' },
+    ],
+    [
+      'team',
+      'squad-1',
+      { assignee_group_id: 'squad-1' },
+      { metadata: { collaboration_group: { id: 'squad-1', name: 'Squad' } } },
+      { assignee_group_id: 'squad-1' },
+    ],
+  ] as const)(
+    'assigns a local task to a %s through the shared delivery contract',
+    async (assigneeType, assigneeId, assignment, storedAssignment, expectedAssignment) => {
+      const assignedTask = {
+        ...taskRecord,
+        ...storedAssignment,
+      }
+      const request = vi.fn(async (method: string) => {
+        if (method === 'todos.update') return assignedTask
+        throw new Error(`Unexpected method: ${method}`)
+      })
+      const api = createLocalDeliveryApi(request)
+
+      await expect(
+        api.assignLoopItem('project-1', 'LOCAL-1', {
+          version: 1,
+          assigneeType,
+          assigneeId,
+          notifyAssignee: true,
+        })
+      ).resolves.toMatchObject(expectedAssignment)
+      expect(request).toHaveBeenCalledWith('todos.update', {
+        project_id: 'project-1',
+        task_id: 'LOCAL-1',
+        todo: {
+          version: 1,
+          ...assignment,
+        },
+      })
+    }
+  )
+
   test('maps the executor-owned Issue context marker', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'todos.list') {

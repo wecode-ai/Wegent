@@ -3,6 +3,7 @@ import type { CloudProject } from '@/api/deliveries'
 import {
   canEditProjectSpaceIssue,
   findProjectSpaceContextForTask,
+  findProjectSpaceContextSourceForTask,
   loadProjectSpaceOptions,
   projectSpaceRef,
   runtimeCloudProjectId,
@@ -144,6 +145,31 @@ describe('projectSpaceSelection', () => {
     ).resolves.toEqual(cloudContext)
     expect(localApi.findCloudContextForTask).toHaveBeenCalledOnce()
     expect(cloudApi.findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
+  test('returns the API that owns the selected task context', async () => {
+    const context = {
+      id: 'context-1',
+      device_id: 'device-1',
+      task_id: 'task-1',
+      cloud_project_id: 'space-cloud',
+      loop_item_id: 'todo-cloud',
+      project: project('space-cloud', 'Cloud board', 'backend'),
+      loop_item: null,
+    }
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not found')),
+    } as unknown as ProjectSpaceApi
+    const cloudApi = {
+      findCloudContextForTask: vi.fn().mockResolvedValue(context),
+    } as unknown as ProjectSpaceApi
+
+    await expect(
+      findProjectSpaceContextSourceForTask([localApi, cloudApi], {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+      })
+    ).resolves.toEqual({ api: cloudApi, context })
   })
 
   test('does not let an unavailable store block a resolved task context', async () => {

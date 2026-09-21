@@ -48,6 +48,14 @@ where
         self.inner.route_metrics(path, method)
     }
 
+    fn prepare<'p>(
+        &self,
+        path: &'p str,
+        method: &str,
+    ) -> brz_http_server::__private::PreparedRoute<'p> {
+        self.inner.prepare(path, method)
+    }
+
     async fn call<'a>(&'a self, request: Request<'a>, authenticator: &'a A) -> Response {
         let path = request.path();
         let method = request.method();
@@ -87,6 +95,11 @@ mod tests {
 
     #[brz_http_server::get("/api/startup", group = probe::fallback_probe)]
     async fn startup() -> &'static str {
+        "ok"
+    }
+
+    #[brz_http_server::get("/api/quiet", api_log = false, group = probe::fallback_probe)]
+    async fn quiet() -> &'static str {
         "ok"
     }
 
@@ -162,5 +175,14 @@ mod tests {
         .await;
         assert!(raw.starts_with("HTTP/1.1 200"));
         assert_eq!(body_of(&raw), r#""ok""#);
+    }
+
+    #[test]
+    fn preserves_the_inner_route_api_log_setting() {
+        let handler =
+            brz_http_server::handlers!(; group = probe::fallback_probe).expect("probe router");
+        let handler = FastApiFallback::new(handler);
+        let prepared = handler.prepare("/api/quiet", "GET");
+        assert!(!prepared.api_log());
     }
 }

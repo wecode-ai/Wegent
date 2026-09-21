@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 
 const fileViewerMocks = vi.hoisted(() => ({
   render: vi.fn(),
@@ -89,6 +90,24 @@ const markdownFile = {
   truncated: false,
   size: 28,
 }
+
+test.each(['csv', 'tsv'])('keeps %s attachments in the read-only table viewer', async extension => {
+  render(
+    <WorkspaceAttachmentPreview
+      source={{
+        filename: `test-data.${extension}`,
+        contentType: extension === 'csv' ? 'text/csv' : 'text/tab-separated-values',
+        loadFile: async () => new Blob(['test,value\none,two']),
+      }}
+    />
+  )
+  await waitFor(() =>
+    expect(fileViewerMocks.render).toHaveBeenCalledWith(
+      expect.objectContaining({ filename: `test-data.${extension}`, type: 'csv' })
+    )
+  )
+  expect(codeViewMocks.render).not.toHaveBeenCalled()
+})
 
 test('renders Markdown files as a scrollable preview by default', () => {
   render(

@@ -553,13 +553,14 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     expect(actions).toEqual([
-      {
+      expect.objectContaining({
         type: 'assistant_started',
         taskId: 'runtime-task-1',
         subtaskId: 'codex-turn-9',
         clientUserMessageId: 'client-user-1',
         shellType: undefined,
-      },
+        startedAt: expect.any(Number),
+      }),
     ])
   })
 
@@ -737,6 +738,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       shellType: 'codex',
       error: 'Context window exceeded',
       type: 'response.failed',
+      startedAt: 1_789_714_800_000,
+      durationMs: 2500,
     })
 
     expect(actions).toHaveLength(1)
@@ -745,6 +748,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'codex-turn-9',
       error: 'Context window exceeded',
       errorType: 'response.failed',
+      startedAt: 1_789_714_800_000,
+      durationMs: 2500,
     })
   })
 
@@ -1101,6 +1106,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       offset: 0,
       result: {
         turnId: 'turn-9',
+        startedAt: 1_789_714_800_000,
+        durationMs: 18_250,
         value: [
           '当前分支比 origin/main ahead 1，可以直接 push。',
           '',
@@ -1114,6 +1121,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_done',
       subtaskId: 'subtask-9',
       turnId: 'turn-9',
+      startedAt: 1_789_714_800_000,
+      durationMs: 18_250,
     })
     expect(info).toHaveBeenCalledWith(
       '[Wework] Runtime terminal event accepted',

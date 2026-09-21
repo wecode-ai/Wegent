@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
+import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
+import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
 const PROJECT_NAME = '协作共享核心验收'
@@ -290,6 +292,14 @@ export function createDesktopScenario({
         await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await verifyCollaborationIssueHome(control, {
+          request,
+          project,
+          issue,
+          owner,
+          agent,
+          scoped,
+        })
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
@@ -432,6 +442,13 @@ export function createDesktopScenario({
         )
         assert.notEqual(updatedIssue.status, 'inbox')
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
+        await verifyCollaborationLocalProjectImport(control, {
+          cloudProjectId: project.id,
+          cloudWorkspaceId: workspace.id,
+          executorHome,
+          scoped,
+          workbenchReadyTimeoutMs,
+        })
       } finally {
         await archiveFixture()
       }

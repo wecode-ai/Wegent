@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict'
 
+import {
+  functionCall,
+  requestAdvertisesShellTool,
+  requestContainsToolOutput,
+  selectShellToolCommand,
+} from '../modules/response-protocol.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const SOURCE_PROMPT = 'WEWORK_CONVERSATION_REFERENCE_SOURCE: remember the launch code ORBIT-42.'
 const SOURCE_COMPLETION = 'SOURCE_CONVERSATION_COMPLETE: the launch code is ORBIT-42.'
 const TARGET_COMPLETION = 'REFERENCED_CONVERSATION_CONTEXT_RECEIVED'
+const LARGE_SOURCE_PROMPT =
+  'WEWORK_CONVERSATION_REFERENCE_LARGE_SOURCE: preserve only this visible conversation.'
+const LARGE_SOURCE_COMPLETION = 'LARGE_SOURCE_CONVERSATION_COMPLETE'
+const LARGE_TARGET_COMPLETION = 'LARGE_REFERENCED_CONVERSATION_CONTEXT_RECEIVED'
+const LARGE_TOOL_CALL_ID = 'call_wework_large_conversation_reference'
+const LARGE_TOOL_COMMAND =
+  "node -e \"process.stdout.write(require('crypto').randomBytes(14000000).toString('base64'))\""
+const MAX_REFERENCED_REQUEST_BYTES = 1024 * 1024
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -62,12 +78,12 @@ async function waitForConversationOption(control, timeoutMs) {
   throw new Error('The referenced conversation did not appear in the @ menu')
 }
 
-async function selectConversationOption(control, timeoutMs) {
+async function selectConversationOption(control, query, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     await control.command('fill', COMPOSER_SELECTOR, { value: '' })
     await control.command('fill', COMPOSER_SELECTOR, {
-      value: '@WEWORK_CONVERSATION_REFERENCE_SOURCE',
+      value: query,
     })
     const optionTestId = await waitForConversationOption(control, timeoutMs)
     try {
@@ -93,11 +109,13 @@ async function waitForNewTaskRow(control, knownTaskRows, timeoutMs) {
   throw new Error('The conversation mention task row did not appear')
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let sourceRequest = null
   let targetRequest = null
+  let largeSourceToolRequested = false
+  let largeTargetRequest = null
 
   return {
     codexConfigToml: '\n[features]\nplugins = false\n',
@@ -112,10 +130,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const serialized = JSON.stringify(body)
       const responseId = `wework-conversation-mention-${Date.now()}`
       let completion = ''
+      let output = []
 
-      if (serialized.includes('wework-conversation://')) {
+      if (
+        serialized.includes('wework-conversation://') &&
+        serialized.includes(LARGE_SOURCE_PROMPT)
+      ) {
+        largeTargetRequest = body
+        completion = LARGE_TARGET_COMPLETION
+      } else if (serialized.includes('wework-conversation://')) {
         targetRequest = body
         completion = TARGET_COMPLETION
+      } else if (requestContainsToolOutput(body, LARGE_TOOL_CALL_ID)) {
+        completion = LARGE_SOURCE_COMPLETION
+      } else if (serialized.includes(LARGE_SOURCE_PROMPT) && requestAdvertisesShellTool(body)) {
+        const tool = selectShellToolCommand(body, LARGE_TOOL_COMMAND, workspacePath)
+        largeSourceToolRequested = true
+        output = functionCall(LARGE_TOOL_CALL_ID, tool.name, tool.arguments)
       } else if (serialized.includes(SOURCE_PROMPT)) {
         sourceRequest = body
         completion = SOURCE_COMPLETION
@@ -125,6 +156,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       response.end(
         sse([
           responseCreated(responseId),
+          ...output,
           ...(completion ? [assistantMessage(completion)] : []),
           responseCompleted(responseId),
         ])
@@ -167,7 +199,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'The @ menu selected an unrelated conversation'
       )
       await capture(control, 'conversation-mention-01-menu.png')
-      await selectConversationOption(control, uiTimeoutMs)
+      await selectConversationOption(control, '@WEWORK_CONVERSATION_REFERENCE_SOURCE', uiTimeoutMs)
       await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -225,12 +257,62 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'Switching back rendered referenced-conversation JSON as user-visible text'
       )
       await capture(control, 'conversation-mention-04-restored.png')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      await control.command('fill', COMPOSER_SELECTOR, { value: LARGE_SOURCE_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: LARGE_SOURCE_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.ok(
+        largeSourceToolRequested,
+        'The large referenced conversation did not execute the real shell tool'
+      )
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await selectConversationOption(
+        control,
+        '@WEWORK_CONVERSATION_REFERENCE_LARGE_SOURCE',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: LARGE_TARGET_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      assert.ok(
+        largeTargetRequest,
+        'The large referenced conversation did not reach the model request'
+      )
+      const serializedLargeTarget = JSON.stringify(largeTargetRequest)
+      assert.ok(
+        serializedLargeTarget.includes(LARGE_SOURCE_PROMPT),
+        'The large referenced conversation omitted its user message'
+      )
+      assert.ok(
+        serializedLargeTarget.includes(LARGE_SOURCE_COMPLETION),
+        'The large referenced conversation omitted its assistant message'
+      )
+      assert.ok(
+        Buffer.byteLength(serializedLargeTarget) < MAX_REFERENCED_REQUEST_BYTES,
+        `The referenced model request still contained oversized process data: ${Buffer.byteLength(serializedLargeTarget)} bytes`
+      )
     },
 
     diagnostics() {
       return {
         receivedSourceRequest: Boolean(sourceRequest),
         receivedTargetRequest: Boolean(targetRequest),
+        requestedLargeSourceTool: largeSourceToolRequested,
+        receivedLargeTargetRequest: Boolean(largeTargetRequest),
       }
     },
   }

@@ -38,6 +38,7 @@ import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { TaskBoardView } from '@/features/todo/TaskBoardView'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -79,6 +80,12 @@ import {
   readSettingsReturnPath,
   writeSettingsReturnPath,
 } from '@/features/workspace-tabs/settingsReturnPath'
+import {
+  TitlebarActionsPortal,
+  TitlebarFeedbackPortal,
+} from '@/components/topnav/TitlebarActionsPortal'
+import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
+import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -227,12 +234,12 @@ export function DesktopWorkbenchLayout({
     ownedWorkspaceTab?.kind === 'board'
       ? ownedWorkspaceTab.contentRoute
       : `${currentPath}${window.location.search}`
-  const defaultWorkItemsOpen =
-    taskView === 'default-work-items' ||
-    (routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute))
-  const workItemSurfaceOpen = routeWorkItemsOpen || defaultWorkItemsOpen
-  const workItemUser = state.user ?? (defaultWorkItemsOpen ? LOCAL_USER : null)
-  const workItemServicesReady = defaultWorkItemsOpen
+  const taskBoardOpen = taskView === 'default-work-items'
+  const routedDefaultWorkItemsOpen =
+    routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
+  const workItemSurfaceOpen = routeWorkItemsOpen || taskBoardOpen
+  const workItemUser = state.user ?? (routedDefaultWorkItemsOpen ? LOCAL_USER : null)
+  const workItemServicesReady = routedDefaultWorkItemsOpen
     ? availableProjectSpaceApis.length > 0
     : Boolean(services.deliveryApi)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
@@ -399,6 +406,11 @@ export function DesktopWorkbenchLayout({
   }, [loadLocalHarnessSessions, workItemSurfaceOpen])
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const toggleMyWork = useCallback(() => {
+    setTaskView(currentView =>
+      currentView === 'default-work-items' ? 'workbench' : 'default-work-items'
+    )
+  }, [])
   const startNewChatOutsideHarness = useCallback(() => {
     setTaskView('workbench')
     setActiveLocalHarnessSessionId(null)
@@ -1002,7 +1014,7 @@ export function DesktopWorkbenchLayout({
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
       onOpenSearch={() => setSearchOpen(true)}
-      onOpenMyWork={() => setTaskView('default-work-items')}
+      onToggleMyWork={toggleMyWork}
       onSelectProject={selectProjectOutsideHarness}
       onStartNewProjectChat={startNewProjectChatOutsideHarness}
       onOpenRuntimeTask={openRuntimeTaskOutsideHarness}
@@ -1101,9 +1113,41 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {workItemSurfaceOpen &&
+          {taskBoardOpen && routeActive && !settingsOpen ? (
+            <>
+              <TitlebarActionsPortal>
+                <TaskBoardCreateButton
+                  label={t('todo.new_task', '新建任务')}
+                  onClick={startNewChatOutsideHarness}
+                />
+              </TitlebarActionsPortal>
+              <TitlebarFeedbackPortal>
+                <GlobalFeedbackButton testId="task-feedback-button" />
+              </TitlebarFeedbackPortal>
+            </>
+          ) : null}
+          {taskBoardOpen ? (
+            <div
+              data-testid="task-view-board-transition"
+              className="task-view-board-enter flex min-h-0 min-w-0 flex-1"
+            >
+              <TaskBoardView
+                runtimeWork={state.runtimeWork}
+                runtimeTaskLifecycle={runtimeTaskLifecycle}
+                unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
+                onCreateTask={startNewChatOutsideHarness}
+                projectSpaceApis={availableProjectSpaceApis}
+                onArchiveRuntimeTasks={onArchiveChatConversations}
+                onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
+                onOpenRuntimeTask={address => {
+                  void openRuntimeTaskOutsideHarness(address)
+                }}
+              />
+            </div>
+          ) : null}
+          {routeWorkItemsOpen &&
             (workItemUser && workItemServicesReady ? (
-              defaultWorkItemsOpen ? (
+              routedDefaultWorkItemsOpen ? (
                 <CloudTodoWorkspace
                   user={workItemUser}
                   localProjects={localTodoProjects}
@@ -1112,8 +1156,9 @@ export function DesktopWorkbenchLayout({
                   services={services}
                   embedded
                   embeddedTitle="project"
-                  startupActive={routeActive && routeWorkItemsOpen}
+                  startupActive={routeActive}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                  onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}

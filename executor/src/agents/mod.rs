@@ -54,10 +54,19 @@ pub use codex::{
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexAuthMutationError, CodexCancellationState,
     CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
-    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
+    CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
+
+/// Terminates every agent process owned by this executor.
+///
+/// Call this when the executor's owner goes away, so the agents it was driving
+/// cannot outlive it. Returns the number of terminated agents.
+pub async fn terminate_agent_processes() -> usize {
+    codex::terminate_shared_codex_app_servers().await
+}
 
 const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
 const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
@@ -275,16 +284,50 @@ fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> Strea
 #[derive(Debug, Clone)]
 pub struct AgentProcessEngine {
     planner: AgentCommandPlanner,
+    codex_engine: CodexAppServerEngine,
 }
 
 impl AgentProcessEngine {
     pub fn new(planner: AgentCommandPlanner) -> Self {
-        Self { planner }
+        let codex_engine = CodexAppServerEngine::new(planner.codex_binary.clone());
+        Self {
+            planner,
+            codex_engine,
+        }
     }
+}
+
+async fn prepare_standard_codex_request(
+    request: ExecutionRequest,
+) -> Result<ExecutionRequest, String> {
+    git_auth::setup_git_authentication(&request).await;
+    let mut request = git_workspace::prepare_git_workspace(request).await?;
+    let task_dir = request
+        .cwd()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::workspace_paths::task_workspace_dir(&request.task_id));
+    std::fs::create_dir_all(&task_dir).map_err(|error| {
+        format!(
+            "failed to create Codex task workspace {}: {error}",
+            task_dir.display()
+        )
+    })?;
+    request.project_workspace_path = Some(task_dir.display().to_string());
+    environment_setup::prepare_execution_environment(&request).await?;
+    runtime_capabilities::prepare_codex_runtime(&request).await?;
+    Ok(request)
 }
 
 impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
+
+    fn cancel_pending(
+        &self,
+        task_id: &str,
+        subtask_id: Option<&str>,
+    ) -> Option<crate::emitter::EventEnvelope> {
+        self.codex_engine.cancel_pending(task_id, subtask_id)
+    }
 
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let agent_kind = request.resolved_agent_kind();
@@ -298,6 +341,7 @@ impl AgentEngine for AgentProcessEngine {
             ],
         );
         let planner = self.planner.clone();
+        let codex_engine = self.codex_engine.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
             let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -306,26 +350,24 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
-                    git_auth::setup_git_authentication(&request).await;
-                    let request = match git_workspace::prepare_git_workspace(request).await {
+                    if request
+                        .extra
+                        .get("interactive_form_answer")
+                        .is_some_and(|answer| !answer.is_null())
+                    {
+                        return codex_engine.run(request).await;
+                    }
+                    let request = match prepare_standard_codex_request(request).await {
                         Ok(request) => request,
                         Err(message) => {
                             log_executor_event(
-                                "git workspace preparation failed",
+                                "codex runtime preparation failed",
                                 &[("error_len", message.len().to_string())],
                             );
                             return ExecutionOutcome::Failed { message };
                         }
                     };
-                    if let Err(message) =
-                        environment_setup::prepare_execution_environment(&request).await
-                    {
-                        return ExecutionOutcome::Failed { message };
-                    }
-                    runtime_capabilities::prepare_codex_runtime(&request).await;
-                    CodexAppServerEngine::new(planner.codex_binary)
-                        .run(request)
-                        .await
+                    codex_engine.run(request).await
                 }
                 AgentKind::Dify => DifyEngine::new().run(request).await,
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
@@ -437,6 +479,7 @@ impl AgentEngine for AgentProcessEngine {
             ],
         );
         let planner = self.planner.clone();
+        let codex_engine = self.codex_engine.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
             let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -445,26 +488,24 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
-                    git_auth::setup_git_authentication(&request).await;
-                    let request = match git_workspace::prepare_git_workspace(request).await {
+                    if request
+                        .extra
+                        .get("interactive_form_answer")
+                        .is_some_and(|answer| !answer.is_null())
+                    {
+                        return codex_engine.run_with_events(request, sink, builder).await;
+                    }
+                    let request = match prepare_standard_codex_request(request).await {
                         Ok(request) => request,
                         Err(message) => {
                             log_executor_event(
-                                "git workspace preparation failed",
+                                "codex runtime preparation failed",
                                 &[("error_len", message.len().to_string())],
                             );
                             return ExecutionOutcome::Failed { message };
                         }
                     };
-                    if let Err(message) =
-                        environment_setup::prepare_execution_environment(&request).await
-                    {
-                        return ExecutionOutcome::Failed { message };
-                    }
-                    runtime_capabilities::prepare_codex_runtime(&request).await;
-                    CodexAppServerEngine::new(planner.codex_binary)
-                        .run(request)
-                        .await
+                    codex_engine.run_with_events(request, sink, builder).await
                 }
                 AgentKind::Dify => DifyEngine::new().run(request).await,
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,

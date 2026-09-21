@@ -31,8 +31,7 @@ function buildTextLinks(doc: PMNode) {
     links.map((link) =>
       Decoration.inline(link.from, link.to, {
         nodeName: "span",
-        class:
-          "composer-text-link cursor-pointer underline decoration-current/30 underline-offset-2",
+        class: 'composer-text-link cursor-pointer',
         role: "link",
         tabindex: "0",
         "data-testid": "composer-text-link",

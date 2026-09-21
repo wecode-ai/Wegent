@@ -338,6 +338,8 @@ class ContextService:
         binary_data: bytes,
         subtask_id: int = 0,
         storage_purpose: str = "default",
+        *,
+        commit: bool = True,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
@@ -349,6 +351,7 @@ class ContextService:
             binary_data: File binary data
             subtask_id: Subtask ID to link to (0 means unlinked)
             storage_purpose: Explicit purpose used to select external storage
+            commit: Commit locally; False leaves the transaction to the caller
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
@@ -421,32 +424,32 @@ class ContextService:
                 )
         except Exception as exc:
             logger.exception(f"Failed to save context {context.id} to storage: {exc}")
-            db.rollback()
+            if commit:
+                db.rollback()
             raise
 
         if external_storage is not None and stored.skip_parsing:
             context.status = ContextStatus.READY.value
+            truncation_info = None
+        else:
+            context.status = ContextStatus.PARSING.value
+            db.flush()
+            try:
+                truncation_info = self._parse_and_update_context(
+                    context=context,
+                    binary_data=binary_data,
+                    extension=extension,
+                )
+            except DocumentParseError:
+                if commit:
+                    db.commit()
+                raise
+
+        if commit:
             db.commit()
             db.refresh(context)
-            return context, None
-
-        # Update status to PARSING
-        context.status = ContextStatus.PARSING.value
-        db.flush()
-
-        # Parse document
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError as e:
-            db.commit()
-            raise
-
-        db.commit()
-        db.refresh(context)
+        else:
+            db.flush()
 
         logger.info(
             f"Attachment uploaded successfully: id={context.id}, "
@@ -1659,6 +1662,19 @@ class ContextService:
 
         if context is None:
             return False
+
+        return self._delete_unlinked_context(db, context)
+
+    def delete_unlinked_context_by_id(self, db: Session, context_id: int) -> bool:
+        """Delete an unlinked context for trusted ownership-cleanup callers."""
+        context = db.get(SubtaskContext, context_id)
+        if context is None:
+            return False
+        return self._delete_unlinked_context(db, context)
+
+    @staticmethod
+    def _delete_unlinked_context(db: Session, context: SubtaskContext) -> bool:
+        context_id = context.id
 
         # Only allow deletion of unlinked contexts (subtask_id == 0)
         if context.subtask_id > 0:

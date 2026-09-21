@@ -37,6 +37,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   onPreviewPinnedChange?: (pinned: boolean) => void
   previewDisabled?: boolean
   dragEnabled?: boolean
+  unread?: boolean
   onMarkRead?: () => void
   progressTaskBindings?: T[]
   goal?: { bindingId: string | number; objective: string } | null
@@ -60,6 +61,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   onPreviewPinnedChange,
   previewDisabled = false,
   onMarkRead,
+  unread,
   progressTaskBindings = [],
   goal,
   renderTaskSummary,
@@ -117,14 +119,16 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
     if (!previewAvailable && previewPinned) onPreviewPinnedChange?.(false)
   }, [previewAvailable, previewPinned, onPreviewPinnedChange])
   const canMarkRead = Boolean(onMarkRead)
+  const isUnread = unread ?? Boolean(item.is_unread)
   useEffect(() => {
-    if (!previewOpen || !item.is_unread || !canMarkRead) return
+    if (!previewOpen || !isUnread || !canMarkRead) return
     const timer = window.setTimeout(() => markReadRef.current?.(), 3000)
     return () => window.clearTimeout(timer)
-  }, [item.is_unread, canMarkRead, previewOpen])
+  }, [isUnread, canMarkRead, previewOpen])
   const card = (
     <CollaborationIssueCard
       item={item}
+      unread={isUnread}
       reference={reference}
       display={display}
       labels={labels}

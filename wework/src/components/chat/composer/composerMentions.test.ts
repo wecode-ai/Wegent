@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import {
   composerSkillFilePath,
+  composerPathReference,
+  classifyComposerReference,
   createComposerMentionElement,
   findComposerMentionDeletionRange,
   parseComposerMentions,
@@ -9,10 +11,79 @@ import {
   replaceComposerMentionTrigger,
 } from './composerMentions'
 import { publishComposerApps, resetComposerAppsMemory } from './composerAppsSnapshot'
+import references from '../../../../../packages/chat-core/test-fixtures/prompt-mentions.json'
+import { createComposerDocument, serializeComposerDocument } from './composerProseMirrorModel'
 
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 
+test('recovers after long malformed references without rescanning their prefixes', () => {
+  const malformed = '['.repeat(100_000)
+  const reference = '[$test](~/test/SKILL.md)'
+  for (const prefix of [malformed, `${malformed}](unterminated`, '[]()', '[bad] text']) {
+    const input = `${prefix}\n${reference}`
+    expect(parseComposerMentions(input)).toEqual([
+      expect.objectContaining({ reference, start: prefix.length + 1, end: input.length }),
+    ])
+  }
+})
+
+test('uses distinct file-type icons and preserves a requested skill icon', () => {
+  const icon = (reference: string) =>
+    createComposerMentionElement(parseComposerMentions(reference)[0]).querySelector('svg')!
+      .innerHTML
+  const file = icon('[test](~/test-document.md)')
+  const code = icon('[test](C:/test-file.ts)')
+  const skill = icon('[$test](~/test-skill/SKILL.md)')
+  const pencil = icon('[$test?icon=pencil-sparkle](~/test-skill/SKILL.md)')
+  expect(new Set([file, code, skill, pencil]).size).toBe(4)
+})
+
+test('recognizes a reference whose label ends in a backslash before its closing bracket', () => {
+  const reference = '[test\\](~/test-skill/SKILL.md)'
+  expect(parseComposerMentions(reference)[0]?.reference).toBe(reference)
+})
+
 describe('composerSkillFilePath', () => {
+  test.each(references)('classifies and preserves $reference', fixture => {
+    const label = fixture.reference.slice(1, fixture.reference.indexOf(']('))
+    expect(classifyComposerReference(label, fixture.href)).toBe(fixture.kind)
+    const mentions = parseComposerMentions(fixture.reference)
+    if (fixture.kind === null && !fixture.composerKind) {
+      expect(mentions).toEqual([])
+    } else {
+      expect(mentions).toHaveLength(1)
+      expect(mentions[0]).toMatchObject({ name: fixture.name, reference: fixture.reference })
+    }
+    expect(composerSkillFilePath(fixture.reference)).toBe(
+      fixture.kind === 'skill' ? fixture.href : null
+    )
+    if (fixture.composerKind === 'file') {
+      expect(composerPathReference(fixture.reference)).toEqual({
+        path: fixture.href,
+        directory: false,
+      })
+    }
+    expect(serializeComposerDocument(createComposerDocument(fixture.reference))).toBe(
+      fixture.reference
+    )
+  })
+  test('recognizes home-relative skills and preserves their reference', () => {
+    const reference = '[$test-skill](~/.agents/skills/test-skill/SKILL.md)'
+    expect(composerSkillFilePath(reference)).toBe('~/.agents/skills/test-skill/SKILL.md')
+    expect(parseComposerMentions(reference)).toEqual([
+      { name: 'test-skill', label: 'Test Skill', reference, start: 0, end: reference.length },
+    ])
+  })
+
+  test.each(['https://example.com/SKILL.md', 'http://example.com/skills', 'HTTPS://example.com'])(
+    'keeps HTTP links as ordinary links: %s',
+    path => {
+      const reference = `[$test-skill](${path})`
+      expect(composerSkillFilePath(reference)).toBeNull()
+      expect(parseComposerMentions(reference)).toEqual([])
+    }
+  )
+
   test('reads direct skill file paths without a URI prefix', () => {
     expect(composerSkillFilePath(GMAIL_REFERENCE)).toBe('/tmp/gmail/SKILL.md')
   })
@@ -81,6 +152,19 @@ describe('replaceComposerMentionTrigger', () => {
 })
 
 describe('cloud references', () => {
+  test.each(['member', 'agent', 'group', 'issue'])(
+    'preserves %s references alongside skill references',
+    kind => {
+      const label = kind === 'issue' ? '#42 Test issue' : '@Test reference'
+      const reference = `[$${label}](wework-${kind}://test-project/test-id)`
+      const [mention] = parseComposerMentions(reference)
+      expect(mention).toMatchObject({ name: label, label, reference })
+      expect(composerSkillFilePath(reference)).toBeNull()
+      const element = createComposerMentionElement(mention)
+      expect(element).toHaveAttribute('data-composer-reference-kind', kind)
+      expect(element.textContent).toBe(label.slice(1))
+    }
+  )
   test('keeps cloud references atomic in the composer', () => {
     const reference = '[$design.md](cloud://projects/11/files/42)'
 

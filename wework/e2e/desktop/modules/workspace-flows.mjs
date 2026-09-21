@@ -1919,6 +1919,7 @@ export {
   currentRuntimeTaskFromDebugSnapshot,
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
+  reloadMainWindow,
   verifyWorkspaceDocumentTabs,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,

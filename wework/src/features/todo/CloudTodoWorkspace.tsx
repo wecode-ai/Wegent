@@ -23,6 +23,7 @@ import {
   ArrowLeft,
   Bot,
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   Cloud,
@@ -131,7 +132,10 @@ import {
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
-import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import {
   findRuntimeTask,
   hydrateRuntimeTaskAddress,
@@ -498,6 +502,7 @@ export interface CloudTodoWorkspaceProps {
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
   onArchiveRuntimeTasks?: (
     addresses: RuntimeTaskAddress[]
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
@@ -650,6 +655,7 @@ export function CloudTodoWorkspace({
   onFocusedItemHandled,
   onActiveProjectChange,
   onOpenRuntimeTask,
+  onMarkRuntimeTaskRead,
   onArchiveRuntimeTasks,
   onOpenSettings,
   onLogout,
@@ -994,7 +1000,6 @@ export function CloudTodoWorkspace({
   const focusedItemRequestRef = useRef<string | null>(null)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
   const boardLiveSubscriptionActiveRef = useRef(false)
-  const markingReadItemKeysRef = useRef(new Set<string>())
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
     setBoardParentId(null)
@@ -1037,6 +1042,12 @@ export function CloudTodoWorkspace({
   const [archiveItem, setArchiveItem] = useState<CloudLoopItem | null>(null)
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
+  const [batchConfirmError, setBatchConfirmError] = useState<string | null>(null)
+  const [batchConfirmItems, setBatchConfirmItems] = useState<LocatedLoopItem[] | null>(null)
+  const [batchConfirmRetryItemKeys, setBatchConfirmRetryItemKeys] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
@@ -1824,62 +1835,50 @@ export function CloudTodoWorkspace({
   const selectedItemServices = selectedItemProject
     ? services.projectSpaceDetailServices?.[selectedItemProject.location]
     : undefined
-  const markItemRead = useCallback(
-    async (item: LocatedLoopItem) => {
-      if (!item.is_unread) return
-      const project = projectForItem(item)
-      const itemApi = apiForProject(project)
-      if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) return
-      const projectKey = projectSpaceKey(projectSpaceRef(project))
-      const requestKey = `${projectKey}\0${item.id}`
-      if (markingReadItemKeysRef.current.has(requestKey)) return
-      markingReadItemKeysRef.current.add(requestKey)
-
-      try {
-        const updated = {
-          ...(project.location === 'cloud'
-            ? toCloudLoopItem(await cloudWorkspaceApi!.issues.markRead(item.id))
-            : await itemApi!.markLoopItemRead(item.id)),
-          project_store: item.project_store,
+  const runtimeAddressesForTaskBoardItem = useCallback(
+    (item: CloudLoopItem): RuntimeTaskAddress[] => {
+      if (isRuntimeMyWorkItem(item)) return [item.runtime_address]
+      const addresses = new Map<string, RuntimeTaskAddress>()
+      for (const binding of activeItemTaskBindings[item.id] ?? []) {
+        const address = { deviceId: binding.device_id, taskId: binding.task_id }
+        addresses.set(getRuntimeTaskLifecycleKey(address), address)
+      }
+      for (const address of runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`) ??
+        []) {
+        addresses.set(getRuntimeTaskLifecycleKey(address), address)
+      }
+      return [...addresses.values()]
+    },
+    [activeItemTaskBindings, runtimeAddressesByWorkItem]
+  )
+  const isTaskBoardItemUnread = useCallback(
+    (item: CloudLoopItem): boolean =>
+      runtimeAddressesForTaskBoardItem(item).some(address =>
+        runtimeTaskLifecycle?.unreadTaskKeys.has(getRuntimeTaskLifecycleKey(address))
+      ),
+    [runtimeAddressesForTaskBoardItem, runtimeTaskLifecycle]
+  )
+  const markTaskBoardItemRead = useCallback(
+    (item: CloudLoopItem) => {
+      if (!onMarkRuntimeTaskRead) return
+      for (const address of runtimeAddressesForTaskBoardItem(item)) {
+        if (runtimeTaskLifecycle?.unreadTaskKeys.has(getRuntimeTaskLifecycleKey(address))) {
+          onMarkRuntimeTaskRead(address)
         }
-        const applyReadSnapshot = (current: LocatedLoopItem) => ({
-          ...preferNewestLoopItemSnapshot(current, updated),
-          is_unread: false,
-        })
-        if (project.location === 'cloud') {
-          cloudWorkspace.commands.replaceIssue(updated as CollaborationIssue)
-        }
-        setSelectedItem(current => (current?.id === item.id ? applyReadSnapshot(current) : current))
-        if (project.location === 'local') {
-          setDetailItems(current =>
-            current.map(candidate =>
-              candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
-            )
-          )
-        }
-        if (project.location === 'local') {
-          setItems(current =>
-            current.map(candidate =>
-              candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
-            )
-          )
-          setLocalProjectItems(current => ({
-            ...current,
-            [projectKey]: (current[projectKey] ?? []).map(candidate =>
-              candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
-            ),
-          }))
-        }
-      } catch (error) {
-        console.warn('[Wework project board] mark Issue read failed', {
-          itemId: item.id,
-          error,
-        })
-      } finally {
-        markingReadItemKeysRef.current.delete(requestKey)
       }
     },
-    [apiForProject, cloudWorkspaceApi, projectForItem]
+    [onMarkRuntimeTaskRead, runtimeAddressesForTaskBoardItem, runtimeTaskLifecycle]
+  )
+  const openItemForProject = useCallback(
+    (project: LocatedCloudProject, item: LocatedLoopItem, openRuntimeItemInWorkbench = false) => {
+      if (isDefaultWorkItemProject(project)) markTaskBoardItemRead(item)
+      if (openRuntimeItemInWorkbench && isRuntimeMyWorkItem(item)) {
+        void openBoardRuntimeTask(item.runtime_address)
+        return
+      }
+      setSelectedItem(item)
+    },
+    [markTaskBoardItemRead, openBoardRuntimeTask]
   )
   useEffect(() => {
     if (
@@ -1922,12 +1921,6 @@ export function CloudTodoWorkspace({
       active = false
     }
   }, [cloudWorkspaceApi, selectedItem, selectedItemApi, selectedItemProject, t])
-  useEffect(() => {
-    if (!selectedItem?.is_unread || selectedItemProject?.task_provider !== 'local') {
-      return
-    }
-    window.queueMicrotask(() => void markItemRead(selectedItem))
-  }, [markItemRead, selectedItem, selectedItemProject])
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =
@@ -3047,6 +3040,7 @@ export function CloudTodoWorkspace({
       return
     }
     if (
+      !selectedProject ||
       !selectedProjectId ||
       !selectedProjectKey ||
       (selectedProject?.location === 'cloud'
@@ -3065,7 +3059,7 @@ export function CloudTodoWorkspace({
       focusedItemRequestRef.current = requestKey
       setProjectView('board')
       setBoardParentId(focusedItem.parent_id)
-      setSelectedItem(focusedItem)
+      openItemForProject(selectedProject, focusedItem)
       onFocusedItemHandled?.()
     })
     return () => {
@@ -3077,6 +3071,7 @@ export function CloudTodoWorkspace({
     cloudWorkspace.state.project?.id,
     itemsProjectKey,
     onFocusedItemHandled,
+    openItemForProject,
     selectedProjectId,
     selectedProjectKey,
     selectedProject,
@@ -3289,40 +3284,6 @@ export function CloudTodoWorkspace({
       if (!itemProject || (itemProject.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
         throw new Error('项目空间当前不可用')
       }
-      const updateItem = async (
-        target: LocatedLoopItem,
-        update: WeworkStandardBoardUpdate
-      ): Promise<CloudLoopItem> => {
-        if (itemProject.location === 'local') {
-          return itemApi!.updateLoopItem(target.id, {
-            version: target.version,
-            ...update,
-          })
-        }
-        return cloudWorkspace.commands
-          .updateIssue(
-            target.id,
-            {
-              version: target.version,
-              status: update.status,
-              priority: update.priority as CollaborationIssue['priority'] | undefined,
-              assigneeUserId: update.assignee_user_id,
-              assigneeAgentId: update.assignee_agent_id,
-              assigneeTeamId: update.assignee_team_id,
-              tags: update.tags,
-              workflow: update.workflow as unknown as Record<string, unknown> | undefined,
-              executionConfig: update.execution_config as unknown as
-                | Record<string, unknown>
-                | undefined,
-              automationRuleId: update.automation_rule_id,
-            },
-            { throwOnError: true }
-          )
-          .then(updated => {
-            if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
-            return toCloudLoopItem(updated)
-          })
-      }
       const assignItem =
         itemProject.location === 'cloud' || typeof itemApi!.assignLoopItem === 'function'
           ? async (
@@ -3358,7 +3319,7 @@ export function CloudTodoWorkspace({
           ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
         },
         commands: {
-          update: updateItem,
+          update: updateStandardBoardItem,
           assign: assignItem,
           reorder: isMyTasksBoard
             ? undefined
@@ -3505,6 +3466,123 @@ export function CloudTodoWorkspace({
       track('operation_failed', { operation: 'board_item_move' })
       if (executionResult) throw cause
       return false
+    }
+  }
+
+  async function updateStandardBoardItem(
+    target: LocatedLoopItem,
+    update: WeworkStandardBoardUpdate
+  ): Promise<CloudLoopItem> {
+    const project = projectForItem(target)
+    const itemApi = apiForProject(project)
+    if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
+      throw new Error('项目空间当前不可用')
+    }
+    if (project.location === 'local') {
+      return itemApi!.updateLoopItem(target.id, {
+        version: target.version,
+        ...update,
+      })
+    }
+    return cloudWorkspace.commands
+      .updateIssue(
+        target.id,
+        {
+          version: target.version,
+          status: update.status,
+          priority: update.priority,
+          assigneeUserId: update.assignee_user_id,
+          assigneeAgentId: update.assignee_agent_id,
+          assigneeTeamId: update.assignee_team_id,
+          tags: update.tags,
+          workflow: update.workflow as unknown as Record<string, unknown> | undefined,
+          executionConfig: update.execution_config as unknown as
+            | Record<string, unknown>
+            | undefined,
+          automationRuleId: update.automation_rule_id,
+        },
+        { throwOnError: true }
+      )
+      .then(updated => {
+        if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
+        return toCloudLoopItem(updated)
+      })
+  }
+
+  async function confirmReviewItems(reviewItems: LocatedLoopItem[]) {
+    if (batchConfirmBusy || reviewItems.length === 0) return
+    setBatchConfirmBusy(true)
+    setBatchConfirmError(null)
+    const failedItems: LocatedLoopItem[] = []
+    const updatedItems = new Map<string, LocatedLoopItem>()
+    try {
+      const results = await Promise.allSettled(
+        reviewItems.map(async item => {
+          const itemKey = `${item.project_store ?? 'backend'}:${item.id}`
+          const project = projectForItem(item)
+          const api = apiForProject(project)
+          const target =
+            batchConfirmRetryItemKeys.has(itemKey) && project?.location === 'local' && api
+              ? {
+                  ...(await api.getLoopItem(item.id)),
+                  project_store: item.project_store,
+                }
+              : item
+          return updateStandardBoardItem(target, { status: 'completed' }).then(updated => ({
+            ...updated,
+            project_store: item.project_store,
+          }))
+        })
+      )
+      results.forEach((result, index) => {
+        const source = reviewItems[index]
+        if (result.status === 'fulfilled') {
+          updatedItems.set(`${source.project_store ?? 'backend'}:${source.id}`, result.value)
+          return
+        }
+        failedItems.push(source)
+        console.error('[Wework project board] batch confirmation failed', {
+          itemId: source.id,
+          error: result.reason,
+        })
+      })
+      if (updatedItems.size > 0) {
+        setItems(current =>
+          current.map(candidate => {
+            const updated = updatedItems.get(
+              `${candidate.project_store ?? 'backend'}:${candidate.id}`
+            )
+            return updated ?? candidate
+          })
+        )
+        setSelectedItem(current => {
+          if (!current) return current
+          return updatedItems.get(`${current.project_store ?? 'backend'}:${current.id}`) ?? current
+        })
+        track('feature_action_completed', {
+          domain: 'board_item',
+          action: 'update',
+        })
+      }
+      setBatchConfirmItems(failedItems.length > 0 ? failedItems : null)
+      setBatchConfirmRetryItemKeys(
+        new Set(
+          failedItems.flatMap(item =>
+            projectForItem(item)?.location === 'local'
+              ? [`${item.project_store ?? 'backend'}:${item.id}`]
+              : []
+          )
+        )
+      )
+      if (failedItems.length > 0) {
+        setBatchConfirmError(
+          t('todo.batch_confirm_failed', '{{count}} 个事项确认失败，请稍后重试', {
+            count: failedItems.length,
+          })
+        )
+      }
+    } finally {
+      setBatchConfirmBusy(false)
     }
   }
 
@@ -3863,17 +3941,13 @@ export function CloudTodoWorkspace({
 
   const openBoardItem = useCallback(
     (item: LocatedLoopItem) => {
-      if (item.can_view_detail === false) return
+      if (item.can_view_detail === false || !selectedProject) return
       setPinnedBoardPreview(null)
       setBackgroundTaskItemId(null)
       closeTaskPanel()
-      if (isRuntimeMyWorkItem(item)) {
-        void openBoardRuntimeTask(item.runtime_address)
-        return
-      }
-      setSelectedItem(item)
+      openItemForProject(selectedProject, item, true)
     },
-    [closeTaskPanel, openBoardRuntimeTask]
+    [closeTaskPanel, openItemForProject, selectedProject]
   )
 
   function closeTopPanel() {
@@ -4733,40 +4807,26 @@ export function CloudTodoWorkspace({
                             : issueColumnEmptyHints
                         )[status]
                         if (!hint) return undefined
-                        if (status !== 'inbox' && status !== 'pending') return { hint }
-                        const onClick = () => {
-                          if (!boardParent && status === 'pending')
-                            openIssueCreation('pending', '', 'popup')
-                          else setQuickCreateStatus(status)
-                        }
+                        const isTaskBoard = Boolean(boardParent) || isMyTasksBoard
+                        if (status !== 'inbox' && (status !== 'pending' || !isTaskBoard))
+                          return { hint }
                         return {
                           hint,
                           action: {
                             label:
                               status === 'inbox'
                                 ? t(
-                                    boardParent || isMyTasksBoard
+                                    isTaskBoard
                                       ? 'todo.create_first_task'
                                       : 'todo.create_first_issue',
-                                    boardParent || isMyTasksBoard
-                                      ? '创建第一个任务'
-                                      : '创建第一个 Issue'
+                                    isTaskBoard ? '创建第一个任务' : '创建第一个 Issue'
                                   )
-                                : t(
-                                    boardParent || isMyTasksBoard
-                                      ? 'todo.create_task_in_pending'
-                                      : 'todo.create_issue_in_pending',
-                                    boardParent || isMyTasksBoard
-                                      ? '创建到待开始'
-                                      : '创建 Issue 到待开始'
-                                  ),
+                                : t('todo.create_task_in_pending', '创建到待开始'),
                             ariaLabel: t(
-                              boardParent || isMyTasksBoard
-                                ? 'todo.new_task_in_column'
-                                : 'todo.new_issue_in_column',
+                              isTaskBoard ? 'todo.new_task_in_column' : 'todo.new_issue_in_column',
                               { column: column.label }
                             ),
-                            onClick,
+                            onClick: () => setQuickCreateStatus(status),
                           },
                         }
                       }}
@@ -4855,12 +4915,45 @@ export function CloudTodoWorkspace({
                       }}
                       renderColumnHeaderActions={(column, columnItems, state) => {
                         const status = column.status as CloudLoopItem['status']
+                        const editableColumnItems = columnItems.filter(canEditProjectSpaceIssue)
                         const open = () =>
                           !boardParent && status === 'pending'
                             ? openIssueCreation('pending', '', 'popup')
                             : setQuickCreateStatus(status)
                         return (
                           <>
+                            {!isMyTasksBoard &&
+                            !isAITableProject &&
+                            state.groupBy === 'status' &&
+                            status === 'in_review' &&
+                            editableColumnItems.length > 0 ? (
+                              <Tooltip
+                                label={t(
+                                  'todo.batch_confirm_review_items',
+                                  '批量确认完成待确认事项'
+                                )}
+                                side="bottom"
+                                align="end"
+                              >
+                                <button
+                                  type="button"
+                                  data-testid="cloud-todo-batch-confirm-review"
+                                  disabled={batchConfirmBusy}
+                                  onClick={() => {
+                                    setBatchConfirmError(null)
+                                    setBatchConfirmRetryItemKeys(new Set())
+                                    setBatchConfirmItems([...editableColumnItems])
+                                  }}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
+                                  aria-label={t(
+                                    'todo.batch_confirm_review_items',
+                                    '批量确认完成待确认事项'
+                                  )}
+                                >
+                                  <CheckCheck className="h-3.5 w-3.5" />
+                                </button>
+                              </Tooltip>
+                            ) : null}
                             {isMyTasksBoard &&
                             state.groupBy === 'status' &&
                             status === 'completed' &&
@@ -4981,6 +5074,7 @@ export function CloudTodoWorkspace({
                         return (
                           <CloudTodoBoardCard
                             item={item}
+                            unread={isMyTasksBoard ? isTaskBoardItemUnread(item) : undefined}
                             processingStatus={isProcessingStatus(item.status)}
                             taskBindings={
                               (
@@ -5011,7 +5105,7 @@ export function CloudTodoWorkspace({
                                   : null
                               )
                             }
-                            onMarkRead={markItemRead}
+                            onMarkRead={isMyTasksBoard ? markTaskBoardItemRead : undefined}
                             onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
                             onOpenRuntimeTask={openBoardRuntimeTask}
                             display={boardCardDisplay}
@@ -5614,7 +5708,10 @@ export function CloudTodoWorkspace({
               if (item.can_view_detail === false) return
               selectProject(project)
               setProjectView('board')
-              setSelectedItem({ ...item, project_store: project.project_store })
+              openItemForProject(project, {
+                ...item,
+                project_store: project.project_store,
+              })
               setGlobalSearchOpen(false)
             }}
           />
@@ -5840,6 +5937,58 @@ export function CloudTodoWorkspace({
                   {archiveBusy
                     ? t('todo.archiving', '归档中…')
                     : t('todo.confirm_archive', '确认归档')}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+        {batchConfirmItems && (
+          <Modal
+            title={t('todo.batch_confirm_review_title', '确认待确认事项？')}
+            onClose={() => {
+              if (batchConfirmBusy) return
+              setBatchConfirmItems(null)
+              setBatchConfirmError(null)
+              setBatchConfirmRetryItemKeys(new Set())
+            }}
+          >
+            <div className="px-5 pb-5 pt-4" data-testid="cloud-todo-batch-confirm-review-dialog">
+              <p className="text-sm leading-5 text-text-secondary">
+                {t(
+                  'todo.batch_confirm_review_description',
+                  '将当前列中的 {{count}} 个事项标记为已完成。',
+                  { count: batchConfirmItems.length }
+                )}
+              </p>
+              {batchConfirmError ? (
+                <p className="mt-3 text-xs text-destructive" role="alert">
+                  {batchConfirmError}
+                </p>
+              ) : null}
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="cloud-todo-batch-confirm-review-cancel"
+                  disabled={batchConfirmBusy}
+                  onClick={() => {
+                    setBatchConfirmItems(null)
+                    setBatchConfirmError(null)
+                    setBatchConfirmRetryItemKeys(new Set())
+                  }}
+                  className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+                >
+                  {t('common.cancel', '取消')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="cloud-todo-batch-confirm-review-confirm"
+                  disabled={batchConfirmBusy}
+                  onClick={() => void confirmReviewItems(batchConfirmItems)}
+                  className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+                >
+                  {batchConfirmBusy
+                    ? t('todo.batch_confirming', '确认中…')
+                    : t('todo.confirm_complete', '确认完成')}
                 </button>
               </div>
             </div>

@@ -339,9 +339,8 @@ async fn claude_event_sink_drops_events_after_cancellation_starts() {
     handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
     let (cancel_tx, _cancel_rx) = oneshot::channel();
     let (_stopped_tx, stopped_rx) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    let execution_id =
+        handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
     let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
     let sink = ClaudeRuntimeEventSink {
         handler: handler.clone(),

@@ -1993,6 +1993,9 @@ function RuntimeOpenProbe() {
       <span data-testid="runtime-transcript-loading">
         {paneSession.transcriptLoading ? 'loading' : 'idle'}
       </span>
+      <span data-testid="runtime-transcript-loading-more">
+        {paneSession.transcriptLoadingMoreBefore ? 'loading' : 'idle'}
+      </span>
       <span data-testid="runtime-transcript-has-more">
         {paneSession.transcriptHasMoreBefore ? 'more' : 'done'}
       </span>
@@ -2171,6 +2174,10 @@ function RuntimeModelSelectionProbe() {
     <div>
       <span data-testid="selected-model">{workbench.projectChat.selectedModel?.name ?? ''}</span>
       <span data-testid="active-model">{workbench.projectChat.activeModel?.name ?? ''}</span>
+      <span data-testid="runtime-model-task">
+        {workbench.state.currentRuntimeTask?.taskId ?? ''}
+      </span>
+      <span data-testid="runtime-model-draft">{workbench.projectChat.input}</span>
       <span data-testid="background-task-selected-model">
         {backgroundTaskModel.selectedModel?.name ?? ''}
       </span>
@@ -2179,6 +2186,9 @@ function RuntimeModelSelectionProbe() {
       </span>
       <span data-testid="selected-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
+      </span>
+      <span data-testid="selected-reasoning">
+        {workbench.projectChat.selectedModelOptions.reasoning ?? ''}
       </span>
       <button
         type="button"
@@ -2208,6 +2218,21 @@ function RuntimeModelSelectionProbe() {
         }
       >
         open runtime a
+      </button>
+      <button type="button" onClick={() => workbench.projectChat.setInput('继续排查失败原因')}>
+        set runtime draft
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (mimoModel) {
+            workbench.projectChat.continueInNewConversation?.(mimoModel, {
+              reasoning: 'high',
+            })
+          }
+        }}
+      >
+        continue with mimo in new conversation
       </button>
     </div>
   )
@@ -5794,6 +5819,93 @@ describe('WorkbenchProvider runtime tasks', () => {
         )
       )
     )
+  })
+
+  test('continues a cross-provider model switch in a new referenced conversation', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.6-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-official',
+          codexAuthConfigured: true,
+          ui: { family: 'codex-official' },
+        },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          codexProviderId: 'wecode-openai',
+          ui: { family: 'codex-provider' },
+        },
+      },
+    ]
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      modelSelection: {
+                        modelName: 'gpt-5.6-sol',
+                        modelType: 'runtime',
+                        options: {},
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-model-task')).toHaveTextContent('runtime-a')
+      expect(screen.getByTestId('active-model')).toHaveTextContent('gpt-5.6-sol')
+    })
+
+    await userEvent.click(screen.getByText('set runtime draft'))
+    await userEvent.click(screen.getByText('continue with mimo in new conversation'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-model-task')).toBeEmptyDOMElement()
+      expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
+      expect(screen.getByTestId('selected-reasoning')).toHaveTextContent('high')
+      expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('[$Runtime A]')
+      expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('继续排查失败原因')
+    })
   })
 
   test('persists blank new chat model selection as the next default', async () => {
@@ -9772,7 +9884,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
 
@@ -9926,7 +10038,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
     expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
   })
@@ -11587,6 +11699,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message b')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message a')
+    expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
   })
 
   test('restores cached history when returning before another transcript finishes loading', async () => {
@@ -11632,6 +11745,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
     )
+    expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(3)
 
     await act(async () => {
@@ -11649,6 +11763,74 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message b')
+  })
+
+  test('ignores an older transcript page that finishes after switching tasks', async () => {
+    const runtimeBOlderTranscript = deferred<RuntimeTranscriptResponse>()
+    const getRuntimeTranscript = vi.fn((request: RuntimeTranscriptRequest) => {
+      if (request.taskId === 'runtime-a') {
+        return Promise.resolve({
+          taskId: 'runtime-a',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'claude_code',
+          messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'message a' }],
+          hasMoreBefore: false,
+          beforeCursor: null,
+        } satisfies RuntimeTranscriptResponse)
+      }
+      if (request.beforeCursor === 'runtime-b-older') {
+        return runtimeBOlderTranscript.promise
+      }
+      return Promise.resolve({
+        taskId: 'runtime-b',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-b:user:2', role: 'user', content: 'recent message b' }],
+        hasMoreBefore: true,
+        beforeCursor: 'runtime-b-older',
+      } satisfies RuntimeTranscriptResponse)
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime b'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('recent message b')
+    )
+
+    await userEvent.click(screen.getByText('load older'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-transcript-loading-more')).toHaveTextContent('loading')
+    )
+
+    await userEvent.click(screen.getByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    )
+    expect(screen.getByTestId('runtime-transcript-loading-more')).toHaveTextContent('idle')
+
+    await act(async () => {
+      runtimeBOlderTranscript.resolve({
+        taskId: 'runtime-b',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-b:user:1', role: 'user', content: 'older message b' }],
+        hasMoreBefore: false,
+        beforeCursor: null,
+      })
+      await runtimeBOlderTranscript.promise
+    })
+
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message b')
+    expect(screen.getByTestId('runtime-transcript-loading-more')).toHaveTextContent('idle')
   })
 
   test('does not reload the currently selected runtime task when clicked again', async () => {

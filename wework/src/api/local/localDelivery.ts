@@ -700,6 +700,14 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         : true,
     is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
+    assignee_group_id:
+      typeof (record.metadata.collaboration_group as { id?: unknown } | null)?.id === 'string'
+        ? (record.metadata.collaboration_group as { id: string }).id
+        : null,
+    assignee_group_name:
+      typeof (record.metadata.collaboration_group as { name?: unknown } | null)?.name === 'string'
+        ? (record.metadata.collaboration_group as { name: string }).name
+        : null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
     execution_state: record.execution_state ?? null,
@@ -1034,6 +1042,33 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         task_id: itemId,
         todo,
+      })
+      taskProjects.set(record.id, projectId)
+      return localTask(record)
+    },
+    async assignLoopItem(
+      projectId: CloudProjectId,
+      itemId: string,
+      data: {
+        version: number
+        assigneeType: 'user' | 'agent' | 'team'
+        assigneeId: string
+        notifyAssignee?: boolean
+      }
+    ) {
+      const assignment =
+        data.assigneeType === 'user'
+          ? { assignee_user_id: Number(data.assigneeId) }
+          : data.assigneeType === 'agent'
+            ? { assignee_agent_id: data.assigneeId }
+            : { assignee_group_id: data.assigneeId }
+      const record = await request<LocalLoopItemRecord>('todos.update', {
+        project_id: projectId,
+        task_id: itemId,
+        todo: {
+          version: data.version,
+          ...assignment,
+        },
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)

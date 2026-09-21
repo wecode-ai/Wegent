@@ -90,6 +90,10 @@ describe('runtimeMyWorkItems', () => {
     expect(isRuntimeMyWorkItem(item)).toBe(true)
   })
 
+  it('excludes archived Runtime Tasks from the board projection', () => {
+    expect(runtimeMyWorkItems(runtimeWork([task({ status: 'archived' })]), target)).toEqual([])
+  })
+
   it('uses device and task identity so equal task ids from different devices are preserved', () => {
     const work = runtimeWork([task()])
     work.projects[0].deviceWorkspaces.push({

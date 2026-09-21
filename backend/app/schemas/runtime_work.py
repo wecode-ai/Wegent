@@ -134,6 +134,10 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     include_full_content: bool = Field(default=False, alias="includeFullContent")
+    conversation_context_only: bool = Field(
+        default=False,
+        alias="conversationContextOnly",
+    )
 
 
 class RuntimeFileChangesRevertRequest(BaseModel):
@@ -223,6 +227,7 @@ class LocalTaskSummary(BaseModel):
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
     created_at: Optional[str | int] = Field(default=None, alias="createdAt")
     updated_at: Optional[str | int] = Field(default=None, alias="updatedAt")
+    recency_at: Optional[str | int] = Field(default=None, alias="recencyAt")
     completed_at: Optional[str | int] = Field(default=None, alias="completedAt")
     running: bool = False
     continuable: Optional[bool] = None

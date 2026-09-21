@@ -152,6 +152,8 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MODEL_SERVICE_CONNECTION_ERROR,
+  MODEL_SERVICE_CONNECTION_PROMPT,
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -396,6 +398,12 @@ function readyPluginWorkspaceResult(body) {
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
+
+const HELD_WORKTREE_SCENARIOS = new Set([
+  'worktree_queue_hold',
+  'worktree_restart_hold',
+  'worktree_status_hold',
+])
 
 class DesktopE2EServer {
   constructor(
@@ -813,11 +821,11 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'model_service_connection_error',
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
-        'worktree_queue_hold',
-        'worktree_restart_hold',
+        ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -853,7 +861,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      HELD_WORKTREE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -3919,7 +3927,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
@@ -4204,20 +4212,18 @@ class DesktopE2EServer {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
       const requestText = JSON.stringify(body).replaceAll('\\', '/')
       const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'
       )
       assert.ok(
-        requestText.includes(filePath),
-        'The pasted file reference was not forwarded to the real Codex request'
+        requestText.includes(PASTED_PATH_FILE_NAME),
+        'The pasted file attachment was not forwarded to the real Codex request'
       )
       assert.equal(
-        requestText.includes('nested path context') ||
-          requestText.includes('# Pasted path context'),
+        requestText.includes('nested path context'),
         false,
-        'The pasted paths copied file contents into the model request'
+        'The pasted directory was incorrectly read as a file'
       )
       this.writeSse(response, [
         responseCreated(responseId),
@@ -4231,20 +4237,18 @@ class DesktopE2EServer {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
       const requestText = JSON.stringify(body).replaceAll('\\', '/')
       const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'
       )
       assert.ok(
-        requestText.includes(filePath),
-        'The dropped file reference was not forwarded to the real Codex request'
+        requestText.includes(DROPPED_PATH_FILE_NAME),
+        'The dropped file attachment was not forwarded to the real Codex request'
       )
       assert.equal(
-        requestText.includes('nested dropped path context') ||
-          requestText.includes('# Dropped path context'),
+        requestText.includes('nested dropped path context'),
         false,
-        'The dropped paths copied file contents into the model request'
+        'The dropped directory was incorrectly read as a file'
       )
       this.writeSse(response, [
         responseCreated(responseId),
@@ -4465,6 +4469,19 @@ class DesktopE2EServer {
         responseCreated(responseId),
         assistantMessage(RATE_LIMIT_COMPLETION_TEXT),
         responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'model_service_connection_error') {
+      this.recordScenarioRequest('model_service_connection_error', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(MODEL_SERVICE_CONNECTION_PROMPT),
+        'The real Codex request did not contain the model-service connection prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, MODEL_SERVICE_CONNECTION_ERROR, 'other'),
       ])
       return
     }

@@ -64,6 +64,11 @@ Each cloud sequence maps to exactly one object:
   snapshot and every later segment, then deletes older object bodies and
   metadata. With a snapshot interval of 10, an active transcript normally keeps
   11 objects and peaks at about 20 instead of growing without bound.
+- A native rollout segment has a 256 MiB plaintext limit. When building a delta,
+  the Executor reads from the synchronized rollout offset instead of loading the
+  entire growing rollout file first. A rollout that exceeds the previous
+  128 MiB threshold can therefore keep uploading while the pending segment
+  remains within the limit.
 
 Two computers may keep Wework open at the same time. Clients poll cloud progress
 every five seconds and acquire a short writer lease only while uploading, then
@@ -172,6 +177,31 @@ migration and requires no schema change for existing deployments. If object
 storage is unavailable, segment metadata is not committed and the outbox keeps
 its locator while local execution remains available offline.
 
+The transcript bucket is a separate bucket from the attachment bucket: the
+account behind `ATTACHMENT_S3_*` needs `ListBucket`, `GetObject`, `PutObject`,
+and `DeleteObject` on it. An account that is only authorized for the attachment
+bucket fails on the first upload with a 503. The Backend log records the S3
+error code, and the device shows the same code in parentheses at the end of the
+message (for example `AccessDenied`).
+
 When the dedicated root is empty, `SECRET_KEY` is used for compatibility.
 Production deployments should configure a dedicated value and keep it unchanged
 while related tgz objects are retained.
+
+## Failure semantics and troubleshooting
+
+The settings page labels failures as `Conversation upload`,
+`Conversation download`, or `Preference synchronization` so lease, archive
+download, and preference failures are not collapsed into an unlocatable generic
+error. Electron request failures preserve the underlying network cause while
+redacting URL credentials from displayed messages.
+
+If an archive index still exists in the database but its object is missing from
+object storage, the download endpoint returns `404 archive_not_found`. The
+client logs the transcript ID, archive ID, and sequence, skips that cloud
+transcript because it cannot be restored completely, and continues synchronizing
+other conversations. General object-storage failures still fail the download
+phase and are not mistaken for one missing archive. This behavior isolates
+corrupt data; it does not fabricate or rebuild the missing object. Operators
+should still use Backend logs and object-store audit records to determine why
+the object was deleted.

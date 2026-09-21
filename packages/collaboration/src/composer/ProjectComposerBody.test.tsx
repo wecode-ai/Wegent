@@ -130,6 +130,22 @@ describe('shared PC composer body', () => {
     await click('send')
     expect(submit).toHaveBeenCalledWith('Newest draft', undefined)
   })
+  it.each(['chat', 'document'] as const)(
+    'preserves the %s editor surface and separate toolbar',
+    async presentation => {
+      await mount({ presentation })
+      expect(button('project-chat-composer').dataset.presentation).toBe(presentation)
+      const editor = input.current!.element!
+      expect(Boolean(editor.closest('[data-composer-scroll-container]'))).toBe(
+        presentation === 'chat'
+      )
+      expect(editor.classList.contains('max-h-[60vh]')).toBe(presentation === 'document')
+      expect(button('project-chat-composer-content').contains(button('send'))).toBe(false)
+      await setValue('Test draft')
+      await click('send')
+      expect(submit).toHaveBeenCalledWith('Test draft', undefined)
+    }
+  )
   it('restores text attachments into the live draft and focuses the exact editor', async () => {
     await mount({ buffered: true, attachments: [textAttachment] })
     await setValue('Unflushed text')

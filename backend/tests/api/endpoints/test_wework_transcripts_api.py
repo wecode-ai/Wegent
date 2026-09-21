@@ -100,7 +100,7 @@ def test_commits_native_object_metadata_and_structured_summary(
     retry = _upload(test_client, test_token, request)
     assert retry.json() == {"currentSequence": 1, "appended": 0}
     assert uploads[0][1:] == (SEGMENT_BODY, len(SEGMENT_BODY))
-    assert len(uploads) == 1
+    assert uploads[1] == uploads[0]
 
     transcript = test_db.query(WeworkTranscript).one()
     archive = test_db.query(WeworkTranscriptArchive).one()
@@ -181,8 +181,15 @@ def test_prunes_segments_older_than_previous_snapshot(
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
-    monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
-    monkeypatch.setattr(storage, "delete", deleted_keys.append)
+    stored_keys: set[str] = set()
+    monkeypatch.setattr(storage, "put_stream", lambda key, *_args: stored_keys.add(key))
+    monkeypatch.setattr(storage, "exists", stored_keys.__contains__)
+
+    def delete(key: str) -> None:
+        deleted_keys.append(key)
+        stored_keys.discard(key)
+
+    monkeypatch.setattr(storage, "delete", delete)
 
     for sequence in range(1, 21):
         is_snapshot = sequence in {1, 10, 20}
@@ -225,8 +232,15 @@ def test_continues_bounded_pruning_on_delta_commits(
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
-    monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
-    monkeypatch.setattr(storage, "delete", deleted_keys.append)
+    stored_keys: set[str] = set()
+    monkeypatch.setattr(storage, "put_stream", lambda key, *_args: stored_keys.add(key))
+    monkeypatch.setattr(storage, "exists", stored_keys.__contains__)
+
+    def delete(key: str) -> None:
+        deleted_keys.append(key)
+        stored_keys.discard(key)
+
+    monkeypatch.setattr(storage, "delete", delete)
     monkeypatch.setattr(wework_transcript_service, "MAX_SEGMENTS_PRUNED_PER_COMMIT", 2)
 
     pruned_per_commit: list[int] = []
@@ -391,6 +405,82 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
         test_db, obsolete.transcript_db_id
     )
     assert test_db.query(WeworkTranscriptArchive).filter_by(id=obsolete.id).count() == 0
+
+
+def test_reports_object_storage_failure_with_a_stable_code(
+    test_client, test_token, monkeypatch
+):
+    from app.services import wework_transcript_service
+    from app.services.wework_transcript_storage import WeworkTranscriptStorageError
+
+    lease = _lease(test_client, test_token)
+    monkeypatch.setattr(
+        wework_transcript_service.wework_transcript_storage,
+        "put_stream",
+        lambda *_args: (_ for _ in ()).throw(
+            WeworkTranscriptStorageError(
+                "Failed to store transcript segment (AccessDenied)"
+            )
+        ),
+    )
+
+    response = _upload(test_client, test_token, _segment(lease))
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "transcript_storage_unavailable",
+        "message": "Failed to store transcript segment (AccessDenied)",
+    }
+
+
+def test_requires_snapshot_when_the_committed_recovery_chain_is_missing(
+    test_client, test_token, monkeypatch
+):
+    from app.services import wework_transcript_service
+
+    lease = _lease(test_client, test_token)
+    storage = wework_transcript_service.wework_transcript_storage
+    stored_keys = set()
+
+    def put_stream(key, _stream, _size):
+        stored_keys.add(key)
+
+    monkeypatch.setattr(storage, "put_stream", put_stream)
+    monkeypatch.setattr(storage, "exists", stored_keys.__contains__)
+
+    first = _upload(test_client, test_token, _segment(lease))
+    assert first.status_code == 200
+    stored_keys.clear()
+
+    delta = _upload(
+        test_client,
+        test_token,
+        _segment(
+            lease,
+            baseSequence=1,
+            sequence=2,
+            sha256="2" * 64,
+            turnId="turn-2",
+            format="codex-delta.v1.tgz.aes256gcm",
+        ),
+    )
+    assert delta.status_code == 409
+    assert delta.json()["detail"]["code"] == "snapshot_required"
+
+    snapshot = _upload(
+        test_client,
+        test_token,
+        _segment(
+            lease,
+            baseSequence=1,
+            sequence=2,
+            sha256="2" * 64,
+            turnId="turn-2",
+            format="codex-snapshot.v1.tgz.aes256gcm",
+        ),
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json() == {"currentSequence": 2, "appended": 1}
 
 
 def test_rejects_conflicting_segment_before_object_storage(
@@ -576,3 +666,44 @@ def test_download_streams_the_object_through_backend(
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.headers["content-length"] == "10"
     assert response.content == b"encrypted!!"
+
+
+def test_download_reports_a_missing_storage_object_as_not_found(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.api.endpoints import wework_transcripts
+    from app.services.wework_transcript_storage import (
+        WeworkTranscriptStorageNotFoundError,
+    )
+
+    _lease(test_client, test_token)
+    transcript = test_db.query(WeworkTranscript).one()
+    archive = WeworkTranscriptArchive(
+        transcript_db_id=transcript.id,
+        from_sequence=0,
+        to_sequence=1,
+        storage_key="users/1/transcripts/key/missing.tgz.aes256gcm",
+        sha256="c" * 64,
+        size_bytes=10,
+        format="codex-snapshot.v1.tgz.aes256gcm",
+    )
+    test_db.add(archive)
+    test_db.commit()
+    monkeypatch.setattr(
+        wework_transcripts.wework_transcript_storage,
+        "stream",
+        lambda _key: (_ for _ in ()).throw(
+            WeworkTranscriptStorageNotFoundError("Wework transcript segment not found")
+        ),
+    )
+
+    response = test_client.get(
+        f"/api/wework-transcripts/transcript-1/archives/{archive.id}/download",
+        headers=_headers(test_token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "code": "archive_not_found",
+        "message": "Wework transcript segment not found",
+    }

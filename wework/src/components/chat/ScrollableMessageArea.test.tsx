@@ -4972,6 +4972,78 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
+  test('treats dragging an external scrollbar as user scroll intent', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    const externalScrollInteractionRef = createRef<HTMLDivElement>()
+    const streamingMessage = {
+      id: 'external-scrollbar-drag-stream',
+      role: 'assistant' as const,
+      content: '正在流式输出',
+      status: 'streaming' as const,
+      createdAt: '2026-09-18T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <>
+        <div ref={externalScrollRef}>
+          <ScrollableMessageArea
+            conversationKey="external-scrollbar-drag"
+            externalScrollRef={externalScrollRef}
+            externalScrollInteractionRef={externalScrollInteractionRef}
+            messages={[streamingMessage]}
+          />
+        </div>
+        <div ref={externalScrollInteractionRef} data-testid="external-scrollbar" />
+      </>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    flushScheduledTimers()
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    fireEvent.pointerDown(screen.getByTestId('external-scrollbar'))
+    scroller.scrollTop = -120
+    fireEvent.scroll(scroller)
+
+    fireEvent.pointerMove(screen.getByTestId('external-scrollbar'), { buttons: 1 })
+    scroller.scrollTop = -240
+    fireEvent.scroll(scroller)
+
+    rerender(
+      <>
+        <div ref={externalScrollRef}>
+          <ScrollableMessageArea
+            conversationKey="external-scrollbar-drag"
+            externalScrollRef={externalScrollRef}
+            externalScrollInteractionRef={externalScrollInteractionRef}
+            messages={[
+              {
+                ...streamingMessage,
+                content: '正在流式输出\n\n更多流式内容\n\n仍在增长',
+              },
+            ]}
+          />
+        </div>
+        <div ref={externalScrollInteractionRef} data-testid="external-scrollbar" />
+      </>
+    )
+    flushScheduledTimers()
+    flushStreamingFollow()
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
   test('keeps the conversation pinned to the bottom while it keeps growing after jump-to-bottom', () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const streamingMessage = {

@@ -130,6 +130,8 @@ export interface RuntimeTranscriptTurn {
   messageIndex?: number | null;
   status?: string;
   runtimeStatus?: string | null;
+  startedAt?: string | number | null;
+  durationMs?: number | null;
   completedAt?: string | number | null;
   error?: string | null;
   errorType?: string | null;
@@ -163,6 +165,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   afterCursor?: string | null;
   refresh?: boolean;
   includeFullContent?: boolean;
+  conversationContextOnly?: boolean;
   navigationOnly?: boolean;
 }
 
@@ -291,7 +294,7 @@ export interface Attachment {
   image_height?: number;
   ui_group_id?: string;
   ui_group_role?: "primary" | "companion";
-  ui_kind?: "appshot";
+  ui_kind?: "appshot" | "pasted-text";
 }
 
 export interface RequestUserInputResponseAnswer {

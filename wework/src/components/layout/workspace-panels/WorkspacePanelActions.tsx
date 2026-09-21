@@ -39,6 +39,11 @@ import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/typ
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage } from '@/types/workbench'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import {
+  resolveWorkspaceOpener,
+  setPreferredWorkspaceOpener,
+  usePreferredWorkspaceOpener,
+} from '@/lib/workspace-opener-preferences'
 
 interface WorkspacePanelActionsProps {
   mode?:
@@ -161,6 +166,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
   const normalizedWorkspacePath = localWorkspacePath?.trim()
+  const preferredOpener = usePreferredWorkspaceOpener(normalizedWorkspacePath)
   const projectUsesLocalWorkspace = Boolean(
     currentProject &&
     (currentProject.config?.execution?.targetType === 'local' ||
@@ -212,7 +218,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       )
     : []
   const defaultOpener = openerAvailability
-    ? (availableOpenerIds[0] ?? null)
+    ? resolveWorkspaceOpener(availableOpenerIds, preferredOpener)
     : DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   const defaultOpenerLabel =
     (defaultOpener != null ? openerLabels[defaultOpener] : undefined) ??
@@ -294,6 +300,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         opener,
         path: localWorkspacePath,
       })
+      setPreferredWorkspaceOpener(localWorkspacePath, opener)
     } catch (error) {
       // Unavailable openers are grayed out before launch, so this only logs
       // unexpected launch failures instead of showing a modal.

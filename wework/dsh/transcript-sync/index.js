@@ -179,22 +179,19 @@ export class WeworkSync {
       if (!this.enabled) return false
       if (!(await this.ensureApiBaseUrl())) return false
       const failures = []
-      for (const phase of [
-        () => this.flushPending(),
-        () => this.pullTranscripts(),
-        () => this.syncPreferences(),
+      for (const [phase, synchronize] of [
+        ['Conversation upload', () => this.flushPending()],
+        ['Conversation download', () => this.pullTranscripts()],
+        ['Preference synchronization', () => this.syncPreferences()],
       ]) {
         if (!this.enabled) break
         try {
-          await phase()
+          await synchronize()
         } catch (error) {
-          failures.push(error)
+          failures.push({ phase, error })
         }
       }
-      if (failures.length === 1) throw failures[0]
-      if (failures.length > 1) {
-        throw new AggregateError(failures, 'Wework cloud synchronization phases failed')
-      }
+      if (failures.length) throw synchronizationFailure(failures)
       return this.enabled
     }
     this.processing = operation()
@@ -264,7 +261,23 @@ export class WeworkSync {
         encryptionKey: encryption.key,
         summary: summarized.payload,
       })
-      await this.uploadPendingSegment(turn, segment, lease)
+      try {
+        await this.uploadPendingSegment(turn, segment, lease)
+      } catch (error) {
+        if (!snapshot && isSnapshotRequired(error)) {
+          await removeSegmentFile(segment)
+          segment = await this.source.read(turn, {
+            baseSequence: turn.cloudSequence - 1,
+            sequence: turn.cloudSequence,
+            snapshot: true,
+            encryptionKey: encryption.key,
+            summary: summarized.payload,
+          })
+          await this.uploadPendingSegment(turn, segment, lease)
+        } else {
+          throw error
+        }
+      }
     } catch (error) {
       await this.releaseLease(turn, lease)
       released = true
@@ -300,8 +313,12 @@ export class WeworkSync {
   }
 
   async reconcileOrForkPendingTurn(turn, lease) {
-    const delivered = await this.reconcilePendingSegment(turn)
-    await this.releaseLease(turn, lease)
+    let delivered
+    try {
+      delivered = await this.reconcilePendingSegment(turn, lease)
+    } finally {
+      await this.releaseLease(turn, lease)
+    }
     if (!delivered) {
       this.forkPendingTurn(turn, Math.min(turn.baseSequence, lease.currentSequence))
       return
@@ -349,19 +366,7 @@ export class WeworkSync {
     )
   }
 
-  async reconcilePendingSegment(turn) {
-    const encodedTranscriptId = encodeURIComponent(turn.transcriptId)
-    const [transcript, summaries] = await Promise.all([
-      this.request(`/wework-transcripts/${encodedTranscriptId}`),
-      this.request(
-        `/wework-transcripts/${encodedTranscriptId}/turns?after=${turn.cloudSequence - 1}&limit=1`
-      ),
-    ])
-    const existing = transcript.archives?.find(archive => archive.toSequence === turn.cloudSequence)
-    const existingSummary = summaries.turns?.find(
-      candidate => candidate.sequence === turn.cloudSequence
-    )
-    if (!existing || !existingSummary) return null
+  async reconcilePendingSegment(turn, lease) {
     const encryption = await this.transcriptEncryption(turn.transcriptId)
     const snapshot = turn.cloudSequence === 1 || turn.cloudSequence % SNAPSHOT_INTERVAL === 0
     const segment = await this.source.read(turn, {
@@ -371,20 +376,13 @@ export class WeworkSync {
       encryptionKey: encryption.key,
     })
     try {
-      if (
-        existing?.sha256 === segment.sha256 &&
-        existing?.format === segment.format &&
-        existing?.sizeBytes === segment.sizeBytes &&
-        existingSummary?.turnId === turn.turnId &&
-        stableJson(existingSummary.payload) === stableJson(segmentSummary(turn, segment))
-      ) {
-        return { ...turn, rolloutEnd: segment.rolloutEnd }
-      }
-      return null
+      await this.uploadPendingSegment(turn, segment, lease)
+      return { ...turn, rolloutEnd: segment.rolloutEnd }
+    } catch (error) {
+      if (isSequenceConflict(error)) return null
+      throw error
     } finally {
-      await unlink(segment.path).catch(error => {
-        if (error?.code !== 'ENOENT') throw error
-      })
+      await removeSegmentFile(segment)
     }
   }
 
@@ -442,6 +440,7 @@ export class WeworkSync {
           const directory = await mkdtemp(join(tmpdir(), 'wework-transcript-'))
           try {
             const segments = []
+            let missingArchive = null
             for (const archive of archives) {
               if (!this.enabled) return
               if (
@@ -452,21 +451,35 @@ export class WeworkSync {
                 throw new Error('Transcript archive has an invalid encrypted size')
               }
               const path = join(directory, `${archive.toSequence}.tgz.aes256gcm`)
-              await this.request(
-                `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/download`,
-                'GET',
-                undefined,
-                {
-                  downloadPath: path,
-                  downloadSizeBytes: archive.sizeBytes,
-                }
-              )
+              try {
+                await this.request(
+                  `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/download`,
+                  'GET',
+                  undefined,
+                  {
+                    downloadPath: path,
+                    downloadSizeBytes: archive.sizeBytes,
+                  }
+                )
+              } catch (error) {
+                if (!isArchiveNotFound(error)) throw error
+                missingArchive = archive
+                break
+              }
               segments.push({
                 path,
                 sha256: archive.sha256,
                 sequence: archive.toSequence,
                 format: archive.format,
               })
+            }
+            if (missingArchive) {
+              console.warn('[wework-transcript-sync] skipped missing cloud archive', {
+                transcriptId: transcript.transcriptId,
+                archiveId: missingArchive.id,
+                sequence: missingArchive.toSequence,
+              })
+              continue
             }
             const imported = await this.target.restore(transcript, segments, {
               encryptionKey: encryption.key,
@@ -591,6 +604,17 @@ class SyncRequestError extends Error {
   }
 }
 
+function synchronizationFailure(failures) {
+  if (failures.length === 1) return failures[0].error
+  const errors = failures.map(({ error }) => error)
+  const summary = failures
+    .map(
+      ({ phase, error }) => `${phase}: ${error instanceof Error ? error.message : String(error)}`
+    )
+    .join('; ')
+  return new AggregateError(errors, summary)
+}
+
 class SyncState {
   constructor(path) {
     this.path = path
@@ -697,6 +721,14 @@ function isSequenceConflict(error) {
     error instanceof SyncRequestError &&
     ['sequence_conflict', 'segment_conflict', 'turn_conflict'].includes(error.code)
   )
+}
+
+function isSnapshotRequired(error) {
+  return error instanceof SyncRequestError && error.code === 'snapshot_required'
+}
+
+function isArchiveNotFound(error) {
+  return error instanceof SyncRequestError && error.code === 'archive_not_found'
 }
 
 async function removeSegmentFile(segment) {

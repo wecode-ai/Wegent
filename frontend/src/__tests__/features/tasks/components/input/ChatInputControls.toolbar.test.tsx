@@ -251,6 +251,13 @@ function createProps(): ChatInputControlsProps {
 }
 
 describe('ChatInputControls toolbar actions', () => {
+  it('mounts the model loader before an agent is resolved', () => {
+    render(<ChatInputControls {...createProps()} selectedTeam={null} />)
+    expect(screen.getByTestId('model-selector')).toBeInTheDocument()
+    expect(mockModelSelector.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ selectedTeam: null, disabled: true })
+    )
+  })
   beforeEach(() => {
     routerPush.mockClear()
     mockModelSelector.mockClear()

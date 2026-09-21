@@ -187,6 +187,15 @@ class SubscriptionKnowledgeBaseRef(BaseModel):
     namespace: str = Field("default", description="Knowledge base namespace")
 
 
+class SubscriptionCodeWikiRef(BaseModel):
+    """Reference controlled by the Code Wiki scheduled-update API."""
+
+    id: int = Field(..., gt=0, description="Knowledge base id")
+    name: str = Field(..., min_length=1, description="Kind name")
+    namespace: str = Field(..., min_length=1, description="Kind namespace")
+    userId: int = Field(..., gt=0, description="Kind owner id")
+
+
 class SubscriptionSkillRef(BaseModel):
     """Reference to a Skill for subscription."""
 
@@ -297,6 +306,10 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
+    )
+    codeWikiRef: Optional[SubscriptionCodeWikiRef] = Field(
+        None,
+        description="Internal Code Wiki plan; generic subscription actions reject it.",
     )
     # Notification webhooks
     notificationWebhooks: Optional[List[NotificationWebhook]] = Field(
@@ -507,12 +520,16 @@ class SubscriptionInDB(SubscriptionBase):
     """Database Subscription model."""
 
     id: int
+    code_wiki_id: Optional[int] = Field(
+        None, description="Code Wiki id when this row is a scheduled-update plan"
+    )
     user_id: int
     namespace: str = "default"
     webhook_url: Optional[str] = None
     webhook_secret: Optional[str] = None
     last_execution_time: Optional[datetime] = None
     last_execution_status: Optional[str] = None
+    last_execution_message: Optional[str] = None
     next_execution_time: Optional[datetime] = None
     execution_count: int = 0
     success_count: int = 0

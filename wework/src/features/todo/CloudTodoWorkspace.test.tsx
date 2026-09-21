@@ -1154,43 +1154,6 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.deliveryApi!.listCloudProjectMembers).not.toHaveBeenCalled()
   })
 
-  it.each(['cloud', 'local'] as const)(
-    'marks an unread %s Issue as read when its detail opens',
-    async location => {
-      const workbenchServices = services()
-      workbenchServices.projectSpaceApis = {
-        [location]: workbenchServices.deliveryApi!,
-        defaultLocation: location,
-      }
-      const unreadItem = { ...item, is_unread: true, content_revision: 2 }
-      vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
-        items: [unreadItem],
-      })
-      vi.mocked(workbenchServices.deliveryApi!.markLoopItemRead).mockResolvedValue({
-        ...unreadItem,
-        is_unread: false,
-      })
-
-      render(
-        <CloudTodoWorkspace
-          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-          localProjects={[]}
-          services={workbenchServices}
-        />
-      )
-
-      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-      expect(await screen.findByTestId('cloud-todo-card-unread-WEG-1')).toBeInTheDocument()
-
-      await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-
-      await waitFor(() => {
-        expect(workbenchServices.deliveryApi!.markLoopItemRead).toHaveBeenCalledWith('WEG-1')
-      })
-      expect(screen.queryByTestId('cloud-todo-card-unread-WEG-1')).not.toBeInTheDocument()
-    }
-  )
-
   it('shows only the current runtime task and hides child-task lists and actions', async () => {
     const child = {
       ...item,
@@ -2076,7 +2039,9 @@ describe('CloudTodoWorkspace', () => {
       update: vi.fn(),
     } as never
     const localApi = localServices.deliveryApi!
-    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listCloudProjects = vi.fn(async () => ({
+      items: [localProject, { ...localProject, id: 'default-work-items', name: 'My tasks' }],
+    }))
     localApi.listLoopItems = vi.fn(async () => ({ items: [localItem] }))
     const cloudServices = services()
     const cloudApi = cloudServices.deliveryApi!
@@ -3030,7 +2995,8 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.selectOptions(screen.getByTestId('cloud-todo-detail-parent'), 'WEG-2')
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-WEG-2'))
     await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
@@ -5173,7 +5139,8 @@ describe('CloudTodoWorkspace', () => {
     await user.click((await screen.findAllByText('Wegent V4'))[0])
     await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
     delete workbenchServices.projectSpaceDetailServices?.cloud
-    await user.type(screen.getByTestId('workspace-issue-input'), 'Unavailable AI Issue')
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Unavailable AI Issue')
     await user.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('运行服务当前不可用')
@@ -5193,10 +5160,10 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(screen.getByTestId('cloud-todo-column-empty-add-inbox'))
-    await userEvent.type(
-      screen.getByTestId('cloud-todo-column-quick-create-input-inbox'),
-      'Issue with details'
-    )
+    // This scenario verifies title handoff, not per-character keyboard behavior.
+    fireEvent.change(screen.getByTestId('cloud-todo-column-quick-create-input-inbox'), {
+      target: { value: 'Issue with details' },
+    })
     await userEvent.click(screen.getByTestId('cloud-todo-column-quick-create-full-inbox'))
 
     expect(screen.getByTestId('workspace-issue-composer')).toBeVisible()
@@ -5204,7 +5171,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('workspace-issue-composer')).toHaveTextContent('创建 Issue')
   })
 
-  it('only offers direct creation in intake columns', async () => {
+  it('only offers direct Issue creation in the inbox column', async () => {
     const workbenchServices = services()
     render(
       <CloudTodoWorkspace
@@ -5216,22 +5183,27 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     for (const state of ['inbox', 'pending', 'in_progress', 'in_review', 'completed']) {
-      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).toHaveClass(
-        'overflow-y-auto',
+      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}-viewport`)).toHaveClass(
         'overscroll-y-contain',
+        'pr-1.5'
+      )
+      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}-content`)).toHaveClass(
         'px-2',
-        'pt-2'
+        'pt-2',
+        'pb-2'
       )
       expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).not.toHaveClass('p-2')
     }
+    const inboxAdd = screen.getByTestId('cloud-todo-column-empty-add-inbox')
+    expect(inboxAdd).toBeVisible()
+    expect(inboxAdd).toContainElement(inboxAdd.querySelector('svg'))
+    expect(inboxAdd).toHaveTextContent('创建第一个 Issue')
+    expect(screen.getByTestId('cloud-todo-column-dropzone-inbox')).toContainElement(inboxAdd)
+    expect(screen.queryByTestId('cloud-todo-column-empty-add-pending')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-dropzone-pending')).toHaveTextContent(
+      '目标和负责人明确后，从这里等待开始。'
+    )
     for (const state of ['inbox', 'pending']) {
-      const emptyAdd = screen.getByTestId(`cloud-todo-column-empty-add-${state}`)
-      expect(emptyAdd).toBeVisible()
-      expect(emptyAdd).toContainElement(emptyAdd.querySelector('svg'))
-      expect(emptyAdd).toHaveTextContent(
-        state === 'inbox' ? '创建第一个 Issue' : '创建 Issue 到待开始'
-      )
-      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).toContainElement(emptyAdd)
       expect(screen.queryByTestId(`cloud-todo-column-bottom-add-${state}`)).not.toBeInTheDocument()
     }
     for (const state of ['in_progress', 'in_review', 'completed']) {
@@ -5485,7 +5457,53 @@ describe('CloudTodoWorkspace', () => {
       cloud_project_id: defaultProject.id,
       title: 'Issue-bound Runtime Task',
       status: 'completed' as const,
+      is_unread: true,
     }
+    const firstAddress = {
+      deviceId: 'local-device',
+      taskId: 'bound-runtime-task',
+    }
+    const secondAddress = {
+      deviceId: 'local-device',
+      taskId: 'second-bound-runtime-task',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 91, key: 'project-a', name: 'Project A' },
+          deviceWorkspaces: [
+            {
+              deviceId: firstAddress.deviceId,
+              workspacePath: '/tmp/project-a',
+              available: true,
+              tasks: [
+                {
+                  taskId: firstAddress.taskId,
+                  workspacePath: '/tmp/project-a',
+                  title: persistedIssue.title,
+                  runtime: 'codex' as const,
+                  completedAt: 1_700_000_000,
+                },
+                {
+                  taskId: secondAddress.taskId,
+                  workspacePath: '/tmp/project-a',
+                  title: 'Second bound Runtime Task',
+                  runtime: 'codex' as const,
+                  completedAt: 1_700_000_001,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore(1)
+    lifecycleStore.syncRuntimeWork(runtimeWork)
+    lifecycleStore.markRead(firstAddress)
+    lifecycleStore.markRead(secondAddress)
+    expect(lifecycleStore.getSnapshot().unreadTaskKeys).toEqual(new Set())
     const workbenchServices = services()
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
       items: [defaultProject],
@@ -5497,63 +5515,118 @@ describe('CloudTodoWorkspace', () => {
           id: 1,
           loop_item_id: persistedIssue.id,
           task_user_id: 1,
-          device_id: 'local-device',
-          task_id: 'bound-runtime-task',
+          device_id: firstAddress.deviceId,
+          task_id: firstAddress.taskId,
           task_title: persistedIssue.title,
           backend_task_id: null,
           linked_at: '2026-09-12T00:00:00Z',
+        },
+        {
+          id: 2,
+          loop_item_id: persistedIssue.id,
+          task_user_id: 1,
+          device_id: secondAddress.deviceId,
+          task_id: secondAddress.taskId,
+          task_title: 'Second bound Runtime Task',
+          backend_task_id: null,
+          linked_at: '2026-09-12T00:01:00Z',
         },
       ],
       members: [],
       agents: [],
     }))
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [persistedIssue],
+    }))
     workbenchServices.projectSpaceApis = {
       local: workbenchServices.deliveryApi!,
       defaultLocation: 'local',
     }
-
-    render(
+    const onMarkRuntimeTaskRead = vi.fn((runtimeAddress: typeof firstAddress) =>
+      lifecycleStore.markRead(runtimeAddress)
+    )
+    const workspace = (
+      lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>,
+      focusedItemId?: string
+    ) => (
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
-        runtimeWork={{
-          projects: [
-            {
-              project: { id: 91, key: 'project-a', name: 'Project A' },
-              deviceWorkspaces: [
-                {
-                  deviceId: 'local-device',
-                  workspacePath: '/tmp/project-a',
-                  available: true,
-                  tasks: [
-                    {
-                      taskId: 'bound-runtime-task',
-                      workspacePath: '/tmp/project-a',
-                      title: persistedIssue.title,
-                      runtime: 'codex',
-                      completedAt: 1_700_000_000,
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          chats: [],
-          totalTasks: 1,
-        }}
+        runtimeWork={runtimeWork}
+        runtimeTaskLifecycle={lifecycleSnapshot}
         services={workbenchServices}
         embedded
         activeProjectRef={{
           projectStore: 'local',
           projectId: defaultProject.id,
         }}
+        focusedItemId={focusedItemId}
+        onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
       />
     )
+
+    const rendered = render(workspace(lifecycleStore.getSnapshot()))
 
     expect(await screen.findByTestId(`cloud-todo-card-${persistedIssue.id}`)).toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-todo-card-runtime:local-device:bound-runtime-task')
     ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId(`cloud-todo-card-unread-${persistedIssue.id}`)
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+
+    expect(
+      await screen.findByTestId(`cloud-todo-card-unread-${persistedIssue.id}`)
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId(`cloud-todo-card-${persistedIssue.id}`))
+
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
+    expect(workbenchServices.deliveryApi!.markLoopItemRead).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    onMarkRuntimeTaskRead.mockClear()
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot(), persistedIssue.id))
+
+    await waitFor(() => expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2))
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
+
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+    onMarkRuntimeTaskRead.mockClear()
+    act(() => {
+      lifecycleStore.executorStarted(firstAddress)
+      lifecycleStore.executorSettled(firstAddress)
+      lifecycleStore.executorStarted(secondAddress)
+      lifecycleStore.executorSettled(secondAddress)
+    })
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await userEvent.type(screen.getByTestId('cloud-global-search-input'), persistedIssue.id)
+    await userEvent.click(
+      await screen.findByTestId(`cloud-global-search-result-${persistedIssue.id}`)
+    )
+
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(2)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(firstAddress)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(secondAddress)
   })
 
   it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {
@@ -5792,6 +5865,7 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
       'Stopped task Issue'
     )
+    expect(screen.queryByTestId('cloud-todo-batch-confirm-review')).not.toBeInTheDocument()
     expect(await screen.findByTestId('cloud-todo-card-progress-trigger-WEG-1')).toHaveAttribute(
       'aria-label',
       '查看进展：Stopped task Issue'
@@ -5904,6 +5978,147 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     const card = await screen.findByTestId('cloud-todo-card-WEG-1')
     expect(card).not.toHaveAttribute('draggable')
+  })
+
+  it('confirms every editable item in the review column from one batch action', async () => {
+    const reviewItems = [
+      { ...item, status: 'in_review' as const },
+      {
+        ...item,
+        id: 'WEG-2',
+        sequence_number: 2,
+        title: 'Review the release notes',
+        status: 'in_review' as const,
+        sort_order: 1,
+      },
+    ]
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: reviewItems,
+    })
+    vi.mocked(workbenchServices.deliveryApi!.updateLoopItem).mockImplementation(
+      async (itemId, values) => ({
+        ...reviewItems.find(candidate => candidate.id === itemId)!,
+        ...values,
+        version: 2,
+      })
+    )
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Review the release notes'
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review'))
+    expect(screen.getByTestId('cloud-todo-batch-confirm-review-dialog')).toHaveTextContent(
+      '将当前列中的 2 个事项标记为已完成'
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledTimes(2)
+    )
+    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
+      version: 1,
+      status: 'completed',
+    })
+    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-2', {
+      version: 1,
+      status: 'completed',
+    })
+    await waitFor(() =>
+      expect(screen.queryByTestId('cloud-todo-batch-confirm-review-dialog')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_review')).not.toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Review the release notes'
+    )
+  })
+
+  it('refreshes a failed local item before retrying batch confirmation', async () => {
+    const localProject = {
+      ...project,
+      id: 'local-review',
+      project_key: 'LOCAL',
+      name: 'Local Review',
+      project_store: 'local' as const,
+    }
+    const localReviewItem = {
+      ...item,
+      id: 'LOCAL-1',
+      cloud_project_id: localProject.id,
+      title: 'Confirm local review',
+      status: 'in_review' as const,
+      project_store: 'local' as const,
+    }
+    const workbenchServices = services()
+    const localApi = workbenchServices.deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listLoopItems = vi.fn(async () => ({ items: [localReviewItem] }))
+    localApi.getLoopItem = vi.fn(async () => ({ ...localReviewItem, version: 2 }))
+    localApi.updateLoopItem = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('version conflict'))
+      .mockImplementation(async (_itemId, values) => ({
+        ...localReviewItem,
+        ...values,
+        version: values.version + 1,
+      }))
+    workbenchServices.projectSpaceApis = {
+      local: localApi,
+      defaultLocation: 'local',
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Local Review'))[0])
+    expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Confirm local review'
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review'))
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review-confirm'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 个事项确认失败，请稍后重试')
+    expect(localApi.updateLoopItem).toHaveBeenCalledWith('LOCAL-1', {
+      version: 1,
+      status: 'completed',
+    })
+    expect(localApi.getLoopItem).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-batch-confirm-review-confirm'))
+
+    await waitFor(() => expect(localApi.getLoopItem).toHaveBeenCalledWith('LOCAL-1'))
+    expect(localApi.updateLoopItem).toHaveBeenLastCalledWith('LOCAL-1', {
+      version: 2,
+      status: 'completed',
+    })
+    expect(screen.queryByTestId('cloud-todo-batch-confirm-review-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Confirm local review'
+    )
   })
 
   it('creates a shared cloud folder from the files view', async () => {

@@ -50,6 +50,10 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
 - 新完整快照提交后，服务端保留“上一个完整快照 + 其后的全部 segment”，删除更旧的
   OSS 对象和元数据。快照间隔为 10 时，每个持续活跃的 transcript 通常保留 11 个、
   峰值不超过约 20 个对象，不会随对话轮数无限增长。
+- 单个原生 rollout segment 的明文上限为 256 MiB。生成增量时 Executor 从已同步的
+  rollout offset 开始读取后缀，不会先把整个持续增长的 rollout 文件读入内存；因此
+  总 rollout 超过旧版 128 MiB 阈值时，只要本次待同步 segment 未超过上限，仍可继续
+  上传。
 
 两台电脑可以同时保持 Wework 打开。客户端每 5 秒拉取一次云端进度，写入时才申请短租约，
 上传完成立即释放；没有新 turn 的公司电脑不会长期占锁。正在运行的本地任务不会被云端恢复
@@ -143,5 +147,23 @@ GitHub CI 的执行前提。
 调整数据库结构。对象存储不可用时，segment 不会提交到 MySQL，outbox 继续保留定位
 信息，本地任务仍可离线执行。
 
+transcript bucket 与附件 bucket 是两个独立桶，`ATTACHMENT_S3_*` 对应的账号必须对该桶
+持有 `ListBucket`、`GetObject`、`PutObject`、`DeleteObject` 权限。只授权了附件桶的账号
+会在首次上传时以 503 失败；此时 Backend 日志记录 S3 错误码，设备侧错误信息末尾括号内
+也会给出同一错误码（如 `AccessDenied`）。
+
 未配置独立根密钥时兼容使用 `SECRET_KEY`。生产环境应配置独立值，并在相关 tgz 保留期间
 保持不变。
+
+## 故障语义与排查
+
+设置页会按 `Conversation upload`、`Conversation download` 和
+`Preference synchronization` 标注失败阶段，避免把上传租约、归档下载和偏好同步错误
+合并成无法定位的通用异常。Electron 请求失败时会保留底层网络原因，但会清除错误文本中的
+URL 凭据。
+
+如果数据库中的 archive 索引仍存在、对应对象却已从对象存储丢失，下载接口返回
+`404 archive_not_found`。客户端会记录 transcript ID、archive ID 和 sequence，跳过该条
+无法完整恢复的云端 transcript，并继续同步其他会话；普通对象存储故障仍会使本轮下载失败，
+不会被误判为单个归档缺失。该处理只隔离损坏数据，不会伪造或重建丢失对象；运维仍需根据
+Backend 日志和对象存储审计记录定位对象被删除的原因。
