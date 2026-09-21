@@ -14,6 +14,9 @@ export const RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
 export const RIGHT_SPLIT_PANEL_MIN_WIDTH = 260
+const RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_STORAGE_KEY =
+  'wework.desktop.right-workspace.panel-width-ratio'
+const RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT = 'wework:right-workspace-panel-width-ratio'
 const BOTTOM_DEFAULT_HEIGHT = 320
 const BOTTOM_MAX_HEIGHT = 560
 const BOTTOM_PANEL_BORDER_HEIGHT = 1
@@ -31,6 +34,14 @@ function getRightSplitChatMaxWidth(containerWidth: number) {
   return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_MIN_WIDTH)
 }
 
+function getRightWorkspacePanelWidthRange(containerWidth: number) {
+  const maximum = Math.max(RIGHT_SPLIT_PANEL_MIN_WIDTH, containerWidth - RIGHT_SPLIT_CHAT_MIN_WIDTH)
+  return {
+    minimum: Math.min(RIGHT_SPLIT_PANEL_MIN_WIDTH, maximum),
+    maximum,
+  }
+}
+
 function getRightSplitChatDefaultWidth(containerWidth: number, defaultPanelWidth?: number) {
   if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
 
@@ -40,6 +51,53 @@ function getRightSplitChatDefaultWidth(containerWidth: number, defaultPanelWidth
       : containerWidth - defaultPanelWidth,
     RIGHT_SPLIT_CHAT_MIN_WIDTH,
     getRightSplitChatMaxWidth(containerWidth)
+  )
+}
+
+function getRightSplitChatWidthFromPanelRatio(containerWidth: number, ratio: number) {
+  if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
+
+  const range = getRightWorkspacePanelWidthRange(containerWidth)
+  const panelWidth = range.minimum + clamp(ratio, 0, 1) * (range.maximum - range.minimum)
+  return clamp(
+    containerWidth - panelWidth,
+    RIGHT_SPLIT_CHAT_MIN_WIDTH,
+    getRightSplitChatMaxWidth(containerWidth)
+  )
+}
+
+function getRightWorkspacePanelRatio(panelWidth: number, containerWidth: number) {
+  const range = getRightWorkspacePanelWidthRange(containerWidth)
+  const span = range.maximum - range.minimum
+  if (span <= 0) return 0
+  return clamp((panelWidth - range.minimum) / span, 0, 1)
+}
+
+function readStoredRightWorkspacePanelWidthRatio() {
+  if (typeof window === 'undefined') return undefined
+
+  try {
+    const value = window.localStorage.getItem(RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_STORAGE_KEY)
+    if (!value) return undefined
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? clamp(parsed, 0, 1) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function storeRightWorkspacePanelWidthRatio(ratio: number) {
+  if (typeof window === 'undefined') return
+
+  const clampedRatio = clamp(ratio, 0, 1)
+  try {
+    window.localStorage.setItem(RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_STORAGE_KEY, String(clampedRatio))
+  } catch {
+    // Ignore storage failures; the in-memory resize state still updates.
+  }
+
+  window.dispatchEvent(
+    new CustomEvent(RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT, { detail: { ratio: clampedRatio } })
   )
 }
 
@@ -57,16 +115,20 @@ export function useResizableRightSplitChat({
   const [width, setWidth] = useState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
   const [resizing, setResizing] = useState(false)
   const collapseFrameRef = useRef<number | null>(null)
-  const userSizedRef = useRef(false)
+  const resizingRef = useRef(false)
+  const panelWidthRatioRef = useRef<number | undefined>(readStoredRightWorkspacePanelWidthRatio())
 
   useLayoutEffect(() => {
     const container = containerRef?.current
     if (!container) return
 
     const applyDefaultWidth = () => {
-      if (userSizedRef.current) return
+      if (resizingRef.current) return
+      const containerWidth = container.getBoundingClientRect().width
       setWidth(
-        getRightSplitChatDefaultWidth(container.getBoundingClientRect().width, defaultPanelWidth)
+        defaultPanelWidth !== undefined || panelWidthRatioRef.current === undefined
+          ? getRightSplitChatDefaultWidth(containerWidth, defaultPanelWidth)
+          : getRightSplitChatWidthFromPanelRatio(containerWidth, panelWidthRatioRef.current)
       )
     }
 
@@ -76,6 +138,33 @@ export function useResizableRightSplitChat({
     const observer = new ResizeObserver(applyDefaultWidth)
     observer.observe(container)
     return () => observer.disconnect()
+  }, [containerRef, defaultPanelWidth])
+
+  useEffect(() => {
+    const handleStoredPanelWidthRatioChange = (event: Event) => {
+      if (defaultPanelWidth !== undefined) return
+
+      const detail = (event as CustomEvent<{ ratio?: number }>).detail
+      const ratio = detail?.ratio ?? readStoredRightWorkspacePanelWidthRatio()
+      if (ratio === undefined) return
+
+      panelWidthRatioRef.current = ratio
+      const containerWidth = containerRef?.current?.getBoundingClientRect().width ?? 0
+      setWidth(getRightSplitChatWidthFromPanelRatio(containerWidth, ratio))
+    }
+
+    window.addEventListener(
+      RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT,
+      handleStoredPanelWidthRatioChange
+    )
+    window.addEventListener('storage', handleStoredPanelWidthRatioChange)
+    return () => {
+      window.removeEventListener(
+        RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT,
+        handleStoredPanelWidthRatioChange
+      )
+      window.removeEventListener('storage', handleStoredPanelWidthRatioChange)
+    }
   }, [containerRef, defaultPanelWidth])
 
   useEffect(() => {
@@ -92,8 +181,10 @@ export function useResizableRightSplitChat({
     const startWidth = width
     const containerWidth = containerRef?.current?.getBoundingClientRect().width ?? 0
     const maxWidth = getRightSplitChatMaxWidth(containerWidth)
+    let resizedPanelWidth = Math.max(RIGHT_SPLIT_PANEL_MIN_WIDTH, containerWidth - startWidth)
+    let resized = false
     let collapsed = false
-    userSizedRef.current = true
+    resizingRef.current = true
 
     function finishResize() {
       document.removeEventListener('pointermove', handleMove)
@@ -102,6 +193,7 @@ export function useResizableRightSplitChat({
       document.body.style.userSelect = ''
       setPanelResizeShieldActive(false)
       setResizing(false)
+      resizingRef.current = false
     }
 
     function collapsePanel() {
@@ -114,8 +206,11 @@ export function useResizableRightSplitChat({
       }
       const applyCollapse = () => {
         collapseFrameRef.current = null
-        userSizedRef.current = false
-        setWidth(getRightSplitChatDefaultWidth(containerWidth, defaultPanelWidth))
+        setWidth(
+          defaultPanelWidth !== undefined || panelWidthRatioRef.current === undefined
+            ? getRightSplitChatDefaultWidth(containerWidth, defaultPanelWidth)
+            : getRightSplitChatWidthFromPanelRatio(containerWidth, panelWidthRatioRef.current)
+        )
         onCollapse?.()
       }
 
@@ -138,10 +233,18 @@ export function useResizableRightSplitChat({
 
       const nextWidth = clamp(rawWidth, RIGHT_SPLIT_CHAT_MIN_WIDTH, maxWidth)
       setWidth(nextWidth)
+      resizedPanelWidth = Math.max(RIGHT_SPLIT_PANEL_MIN_WIDTH, containerWidth - nextWidth)
+      resized = true
     }
 
     function handleUp() {
-      if (!collapsed) finishResize()
+      if (collapsed) return
+      if (resized && defaultPanelWidth === undefined) {
+        const nextRatio = getRightWorkspacePanelRatio(resizedPanelWidth, containerWidth)
+        panelWidthRatioRef.current = nextRatio
+        storeRightWorkspacePanelWidthRatio(nextRatio)
+      }
+      finishResize()
     }
 
     setResizing(true)

@@ -457,6 +457,16 @@ export function createDesktopScenario({
         timeoutMs: taskTimeoutMs,
       })
       await assertSideChatBottomOrigin(control)
+      const [scrollMetrics] = JSON.parse(await control.command('getElementMetrics', SIDE_SCROLL))
+      const [firstUserMetrics] = JSON.parse(
+        await control.command('getElementMetrics', `${SIDE_CHAT} [data-testid="message-user"]`)
+      )
+      assert.ok(scrollMetrics && firstUserMetrics, 'The first side-chat message was not measurable')
+      assert.ok(
+        firstUserMetrics.top >= scrollMetrics.top - 1 &&
+          firstUserMetrics.top <= scrollMetrics.top + 40,
+        'The first side-chat message did not start at the top of the viewport'
+      )
       await waitForThinkingToSettle(control, taskTimeoutMs)
       const sideThreadId = await waitForRetainedSideThread(
         executorLogPath,

@@ -225,6 +225,7 @@ import {
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
   SIDE_CHAT_GUIDANCE_COMPLETION,
+  SIDE_CHAT_QUEUE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
@@ -4288,6 +4289,28 @@ class DesktopE2EServer {
         this.writeSse(response, [
           responseCreated(responseId),
           ...functionCall('wework-e2e-side-chat-guidance-tool', tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestCount >= 3 && requestCount <= 5) {
+        const queueIndex = requestCount - 2
+        const expectedPrompt =
+          queueIndex === 1
+            ? SIDE_CHAT_QUEUE_FOLLOW_UP
+            : `${SIDE_CHAT_QUEUE_FOLLOW_UP}_${queueIndex}`
+        assert.ok(
+          requestText.includes(expectedPrompt),
+          `Side-chat queued reply ${queueIndex} was not sent after the preceding turn`
+        )
+        assert.equal(
+          requestText.includes(`${SIDE_CHAT_QUEUE_FOLLOW_UP}_${queueIndex + 1}`),
+          false,
+          'The side-chat queue sent replies out of order'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
           responseCompleted(responseId),
         ])
         return

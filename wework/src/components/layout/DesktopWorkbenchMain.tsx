@@ -1912,11 +1912,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const displayedRightPanelOpen = rightPanelOpen
   const displayedRightPanelExpanded = rightPanelExpanded
   const compactRightPanelOpen =
-    (rightPanelTabs.length === 1 &&
-      rightPanelTabs[0].startsWith('chat:') &&
-      rightPanelView === rightPanelTabs[0]) ||
-    rightPanelView === 'subagents' ||
-    isRightWorkspaceExtensionTab(rightPanelView)
+    rightPanelView === 'subagents' || isRightWorkspaceExtensionTab(rightPanelView)
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,

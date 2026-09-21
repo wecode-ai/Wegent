@@ -34,6 +34,48 @@ const applied = (id: string) => ({
 })
 
 describe('shared PC and Web conversation queue', () => {
+  it.each(['before', 'after'])(
+    'drains successive replies when each turn returns to the same idle state (%s send acknowledgement)',
+    async acknowledgement => {
+      let phase = 'idle'
+      const queue = new RuntimeConversationQueue<string>()
+      const port: RuntimeConversationQueuePort<string> = {
+        ...setup().port,
+        lifecycle: () => phase,
+        lifecycleChanged: previous => previous !== phase,
+      }
+      for (const id of ['one', 'two', 'three']) queue.enqueue(message(id))
+
+      for (const [index, id] of ['one', 'two', 'three'].entries()) {
+        let accept!: (result: { sent: boolean }) => void
+        vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (accept = resolve)))
+        const sending = queue.pump(port, false)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+        expect(port.send).toHaveBeenLastCalledWith(message(id))
+        await queue.pump(port, false)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+
+        if (acknowledgement === 'before') {
+          accept({ sent: true })
+          await sending
+          await queue.pump(port, false)
+          expect(port.send).toHaveBeenCalledTimes(index + 1)
+        }
+        phase = 'running'
+        await queue.pump(port, true)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+        phase = 'idle'
+        if (acknowledgement === 'after') {
+          await queue.pump(port, false)
+          expect(port.send).toHaveBeenCalledTimes(index + 1)
+          accept({ sent: true })
+          await sending
+        }
+      }
+      expect(queue.getSnapshot()).toEqual([])
+    }
+  )
+
   it('waits while busy and dispatches FIFO once per confirmed lifecycle transition', async () => {
     const { queue, port, transition } = setup()
     queue.enqueue(message('one'))
