@@ -1985,6 +1985,20 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     await click(byTestId("collaboration-primary-agents"));
     expect(byTestId("collaboration-agents-page")).toBeTruthy();
+    const agentFilters = container.querySelector(
+      ".collaboration-resource-filter-stack",
+    );
+    expect(agentFilters?.querySelector(":scope > span")).toBeNull();
+    expect(
+      agentFilters
+        ?.querySelector(".collaboration-resource-source-filter")
+        ?.getAttribute("aria-label"),
+    ).toBe("存储位置");
+    expect(
+      agentFilters
+        ?.querySelector(".collaboration-resource-scope-filter")
+        ?.getAttribute("aria-label"),
+    ).toBe("资源来源");
     expect(byTestId("test-location").textContent).toContain(
       '"rootView":"agents"',
     );

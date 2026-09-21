@@ -1593,7 +1593,6 @@ function ResourceCatalogPage({
 
       <div className="collaboration-resource-catalog-toolbar">
         <div className="collaboration-resource-filter-stack">
-          <span>{messages.storageLocation}</span>
           <div
             className="collaboration-resource-source-filter"
             role="group"
@@ -1622,32 +1621,29 @@ function ResourceCatalogPage({
             ))}
           </div>
           {source === "cloud" ? (
-            <>
-              <span>{messages.resourceSource}</span>
-              <div
-                className="collaboration-resource-scope-filter"
-                role="group"
-                aria-label={messages.resourceSource}
-              >
-                {(["all", "mine", "shared"] as const).map((candidate) => (
-                  <button
-                    type="button"
-                    className={scope === candidate ? "active" : undefined}
-                    aria-pressed={scope === candidate}
-                    data-testid={`collaboration-${kind}-scope-${candidate}`}
-                    key={candidate}
-                    onClick={() => setScope(candidate)}
-                  >
-                    {candidate === "all"
-                      ? messages.allSources
-                      : candidate === "mine"
-                        ? messages.createdByMe
-                        : messages.teamShared}
-                    <em>{scopeCounts[candidate]}</em>
-                  </button>
-                ))}
-              </div>
-            </>
+            <div
+              className="collaboration-resource-scope-filter"
+              role="group"
+              aria-label={messages.resourceSource}
+            >
+              {(["all", "mine", "shared"] as const).map((candidate) => (
+                <button
+                  type="button"
+                  className={scope === candidate ? "active" : undefined}
+                  aria-pressed={scope === candidate}
+                  data-testid={`collaboration-${kind}-scope-${candidate}`}
+                  key={candidate}
+                  onClick={() => setScope(candidate)}
+                >
+                  {candidate === "all"
+                    ? messages.allSources
+                    : candidate === "mine"
+                      ? messages.createdByMe
+                      : messages.teamShared}
+                  <em>{scopeCounts[candidate]}</em>
+                </button>
+              ))}
+            </div>
           ) : null}
         </div>
         <label className="collaboration-resource-catalog-search">
