@@ -403,7 +403,10 @@ function CapabilityPicker<T>({
                           : undefined
                       }
                       disabled={busy || requiredKeys.has(key)}
-                      onChange={(event) => onChange(item, event.target.checked)}
+                      onChange={(event) => {
+                        onChange(item, event.target.checked);
+                        close();
+                      }}
                       type="checkbox"
                     />
                     {!getIconLabel ? (
