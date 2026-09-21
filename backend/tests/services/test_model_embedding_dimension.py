@@ -4,30 +4,19 @@
 
 """Tests for the embedding dimension contract declared by Model resources."""
 
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 import pytest
 from pytest_mock import MockerFixture
 from sqlalchemy.orm import Session
 
+from app.api.endpoints.kind.common import validate_and_prepare_resource
 from app.core.exceptions import ValidationException
 from app.models.kind import Kind
 from app.models.user import User
 from app.services.kind_impl import ModelKindService
-
-
-class _SessionProxy:
-    """Let a service use the test session without closing it."""
-
-    def __init__(self, session: Session):
-        self._session = session
-
-    def __enter__(self) -> Session:
-        return self._session
-
-    def __exit__(self, *exc_info: Any) -> bool:
-        return False
 
 
 def _model_resource(
@@ -54,7 +43,12 @@ def _model_resource(
 @pytest.fixture
 def model_service(mocker: MockerFixture, test_db: Session) -> ModelKindService:
     service = ModelKindService()
-    mocker.patch.object(service, "get_db", return_value=_SessionProxy(test_db))
+
+    @contextmanager
+    def fake_db() -> Iterator[Session]:
+        yield test_db
+
+    mocker.patch.object(service, "get_db", fake_db)
     return service
 
 
@@ -84,6 +78,29 @@ def test_create_embedding_model_requires_declared_dimension(
             test_user.id,
             _model_resource(name="legacy-model", dimensions=None),
         )
+
+
+def test_create_embedding_model_requires_dimension_for_api_payloads(
+    model_service: ModelKindService,
+    test_user: User,
+) -> None:
+    """The HTTP API validates the parsed Model, which keeps modelType an enum."""
+    resource = _model_resource(name="api-model", dimensions=None)
+    prepared = validate_and_prepare_resource("Model", resource, "default")
+
+    assert prepared["spec"]["modelType"] is not None
+    with pytest.raises(ValidationException, match="dimensions"):
+        model_service.create_resource(test_user.id, prepared)
+
+
+def test_create_embedding_model_accepts_api_payloads_with_dimension(
+    model_service: ModelKindService,
+    test_user: User,
+) -> None:
+    resource = _model_resource(name="api-model", dimensions=1024)
+    prepared = validate_and_prepare_resource("Model", resource, "default")
+
+    assert model_service.create_resource(test_user.id, prepared) > 0
 
 
 @pytest.mark.parametrize("dimensions", [0, -1, -1024])

@@ -58,13 +58,18 @@ def validate_embedding_dimension_declaration(
 
 
 def _model_type(spec: Mapping[str, Any]) -> str:
-    """Return the model category, accepting the legacy nested location too."""
+    """Return the model category of a Model spec.
+
+    Accepts the legacy nested ``modelConfig.modelType`` location and enum
+    members, because parsed Model resources keep their category as an enum.
+    """
     model_type = spec.get("modelType")
     if model_type is None:
         model_config = spec.get("modelConfig") or {}
         if isinstance(model_config, Mapping):
             model_type = model_config.get("modelType")
-    return str(model_type or "llm").lower()
+    model_type = getattr(model_type, "value", model_type)
+    return str(model_type or "llm").strip().lower()
 
 
 def _declares_embedding(

@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
+from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.schema import TextNode
+from llama_index.core.vector_stores.simple import SimpleVectorStore
+from pydantic import PrivateAttr
 
 from knowledge_engine.embedding.errors import (
     CollectionDimensionMismatchError,
@@ -22,10 +25,13 @@ from knowledge_engine.storage.milvus_backend import MilvusBackend
 from shared.models import RetrievalScope
 
 
-class _StubEmbeddingModel:
+class _StubEmbeddingModel(BaseEmbedding):
     """Embedding model with an explicit declared-dimension contract."""
 
-    model_name = "stub-embedding-model"
+    _configured_dimension: Optional[int] = PrivateAttr(default=None)
+    _vector_dimension: int = PrivateAttr(default=4)
+    _text_batches: List[List[str]] = PrivateAttr(default_factory=list)
+    _query_requests: List[str] = PrivateAttr(default_factory=list)
 
     def __init__(
         self,
@@ -34,20 +40,39 @@ class _StubEmbeddingModel:
         vector_dimension: int,
         embed_batch_size: int = 10,
     ) -> None:
-        self.embed_batch_size = embed_batch_size
-        self.text_batches: List[List[str]] = []
-        self.query_requests: List[str] = []
+        super().__init__(
+            model_name="stub-embedding-model",
+            embed_batch_size=embed_batch_size,
+        )
         self._vector_dimension = vector_dimension
+        self._configured_dimension = None
         if declared_dimension is not None:
             self._configured_dimension = declared_dimension
 
-    def get_text_embedding_batch(self, texts: List[str], **_: Any) -> List[List[float]]:
-        self.text_batches.append(list(texts))
+    @property
+    def text_batches(self) -> List[List[str]]:
+        return self._text_batches
+
+    @property
+    def query_requests(self) -> List[str]:
+        return self._query_requests
+
+    def _get_text_embedding(self, text: str) -> List[float]:
+        return [0.5] * self._vector_dimension
+
+    async def _aget_text_embedding(self, text: str) -> List[float]:
+        return self._get_text_embedding(text)
+
+    def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
+        self._text_batches.append(list(texts))
         return [[0.5] * self._vector_dimension for _ in texts]
 
-    def get_query_embedding(self, query: str) -> List[float]:
-        self.query_requests.append(query)
+    def _get_query_embedding(self, query: str) -> List[float]:
+        self._query_requests.append(query)
         return [0.5] * self._vector_dimension
+
+    async def _aget_query_embedding(self, query: str) -> List[float]:
+        return self._get_query_embedding(query)
 
 
 def _collection_description(dimension: int) -> Dict[str, Any]:
@@ -1450,6 +1475,37 @@ class TestEmbeddingDimensionContract:
         assert embed_model.query_requests == []
         assert len(embed_model.text_batches) == 1
         assert not hasattr(embed_model, "_dimension")
+
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_real_llama_index_write_reuses_the_first_batch_vectors(
+        self,
+        mock_milvus_vs,
+        mock_client_cls,
+    ):
+        """Let the real LlamaIndex write run to prove the vectors are reused."""
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = False
+        vector_store = SimpleVectorStore()
+        mock_milvus_vs.return_value = vector_store
+
+        embed_model = _StubEmbeddingModel(
+            declared_dimension=None,
+            vector_dimension=4,
+        )
+
+        self._backend().index_with_metadata(
+            nodes=[TextNode(text="chunk one"), TextNode(text="chunk two")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=embed_model,
+        )
+
+        assert embed_model.text_batches[0] == ["chunk one", "chunk two"]
+        # LlamaIndex never asks the provider again for texts it already has vectors for.
+        assert [batch for batch in embed_model.text_batches[1:] if batch] == []
+        stored_vectors = list(vector_store.data.embedding_dict.values())
+        assert stored_vectors == [[0.5] * 4, [0.5] * 4]
 
     @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
     @patch("knowledge_engine.storage.milvus_backend.StorageContext")

@@ -32,7 +32,6 @@ class CustomEmbedding(BaseEmbedding):
     model: str
     headers: dict[str, str]
     api_key: Optional[str] = None
-    _dimension: Optional[int] = None
     _configured_dimension: Optional[int] = None
     _encoding_format: Optional[str] = None
 
@@ -63,7 +62,6 @@ class CustomEmbedding(BaseEmbedding):
         )
 
         if dimensions is not None:
-            self._dimension = dimensions
             self._configured_dimension = dimensions
         if encoding_format is not None:
             self._encoding_format = encoding_format
@@ -162,7 +160,5 @@ class CustomEmbedding(BaseEmbedding):
             declared=self._configured_dimension,
             vectors=[embedding],
         )
-        if self._dimension is None:
-            self._dimension = len(embedding)
 
         return embedding
