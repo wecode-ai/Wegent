@@ -699,16 +699,30 @@ async function verifySideChatAttachmentIsolation({
   )
   control.setScenario('side_chat_attachment')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  await control.command('waitFor', '[data-testid="right-workspace-chat-option"]', {
+    stableMs: 300,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const [launcherMetrics] = JSON.parse(
+    await control.command('getElementMetrics', rightPanelShellSelector)
+  )
   await control.command('click', '[data-testid="right-workspace-chat-option"]')
   await control.command('waitFor', sideComposerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
 
   await waitForElementWidth(
     control,
     rightPanelShellSelector,
-    width => width >= 400 && width <= 440,
-    'The temporary-chat-only right panel'
+    width => Math.abs(width - launcherMetrics.width) <= 1,
+    'The side chat retaining the launcher panel width'
   )
-  await captureVerificationScreenshot(control, '01-side-chat-compact-width.png')
+  await captureVerificationScreenshot(control, '01-side-chat-panel-width.png')
+  const [chatMetrics] = JSON.parse(
+    await control.command('getElementMetrics', rightPanelShellSelector)
+  )
+  assert.ok(
+    Math.abs(chatMetrics.width - launcherMetrics.width) <= 1,
+    'Opening a side chat changed the launcher panel width'
+  )
 
   await control.command('dropFile', sideComposerSelector, {
     filename: SIDE_CHAT_FILENAME,
@@ -823,12 +837,28 @@ async function verifySideChatAttachmentIsolation({
     'The side-chat follow-up was queued instead of guiding the active turn'
   )
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
+  for (const prompt of [
+    SIDE_CHAT_QUEUE_FOLLOW_UP,
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}_2`,
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}_3`,
+  ]) {
+    await control.command('fill', sideComposerSelector, { value: prompt })
+    await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+    await control.command(
+      'waitFor',
+      `${sideChatSelector} [data-testid="conversation-queue-panel"]`,
+      {
+        text: prompt,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+  }
   control.releaseSideChatGuidanceResponse()
-  await control.awaitScenarioRequestCount('side_chat_guidance', 2)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 5)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
-    'Applied guidance remained in the side-chat queue',
+    'The side-chat queue did not automatically drain after the active turn',
     DEFAULT_STEP_TIMEOUT_MS,
     sideChatSelector
   )
