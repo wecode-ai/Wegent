@@ -10,6 +10,7 @@ from app.api.endpoints.admin.public_models import (
     create_public_model,
     update_public_model,
 )
+from app.core.exceptions import ValidationException
 from app.models.user import User
 from app.schemas.admin import PublicModelCreate, PublicModelUpdate
 
@@ -27,6 +28,22 @@ def _model_json(name: str) -> dict:
                 }
             }
         },
+        "status": {"state": "Available"},
+    }
+
+
+def _embedding_model_json(name: str, dimensions: int | None = 1536) -> dict:
+    spec: dict = {
+        "modelConfig": {"env": {"model": "custom", "model_id": name}},
+        "modelType": "embedding",
+    }
+    if dimensions is not None:
+        spec["embeddingConfig"] = {"dimensions": dimensions}
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Model",
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": spec,
         "status": {"state": "Available"},
     }
 
@@ -110,3 +127,44 @@ async def test_public_model_config_update_preserves_hidden_state(
     assert response.is_visible is False
     assert response.model_json["spec"]["isVisible"] is False
     assert response.model_json["spec"]["modelConfig"]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_public_embedding_model_create_requires_dimension(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    with pytest.raises(ValidationException, match="dimensions"):
+        await create_public_model(
+            model_data=PublicModelCreate(
+                name="no-dimension-public-model",
+                json=_embedding_model_json("no-dimension-public-model", None),
+            ),
+            db=test_db,
+            current_user=test_admin_user,
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_embedding_model_dimension_is_immutable(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    created = await create_public_model(
+        model_data=PublicModelCreate(
+            name="stable-public-model",
+            json=_embedding_model_json("stable-public-model"),
+        ),
+        db=test_db,
+        current_user=test_admin_user,
+    )
+
+    with pytest.raises(ValidationException, match="immutable"):
+        await update_public_model(
+            model_data=PublicModelUpdate(
+                json=_embedding_model_json("stable-public-model", 768)
+            ),
+            model_id=created.id,
+            db=test_db,
+            current_user=test_admin_user,
+        )

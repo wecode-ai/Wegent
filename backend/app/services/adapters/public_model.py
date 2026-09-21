@@ -15,6 +15,9 @@ from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
 from app.services.model_capabilities import normalize_model_capabilities
+from app.services.model_embedding_dimension import (
+    validate_embedding_dimension_declaration,
+)
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 
@@ -46,19 +49,26 @@ def with_public_model_visibility(
     return updated_json
 
 
-def _split_model_config_protocol(
-    config: Dict[str, Any],
-) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
-    """Move protocol/apiFormat from modelConfig to spec level if present.
+SPEC_LEVEL_KEYS = ("protocol", "apiFormat", "modelType", "embeddingConfig")
 
-    Older clients and bulk-import payloads may place protocol/apiFormat inside
-    the modelConfig dict. The Model CRD schema keeps them at spec level, so
-    normalize them here to keep adapter-created models consistent with CRD
-    models created by the frontend.
+
+def _hoist_spec_keys(
+    config: Dict[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Move CRD-level keys from modelConfig to spec level if present.
+
+    Older clients and bulk-import payloads may place protocol, apiFormat,
+    modelType or embeddingConfig inside the modelConfig dict. The Model CRD
+    schema keeps them at spec level, so normalize them here to keep
+    adapter-created models consistent with CRD models created by the frontend.
     """
-    protocol = config.pop("protocol", None) if isinstance(config, dict) else None
-    api_format = config.pop("apiFormat", None) if isinstance(config, dict) else None
-    return config, protocol, api_format
+    spec_keys: Dict[str, Any] = {}
+    if isinstance(config, dict):
+        for key in SPEC_LEVEL_KEYS:
+            value = config.pop(key, None)
+            if value:
+                spec_keys[key] = value
+    return config, spec_keys
 
 
 class ModelAdapter:
@@ -138,6 +148,13 @@ class ModelAdapter:
                                     exclude_none=True
                                 ),
                             }
+                    if model_crd.spec.embeddingConfig:
+                        config = {
+                            **config,
+                            "embeddingConfig": model_crd.spec.embeddingConfig.model_dump(
+                                exclude_none=True
+                            ),
+                        }
                 except Exception:
                     # Fallback for invalid CRD structure
                     config = kind.json
@@ -244,14 +261,15 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         # Convert config to JSON format matching kinds table structure.
         # Pull protocol/apiFormat up to spec level if the caller nested them
         # inside the config dict.
-        model_config, protocol, api_format = _split_model_config_protocol(
+        model_config, spec_keys = _hoist_spec_keys(
             dict(obj_in.config) if obj_in.config else {}
         )
-        spec: Dict[str, Any] = {"modelConfig": model_config}
-        if protocol:
-            spec["protocol"] = protocol
-        if api_format:
-            spec["apiFormat"] = api_format
+        spec: Dict[str, Any] = {"modelConfig": model_config, **spec_keys}
+        validate_embedding_dimension_declaration(
+            spec=spec,
+            stored_spec=None,
+            name=obj_in.name,
+        )
         json_data = {
             "kind": "Model",
             "spec": spec,
@@ -599,6 +617,9 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             raise HTTPException(status_code=404, detail="Model not found")
 
         update_data = obj_in.model_dump(exclude_unset=True)
+        stored_spec = (
+            dict(model.json.get("spec") or {}) if isinstance(model.json, dict) else {}
+        )
 
         # If updating name, ensure uniqueness
         if "name" in update_data and update_data["name"] != model.name:
@@ -625,21 +646,31 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     model_crd.metadata.name = value
                     model.json = model_crd.model_dump()
             elif field == "config":
-                # Update modelConfig in json and pull protocol/apiFormat up to
-                # spec level if the caller nested them inside the config dict.
+                # Update modelConfig in json and pull CRD-level keys up to spec
+                # level if the caller nested them inside the config dict.
                 if isinstance(model.json, dict):
                     model_crd = Model.model_validate(model.json)
-                    model_config, protocol, api_format = _split_model_config_protocol(
+                    model_config, spec_keys = _hoist_spec_keys(
                         dict(value) if value else {}
                     )
-                    model_crd.spec.modelConfig = model_config
-                    if protocol:
-                        model_crd.spec.protocol = protocol
-                    if api_format:
-                        model_crd.spec.apiFormat = api_format
-                    model.json = model_crd.model_dump()
+                    spec = model_crd.spec.model_dump()
+                    spec["modelConfig"] = model_config
+                    # CRD-level keys the payload omits keep their stored value,
+                    # so an update cannot silently drop the model category.
+                    for key in SPEC_LEVEL_KEYS:
+                        if key not in spec_keys and stored_spec.get(key):
+                            spec_keys[key] = stored_spec[key]
+                    spec.update(spec_keys)
+                    model.json = {**model_crd.model_dump(), "spec": spec}
             else:
                 setattr(model, field, value)
+
+        if "config" in update_data and isinstance(model.json, dict):
+            validate_embedding_dimension_declaration(
+                spec=model.json.get("spec") or {},
+                stored_spec=stored_spec,
+                name=model.name,
+            )
 
         db.add(model)
         db.commit()

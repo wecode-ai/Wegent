@@ -843,6 +843,76 @@ def test_document_indexer_hierarchical_routes_through_ingestion_result_contract(
     assert result["chunks_data"]["splitter_subtype"] == "markdown_sentence"
 
 
+def test_document_indexer_writes_chunks_before_parent_nodes() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.return_value = {"indexed_count": 2}
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config={"chunk_strategy": "hierarchical"},
+        file_extension=".md",
+    )
+    ingestion_result = SimpleNamespace(
+        parent_nodes=[TextNode(text="parent-a", metadata={})],
+        index_nodes=[TextNode(text="child-a", metadata={})],
+        parser_subtype="markdown_sentence",
+    )
+
+    with patch(
+        "knowledge_engine.index.indexer.build_ingestion_result",
+        return_value=ingestion_result,
+    ):
+        indexer._index_documents(
+            documents=[Document(text="# Intro\n\nHierarchical content.")],
+            file_extension=".md",
+            chunk_metadata=ChunkMetadata(
+                knowledge_id="1",
+                doc_ref="doc_1",
+                source_file="notes.md",
+                created_at="2026-04-12T00:00:00+00:00",
+            ),
+        )
+
+    call_names = [name for name, *_ in storage_backend.mock_calls]
+    assert call_names.index("index_with_metadata") < call_names.index(
+        "save_parent_nodes"
+    )
+
+
+def test_document_indexer_leaves_parent_nodes_untouched_when_indexing_fails() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.side_effect = ValueError("dimension mismatch")
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config={"chunk_strategy": "hierarchical"},
+        file_extension=".md",
+    )
+    ingestion_result = SimpleNamespace(
+        parent_nodes=[TextNode(text="parent-a", metadata={})],
+        index_nodes=[TextNode(text="child-a", metadata={})],
+        parser_subtype="markdown_sentence",
+    )
+
+    with patch(
+        "knowledge_engine.index.indexer.build_ingestion_result",
+        return_value=ingestion_result,
+    ):
+        with pytest.raises(ValueError, match="dimension mismatch"):
+            indexer._index_documents(
+                documents=[Document(text="# Intro\n\nHierarchical content.")],
+                file_extension=".md",
+                chunk_metadata=ChunkMetadata(
+                    knowledge_id="1",
+                    doc_ref="doc_1",
+                    source_file="notes.md",
+                    created_at="2026-04-12T00:00:00+00:00",
+                ),
+            )
+
+    storage_backend.save_parent_nodes.assert_not_called()
+
+
 def test_document_indexer_hierarchical_chunk_metadata_counts_indexed_nodes_only() -> (
     None
 ):

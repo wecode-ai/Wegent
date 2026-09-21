@@ -269,14 +269,6 @@ class DocumentIndexer:
         parent_nodes = ingestion_result.parent_nodes
         nodes = ingestion_result.index_nodes
 
-        if parent_nodes is not None:
-            chunk_metadata.apply_to_nodes(parent_nodes)
-            self.storage_backend.save_parent_nodes(
-                knowledge_id=chunk_metadata.knowledge_id,
-                parent_nodes=parent_nodes,
-                **kwargs,
-            )
-
         chunk_metadata.apply_to_nodes(nodes)
 
         add_span_event(
@@ -299,6 +291,17 @@ class DocumentIndexer:
             embed_model=self.embed_model,
             **kwargs,
         )
+
+        # Parent nodes are written only after the chunk write is accepted, so a
+        # rejected index (for example an embedding dimension mismatch) leaves the
+        # parent sidecar exactly as it was.
+        if parent_nodes is not None:
+            chunk_metadata.apply_to_nodes(parent_nodes)
+            self.storage_backend.save_parent_nodes(
+                knowledge_id=chunk_metadata.knowledge_id,
+                parent_nodes=parent_nodes,
+                **kwargs,
+            )
 
         result.update(
             {
