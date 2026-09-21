@@ -45,7 +45,7 @@ const minimalDisplay = {
 
 describe('board progress activation', () => {
   it.each(['drop', 'tasks', 'task-summary'])(
-    'opens the Issue once from the %s area',
+    'opens the lightweight progress preview from the %s area',
     async area => {
       const onClick = vi.fn()
       render(
@@ -60,14 +60,14 @@ describe('board progress activation', () => {
       )
       const suffix = area === 'task-summary' ? '-85' : ''
       await userEvent.click(screen.getByTestId(`cloud-todo-card-${area}-WEG-85${suffix}`))
-      expect(onClick).toHaveBeenCalledOnce()
-      expect(screen.getByTestId('cloud-todo-card-WEG-85')).toHaveFocus()
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(onClick).not.toHaveBeenCalled()
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toHaveFocus()
       expect(screen.getByTestId('cloud-todo-card-drop-WEG-85')).toHaveClass('cursor-default')
     }
   )
 
-  it('keeps disabled Issue details unavailable from the card background and summary', async () => {
+  it('keeps disabled Issue previews unavailable from the card background and summary', async () => {
     const onClick = vi.fn()
     render(
       <CloudTodoBoardCard
@@ -82,10 +82,11 @@ describe('board progress activation', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-card-drop-WEG-85'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-85'))
     expect(onClick).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-drop-WEG-85')).toHaveClass('cursor-default')
   })
 
-  it('keeps progress and menu actions separate from the card primary action', async () => {
+  it('keeps task navigation and menu actions separate from the card preview action', async () => {
     const onClick = vi.fn()
     const onArchive = vi.fn()
     render(
@@ -98,14 +99,15 @@ describe('board progress activation', () => {
         processingStatus={false}
       />
     )
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-progress-popup-content-WEG-85'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85-close'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-open-task-WEG-85'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-more-WEG-85'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-archive-WEG-85'))
     expect(onArchive).toHaveBeenCalledOnce()
-    expect(onClick).not.toHaveBeenCalled()
+    expect(onClick).toHaveBeenCalledOnce()
   })
 
   it('scopes the card shortcut hover state to the current card', async () => {
@@ -138,7 +140,7 @@ describe('board progress activation', () => {
     expect(onClick).not.toHaveBeenCalled()
   })
 
-  it('never opens or marks read on hover, focus, or an ordinary Issue click', async () => {
+  it('opens only on click and does not mark read before the preview delay', async () => {
     vi.useFakeTimers()
     const onClick = vi.fn()
     const onMarkRead = vi.fn()
@@ -159,9 +161,9 @@ describe('board progress activation', () => {
     await act(async () => vi.advanceTimersByTime(5000))
     fireEvent.pointerDown(card)
     fireEvent.click(card)
-    await act(async () => vi.advanceTimersByTime(5000))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(onClick).toHaveBeenCalledOnce()
+    await act(async () => vi.advanceTimersByTime(2999))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(onClick).not.toHaveBeenCalled()
     expect(onMarkRead).not.toHaveBeenCalled()
     vi.useRealTimers()
   })
@@ -178,7 +180,7 @@ describe('board progress activation', () => {
         processingStatus={false}
       />
     )
-    const trigger = screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85')
+    const trigger = screen.getByTestId('cloud-todo-card-WEG-85')
     trigger.focus()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await user.keyboard('{Enter}')
@@ -197,7 +199,7 @@ describe('board progress activation', () => {
     expect(trigger).toHaveFocus()
   })
 
-  it('lets the first outside click open the Issue without reopening the progress panel', async () => {
+  it('opens the task page only from the quiet trailing action', async () => {
     const onClick = vi.fn()
     const user = userEvent.setup()
     render(
@@ -210,25 +212,36 @@ describe('board progress activation', () => {
         processingStatus={false}
       />
     )
-    await user.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
     await user.click(screen.getByTestId('cloud-todo-card-WEG-85'))
+    await user.click(screen.getByTestId('cloud-todo-card-open-task-WEG-85'))
     expect(onClick).toHaveBeenCalledOnce()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    const openTask = screen.getByTestId('cloud-todo-card-open-task-WEG-85')
+    expect(openTask).toHaveClass(
+      'pointer-events-none',
+      'opacity-0',
+      'group-hover/issue-board-card:pointer-events-auto',
+      'group-hover/issue-board-card:opacity-100'
+    )
+    expect(openTask.closest('.absolute')).toHaveClass('bottom-2', 'right-2')
   })
 
-  it('hides the progress trigger when previews are disabled', () => {
+  it('falls back to opening the task page from the card when previews are disabled', async () => {
+    const onClick = vi.fn()
     render(
       <CloudTodoBoardCard
         item={item}
         taskBindings={progressBindings}
         display={minimalDisplay}
-        onClick={vi.fn()}
+        onClick={onClick}
         onArchive={vi.fn()}
         processingStatus={false}
         previewDisabled
       />
     )
-    expect(screen.queryByTestId('cloud-todo-card-progress-trigger-WEG-85')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
+    expect(onClick).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
   it('keeps the card DOM stable and does not reopen after preview availability returns', async () => {
     const props = {
@@ -241,7 +254,7 @@ describe('board progress activation', () => {
     }
     const { rerender } = render(<CloudTodoBoardCard {...props} />)
     const card = screen.getByTestId('cloud-todo-card-WEG-85')
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    await userEvent.click(card)
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     rerender(<CloudTodoBoardCard {...props} previewDisabled />)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -249,7 +262,7 @@ describe('board progress activation', () => {
     rerender(<CloudTodoBoardCard {...props} />)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-WEG-85')).toBe(card)
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-85'))
+    await userEvent.click(card)
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 })

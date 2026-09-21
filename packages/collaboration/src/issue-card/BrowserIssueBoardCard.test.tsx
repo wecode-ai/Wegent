@@ -187,11 +187,7 @@ describe('Web board with the native runtime progress presentation', () => {
     await render()
     expect(container.textContent).toContain('请在 PC App 查看进展')
     await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="cloud-todo-card-progress-trigger-issue-1"]'
-        )!
-        .click()
+      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
     )
     expect(document.body.textContent).toContain('请在 PC App 查看进展')
     expect(
@@ -275,11 +271,7 @@ describe('Web board with the native runtime progress presentation', () => {
         ?.getAttribute('aria-label')
     ).toContain(goal.objective)
     await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="cloud-todo-card-progress-trigger-issue-1"]'
-        )!
-        .click()
+      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
     )
     expect(
       document.querySelector('[data-testid="cloud-todo-card-popup-goal-issue-1-binding-1"]')
@@ -296,11 +288,7 @@ describe('Web board with the native runtime progress presentation', () => {
     })
     await render()
     await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="cloud-todo-card-progress-trigger-issue-1"]'
-        )!
-        .click()
+      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
     )
     expect(document.body.textContent).toContain('Goal is temporarily unavailable')
     const subscriptions = vi.mocked(runtime.subscribe).mock.calls.length
@@ -339,14 +327,23 @@ describe('Web board with the native runtime progress presentation', () => {
       container.querySelector('[data-testid="cloud-todo-card-final-response-issue-1"]')?.textContent
     ).toBe('/repo')
   })
-  it('disables the progress popup while the Issue drawer is present', async () => {
+  it('disables the card progress preview while the Issue drawer is present', async () => {
     await render()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+    )
     expect(
-      container.querySelector('[data-testid="cloud-todo-card-progress-trigger-issue-1"]')
+      document.querySelector('[data-testid="cloud-todo-card-progress-popup-issue-1"]')
     ).not.toBeNull()
     await render(true)
     expect(
-      container.querySelector('[data-testid="cloud-todo-card-progress-trigger-issue-1"]')
+      document.querySelector('[data-testid="cloud-todo-card-progress-popup-issue-1"]')
+    ).toBeNull()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+    )
+    expect(
+      document.querySelector('[data-testid="cloud-todo-card-progress-popup-issue-1"]')
     ).toBeNull()
   })
   it('surfaces transcript failure and recovers through the same subscription', async () => {
@@ -368,11 +365,7 @@ describe('Web board with the native runtime progress presentation', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="seed-task-draft"]')!.click()
     )
     await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="cloud-todo-card-progress-trigger-issue-1"]'
-        )!
-        .click()
+      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
     )
     const popup = document.querySelector(
       '[data-testid="cloud-todo-card-popup-conversation-issue-1"]'

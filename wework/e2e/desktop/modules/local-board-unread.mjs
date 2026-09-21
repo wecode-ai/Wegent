@@ -99,6 +99,17 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await captureVerificationScreenshot(control, 'local-board-unread-01-completed.png')
 
   await control.command('click', `${cardSelector} [data-testid="cloud-todo-card-${itemId}"]`)
+  const progressPopupSelector = `[data-testid="cloud-todo-card-progress-popup-${itemId}"]`
+  await control.command('waitFor', progressPopupSelector, {
+    visible: true,
+  })
+  await control.command('waitFor', boardSurfaceSelector, {
+    visible: true,
+  })
+  await control.command(
+    'click',
+    `${cardSelector} [data-testid="cloud-todo-card-open-task-${itemId}"]`
+  )
   await control.command('waitFor', boardSurfaceSelector, {
     visible: false,
   })
