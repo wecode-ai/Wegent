@@ -92,6 +92,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showFullscreenControl?: boolean
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
+  defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
   taskRefreshKey?: string | number
   initialTaskBindings?: LoopItemTaskBinding[]
   headerActions?: ReactNode
@@ -239,6 +240,7 @@ export function TodoEditor(props: TodoEditorProps) {
     showFullscreenControl: props.showFullscreenControl,
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
+    defaultAssistant: props.defaultAssistant,
     taskRefreshKey: props.taskRefreshKey,
     initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
     headerActions:

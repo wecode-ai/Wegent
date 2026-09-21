@@ -7,7 +7,7 @@ import {
   localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
 } from "../../markdown/assistantMarkdownLinks";
-import { isWebSearchToolName } from "./toolBlockActivity";
+import { isWebSearchToolName, unwrapShellCommand } from "./toolBlockActivity";
 import {
   getFileInputPath,
   getFileInputPaths,
@@ -269,6 +269,7 @@ export function getWorkspaceFilePath(block: ToolBlock): string | undefined {
 
 function BashBlockDetail({ block }: { block: ToolBlock }) {
   const command = getInputField(block, "command", "cmd", "commandLine");
+  const displayCommand = command ? unwrapShellCommand(command) : undefined;
   const cwd = getInputField(block, "cwd", "workdir", "workingDirectory");
   const output = block.toolOutput;
   const rawOutputText = useMemo(
@@ -295,7 +296,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
   }, [outputText]);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(command ?? "");
+    void navigator.clipboard.writeText(displayCommand ?? "");
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -340,10 +341,10 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
           )}
         </button>
       </div>
-      {command && (
+      {displayCommand && (
         <div className="overflow-x-auto font-mono text-xs leading-5 text-text-primary">
           <span className="text-text-muted">$ </span>
-          {command}
+          {displayCommand}
         </div>
       )}
       {cwd && (

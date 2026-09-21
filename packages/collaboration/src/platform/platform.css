@@ -743,65 +743,107 @@
 }
 
 .collaboration-first-project-starter {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
+  display: flex;
+  width: min(680px, 100%);
+  min-height: calc(100vh - 160px);
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
-  min-height: 120px;
-  padding: 24px;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 12px;
-  background: rgb(var(--color-bg-surface));
+  justify-content: center;
+  gap: 0;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+  text-align: center;
 }
 
-.collaboration-first-project-starter > .collaboration-project-card-mark {
-  width: 40px;
-  height: 40px;
-  color: rgb(var(--color-primary));
-  background: rgb(var(--color-primary) / 0.1);
+.collaboration-first-project-icon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-subtle));
+}
+
+.collaboration-first-project-icon > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.collaboration-first-project-copy {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-top: 18px;
 }
 
 .collaboration-first-project-starter h2 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
 }
 
 .collaboration-first-project-starter p {
-  max-width: 640px;
-  margin: 6px 0 0;
+  max-width: 480px;
+  margin: 0;
   color: rgb(var(--color-text-muted));
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
-.collaboration-first-project-actions {
+.collaboration-first-project-guide {
   display: flex;
-  gap: 8px;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+  color: rgb(var(--color-text-secondary));
 }
 
-.collaboration-first-project-actions > button {
+.collaboration-first-project-guide > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.collaboration-first-project-guide > span > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.collaboration-first-project-guide > svg {
+  width: 14px;
+  height: 14px;
+  color: rgb(var(--color-text-muted));
+  opacity: 0.55;
+}
+
+.collaboration-first-project-create {
   display: inline-flex;
   min-height: 36px;
   align-items: center;
-  gap: 7px;
-  padding: 0 12px;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 8px;
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-base));
-  font: inherit;
-  cursor: pointer;
+  gap: 6px;
+  margin-top: 28px;
+  padding: 7px 14px;
+  border-radius: 999px;
 }
 
-.collaboration-first-project-actions > button:hover {
-  background: rgb(var(--color-bg-hover));
-}
-
-.collaboration-first-project-actions > button > svg {
+.collaboration-first-project-create > svg {
   width: 16px;
   height: 16px;
-  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-first-project-location-hint {
+  margin-top: 8px;
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .collaboration-home-section {
@@ -1226,7 +1268,7 @@
 
 .collaboration-resource-catalog-toolbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 12px;
@@ -1235,18 +1277,15 @@
 .collaboration-resource-filter-stack {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
-}
-
-.collaboration-resource-filter-stack > span {
-  color: rgb(var(--color-text-muted));
-  font-size: var(--text-xs);
-  font-weight: 500;
+  gap: 12px;
+  overflow: hidden;
 }
 
 .collaboration-resource-source-filter {
   display: inline-flex;
+  flex: none;
   gap: 2px;
   padding: 3px;
   border-radius: 9px;
@@ -1255,7 +1294,7 @@
 
 .collaboration-resource-source-filter > button {
   display: inline-flex;
-  min-width: 64px;
+  min-width: max-content;
   height: 30px;
   align-items: center;
   justify-content: center;
@@ -1266,6 +1305,7 @@
   color: rgb(var(--color-text-muted));
   background: transparent;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .collaboration-resource-source-filter > button > svg {
@@ -1282,7 +1322,9 @@
 
 .collaboration-resource-scope-filter {
   display: inline-flex;
+  min-width: 0;
   height: 36px;
+  flex: 0 1 auto;
   align-items: center;
   gap: 2px;
   border-bottom: 1px solid rgb(var(--color-border));
@@ -1290,6 +1332,7 @@
 
 .collaboration-resource-scope-filter > button {
   display: inline-flex;
+  min-width: max-content;
   height: 36px;
   align-items: center;
   gap: 6px;
@@ -1299,6 +1342,7 @@
   color: rgb(var(--color-text-muted));
   background: transparent;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .collaboration-resource-scope-filter > button:hover,
@@ -1329,7 +1373,9 @@
 
 .collaboration-resource-catalog-search {
   display: flex;
-  width: min(320px, 42%);
+  width: 320px;
+  max-width: 38%;
+  flex: 0 1 320px;
   height: 36px;
   align-items: center;
   gap: 8px;
@@ -1872,6 +1918,14 @@
 .collaboration-resource-dialog > header > button > svg {
   width: 16px;
   height: 16px;
+}
+
+.collaboration-delete-agent-dialog > .collaboration-resource-form-error {
+  margin: 16px 20px 0;
+}
+
+.collaboration-delete-agent-actions {
+  padding: 16px 20px 20px;
 }
 
 .collaboration-resource-create-options,
@@ -4215,23 +4269,23 @@
   }
 
   .collaboration-first-project-starter {
-    grid-template-columns: 40px minmax(0, 1fr);
-    padding: 18px;
+    min-height: auto;
+    padding: 48px 0;
   }
 
   .collaboration-first-project-starter > button,
-  .collaboration-first-project-actions {
-    grid-column: 1 / -1;
-  }
-
-  .collaboration-first-project-starter > button,
-  .collaboration-first-project-actions > button {
+  .collaboration-first-project-create {
     min-height: 44px;
   }
 
-  .collaboration-first-project-actions {
-    display: grid;
-    grid-template-columns: 1fr;
+  .collaboration-first-project-guide {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .collaboration-first-project-guide > svg {
+    display: none;
   }
 
   .collaboration-home-attention-list > button {

@@ -2893,6 +2893,33 @@ def test_runtime_create_payload_preserves_additional_skill_refs(
     assert "user_selected_skills" not in payload["executionRequest"]
 
 
+def test_runtime_create_merges_agent_and_project_plugins() -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    execution_request = SimpleNamespace(
+        project_plugin_ids=["agent-tool@official", "shared-tool@official"]
+    )
+    request = RuntimeTaskCreateRequest(
+        deviceId="cloud-device-1",
+        workspacePath="/srv/workspaces/Wegent",
+        runtime="codex",
+        message="Review the implementation",
+        projectPlugins=[
+            {"id": "shared-tool@official"},
+            {"id": "project-tool@team-market"},
+        ],
+    )
+
+    runtime_work_service._apply_runtime_create_request(execution_request, request)
+
+    assert execution_request.project_plugin_ids == [
+        "agent-tool@official",
+        "shared-tool@official",
+        "project-tool@team-market",
+    ]
+
+
 def test_materialize_runtime_task_requires_team_intent(
     test_db,
     test_user,
@@ -5343,6 +5370,52 @@ def test_runtime_address_team_binding_is_additive() -> None:
 
     assert runtime_work_service._runtime_address_team_id(legacy) is None
     assert runtime_work_service._runtime_address_team_id(bound) == 7
+
+
+@pytest.mark.asyncio
+async def test_send_preserves_desktop_task_binding_and_compiles_continuation(
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service as service
+
+    compiled = SimpleNamespace(new_session=True, to_dict=lambda: {"new_session": False})
+    compile_calls = []
+
+    def compile_request(**kwargs):
+        compile_calls.append(kwargs["request"])
+        return compiled
+
+    monkeypatch.setattr(service, "_ensure_owned_device", lambda *args: None)
+    monkeypatch.setattr(service, "_touch_workspace_mapping", lambda *args: None)
+    monkeypatch.setattr(service, "_build_runtime_execution_request", compile_request)
+    rpc = AsyncMock(return_value={"accepted": True, "taskId": "original-task"})
+    monkeypatch.setattr(service.runtime_rpc_service, "call", rpc)
+    handle = {"wegentTeam": {"id": 42}}
+
+    await service.send_runtime_message(
+        db=None,
+        user_id=7,
+        request=RuntimeSendRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                taskId="original-task",
+                workspacePath="/project",
+                runtimeHandle=handle,
+            ),
+            message="continue",
+        ),
+    )
+
+    assert len(compile_calls) == 1
+    intent = compile_calls[0]
+    assert intent.wegent_team_id == 42
+    assert intent.local_task_id == "original-task"
+    assert intent.workspace_path == "/project"
+    assert intent.new_session is False
+    assert compiled.new_session is False
+    assert rpc.await_args.kwargs["method"] == "runtime.tasks.send"
+    assert rpc.await_args.kwargs["payload"]["runtimeHandle"] == handle
 
 
 def test_build_runtime_send_execution_request_includes_valid_task_token(

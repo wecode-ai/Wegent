@@ -214,6 +214,7 @@ export interface CollaborationExecutionEnvironment {
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
   location?: 'local' | 'cloud'
+  version?: number
   owner_type: 'user' | 'workspace'
   owner_id: string
   owner_name: string
@@ -398,6 +399,12 @@ export interface CollaborationCapabilities {
   projectLocation?: 'cloud' | 'local'
 }
 
+export interface CollaborationDefaultAssistant {
+  name: string
+  description: string
+  capabilitySummary?: string
+}
+
 export type CollaborationView = 'board' | 'table' | 'files' | 'manage'
 export type CollaborationRootView = 'home' | 'my-work'
 
@@ -410,6 +417,7 @@ export interface CollaborationLocation {
 
 export interface CollaborationHostAdapter {
   capabilities: CollaborationCapabilities
+  defaultAssistant?: CollaborationDefaultAssistant
   location: CollaborationLocation
   navigate(location: CollaborationLocation): void
   manageResource?(kind: 'agents' | 'environments', resourceId?: string): void

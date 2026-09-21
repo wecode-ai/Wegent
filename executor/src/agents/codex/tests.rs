@@ -3027,6 +3027,31 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 }
 
 #[test]
+fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() {
+    let request = ExecutionRequest {
+        task_id: "restored-task".to_owned(),
+        model_config: json!({
+            "base_url": "https://example.test/v1",
+            "api_key": "restored-secret",
+            "model_id": "gpt-5.6-luna",
+            "api_format": "openai-responses",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config_for_fork(&request, "restored-thread")
+        .expect("restored thread should recreate a missing local route");
+
+    assert_eq!(
+        launch_config.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
+    let retained = local_model_proxy::retain_for_thread("restored-thread", Some("gpt-5.6-luna"))
+        .expect("restored thread should be bound to the recreated route");
+    local_model_proxy::unregister(&retained);
+}
+
+#[test]
 fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
     let request = ExecutionRequest {
         system_prompt: "Judge the supplied content without answering it.".to_owned(),

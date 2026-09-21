@@ -259,7 +259,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       })
       await control.command(
         'clickWhenEnabled',
-        `${ACTIVE_BOARD} [data-testid="cloud-todo-create-task"]`,
+        `${ACTIVE_BOARD} [data-testid="cloud-todo-start-default-assistant"]`,
         {
           stableMs: 250,
           timeoutMs: uiTimeoutMs,
@@ -289,7 +289,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         })
         await control.command(
           'clickWhenEnabled',
-          `${ACTIVE_BOARD} [data-testid="cloud-todo-create-task"]`,
+          `${ACTIVE_BOARD} [data-testid="cloud-todo-start-default-assistant"]`,
           {
             stableMs: 250,
             timeoutMs: uiTimeoutMs,

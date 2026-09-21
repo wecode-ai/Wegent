@@ -66,6 +66,7 @@ import "./issue-detail/issue-detail.css";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
+  CollaborationDefaultAssistant,
   CollaborationIssue,
   CollaborationMember,
   CollaborationPriority,
@@ -583,6 +584,7 @@ export type TodoEditorProps = {
    * start a host execution even when its content is read-only.
    */
   canStartWork?: boolean;
+  defaultAssistant?: CollaborationDefaultAssistant;
   taskRefreshKey?: string | number;
   initialTaskBindings?: SharedIssueDetailTaskBinding[];
   headerActions?: ReactNode;
@@ -2864,6 +2866,40 @@ export function TodoEditor(props: TodoEditorProps) {
                     </section>
                   ) : null}
 
+                  {canStartWork &&
+                  props.defaultAssistant &&
+                  !hasExecutionDetails ? (
+                    <section
+                      className="task-detail-default-assistant"
+                      data-testid="cloud-todo-default-assistant"
+                    >
+                      <span
+                        className="task-detail-default-assistant-icon"
+                        aria-hidden="true"
+                      >
+                        <Bot size={18} />
+                      </span>
+                      <span className="task-detail-default-assistant-copy">
+                        <strong>{props.defaultAssistant.name}</strong>
+                        <small>{props.defaultAssistant.description}</small>
+                        {props.defaultAssistant.capabilitySummary ? (
+                          <span>
+                            {props.defaultAssistant.capabilitySummary}
+                          </span>
+                        ) : null}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="cloud-todo-start-default-assistant"
+                        onClick={() => props.onCreateTask?.()}
+                      >
+                        {t("todo.handoff_to_assistant", "交给{{name}}", {
+                          name: props.defaultAssistant.name,
+                        })}
+                      </button>
+                    </section>
+                  ) : null}
+
                   <section
                     className="task-detail-state-line"
                     data-testid="cloud-todo-state-summary"
@@ -2930,7 +2966,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           ? t("todo.collapse_tasks", "收起任务")
                           : t("todo.view_tasks", "查看任务")}
                       </button>
-                    ) : canStartWork ? (
+                    ) : canStartWork && !props.defaultAssistant ? (
                       <button
                         type="button"
                         data-testid="cloud-todo-create-task"
@@ -3406,7 +3442,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             <span className="min-w-0 flex-1 truncate">
                               交付结果
                               {delivery.assets.length > 0
-                                ? ` · ${t(
+                                  ? ` · ${t(
                                     "todo.attachment_count",
                                     "{{count}} 个附件",
                                     { count: delivery.assets.length },

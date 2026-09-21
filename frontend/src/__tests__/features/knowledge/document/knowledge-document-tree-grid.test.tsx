@@ -98,6 +98,49 @@ describe('KnowledgeDocumentTreeGrid', () => {
     )
   })
 
+  it.each([
+    [undefined, 'wikijs', 'lucide-book-open'],
+    ['gitlab_repo', 'gitlab-repo', 'lucide-folder-git-2'],
+    ['gitlab_wiki', 'gitlab-wiki', 'lucide-gitlab'],
+  ])(
+    'shows the document and connector types for synchronized documents (%s)',
+    (adapterType, connectorType, iconClass) => {
+      const documents = [
+        createDocument({
+          source_type: 'external',
+          file_extension: 'md',
+          source_config: {
+            external: {
+              provider: 'wiki',
+              title: 'Operations handbook',
+              sync: { enabled: true, adapter_type: adapterType },
+            },
+          },
+        }),
+      ]
+      const { nodes, index } = buildKnowledgeResourceTree([], documents)
+      render(
+        <KnowledgeDocumentTreeGrid
+          nodes={nodes}
+          treeIndex={index}
+          folders={[]}
+          documents={documents}
+          {...requiredTreeGridProps}
+          showSelectionColumn={false}
+          showActionsColumn={false}
+          selectedFolderIds={new Set()}
+          selectedDocumentIds={new Set()}
+        />
+      )
+
+      const type = screen.getByTestId('synced-wiki-document-type')
+      expect(type).toHaveTextContent(`MD${connectorType}`)
+      expect(type).toHaveAttribute('data-connector-type', connectorType)
+      expect(type.querySelector('svg')).toHaveClass(iconClass)
+      expect(type).toHaveAttribute('title', connectorType)
+    }
+  )
+
   it('renders folders and documents through visible TreeGrid rows', () => {
     const folders = [createFolder()]
     const documents = [createDocument({ id: 11, name: 'inside-folder.txt', folder_id: 1 })]
@@ -391,6 +434,178 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(screen.queryByTestId('reindex-document-22')).not.toBeInTheDocument()
   })
 
+  it('keeps the delete action visible for synchronized wiki documents', () => {
+    const onDelete = jest.fn()
+    const syncedWiki = createDocument({
+      id: 23,
+      name: 'synchronized-wiki.md',
+      source_type: 'external',
+      file_extension: 'md',
+      attachment_id: 230,
+      source_config: {
+        external: {
+          provider: 'wiki',
+          title: 'Synchronized Wiki',
+          sync: { enabled: true },
+        },
+      },
+    })
+    const { nodes, index } = buildKnowledgeResourceTree([], [syncedWiki])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={[syncedWiki]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onMove={jest.fn()}
+        onSync={jest.fn()}
+        onReindex={jest.fn()}
+        onDelete={onDelete}
+        canManage={() => true}
+      />
+    )
+
+    const row = screen.getByTestId('document-row-23')
+    expect(row.style.gridTemplateColumns.endsWith('168px')).toBe(true)
+    fireEvent.click(screen.getByTestId('delete-document-23'))
+    expect(onDelete).toHaveBeenCalledWith(syncedWiki)
+  })
+
+  it('shows a missing source warning without changing a synchronized wiki index status', () => {
+    const syncedWiki = createDocument({
+      id: 26,
+      source_type: 'external',
+      attachment_id: 260,
+      index_status: 'success',
+      source_config: {
+        external: {
+          provider: 'wiki',
+          title: 'Synchronized Wiki',
+          status: 'inaccessible',
+          sync: {
+            enabled: true,
+            last_error_code: 'external_source_missing',
+          },
+        },
+      },
+    })
+    const { nodes, index } = buildKnowledgeResourceTree([], [syncedWiki])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={[syncedWiki]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn={false}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    expect(screen.getByTestId('wiki-source-missing-26')).toHaveTextContent(
+      'document.document.wikiSourceMissing'
+    )
+    expect(screen.getByText('document.document.indexStatus.available')).toBeInTheDocument()
+  })
+
+  it('shows synchronized wiki reindex only for a failed index', () => {
+    const syncedConfig = {
+      external: {
+        provider: 'wiki',
+        title: 'Synchronized Wiki',
+        sync: { enabled: true },
+      },
+    }
+    const successful = createDocument({
+      id: 24,
+      source_type: 'external',
+      attachment_id: 240,
+      source_config: syncedConfig,
+      index_status: 'success',
+    })
+    const failed = createDocument({
+      id: 25,
+      source_type: 'external',
+      attachment_id: 250,
+      source_config: syncedConfig,
+      index_status: 'failed',
+    })
+    const documents = [successful, failed]
+    const { nodes, index } = buildKnowledgeResourceTree([], documents)
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onSync={jest.fn()}
+        onReindex={jest.fn()}
+        canManage={() => true}
+        ragConfigured
+      />
+    )
+
+    expect(screen.getByTestId('sync-document-24')).toBeInTheDocument()
+    expect(screen.queryByTestId('reindex-document-24')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sync-document-25')).toBeInTheDocument()
+    expect(screen.getByTestId('reindex-document-25')).toBeInTheDocument()
+  })
+
+  it('disables quick synchronization while the document is processing', () => {
+    const syncedWiki = createDocument({
+      id: 27,
+      source_type: 'external',
+      attachment_id: 270,
+      index_status: 'indexing',
+      source_config: {
+        external: {
+          provider: 'wiki',
+          title: 'Synchronized Wiki',
+          sync: { enabled: true },
+        },
+      },
+    })
+    const onSync = jest.fn()
+    const { nodes, index } = buildKnowledgeResourceTree([], [syncedWiki])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={[syncedWiki]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onSync={onSync}
+        isSyncing={documentId => documentId === 27}
+        canManage={() => true}
+      />
+    )
+
+    const quickSync = screen.getByTestId('quick-sync-document-27')
+    expect(quickSync).toBeDisabled()
+    fireEvent.click(quickSync)
+    expect(onSync).not.toHaveBeenCalled()
+  })
+
   it('activates document rows from the keyboard', () => {
     const onViewDetail = jest.fn()
     const folders: KnowledgeFolder[] = []
@@ -415,5 +630,51 @@ describe('KnowledgeDocumentTreeGrid', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: /root.txt/ }), { key: 'Enter' })
 
     expect(onViewDetail).toHaveBeenCalledWith(documents[0])
+  })
+
+  it('shows wiki source page metadata: real size and successful index time', () => {
+    const formatLocal = (iso: string) =>
+      new Date(iso).toLocaleString('sv-SE', { hour12: false }).replace(/-/g, '/')
+
+    const folders: KnowledgeFolder[] = []
+    const syncedWiki = createDocument({
+      id: 31,
+      name: 'synced-wiki.md',
+      source_type: 'external',
+      file_size: 15,
+      created_at: '2026-09-04T00:00:00Z',
+      updated_at: '2026-09-04T00:00:00Z',
+      source_config: {
+        external: {
+          provider: 'wiki',
+          title: 'Synced Wiki',
+          sync: {
+            enabled: true,
+            observed_version: '2026-09-03T12:34:56Z',
+            last_synced_at: '2026-09-03T18:30:00Z',
+          },
+        },
+      },
+    })
+    const { nodes, index } = buildKnowledgeResourceTree(folders, [syncedWiki])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={[syncedWiki]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn={false}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    // Real byte sizes, not the 0 B placeholder.
+    expect(screen.getByText('15 B')).toBeInTheDocument()
+    const expectedTime = formatLocal('2026-09-03T18:30:00Z')
+    expect(screen.getByText(expectedTime)).toBeInTheDocument()
   })
 })

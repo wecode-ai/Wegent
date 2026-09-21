@@ -3607,9 +3607,26 @@ fn configure_or_retain_codex_router(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) -> Result<(), String> {
     if let Some(thread_id) = bound_thread_id {
-        let local_token =
-            local_model_proxy::retain_for_thread(thread_id, routing_model_id.as_deref())?;
-        configure_codex_router_registration(launch_config, local_token);
+        match local_model_proxy::retain_for_thread(thread_id, routing_model_id.as_deref()) {
+            Ok(local_token) => configure_codex_router_registration(launch_config, local_token),
+            Err(error)
+                if error
+                    == format!(
+                        "local model proxy route for Codex thread {thread_id} is not registered"
+                    ) =>
+            {
+                configure_codex_router(
+                    launch_config,
+                    task_id,
+                    upstream,
+                    routing_model_id,
+                    model_switched,
+                    vision_sidecar,
+                );
+                bind_local_proxy_thread(launch_config, thread_id)?;
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         configure_codex_router(
             launch_config,

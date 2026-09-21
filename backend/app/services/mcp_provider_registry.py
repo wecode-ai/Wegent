@@ -92,7 +92,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 ),
             },
         },
-    }
+    },
 }
 
 

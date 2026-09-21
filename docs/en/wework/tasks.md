@@ -37,6 +37,14 @@ The linked-task progress area does not repeat the runtime task title. While a ta
 
 Hover anywhere on a card to open a lightweight task workspace. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
 
+### Create the first project and hand work to the device assistant
+
+When you enter Collaboration with no projects yet, Wework presents one continuous getting-started path: create a project, create an issue, hand it to an assistant, then review and accept the result. Select **Create project** first, then choose a local or cloud collaboration space; storage location is not split into separate entry points before the project flow begins.
+
+When an executable issue is open in Wework, its detail view shows the **Device assistant**. It represents the default execution environment on the current device and uses the models, plugins, Skills, local files, and desktop capabilities already available there. Selecting **Hand off to Device assistant** opens the task composer. The resulting run stays linked to the current issue so its result can be reviewed and accepted from the issue.
+
+The Device assistant is not a separate cloud Agent that must be created, and it does not synchronize device accounts, files, or system permissions to other devices. To reuse or share a stable prompt, plugin, Skill, or MCP configuration, create an Agent and configure its capability source explicitly; device-specific capabilities still depend on the device that runs it.
+
 ## Manage project-space automation
 
 Project spaces provide an **Automation** entry that manages robot members and their execution queue in one place. A robot can be assigned as the owner of a project task: it claims the task, executes it on the local or a selected device, and writes the result or failure back into the task comment thread for human acceptance.
