@@ -148,6 +148,7 @@ describe('KnowledgeTree category filter', () => {
         onToggleExpand={jest.fn()}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -197,6 +198,7 @@ describe('KnowledgeTree category filter', () => {
         onToggleExpand={jest.fn()}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -243,6 +245,7 @@ describe('KnowledgeTree category filter', () => {
         onToggleExpand={jest.fn()}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 

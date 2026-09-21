@@ -23,6 +23,7 @@ import type {
 import type { KbDataItem } from '../components/KnowledgeGroupListPage'
 import type { Group } from '@/types/group'
 import type { User } from '@/types/api'
+import { filterKnowledgeBasesByAdvancedMode } from './useAdvancedKnowledgeMode'
 
 // Storage keys
 const RECENT_STORAGE_KEY = 'knowledge-recent-access'
@@ -92,10 +93,14 @@ export interface UseKnowledgeSidebarReturn {
   // All KBs for search and display
   allKnowledgeBases: KnowledgeBase[]
   allKnowledgeBasesWithGroupInfo: KnowledgeBaseWithGroupInfo[]
+  visibleAllKnowledgeBases: KnowledgeBase[]
+  visibleAllKnowledgeBasesWithGroupInfo: KnowledgeBaseWithGroupInfo[]
 
   // Personal KBs grouped by ownership (for "Personal" group display)
   personalCreatedByMe: KnowledgeBaseWithGroupInfo[]
   personalSharedWithMe: KnowledgeBaseWithGroupInfo[]
+  visiblePersonalCreatedByMe: KnowledgeBaseWithGroupInfo[]
+  visiblePersonalSharedWithMe: KnowledgeBaseWithGroupInfo[]
 
   // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   getKbGroupInfo: (kb: KbDataItem) => KbGroupInfo
@@ -176,7 +181,11 @@ function mergeKnowledgeBase(
   }
 }
 
-export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
+export function useKnowledgeSidebar({
+  showAdvancedKnowledge = false,
+}: {
+  showAdvancedKnowledge?: boolean
+} = {}): UseKnowledgeSidebarReturn {
   const { user } = useUser()
 
   // Data state - using the new all-grouped API response
@@ -262,6 +271,16 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       .map(toKnowledgeBase)
   }, [allKnowledgeBasesWithGroupInfo])
 
+  const visibleAllKnowledgeBasesWithGroupInfo = useMemo(
+    () => filterKnowledgeBasesByAdvancedMode(allKnowledgeBasesWithGroupInfo, showAdvancedKnowledge),
+    [allKnowledgeBasesWithGroupInfo, showAdvancedKnowledge]
+  )
+
+  const visibleAllKnowledgeBases = useMemo(
+    () => filterKnowledgeBasesByAdvancedMode(allKnowledgeBases, showAdvancedKnowledge),
+    [allKnowledgeBases, showAdvancedKnowledge]
+  )
+
   // Build a map from KB ID to group info for quick lookup
   const kbGroupInfoMap = useMemo((): Map<number, KbGroupInfo> => {
     const map = new Map<number, KbGroupInfo>()
@@ -322,11 +341,16 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     if (!allGroupedData) return []
 
     const result: KnowledgeGroup[] = []
+    const visiblePersonalKbs = visibleAllKnowledgeBasesWithGroupInfo.filter(
+      kb => kb.group_type === 'personal' || kb.group_type === 'personal-shared'
+    )
 
     // Personal group
-    const personalKbCount =
-      allGroupedData.summary?.personal_count ??
-      allGroupedData.personal.created_by_me.length + allGroupedData.personal.shared_with_me.length
+    const personalKbCount = showAdvancedKnowledge
+      ? (allGroupedData.summary?.personal_count ??
+        allGroupedData.personal.created_by_me.length +
+          allGroupedData.personal.shared_with_me.length)
+      : new Set(visiblePersonalKbs.map(kb => kb.id)).size
     result.push({
       id: 'personal',
       type: 'personal',
@@ -337,34 +361,60 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Team groups
     allGroupedData.groups.forEach(group => {
+      const groupKbCount = showAdvancedKnowledge
+        ? group.kb_count
+        : visibleAllKnowledgeBasesWithGroupInfo.filter(
+            kb => kb.group_type === 'group' && kb.group_name === group.group_name
+          ).length
       result.push({
         id: `group-${group.group_name}`,
         type: 'group',
         name: group.group_name,
         displayName: group.group_display_name || group.group_name,
-        kbCount: group.kb_count,
+        kbCount: groupKbCount,
       })
     })
 
     // Organization group
+    const organizationKbCount = showAdvancedKnowledge
+      ? (allGroupedData.summary?.organization_count ?? allGroupedData.organization.kb_count)
+      : visibleAllKnowledgeBasesWithGroupInfo.filter(kb => kb.group_type === 'organization').length
     result.push({
       id: 'organization',
       type: 'organization',
       name: allGroupedData.organization.namespace || 'organization',
       displayName: allGroupedData.organization.display_name || '公司',
-      kbCount: allGroupedData.summary?.organization_count ?? allGroupedData.organization.kb_count,
+      kbCount: organizationKbCount,
     })
 
     return result
-  }, [allGroupedData])
+  }, [allGroupedData, showAdvancedKnowledge, visibleAllKnowledgeBasesWithGroupInfo])
+
+  const visibleSummary = useMemo(() => {
+    const uniqueById = (items: KnowledgeBaseWithGroupInfo[]) => new Set(items.map(kb => kb.id)).size
+    const personal = visibleAllKnowledgeBasesWithGroupInfo.filter(
+      kb => kb.group_type === 'personal' || kb.group_type === 'personal-shared'
+    )
+    const groups = visibleAllKnowledgeBasesWithGroupInfo.filter(kb => kb.group_type === 'group')
+    const organization = visibleAllKnowledgeBasesWithGroupInfo.filter(
+      kb => kb.group_type === 'organization'
+    )
+
+    return {
+      total_count: uniqueById(visibleAllKnowledgeBasesWithGroupInfo),
+      personal_count: uniqueById(personal),
+      group_count: uniqueById(groups),
+      organization_count: uniqueById(organization),
+    }
+  }, [visibleAllKnowledgeBasesWithGroupInfo])
 
   // Convert recent access items to KnowledgeBase objects
   const recentItems = useMemo(() => {
     return recentAccessItems
-      .map(item => allKnowledgeBases.find(kb => kb.id === item.kbId))
+      .map(item => visibleAllKnowledgeBases.find(kb => kb.id === item.kbId))
       .filter((kb): kb is KnowledgeBase => kb !== undefined)
       .slice(0, MAX_RECENT_ITEMS)
-  }, [recentAccessItems, allKnowledgeBases])
+  }, [recentAccessItems, visibleAllKnowledgeBases])
 
   // Favorites management (placeholder - will use API when backend is ready)
   const addFavorite = useCallback(
@@ -578,9 +628,24 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     return allGroupedData?.personal.shared_with_me || []
   }, [allGroupedData])
 
+  const visiblePersonalCreatedByMe = useMemo(
+    () => filterKnowledgeBasesByAdvancedMode(personalCreatedByMe, showAdvancedKnowledge),
+    [personalCreatedByMe, showAdvancedKnowledge]
+  )
+
+  const visiblePersonalSharedWithMe = useMemo(
+    () => filterKnowledgeBasesByAdvancedMode(personalSharedWithMe, showAdvancedKnowledge),
+    [personalSharedWithMe, showAdvancedKnowledge]
+  )
+
+  const visibleFavorites = useMemo(
+    () => filterKnowledgeBasesByAdvancedMode(favorites, showAdvancedKnowledge),
+    [favorites, showAdvancedKnowledge]
+  )
+
   return {
     // Favorites
-    favorites,
+    favorites: visibleFavorites,
     isFavoritesLoading,
     addFavorite,
     removeFavorite,
@@ -617,10 +682,14 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // All KBs for search and display
     allKnowledgeBases,
     allKnowledgeBasesWithGroupInfo,
+    visibleAllKnowledgeBases,
+    visibleAllKnowledgeBasesWithGroupInfo,
 
     // Personal KBs grouped by ownership
     personalCreatedByMe,
     personalSharedWithMe,
+    visiblePersonalCreatedByMe,
+    visiblePersonalSharedWithMe,
 
     // Get group info for a KB
     getKbGroupInfo,
@@ -629,7 +698,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     currentUser: user,
 
     // Summary from backend
-    summary: allGroupedData?.summary,
+    summary: showAdvancedKnowledge ? (allGroupedData?.summary ?? visibleSummary) : visibleSummary,
 
     // Refresh
     refreshAll,

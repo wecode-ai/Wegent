@@ -23,6 +23,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { parseKbUrl } from '@/utils/knowledgeUrl'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
+import { useAdvancedKnowledgeMode } from '../hooks/useAdvancedKnowledgeMode'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
@@ -76,8 +77,10 @@ export function KnowledgeDocumentPageDesktop({
   }, [pathname])
   const currentDocPath = parsedKbUrl?.docPath ?? initialDocPath
 
+  const { showAdvancedKnowledge, setShowAdvancedKnowledge } = useAdvancedKnowledgeMode()
+
   // Knowledge sidebar hook
-  const sidebar = useKnowledgeSidebar()
+  const sidebar = useKnowledgeSidebar({ showAdvancedKnowledge })
   const { currentView, setCurrentView } = useKnowledgeViewMode(
     sidebar.selectedKb?.kb_type,
     sidebar.selectedKb?.id
@@ -129,8 +132,8 @@ export function KnowledgeDocumentPageDesktop({
   } = useGroupKbs({
     selectedGroupId: sidebar.selectedGroupId,
     groups: sidebar.groups,
-    personalCreatedByMe: sidebar.personalCreatedByMe,
-    personalSharedWithMe: sidebar.personalSharedWithMe,
+    personalCreatedByMe: sidebar.visiblePersonalCreatedByMe,
+    personalSharedWithMe: sidebar.visiblePersonalSharedWithMe,
   })
 
   // Sidebar collapse state - auto-collapse in Notebook view
@@ -396,13 +399,13 @@ export function KnowledgeDocumentPageDesktop({
 
   const allModeKbsWithInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
     const map = new Map<number, KnowledgeBaseWithGroupInfo>()
-    for (const kb of sidebar.allKnowledgeBasesWithGroupInfo) {
+    for (const kb of sidebar.visibleAllKnowledgeBasesWithGroupInfo) {
       if (!map.has(kb.id)) {
         map.set(kb.id, { ...kb })
       }
     }
     return Array.from(map.values())
-  }, [sidebar.allKnowledgeBasesWithGroupInfo])
+  }, [sidebar.visibleAllKnowledgeBasesWithGroupInfo])
 
   const selectedKbGroupInfo = sidebar.selectedKb
     ? sidebar.getKbGroupInfo(sidebar.selectedKb)
@@ -492,7 +495,7 @@ export function KnowledgeDocumentPageDesktop({
     }
 
     if (sidebar.viewMode === 'groups') {
-      const teamGroupKbs = sidebar.allKnowledgeBasesWithGroupInfo.filter(
+      const teamGroupKbs = sidebar.visibleAllKnowledgeBasesWithGroupInfo.filter(
         kb => kb.group_type === 'group'
       )
 
@@ -519,6 +522,8 @@ export function KnowledgeDocumentPageDesktop({
           isLoading={sidebar.isGroupsLoading}
           onSelectKb={handleSelectKb}
           onCreateKb={hasCreatableTeamGroup ? dialogs.handleCreateKbFromGroups : undefined}
+          showAdvancedKnowledge={showAdvancedKnowledge}
+          onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
           onEditKb={kb => {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) dialogs.setEditingKb(fullKb)
@@ -544,11 +549,13 @@ export function KnowledgeDocumentPageDesktop({
         <KnowledgeGroupListPage
           groupId={null}
           groupName={t('document.allKnowledgeBases', 'All Knowledge Bases')}
-          knowledgeBases={sidebar.allKnowledgeBases}
+          knowledgeBases={sidebar.visibleAllKnowledgeBases}
           knowledgeBasesWithGroupInfo={allModeKbsWithInfo}
           isLoading={sidebar.isGroupsLoading}
           onSelectKb={handleSelectKb}
           onCreateKb={dialogs.handleCreateKbFromAll}
+          showAdvancedKnowledge={showAdvancedKnowledge}
+          onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
           onEditKb={kb => {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) dialogs.setEditingKb(fullKb)
@@ -572,7 +579,7 @@ export function KnowledgeDocumentPageDesktop({
     if (selectedGroup) {
       const isPersonalMode = selectedGroup.type === 'personal'
 
-      const groupKbsWithInfo = sidebar.allKnowledgeBasesWithGroupInfo.filter(kb => {
+      const groupKbsWithInfo = sidebar.visibleAllKnowledgeBasesWithGroupInfo.filter(kb => {
         if (selectedGroup.type === 'personal') {
           return kb.group_type === 'personal' || kb.group_type === 'personal-shared'
         } else if (selectedGroup.type === 'organization') {
@@ -597,6 +604,8 @@ export function KnowledgeDocumentPageDesktop({
           onBack={handleBackFromGroup}
           onSelectKb={handleSelectKb}
           onCreateKb={canCreateInSelectedGroup ? dialogs.handleCreateKbFromGroup : undefined}
+          showAdvancedKnowledge={showAdvancedKnowledge}
+          onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
           onEditKb={kb => {
             const fullKb =
               sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
@@ -613,8 +622,8 @@ export function KnowledgeDocumentPageDesktop({
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           isPersonalMode={isPersonalMode}
-          personalCreatedByMe={isPersonalMode ? sidebar.personalCreatedByMe : undefined}
-          personalSharedWithMe={isPersonalMode ? sidebar.personalSharedWithMe : undefined}
+          personalCreatedByMe={isPersonalMode ? sidebar.visiblePersonalCreatedByMe : undefined}
+          personalSharedWithMe={isPersonalMode ? sidebar.visiblePersonalSharedWithMe : undefined}
           groupNativeKbs={groupNativeKbs}
           groupSharedKbs={groupSharedKbs}
           getKbGroupInfo={sidebar.getKbGroupInfo}
@@ -667,7 +676,7 @@ export function KnowledgeDocumentPageDesktop({
             onSelectSourceView={handleSelectSourceView}
             sourceViews={sourceViews}
             summary={sidebar.summary}
-            allKnowledgeBases={sidebar.allKnowledgeBases}
+            allKnowledgeBases={sidebar.visibleAllKnowledgeBases}
             onCollapse={() => updateSidebarCollapsed(true)}
           />
         </div>
