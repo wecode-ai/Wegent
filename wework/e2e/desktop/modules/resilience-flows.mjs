@@ -8,6 +8,10 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_SERVICE_CONNECTION_ENDPOINT,
   MODEL_SERVICE_CONNECTION_PROMPT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+  MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_INITIAL_PROMPT,
   RATE_LIMIT_COMPLETION_TEXT,
   RATE_LIMIT_PROMPT,
   RECONNECT_COMPLETION_TEXT,
@@ -16,8 +20,10 @@ import {
   SEND_REJECTION_RUNNING_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  processIsAlive,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
+  waitForExecutorRuntimeEvidence,
   withTimeout,
 } from './shared.mjs'
 
@@ -108,6 +114,101 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   await captureVerificationScreenshot(
     control,
     'reconnect-03-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function verifyModelProxyRestartRecovery({
+  composerSelector,
+  control,
+  executorLogPath,
+  restartDesktopApp,
+}) {
+  control.setScenario('model_proxy_restart')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    MODEL_PROXY_RESTART_INITIAL_PROMPT,
+    'model_proxy_restart'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  const initialSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = initialSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The model-proxy restart task did not expose its runtime task ID')
+  const executorBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
+  const executorProcessIdBeforeRestart = executorBeforeRestart.processIds.at(-1)
+  assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
+
+  await restartDesktopApp()
+
+  const executorAfterRestart = await waitForExecutorRuntimeEvidence(
+    control,
+    executorLogPath,
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const executorProcessIdAfterRestart = executorAfterRestart.processIds.at(-1)
+  assert.ok(executorProcessIdAfterRestart, 'The restarted executor process ID was not recorded')
+  assert.notEqual(
+    executorProcessIdAfterRestart,
+    executorProcessIdBeforeRestart,
+    'Restarting Wework reused the executor process with the old model proxy registry'
+  )
+  assert.equal(
+    processIsAlive(executorProcessIdBeforeRestart),
+    false,
+    'The original executor remained alive after Wework restarted'
+  )
+  const taskRowSelector = `[data-testid="runtime-local-task-row-${taskId}"]`
+  await control.command('waitFor', taskRowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', taskRowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane?.transcript?.loading === false,
+    'The restarted workbench did not restore the model-proxy conversation',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+    'model_proxy_restart'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  assert.equal(
+    control.scenarioRequests.get('model_proxy_restart')?.length,
+    2,
+    'The restarted conversation did not issue exactly one follow-up model request'
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('assistant-error-card'),
+    false,
+    'The restarted model-proxy conversation rendered an assistant error'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'model-proxy-restart-01-recovered.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
 }
@@ -332,4 +433,5 @@ export {
   verifyRateLimitRecovery,
   verifyModelServiceConnectionError,
   verifyAnthropicEmptyResponseRecovery,
+  verifyModelProxyRestartRecovery,
 }
