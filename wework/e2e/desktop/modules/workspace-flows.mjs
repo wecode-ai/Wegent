@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import {
@@ -103,59 +104,39 @@ export async function createLocalCollaborationProject(control, contentSelector, 
     'click',
     `${contentSelector} [data-testid="collaboration-workspace-project-create"]`
   )
-  const dialogSelector = `${contentSelector} [data-testid="collaboration-project-create-dialog"]`
-  const nameSelector = `${dialogSelector} [data-testid="collaboration-project-name-input"]`
-  const localLocationSelector = `${dialogSelector} [data-testid="cloud-project-location-local"]`
-  await control.command('waitFor', dialogSelector, {
+  await control.command('click', '[data-testid="collaboration-workspace-project-import-folder"]')
+  const workspacePath = join(
+    resultDir,
+    'local-collaboration-projects',
+    projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
+  )
+  await mkdir(workspacePath, { recursive: true })
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', localLocationSelector, {
+  await waitForFolderPickerInitialized(control)
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  assert.match(
-    (await control.command('getAttribute', localLocationSelector, {
-      value: 'class',
-    })) ?? '',
-    /collaboration-project-create-location-summary/,
-    'The local project location was rendered as a switchable choice instead of a fixed summary'
-  )
-  assert.equal(
-    Number(
-      await control.command(
-        'getElementCount',
-        `${dialogSelector} [data-testid="cloud-project-location-cloud"]`
-      )
-    ),
-    0,
-    'The local workspace project dialog exposed an invalid cloud location choice'
-  )
-  const localTaskProviderSelector = `${dialogSelector} [data-testid="cloud-project-task-provider-local"]`
-  await control.command('waitFor', localTaskProviderSelector, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', localTaskProviderSelector, {
-      value: 'aria-pressed',
-    }),
-    'true',
-    'The local workspace project dialog did not default to its built-in task provider'
-  )
-  await control.command('fill', nameSelector, {
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
     value: projectName,
   })
-  await control.command(
-    'clickWhenEnabled',
-    `${dialogSelector} [data-testid="collaboration-project-create-confirm"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command(
     'waitFor',
-    `${contentSelector} [data-testid="cloud-project-header-title"]`,
+    inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]', contentSelector),
     {
       text: projectName,
       visible: true,

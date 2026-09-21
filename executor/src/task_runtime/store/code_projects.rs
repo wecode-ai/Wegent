@@ -16,32 +16,116 @@ impl LocalTaskStore {
         name: &str,
         roots: &[String],
         bound_local_id: Option<&str>,
-    ) -> Result<(), TaskRuntimeError> {
+    ) -> Result<bool, TaskRuntimeError> {
         let id = format!("local-code-{:x}", Sha256::digest(key.as_bytes()));
         let execution_environment = code_project_execution_environment(roots);
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // Archived projects remain tombstones; refreshing must not resurrect them.
         let bound_local_id = bound_local_id.filter(|id| *id != DEFAULT_WORK_ITEM_PROJECT_ID);
-        let existing_id = transaction
+        let existing = transaction
             .query_row(
-                "SELECT id FROM loop_items
-             WHERE resource_type = 'project' AND (id = ?1 OR id = ?2)
-             ORDER BY CASE WHEN id = ?2 THEN 0 ELSE 1 END
-             LIMIT 1",
-                params![id, bound_local_id,],
+                "SELECT id, deleted_at FROM loop_items
+                 WHERE resource_type = 'project' AND (id = ?1 OR id = ?2)
+                 ORDER BY CASE WHEN id = ?2 THEN 0 ELSE 1 END
+                 LIMIT 1",
+                params![&id, bound_local_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        if let Some((existing_id, deleted_at)) = existing {
+            if deleted_at.is_some() {
+                transaction.commit()?;
+                return Ok(false);
+            }
+            if let Some(environment) = execution_environment {
+                let metadata = transaction.query_row(
+                    "SELECT metadata FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'project'",
+                    [&existing_id],
+                    |row| row.get::<_, String>(0),
+                )?;
+                let mut metadata =
+                    serde_json::from_str::<Value>(&metadata).unwrap_or_else(|_| json!({}));
+                if metadata.get("execution_environment").is_none() {
+                    metadata["execution_environment"] = environment;
+                    transaction.execute(
+                        "UPDATE loop_items
+                         SET metadata = ?1, version = version + 1, updated_at = ?2
+                         WHERE id = ?3 AND resource_type = 'project'",
+                        params![metadata.to_string(), now(), existing_id],
+                    )?;
+                }
+            }
+            transaction.commit()?;
+            return Ok(true);
+        }
+
+        let project_key = unused_project_key(&transaction)?;
+        let mut metadata = local_project_metadata(TaskProviderKind::Local, json!({}));
+        metadata["code_project_key"] = json!(key);
+        metadata["workspace_roots"] = json!(roots);
+        if let Some(environment) = execution_environment {
+            metadata["execution_environment"] = environment;
+        }
+        let timestamp = now();
+        transaction.execute(
+            "INSERT INTO loop_items (
+                id, resource_type, project_space, public_id, project_key, name,
+                storage_prefix, next_item_number, status, sort_order,
+                metadata, version, created_at, updated_at
+             ) VALUES (?1, 'project', 'default', ?1, ?2, ?3, ?4, 1, 'active',
+                       0, ?5, 1, ?6, ?6)",
+            params![
+                id,
+                project_key,
+                name,
+                format!("projects/{id}"),
+                metadata.to_string(),
+                timestamp
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    pub(crate) fn import_code_project(
+        &self,
+        key: &str,
+        name: &str,
+        roots: &[String],
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let id = format!("local-code-{:x}", Sha256::digest(key.as_bytes()));
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing_metadata = transaction
+            .query_row(
+                "SELECT metadata FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'project'",
+                params![id],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
-        if existing_id.is_none() {
+        let mut metadata = existing_metadata
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|error| {
+                TaskRuntimeError::Invalid(format!("invalid project metadata: {error}"))
+            })?
+            .unwrap_or_else(|| local_project_metadata(TaskProviderKind::Local, json!({})));
+        metadata["code_project_key"] = json!(key);
+        metadata["workspace_roots"] = json!(roots);
+        let timestamp = now();
+        let updated = transaction.execute(
+            "UPDATE loop_items
+             SET name = ?1, status = 'active', metadata = ?2, deleted_at = NULL,
+                 version = version + 1, updated_at = ?3
+             WHERE id = ?4 AND resource_type = 'project'",
+            params![name, metadata.to_string(), timestamp, id],
+        )?;
+        if updated == 0 {
             let project_key = unused_project_key(&transaction)?;
-            let mut metadata = local_project_metadata(TaskProviderKind::Local, json!({}));
-            metadata["code_project_key"] = json!(key);
-            metadata["workspace_roots"] = json!(roots);
-            if let Some(environment) = execution_environment.as_ref() {
-                metadata["execution_environment"] = environment.clone();
-            }
-            let timestamp = now();
             transaction.execute(
                 "INSERT INTO loop_items (
                     id, resource_type, project_space, public_id, project_key, name,
@@ -58,32 +142,10 @@ impl LocalTaskStore {
                     timestamp
                 ],
             )?;
-        } else if let (Some(existing_id), Some(environment)) = (existing_id, execution_environment)
-        {
-            let metadata = transaction
-                .query_row(
-                    "SELECT metadata FROM loop_items
-                     WHERE id = ?1 AND resource_type = 'project' AND deleted_at IS NULL",
-                    [&existing_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            if let Some(metadata) = metadata {
-                let mut metadata =
-                    serde_json::from_str::<Value>(&metadata).unwrap_or_else(|_| json!({}));
-                if metadata.get("execution_environment").is_none() {
-                    metadata["execution_environment"] = environment;
-                    transaction.execute(
-                        "UPDATE loop_items
-                         SET metadata = ?1, version = version + 1, updated_at = ?2
-                         WHERE id = ?3 AND resource_type = 'project' AND deleted_at IS NULL",
-                        params![metadata.to_string(), now(), existing_id],
-                    )?;
-                }
-            }
         }
         transaction.commit()?;
-        Ok(())
+        drop(connection);
+        self.get_project(&id)
     }
 }
 

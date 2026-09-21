@@ -5,7 +5,10 @@ import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
-import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
+import type {
+  LocalProjectSpaceApi,
+  ProjectSpaceDetailServices,
+} from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import {
   projectSpaceForRuntimeTask,
@@ -164,6 +167,13 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           workspaceLocations?: readonly ('local' | 'cloud')[]
         }
         navigate(next: CollaborationPlatformLocation): void
+        renderProjectImporter?: (input: {
+          workspace: Record<string, unknown>
+          mode: 'folder' | 'existing'
+          projects: Record<string, unknown>[]
+          onClose(): void
+          onImported(project: Record<string, unknown>): Promise<void>
+        }) => ReactNode
       }
       navigationApis?: SharedWorkspaceApi[]
       renderProject?(props: {
@@ -172,6 +182,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       }): ReactNode
     }) => {
       const [showLocalProject, setShowLocalProject] = useState(false)
+      const [showProjectImporter, setShowProjectImporter] = useState(false)
       return createElement(
         'div',
         {
@@ -209,6 +220,15 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             type: 'button',
           },
           'Render local project'
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': 'collaboration-platform-import-local-project',
+            onClick: () => setShowProjectImporter(true),
+            type: 'button',
+          },
+          'Import local project'
         ),
         ...(['agents', 'teams', 'devices'] as const).map(destination =>
           createElement(
@@ -265,6 +285,37 @@ vi.mock('@wegent/collaboration', async importOriginal => {
                 name: 'Local workspace',
               },
             })
+          : null,
+        showProjectImporter
+          ? host.renderProjectImporter?.({
+              workspace: {
+                id: 'wework-local-workspace',
+                location: 'local',
+                name: 'Local workspace',
+              },
+              mode: 'existing',
+              projects: [
+                {
+                  id: 'local-project',
+                  metadata: {
+                    code_project_key: 'runtime-project',
+                    workspace_roots: ['/workspace/imported'],
+                  },
+                },
+              ],
+              onClose: () => setShowProjectImporter(false),
+              onImported: async project => {
+                setShowProjectImporter(false)
+                host.navigate({
+                  platformView: 'spaces',
+                  workspaceId: String(project.workspace_id),
+                  workspaceView: 'projects',
+                  projectId: String(project.id),
+                  projectView: 'board',
+                  issueId: null,
+                })
+              },
+            })
           : null
       )
     },
@@ -292,6 +343,7 @@ function createLocalDeliveryApi() {
           id: 'local-project',
           name: 'Local project',
           project_store: 'local',
+          metadata: { code_project_key: 'runtime-project' },
         },
       ],
     }),
@@ -301,7 +353,16 @@ function createLocalDeliveryApi() {
       members: [],
       agents: [],
     }),
-  } as unknown as DeliveryApi
+    importLocalCodeProject: vi.fn().mockResolvedValue({
+      id: 'local-project',
+      name: 'Local project',
+      project_store: 'local',
+      metadata: {
+        code_project_key: 'runtime-project',
+        workspace_roots: ['/workspace/imported'],
+      },
+    }),
+  } as unknown as LocalProjectSpaceApi
 }
 
 function createLocalDetailServices() {
@@ -409,6 +470,183 @@ describe('Wework collaboration workspace API', () => {
     expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
       'data-navigation-source-count',
       '2'
+    )
+  })
+
+  it('resolves an imported runtime project to its local collaboration project', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          projectSpaceApis: {
+            local: localDeliveryApi,
+          },
+        } as never,
+        renderLocalProjectImporter: ({ mode, projects, onCreated }) =>
+          createElement(
+            'button',
+            {
+              'data-testid': 'test-complete-local-project-import',
+              'data-mode': mode,
+              'data-project-count': projects.length,
+              onClick: () =>
+                void onCreated('runtime-project', 'Local project', ['/workspace/imported']),
+              type: 'button',
+            },
+            'Complete import'
+          ),
+      })
+    )
+
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-import-local-project').click()
+    })
+    expect(screen.getByTestId('test-complete-local-project-import')).toHaveAttribute(
+      'data-mode',
+      'existing'
+    )
+    await act(async () => {
+      screen.getByTestId('test-complete-local-project-import').click()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(
+        'local-project'
+      )
+    )
+    expect(localDeliveryApi.importLocalCodeProject).toHaveBeenCalledWith({
+      runtimeProjectKey: 'runtime-project',
+      name: 'Local project',
+      roots: ['/workspace/imported'],
+    })
+  })
+
+  it('resolves an imported project by workspace root when the runtime key is an alias', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    localDeliveryApi.importLocalCodeProject.mockResolvedValue({
+      id: 'local-project',
+      name: 'Local project',
+      project_store: 'local',
+      metadata: {
+        code_project_key: 'runtime-project-uuid',
+        workspace_roots: ['/workspace/imported'],
+      },
+    } as never)
+
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [],
+        services: {
+          projectSpaceApis: {
+            local: localDeliveryApi,
+          },
+        } as never,
+        renderLocalProjectImporter: ({ onCreated }) =>
+          createElement(
+            'button',
+            {
+              'data-testid': 'test-complete-aliased-local-project-import',
+              onClick: () =>
+                void onCreated('runtime-project-uuid', 'Local project', ['/workspace/imported']),
+              type: 'button',
+            },
+            'Complete aliased import'
+          ),
+      })
+    )
+
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-import-local-project').click()
+    })
+    await act(async () => {
+      screen.getByTestId('test-complete-aliased-local-project-import').click()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent(
+        'local-project'
+      )
+    )
+  })
+
+  it('offers only task projects that are not already in local collaboration', async () => {
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [
+          {
+            id: 11,
+            name: 'Already imported',
+            config: {
+              mode: 'workspace',
+              execution: { targetType: 'local', deviceId: 'local-device' },
+              workspace: { source: 'local_path', localPath: '/workspace/imported' },
+            },
+            tasks: [],
+          },
+          {
+            id: 12,
+            name: 'Available task project',
+            config: {
+              mode: 'workspace',
+              execution: { targetType: 'local', deviceId: 'local-device' },
+              workspace: { source: 'local_path', localPath: '/workspace/available' },
+            },
+            tasks: [],
+          },
+        ],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 11, key: 'runtime-project', name: 'Already imported' },
+              deviceWorkspaces: [],
+            },
+            {
+              project: { id: 12, key: 'available-project', name: 'Available task project' },
+              deviceWorkspaces: [],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+        services: {
+          projectSpaceApis: {
+            local: createLocalDeliveryApi(),
+          },
+        } as never,
+        renderLocalProjectImporter: ({ projects }) =>
+          createElement(
+            'div',
+            { 'data-testid': 'test-local-project-candidates' },
+            projects.map(project => project.name).join(',')
+          ),
+      })
+    )
+
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-import-local-project').click()
+    })
+
+    expect(screen.getByTestId('test-local-project-candidates')).toHaveTextContent(
+      'Available task project'
+    )
+    expect(screen.getByTestId('test-local-project-candidates')).not.toHaveTextContent(
+      'Already imported'
     )
   })
 

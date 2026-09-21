@@ -457,7 +457,7 @@ export function useCollaborationPlatformController({
             : cachedWorkspace?.project_count === 0 ||
               cachedWorkspaceProjects.length > 0);
         const canUseNavigationCache =
-          navigationCacheReadyRef.current || targetCoveredByCache;
+          !force && (navigationCacheReadyRef.current || targetCoveredByCache);
         const navigationCollections = canUseNavigationCache
           ? {
               ...cachedNavigation,

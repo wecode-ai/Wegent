@@ -678,6 +678,7 @@ function PlatformHarness({
   notify,
   manageResource,
   renderDeviceCreator,
+  renderProjectImporter,
   renderProject,
   workspaceOwnerOptions,
   defaultAssistant,
@@ -692,6 +693,7 @@ function PlatformHarness({
   notify?: CollaborationPlatformHostAdapter["notify"];
   manageResource?: CollaborationPlatformHostAdapter["manageResource"];
   renderDeviceCreator?: CollaborationPlatformHostAdapter["renderDeviceCreator"];
+  renderProjectImporter?: CollaborationPlatformHostAdapter["renderProjectImporter"];
   renderProject?(context: CollaborationProjectRendererContext): ReactNode;
   workspaceOwnerOptions?: CollaborationPlatformHostAdapter["workspaceOwnerOptions"];
   defaultAssistant?: CollaborationPlatformHostAdapter["defaultAssistant"];
@@ -705,6 +707,7 @@ function PlatformHarness({
     navigate: setLocation,
     manageResource,
     renderDeviceCreator,
+    renderProjectImporter,
     notify,
     workspaceOwnerOptions,
     defaultAssistant,
@@ -1966,6 +1969,147 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.textContent).toContain("保存在 Wegent 云端");
   });
 
+  it("uses the host importer for local projects and opens existing projects from the add menu", async () => {
+    const localProject: CollaborationProject = {
+      ...project,
+      id: "local-project",
+      workspace_id: localWorkspace.id,
+      project_store: "local",
+      name: "本地项目",
+      metadata: { code_project_key: "runtime-project" },
+    };
+    const importedProject: CollaborationProject = {
+      ...localProject,
+      id: "imported-local-project",
+      name: "后续导入项目",
+      metadata: { code_project_key: "imported-runtime-project" },
+    };
+    const { api, projects } = createApi({
+      initialWorkspaces: [{ ...localWorkspace, project_count: 1 }],
+      initialProjects: [localProject],
+      initialIssues: [],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: localWorkspace.id }}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          workspaceLocations: ["local", "cloud"],
+        }}
+        renderProjectImporter={({ workspace, mode, onClose, onImported }) => (
+          <div data-testid="test-local-project-importer">
+            <span>{workspace.name}</span>
+            <span data-testid="test-local-project-importer-mode">{mode}</span>
+            <button type="button" onClick={onClose}>
+              取消
+            </button>
+            <button
+              type="button"
+              data-testid="test-local-project-import-complete"
+              onClick={() => {
+                projects.push(importedProject);
+                void onImported(importedProject);
+              }}
+            >
+              完成导入
+            </button>
+          </div>
+        )}
+      />,
+    );
+
+    await click(byTestId("collaboration-workspace-actions"));
+    expect(
+      byTestId("collaboration-workspace-nav-import-existing-project")
+        .textContent,
+    ).toContain("导入已有项目");
+    expect(
+      byTestId("collaboration-workspace-nav-add-folder").textContent,
+    ).toContain("添加文件夹");
+    await click(
+      byTestId("collaboration-workspace-nav-import-existing-project"),
+    );
+    expect(byTestId("test-local-project-importer").textContent).toContain(
+      localWorkspace.name,
+    );
+    expect(byTestId("test-local-project-importer-mode").textContent).toBe(
+      "existing",
+    );
+    await click(buttonWithText("取消"));
+    await click(byTestId("collaboration-workspace-actions"));
+    await click(byTestId("collaboration-workspace-nav-add-folder"));
+    expect(byTestId("test-local-project-importer-mode").textContent).toBe(
+      "folder",
+    );
+    await click(buttonWithText("取消"));
+
+    expect(
+      byTestId("collaboration-workspace-project-create").textContent,
+    ).toContain("添加项目");
+    await click(byTestId("collaboration-workspace-project-create"));
+    await click(
+      portalByTestId("collaboration-workspace-project-open-existing"),
+    );
+    expect(byTestId("test-local-project-importer-mode").textContent).toBe(
+      "existing",
+    );
+    await click(buttonWithText("取消"));
+
+    await click(byTestId("collaboration-workspace-project-create"));
+    await click(
+      portalByTestId("collaboration-workspace-project-import-folder"),
+    );
+    expect(byTestId("test-local-project-importer").textContent).toContain(
+      localWorkspace.name,
+    );
+    expect(byTestId("test-local-project-importer-mode").textContent).toBe(
+      "folder",
+    );
+    await click(byTestId("test-local-project-import-complete"));
+    expect(byTestId("test-location").textContent).toContain(
+      '"projectId":"imported-local-project"',
+    );
+    expect(
+      byTestId(`collaboration-workspace-project-${importedProject.id}`)
+        .textContent,
+    ).toContain(importedProject.name);
+    expect(api.projects.list).toHaveBeenCalledTimes(2);
+    expect(
+      byTestId(
+        `collaboration-workspace-toggle-${localWorkspace.id}`,
+      ).getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(byTestId("test-location").textContent).toContain(
+      '"workspaceId":"wework-local-workspace"',
+    );
+  });
+
+  it("offers direct folder import when the local workspace is empty", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+      initialIssues: [],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: localWorkspace.id }}
+        renderProjectImporter={() => (
+          <div data-testid="test-empty-local-project-importer" />
+        )}
+      />,
+    );
+
+    expect(container.textContent).toContain("导入第一个本地项目");
+    expect(
+      byTestId("collaboration-workspace-starter-create-project").textContent,
+    ).toContain("添加文件夹");
+    await click(byTestId("collaboration-workspace-starter-create-project"));
+    expect(byTestId("test-empty-local-project-importer")).toBeTruthy();
+  });
+
   it("shows Wework primary navigation before the non-collapsible spaces section", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace, workspace],
@@ -2118,6 +2262,39 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     expect(api.workspaces?.list).toHaveBeenCalledOnce();
     expect(api.projects.list).toHaveBeenCalledOnce();
+  });
+
+  it("expands the selected project workspace when its route omits the workspace id", async () => {
+    const localProject = {
+      ...project,
+      id: "local-project-1",
+      workspace_id: localWorkspace.id,
+      project_store: "local" as const,
+      name: "本地项目",
+    };
+    const { api } = createApi({
+      initialWorkspaces: [workspace, localWorkspace],
+      initialProjects: [project, localProject],
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          projectId: localProject.id,
+        }}
+      />,
+    );
+
+    expect(
+      byTestId(
+        `collaboration-workspace-toggle-${localWorkspace.id}`,
+      ).getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(
+      byTestId(`collaboration-workspace-project-${localProject.id}`),
+    ).toBeTruthy();
   });
 
   it("renders a workspace before project snapshots finish and skips unrelated workspace data", async () => {

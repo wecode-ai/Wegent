@@ -97,6 +97,28 @@ async function preflightLocalWorktree(command: DesktopControlCommand): Promise<s
   )
 }
 
+async function archiveLocalProject(command: DesktopControlCommand): Promise<string> {
+  const fixture = JSON.parse(command.value ?? '{}') as { projectKey?: string }
+  const projectKey = fixture.projectKey?.trim()
+  if (!projectKey) {
+    throw new Error('archiveLocalProject requires a project key')
+  }
+  const projects = (await requestLocalExecutor('projects.list', {})) as Array<{
+    id?: string
+    version?: number
+    metadata?: { code_project_key?: string }
+  }>
+  const project = projects.find(item => item.metadata?.code_project_key === projectKey)
+  if (!project?.id || typeof project.version !== 'number') {
+    throw new Error(`Local collaboration project was not found for ${projectKey}`)
+  }
+  await requestLocalExecutor('projects.archive', {
+    project_id: project.id,
+    version: project.version,
+  })
+  return JSON.stringify({ projectId: project.id })
+}
+
 async function readLocalTerminalSnapshot(command: DesktopControlCommand): Promise<string> {
   const sessionId = command.value?.trim()
   if (!sessionId) {
@@ -146,6 +168,8 @@ export async function executeVerificationControlCommand(
       return { handled: true, value: await readLocalProject(command) }
     case 'preflightLocalWorktree':
       return { handled: true, value: await preflightLocalWorktree(command) }
+    case 'archiveLocalProject':
+      return { handled: true, value: await archiveLocalProject(command) }
     case 'readLocalTerminalSnapshot':
       return { handled: true, value: await readLocalTerminalSnapshot(command) }
     case 'reloadApp':
