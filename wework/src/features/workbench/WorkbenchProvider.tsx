@@ -121,6 +121,7 @@ import {
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeGoalSnapshot,
+  getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
@@ -1950,7 +1951,13 @@ export function WorkbenchProvider({
   )
   const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
-    if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
+    const conversationGoal = getRuntimeConversationMetadata(address).goal
+    if (
+      (expectedGoalStatus === null || expectedGoalStatus === undefined) &&
+      conversationGoal === null
+    ) {
+      return
+    }
 
     const snapshotVersion = beginRuntimeGoalSnapshot(address)
     void runtimeTasks
