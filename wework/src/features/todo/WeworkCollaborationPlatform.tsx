@@ -156,8 +156,10 @@ export interface WeworkCollaborationPlatformProps {
 
 function normalizeWorkspaceRoot(root: string): string {
   const trimmed = root.trim()
-  if (trimmed === '/' || trimmed === '\\' || /^[A-Za-z]:[\\/]$/.test(trimmed)) return trimmed
-  return trimmed.replace(/[\\/]+$/, '')
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(trimmed) || /^\\\\/.test(trimmed)
+  const normalized = isWindowsPath ? trimmed.replaceAll('\\', '/').toLowerCase() : trimmed
+  if (normalized === '/' || /^[a-z]:\/$/i.test(normalized)) return normalized
+  return normalized.replace(isWindowsPath ? /\/+$/ : /[\\/]+$/, '')
 }
 
 function projectWorkspaceRoots(project: CollaborationProject): string[] {
@@ -1106,7 +1108,10 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                       name: projectName,
                       roots: workspaceRoots,
                     })
-                    await onImported(importedProject)
+                    await onImported({
+                      ...importedProject,
+                      workspace_id: LOCAL_WORKSPACE_ID,
+                    })
                   },
                 })
               }

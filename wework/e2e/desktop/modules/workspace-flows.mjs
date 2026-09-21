@@ -105,6 +105,19 @@ export async function createLocalCollaborationProject(control, contentSelector, 
     `${contentSelector} [data-testid="collaboration-workspace-project-create"]`
   )
   await control.command('click', '[data-testid="collaboration-workspace-project-import-folder"]')
+  await completeLocalCollaborationFolderImport(control, projectName)
+  await control.command(
+    'waitFor',
+    inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]', contentSelector),
+    {
+      text: projectName,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+}
+
+export async function completeLocalCollaborationFolderImport(control, projectName) {
   const workspacePath = join(
     resultDir,
     'local-collaboration-projects',
@@ -134,15 +147,6 @@ export async function createLocalCollaborationProject(control, contentSelector, 
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'waitFor',
-    inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]', contentSelector),
-    {
-      text: projectName,
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
 }
 
 async function waitForFolderPathReady(control, expectedPath) {

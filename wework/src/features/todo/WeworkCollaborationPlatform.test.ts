@@ -192,7 +192,10 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         },
         createElement(
           'span',
-          { 'data-testid': 'collaboration-platform-location' },
+          {
+            'data-testid': 'collaboration-platform-location',
+            'data-workspace-id': host.location.workspaceId ?? '',
+          },
           host.location.rootView ?? host.location.projectId ?? 'workspace'
         ),
         createElement(
@@ -299,7 +302,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
                   id: 'local-project',
                   metadata: {
                     code_project_key: 'runtime-project',
-                    workspace_roots: ['/workspace/imported'],
+                    workspace_roots: ['/workspace/imported', 'c:/work/repo'],
                   },
                 },
               ],
@@ -520,6 +523,10 @@ describe('Wework collaboration workspace API', () => {
         'local-project'
       )
     )
+    expect(screen.getByTestId('collaboration-platform-location')).toHaveAttribute(
+      'data-workspace-id',
+      'wework-local-workspace'
+    )
     expect(localDeliveryApi.importLocalCodeProject).toHaveBeenCalledWith({
       runtimeProjectKey: 'runtime-project',
       name: 'Local project',
@@ -648,6 +655,76 @@ describe('Wework collaboration workspace API', () => {
     expect(screen.getByTestId('test-local-project-candidates')).not.toHaveTextContent(
       'Already imported'
     )
+  })
+
+  it('matches imported Windows roots across separator and casing differences', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    vi.mocked(localDeliveryApi.listCloudProjects).mockResolvedValue({
+      items: [
+        {
+          id: 'local-project',
+          name: 'Imported Windows project',
+          project_store: 'local',
+          metadata: {
+            code_project_key: 'different-runtime-key',
+            workspace_roots: ['c:/work/repo'],
+          },
+        },
+      ],
+    } as never)
+
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: {
+          id: 1,
+          user_name: 'admin',
+          email: 'admin@example.com',
+        } as never,
+        localProjects: [
+          {
+            id: 13,
+            name: 'Same Windows project',
+            config: {
+              mode: 'workspace',
+              execution: { targetType: 'local', deviceId: 'local-device' },
+              workspace: { source: 'local_path', localPath: 'C:\\Work\\Repo\\' },
+            },
+            tasks: [],
+          },
+        ],
+        runtimeWork: {
+          projects: [
+            {
+              project: {
+                id: 13,
+                key: 'windows-runtime-project',
+                name: 'Same Windows project',
+              },
+              deviceWorkspaces: [],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+        services: {
+          projectSpaceApis: {
+            local: localDeliveryApi,
+          },
+        } as never,
+        renderLocalProjectImporter: ({ projects }) =>
+          createElement(
+            'div',
+            { 'data-testid': 'test-windows-project-candidates' },
+            projects.map(project => project.name).join(',')
+          ),
+      })
+    )
+
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-import-local-project').click()
+    })
+
+    expect(screen.getByTestId('test-windows-project-candidates')).toBeEmptyDOMElement()
   })
 
   it('keeps local project data and Agent configuration independent of cloud resources', async () => {

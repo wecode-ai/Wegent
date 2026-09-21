@@ -173,6 +173,10 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .unwrap();
     assert_eq!(restored["id"], first["id"]);
     assert!(restored["deleted_at"].is_null());
+    assert_eq!(
+        restored["metadata"]["collaboration_groups"],
+        json!([{"id":"squad-1", "name":"Delivery team"}])
+    );
     server
         .dispatch(
             "projects.archive",
