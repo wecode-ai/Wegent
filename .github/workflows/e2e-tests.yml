@@ -732,6 +732,17 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
+      - name: Restore bundled Codex cache
+        id: bundled-codex-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
+      - name: Prepare bundled Codex for local Executor
+        working-directory: ./wework
+        run: node scripts/prepare-codex-binary.mjs --materialize
+
       - name: Add local harness CLIs to PATH
         run: echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
@@ -886,7 +897,7 @@ jobs:
           pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
-      - name: Start Local ClaudeCode Executor
+      - name: Start Local Executor
         env:
           EXECUTOR_MODE: local
           WEGENT_BACKEND_URL: http://localhost:8000
@@ -899,6 +910,9 @@ jobs:
           WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
+          CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          CODEX_HOME: ${{ runner.temp }}/wegent-executor/codex
+          WEGENT_CODEX_HOME: ${{ runner.temp }}/wegent-executor/codex
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"
           CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
@@ -959,6 +973,7 @@ jobs:
           PY
           )
           test -x executor/target/release/wegent-executor
+          test -x "$CODEX_BINARY_PATH"
           nohup env \
             -u GIT_TOKEN_AES_KEY \
             -u GIT_TOKEN_AES_IV \
