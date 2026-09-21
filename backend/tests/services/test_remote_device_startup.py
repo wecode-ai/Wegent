@@ -46,6 +46,10 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
     assert "-e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in first.command
     assert "-e DEVICE_CODE_SERVER_ENABLED=true" in first.command
     assert "-e DEVICE_TERMINAL_ENABLED=true" in first.command
+    # Only cloud devices support the desktop, and the published device image
+    # installs no VNC server, so a Remote device must not be started with it.
+    assert "DEVICE_VNC" not in first.command
+    assert "DEVICE_VNC" not in first.commands[1].command
     assert "WEGENT_EXECUTOR_HOME_ID" not in first.commands[1].command
     assert (
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in first.commands[1].command

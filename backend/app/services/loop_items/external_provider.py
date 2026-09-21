@@ -290,13 +290,18 @@ class ExternalLoopItemProvider:
             access.role, BaseRole.Reporter
         ):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        item_status = values.status or "inbox"
+        if item_status not in EXTERNAL_BOARD_STATUSES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Unsupported board status"
+            )
         assignee_label = self._assignee_label_for_values(
             db, project, values, user_id=user_id
         )
         labels = self._labels_for_write(
             values.tags + [f"{CREATOR_PREFIX}{user_id}:{self._safe_name(user_name)}"],
             values.priority,
-            values.status,
+            item_status,
             assignee=assignee_label,
         )
         issue = self._create_issue(

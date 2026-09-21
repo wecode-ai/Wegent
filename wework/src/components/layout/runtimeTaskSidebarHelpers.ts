@@ -10,6 +10,10 @@ export interface RuntimeSidebarTaskItem {
 export const RUNTIME_PROJECT_TASK_PREVIEW_LIMIT = 5
 export const RUNTIME_PROJECT_TASK_EXPAND_STEP = 10
 
+export function shortenSidebarHomePath(path: string): string {
+  return path.replace(/^\/Users\/[^/]+(?=\/|$)/u, '~')
+}
+
 export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
   return task.recencyAt ?? task.updatedAt ?? task.createdAt ?? undefined
 }

@@ -93,18 +93,21 @@ class FakeAICardInstance:
     def set_order(self, order: list[str]) -> None:
         self.order = order
 
-    def ai_start(self) -> None:
+    async def close(self):
+        pass
+
+    async def ai_start(self) -> None:
         self.card_instance_id = f"card-{uuid.uuid4().hex}"
         self.records[self.card_instance_id] = CardRecord([], [])
 
-    def ai_streaming(self, content: str, append: bool = False) -> None:
+    async def ai_streaming(self, content: str, append: bool = False) -> None:
         assert append is False
         self._record().updates.append(content)
 
-    def ai_finish(self, content: str) -> None:
+    async def ai_finish(self, content: str) -> None:
         self._record().finished.append(content)
 
-    def ai_fail(self) -> None:
+    async def ai_fail(self) -> None:
         self._record().failed = True
 
     def _record(self) -> CardRecord:

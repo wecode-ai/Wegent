@@ -3027,6 +3027,31 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 }
 
 #[test]
+fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() {
+    let request = ExecutionRequest {
+        task_id: "restored-task".to_owned(),
+        model_config: json!({
+            "base_url": "https://example.test/v1",
+            "api_key": "restored-secret",
+            "model_id": "gpt-5.6-luna",
+            "api_format": "openai-responses",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config_for_fork(&request, "restored-thread")
+        .expect("restored thread should recreate a missing local route");
+
+    assert_eq!(
+        launch_config.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
+    let retained = local_model_proxy::retain_for_thread("restored-thread", Some("gpt-5.6-luna"))
+        .expect("restored thread should be bound to the recreated route");
+    local_model_proxy::unregister(&retained);
+}
+
+#[test]
 fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
     let request = ExecutionRequest {
         system_prompt: "Judge the supplied content without answering it.".to_owned(),
@@ -3508,6 +3533,68 @@ fn codex_model_provider_validation_accepts_requested_provider() {
     });
 
     validate_codex_model_provider("thread/resume", &response, Some("openai")).unwrap();
+}
+
+#[test]
+fn turn_input_matches_shared_prompt_reference_cases() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for case in cases {
+        let reference = case["reference"].as_str().unwrap();
+        let input = turn_input(&json!(reference));
+        if case["kind"].is_null() {
+            assert_eq!(input, vec![text_input(reference.to_owned())], "{reference}");
+            continue;
+        }
+        let expected = if case["kind"] == "skill" {
+            skill_input(
+                case["name"].as_str().unwrap(),
+                case["href"].as_str().unwrap(),
+            )
+        } else {
+            mention_input(
+                case["name"].as_str().unwrap(),
+                case["href"].as_str().unwrap(),
+            )
+        };
+        assert_eq!(input.len(), 2, "{reference}");
+        assert_eq!(input[1], expected, "{reference}");
+    }
+}
+
+#[test]
+fn turn_input_preserves_collaboration_references_as_text() {
+    for scheme in [
+        "wework-member",
+        "wework-agent",
+        "wework-group",
+        "wework-issue",
+    ] {
+        let reference = format!("[$test]({scheme}://test)");
+        assert_eq!(turn_input(&json!(reference)), vec![text_input(reference)]);
+    }
+}
+
+#[test]
+fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
+    let path = dirs::home_dir()
+        .expect("test user has a home directory")
+        .join(".agents/skills/test-skill/SKILL.md");
+    let input = turn_input(&Value::String(format!(
+        "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
+        path.display()
+    )));
+
+    assert_eq!(
+        input,
+        vec![
+            json!({"type": "text", "text": "$test-skill then $test-skill", "text_elements": []}),
+            json!({"type": "skill", "name": "test-skill", "path": path.to_string_lossy()}),
+        ]
+    );
 }
 
 #[test]

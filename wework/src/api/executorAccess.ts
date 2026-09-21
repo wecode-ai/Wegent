@@ -262,10 +262,24 @@ export function createExecutorClientFromApis({
   reviewApi,
   resolveDevice,
 }: ExecutorAccessApis): ExecutorClient {
+  const routeKinds =
+    transportKind === 'local-ipc'
+      ? new Set(['local-ipc', 'app-ipc'])
+      : new Set(['cloud-relay', 'remote-relay'])
+  const statusForTransport = (device: DeviceInfo): ExecutorRegistryEntry['status'] => {
+    const routeStatuses =
+      device.runtime_routes
+        ?.filter(route => routeKinds.has(route.kind))
+        .map(route => route.status) ?? []
+    if (routeStatuses.length === 0) return device.status
+    if (routeStatuses.includes('online')) return 'online'
+    if (routeStatuses.includes('busy')) return 'busy'
+    return 'offline'
+  }
   const createRegistryEntry = (device: DeviceInfo): ExecutorRegistryEntry => ({
     deviceId: device.device_id,
     name: device.name,
-    status: device.status,
+    status: statusForTransport(device),
     version: device.executor_version,
     capabilities: device.capabilities ?? [],
     transportKind,

@@ -243,6 +243,28 @@ function flushStreamingFollow() {
   })
 }
 
+// Puts a bottom-origin conversation into the state the desktop chat uses when the reader parks in the
+// history: `scrollTop` 0 is the bottom, so parking is a negative offset, and only the reader's own
+// gesture may leave them there.
+function parkBottomOriginReader(scroller: HTMLDivElement, parkedPx: number) {
+  Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+  Object.defineProperty(scroller, 'scrollHeight', { value: 2_000, configurable: true })
+  Object.defineProperty(scroller, 'scrollTop', {
+    value: 0,
+    writable: true,
+    configurable: true,
+  })
+  scroller.scrollTo = vi.fn((options: ScrollToOptions) => {
+    scroller.scrollTop = Number(options.top ?? 0) + 0
+  }) as unknown as HTMLDivElement['scrollTo']
+
+  fireEvent.scroll(scroller)
+  fireEvent.wheel(scroller, { deltaY: -120 })
+  scroller.scrollTop = -parkedPx
+  fireEvent.scroll(scroller)
+  ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+}
+
 describe('ScrollableMessageArea', () => {
   let requestAnimationFrameSpy: ReturnType<typeof vi.spyOn>
   let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn>
@@ -4851,6 +4873,202 @@ describe('ScrollableMessageArea', () => {
       vi.runOnlyPendingTimers()
     })
 
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  const parkedConversationMessages = [
+    {
+      id: 'parked-user-1',
+      role: 'user' as const,
+      content: '第一问',
+      status: 'done' as const,
+      createdAt: '2026-09-18T00:00:00.000Z',
+    },
+    {
+      id: 'parked-assistant-1',
+      role: 'assistant' as const,
+      content: '第一答',
+      status: 'done' as const,
+      createdAt: '2026-09-18T00:00:01.000Z',
+    },
+    {
+      id: 'parked-user-2',
+      role: 'user' as const,
+      content: '第二问',
+      status: 'done' as const,
+      createdAt: '2026-09-18T00:00:02.000Z',
+    },
+  ]
+
+  test('does not pull a reader parked in history down when the assistant turn starts waiting', () => {
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="parked-waiting"
+        scrollOrigin="bottom"
+        messages={parkedConversationMessages}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    parkBottomOriginReader(scroller, 900)
+
+    // The assistant's turn answering the reader's last message begins: the waiting indicator appears.
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="parked-waiting"
+        scrollOrigin="bottom"
+        messages={parkedConversationMessages}
+        isWaitingForAssistant
+      />
+    )
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    // A turn beginning to answer is not the reader's own action: their place in the history stands.
+    expect(scroller.scrollTop).toBe(-900)
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('still brings the newest turn into view when the assistant starts waiting at the bottom', () => {
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="bottom-waiting"
+        scrollOrigin="bottom"
+        messages={parkedConversationMessages}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 2_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn((options: ScrollToOptions) => {
+      scroller.scrollTop = Number(options.top ?? 0) + 0
+    }) as unknown as HTMLDivElement['scrollTo']
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="bottom-waiting"
+        scrollOrigin="bottom"
+        messages={parkedConversationMessages}
+        isWaitingForAssistant
+      />
+    )
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTop).toBe(0)
+    expect(scroller.scrollTo).toHaveBeenCalled()
+  })
+
+  test('brings a message the reader sends into view even while they are parked in history', () => {
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="parked-send"
+        scrollOrigin="bottom"
+        messages={parkedConversationMessages}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    parkBottomOriginReader(scroller, 900)
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="parked-send"
+        scrollOrigin="bottom"
+        messages={[
+          ...parkedConversationMessages,
+          {
+            id: 'parked-user-3',
+            role: 'user',
+            content: '第三问',
+            status: 'done',
+            createdAt: '2026-09-18T00:00:03.000Z',
+          },
+        ]}
+        isWaitingForAssistant
+      />
+    )
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTop).toBe(0)
+    expect(scroller.scrollTo).toHaveBeenCalled()
+  })
+
+  test('does not pull a parked reader down when a held response start is released', () => {
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="held-start"
+        scrollOrigin="bottom"
+        messages={parkedConversationMessages}
+        autoScrollSuspended
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 2_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn((options: ScrollToOptions) => {
+      scroller.scrollTop = Number(options.top ?? 0) + 0
+    }) as unknown as HTMLDivElement['scrollTo']
+
+    // The response starts while auto-scroll is suspended, so bringing it into view is held back.
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="held-start"
+        scrollOrigin="bottom"
+        messages={[
+          ...parkedConversationMessages,
+          {
+            id: 'held-start-assistant',
+            role: 'assistant',
+            content: '第二答',
+            status: 'streaming',
+            createdAt: '2026-09-18T00:00:03.000Z',
+          },
+        ]}
+        autoScrollSuspended
+      />
+    )
+    // The reader parks in the history before the suspension is lifted.
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    scroller.scrollTop = -900
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="held-start"
+        scrollOrigin="bottom"
+        messages={[
+          ...parkedConversationMessages,
+          {
+            id: 'held-start-assistant',
+            role: 'assistant',
+            content: '第二答',
+            status: 'streaming',
+            createdAt: '2026-09-18T00:00:03.000Z',
+          },
+        ]}
+      />
+    )
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTop).toBe(-900)
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 

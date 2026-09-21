@@ -196,7 +196,6 @@ def release_lease(
         for_update=True,
     )
     _require_lease(transcript, request.client_id, request.fencing_token)
-    transcript.writer_client_id = ""
     transcript.writer_lease_expires_at = EPOCH_TIME
     transcript.updated_at = utcnow()
     db.commit()
@@ -416,7 +415,6 @@ def archive_transcript(
     _require_lease(transcript, request.client_id, request.fencing_token)
     transcript.state = "archived"
     transcript.archived_at = utcnow()
-    transcript.writer_client_id = ""
     transcript.writer_lease_expires_at = EPOCH_TIME
     transcript.updated_at = utcnow()
     db.commit()

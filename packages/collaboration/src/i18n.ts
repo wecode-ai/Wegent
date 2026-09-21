@@ -515,6 +515,8 @@ const sharedMessages: Record<
     "todo.comment_placeholder": "留下评论…",
     "todo.execution_settings": "执行设置",
     "todo.show_text_attachment": "在文本框中显示",
+    "todo.pasted_text_attachment": "粘贴的文本",
+    "todo.adding_pasted_text_attachment": "正在添加粘贴的文本…",
     "todo.appshot_attachment": "应用快照",
     "todo.remove_attachment": "移除附件",
     "todo.attachments_uploading": "附件仍在上传中",
@@ -675,6 +677,10 @@ const sharedMessages: Record<
     "todo.assignment_source": "分配来源",
     "todo.assignment_mode": "分配方式",
     "todo.shared_agent": "共享智能体",
+    "todo.local_agent_resource_unavailable":
+      "无法读取智能体资源配置，请重新登录后重试",
+    "todo.local_agent_runtime_unsupported":
+      "本地项目仅支持使用 Codex 或 Claude Code 执行器的智能体",
     "todo.project_owned_agent": "项目智能体",
     "todo.edit_project_agent": "编辑",
     "todo.update_project_agent_failed": "更新项目智能体失败",
@@ -956,6 +962,8 @@ const sharedMessages: Record<
     "todo.comment_placeholder": "Leave a comment…",
     "todo.execution_settings": "Execution settings",
     "todo.show_text_attachment": "Show in text box",
+    "todo.pasted_text_attachment": "Pasted text",
+    "todo.adding_pasted_text_attachment": "Adding pasted text…",
     "todo.appshot_attachment": "Appshot",
     "todo.remove_attachment": "Remove attachment",
     "todo.attachments_uploading": "Attachments are still uploading",
@@ -1126,6 +1134,10 @@ const sharedMessages: Record<
     "todo.assignment_source": "Assignment source",
     "todo.assignment_mode": "Assignment mode",
     "todo.shared_agent": "Shared agent",
+    "todo.local_agent_resource_unavailable":
+      "The Agent resource configuration is unavailable. Sign in and try again.",
+    "todo.local_agent_runtime_unsupported":
+      "Local projects support only Agents that use the Codex or Claude Code runtime.",
     "todo.project_owned_agent": "Project agent",
     "todo.edit_project_agent": "Edit",
     "todo.update_project_agent_failed": "Failed to update the project agent",

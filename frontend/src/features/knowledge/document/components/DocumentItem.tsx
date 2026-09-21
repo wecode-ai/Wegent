@@ -30,7 +30,13 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
 import { getProcessingErrorMessage } from '../utils/processing-error'
-import { getExternalSourceInfo } from '../utils/documentUtils'
+import {
+  getDocumentDisplayUpdatedAt,
+  getExternalSourceInfo,
+  getSyncedWikiConnectorType,
+  isSyncedWikiDocument,
+  isWikiSourceMissing,
+} from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
@@ -45,6 +51,7 @@ interface DocumentItemProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onSync?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   /** Open the "modify prompt & re-analyze" dialog (video/image docs only) */
@@ -65,6 +72,7 @@ interface DocumentItemProps {
   isRefreshing?: boolean
   /** Whether the document is currently being reindexed */
   isReindexing?: boolean
+  isSyncing?: boolean
   /** Whether the knowledge base has RAG configured (retriever + embedding model) */
   ragConfigured?: boolean
   /** Width of the name column in pixels (for table mode column resize) */
@@ -94,6 +102,7 @@ export function DocumentItem({
   onDelete,
   onRefresh,
   onReindex,
+  onSync,
   onViewDetail,
   onMove,
   canManage = true,
@@ -107,6 +116,7 @@ export function DocumentItem({
   compact = false,
   isRefreshing = false,
   isReindexing = false,
+  isSyncing = false,
   ragConfigured = true,
   nameColumnWidth,
   showActionsColumn: showActionsColumnProp,
@@ -135,8 +145,9 @@ export function DocumentItem({
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
   }
 
-  // Check if the document has been modified since creation
-  const isUnmodified = document.updated_at === document.created_at
+  // Effective display update time: wiki rows use the latest successful index time
+  // (see getDocumentDisplayUpdatedAt); regular rows keep the '-' rule.
+  const displayUpdatedAt = getDocumentDisplayUpdatedAt(document)
 
   const checkboxChecked = selected || includedInFolderScope
   const checkboxDisabled = includedInFolderScope || selectionDisabled
@@ -175,6 +186,11 @@ export function DocumentItem({
     onReindex?.(document)
   }
 
+  const handleSync = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onSync?.(document)
+  }
+
   const handleOpenLink = (e: React.MouseEvent) => {
     e.stopPropagation()
     const url = sourceUrl
@@ -196,7 +212,10 @@ export function DocumentItem({
   }
 
   // Whether to show download button
-  const showDownload = allowDownload && document.source_type === 'file' && !!document.attachment_id
+  const isSyncedWiki = isSyncedWikiDocument(document)
+  const syncedWikiConnectorType = getSyncedWikiConnectorType(document)
+  const showDownload =
+    allowDownload && !!document.attachment_id && (document.source_type === 'file' || isSyncedWiki)
   // Check document source type
   const isWeb = document.source_type === 'web'
   const isNotIndexed = document.index_status === 'not_indexed'
@@ -208,20 +227,27 @@ export function DocumentItem({
     document.index_status === 'indexing' ||
     isConverting ||
     isPendingConversion
-  const showIndexingState = isReindexing || isBackendIndexing
+  const showIndexingState = isReindexing || isSyncing || isBackendIndexing
   const isExternal = document.source_type === 'external'
+  const isWiki = isSyncedWiki
   // External documents retry through the dedicated import-retry entry, which
   // fetches the provider's latest body before replacing the attachment and
   // reindexing. Regular documents reindex from failed or not-indexed states.
   const canReindex =
     !!onReindex &&
     !showIndexingState &&
-    (isExternal ? isIndexFailed : ragConfigured && (isIndexFailed || isNotIndexed))
+    (isSyncedWiki
+      ? ragConfigured && !!document.attachment_id && isIndexFailed
+      : isExternal
+        ? isIndexFailed
+        : ragConfigured && (isIndexFailed || isNotIndexed))
+  const canSync = isSyncedWiki && !!onSync && !showIndexingState
   // The same control serves as "retry import" for external documents; the
   // DocumentList handler routes external documents to the retry entry.
-  const reindexActionLabel = isExternal
-    ? t('knowledge:document.document.retryImport')
-    : t('knowledge:document.document.reindex')
+  const reindexActionLabel =
+    isExternal && !isSyncedWiki
+      ? t('knowledge:document.document.retryImport')
+      : t('knowledge:document.document.reindex')
 
   // Multimodal (video/image) document actions — re-analyze gate + handler.
   const { canReanalyze, handleReanalyze } = useMultimodalDocActions(
@@ -242,9 +268,24 @@ export function DocumentItem({
       : isExternal && typeof externalSource?.url === 'string'
         ? externalSource.url
         : null
-  // The provider rejected the initial import because the source disappeared
-  // or access was revoked. The failed placeholder remains retryable.
-  const isExternalSourceInaccessible = isExternal && externalSource?.status === 'inaccessible'
+  // Source health is independent from index health: a synchronized document
+  // may keep serving its last successful index after the remote page disappears.
+  const hasExternalSourceWarning =
+    isExternal && ['inaccessible', 'sync_error'].includes(externalSource?.status || '')
+  const wikiSourceMissing = isWikiSourceMissing(document)
+  const isSourceSyncError = externalSource?.status === 'sync_error'
+  const sourceInaccessibleLabel = wikiSourceMissing
+    ? t('knowledge:document.document.wikiSourceMissing')
+    : isSourceSyncError
+      ? t('knowledge:document.document.sourceSyncFailed')
+      : t('knowledge:document.document.sourceInaccessible')
+  const sourceInaccessibleHint =
+    externalSource?.last_error ||
+    (wikiSourceMissing
+      ? t('knowledge:document.document.wikiSourceMissingHint')
+      : isSourceSyncError
+        ? t('knowledge:document.document.sourceSyncFailedHint')
+        : t('knowledge:document.document.sourceInaccessibleHint'))
 
   // Get display name - for web documents, remove .md extension
   const displayName =
@@ -255,11 +296,14 @@ export function DocumentItem({
   }
 
   const showSelectionColumn = Boolean(onSelect)
+  const canEditDocument = Boolean(onEdit) && !isWiki
   const showActionsColumn =
     showActionsColumnProp ??
-    Boolean(onMove || onEdit || onDelete || onRefresh || onReindex || showDownload)
+    Boolean(
+      onMove || canEditDocument || onDelete || onRefresh || onReindex || onSync || showDownload
+    )
   const hasManageActions = Boolean(
-    onMove || onEdit || onDelete || onRefresh || onReindex || showDownload
+    onMove || canEditDocument || onDelete || onRefresh || onReindex || onSync || showDownload
   )
   const tableGridTemplate = getDocumentTableGridTemplate({
     showSelectionColumn,
@@ -363,11 +407,27 @@ export function DocumentItem({
                   {t('knowledge:document.document.type.web')}
                 </Badge>
               ) : isExternal ? (
-                <ExternalDocumentBadge className="text-[9px] px-1 py-0" />
+                <ExternalDocumentBadge
+                  syncedWiki={isSyncedWiki}
+                  extension={document.file_extension}
+                  connectorType={syncedWikiConnectorType}
+                  className="text-[9px] px-1 py-0"
+                />
               ) : (
                 <span className="text-[9px] text-text-muted uppercase">
                   {document.file_extension}
                 </span>
+              )}
+              {hasExternalSourceWarning && (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="max-w-[9rem] truncate bg-red-500/10 px-1 py-0 text-[9px] text-red-600 border-red-500/20"
+                  title={sourceInaccessibleHint}
+                  data-testid="external-source-inaccessible-compact"
+                >
+                  {sourceInaccessibleLabel}
+                </Badge>
               )}
               {/* Size */}
               {!isWeb && (
@@ -433,7 +493,7 @@ export function DocumentItem({
                 </span>
               )}
               <span className="text-[9px] text-text-muted">
-                {isUnmodified ? '-' : formatDate(document.updated_at)}
+                {displayUpdatedAt ? formatDate(displayUpdatedAt) : '-'}
               </span>
             </div>
           </div>
@@ -459,12 +519,13 @@ export function DocumentItem({
                   <button
                     className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors"
                     onClick={e => e.stopPropagation()}
+                    data-testid={`document-actions-${document.id}`}
                   >
                     <MoreVertical className="w-3.5 h-3.5" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-[120px]">
-                  {onEdit && (
+                  {canEditDocument && (
                     <DropdownMenuItem onClick={handleEdit}>
                       <Pencil className="w-3.5 h-3.5 mr-2" />
                       {t('common:actions.edit')}
@@ -484,6 +545,12 @@ export function DocumentItem({
                       {isRefreshing
                         ? t('knowledge:document.upload.web.refetching')
                         : t('knowledge:document.upload.web.refetch')}
+                    </DropdownMenuItem>
+                  )}
+                  {canSync && (
+                    <DropdownMenuItem onClick={handleSync} disabled={showIndexingState}>
+                      <CloudDownload className="mr-2 h-3.5 w-3.5" />
+                      {t('knowledge:document.document.resync')}
                     </DropdownMenuItem>
                   )}
                   {canReindex && (
@@ -588,7 +655,7 @@ export function DocumentItem({
       </div>
       {/* Edit button - right aligned */}
       <div className="flex items-center justify-end">
-        {canManage && (
+        {canManage && canEditDocument && (
           <button
             className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
             onClick={handleEdit}
@@ -610,11 +677,15 @@ export function DocumentItem({
             {t('knowledge:document.document.type.web')}
           </Badge>
         ) : isExternal ? (
-          <ExternalDocumentBadge />
+          <ExternalDocumentBadge
+            syncedWiki={isSyncedWiki}
+            extension={document.file_extension}
+            connectorType={syncedWikiConnectorType}
+          />
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}
-        {isExternalSourceInaccessible && (
+        {hasExternalSourceWarning && (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
@@ -624,21 +695,19 @@ export function DocumentItem({
                   className="ml-1 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
                   data-testid="external-source-inaccessible"
                 >
-                  {t('knowledge:document.document.sourceInaccessible')}
+                  {sourceInaccessibleLabel}
                 </Badge>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">
-                  {externalSource?.last_error ||
-                    t('knowledge:document.document.sourceInaccessibleHint')}
-                </p>
+                <p className="text-xs">{sourceInaccessibleHint}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         )}
       </div>
 
-      {/* Size */}
+      {/* Size — wiki rows carry the real Markdown byte size since the
+          metadata fix, so they format like regular documents. */}
       <div className="text-center min-w-0">
         <span className="text-xs text-text-muted">
           {isWeb ? '-' : formatFileSize(document.file_size)}
@@ -668,7 +737,7 @@ export function DocumentItem({
       {/* Updated date */}
       <div className="text-center min-w-0" data-testid="updated-at-cell">
         <span className="text-xs text-text-muted">
-          {isUnmodified ? '-' : formatDateTime(document.updated_at)}
+          {displayUpdatedAt ? formatDateTime(displayUpdatedAt) : '-'}
         </span>
       </div>
 
@@ -726,7 +795,12 @@ export function DocumentItem({
             </Tooltip>
           </TooltipProvider>
         ) : document.is_active ? (
-          <Badge variant="success" size="sm" className="whitespace-nowrap">
+          <Badge
+            variant="success"
+            size="sm"
+            className="whitespace-nowrap"
+            data-testid={isSyncedWiki ? `document-wiki-status-${document.id}` : undefined}
+          >
             {t('knowledge:document.document.indexStatus.available')}
           </Badge>
         ) : (
@@ -783,6 +857,16 @@ export function DocumentItem({
                   <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
                 </button>
               )}
+              {canSync && (
+                <button
+                  className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                  onClick={handleSync}
+                  title={t('knowledge:document.document.resync')}
+                  data-testid={`sync-document-${document.id}`}
+                >
+                  <CloudDownload className="h-4 w-4" />
+                </button>
+              )}
               {/* Reindex button - only when RAG configured and document not indexed */}
               {canReindex && (
                 <button
@@ -799,7 +883,7 @@ export function DocumentItem({
                       : reindexActionLabel
                   }
                   data-testid={
-                    isExternal
+                    isExternal && !isSyncedWiki
                       ? `retry-import-document-${document.id}`
                       : `reindex-document-${document.id}`
                   }

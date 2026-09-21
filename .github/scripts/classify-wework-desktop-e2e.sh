@@ -449,6 +449,14 @@ classify_wework_path() {
       return
       ;;
 
+    # The cloud suite covers VNC-related desktop changes.
+    wework/src/components/vnc/* | \
+      wework/src/pages/DeviceDesktopPage* | \
+      wework/src/pages/deviceDesktopRoute.ts)
+      select_target "cloud:all"
+      return
+      ;;
+
     # Cloud execution has a separate backend/executor-backed desktop suite.
     wework/src/api/cloud/* | \
       wework/src/features/cloud-connection/* | \

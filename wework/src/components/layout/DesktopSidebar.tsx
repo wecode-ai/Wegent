@@ -49,6 +49,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
@@ -188,6 +189,7 @@ import {
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
+  shortenSidebarHomePath,
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
@@ -852,10 +854,6 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
   return (
     workspaces.length > 0 && workspaces.every(workspace => workspace.workspaceSource === 'remote')
   )
-}
-
-function shortenSidebarHomePath(path: string): string {
-  return path.replace(/^\/Users\/[^/]+(?=\/|$)/u, '~')
 }
 
 function getSidebarRepositoryLabel(repoUrl?: string | null): string | null {
@@ -2282,7 +2280,7 @@ function RuntimeTaskRow({
         confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
         onClose={() => setRenameOpen(false)}
         onSubmit={title => {
-          if (workspace.available) onRenameRuntimeTask?.(taskAddress, title)
+          if (workspace.available) return onRenameRuntimeTask?.(taskAddress, title)
         }}
       />
       {archiveNoticeOpen &&
@@ -3274,6 +3272,11 @@ export function DesktopSidebar({
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const [isArchivingPriority, setIsArchivingPriority] = useState(false)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
+  const projectCreateDialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => setProjectCreateDialogOpen(false),
+    projectCreateDialogOpen,
+    '[data-testid="project-create-local-option"]'
+  )
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
@@ -4024,12 +4027,12 @@ export function DesktopSidebar({
     })
   }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
 
-  const openProjectCreateDialog = () => {
+  const openProjectCreateDialog = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    // Pointer activation should not restore keyboard focus to the icon on dismissal.
+    if (event.detail > 0) event.currentTarget.blur()
     setProjectCreateDialogOpen(true)
     void onRefreshDevices?.().catch(() => undefined)
   }
-
-  useEscapeKey(() => setProjectCreateDialogOpen(false), projectCreateDialogOpen)
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
@@ -4614,7 +4617,7 @@ export function DesktopSidebar({
                             data-testid="projects-create-button"
                             onClick={event => {
                               event.stopPropagation()
-                              openProjectCreateDialog()
+                              openProjectCreateDialog(event)
                             }}
                             className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                             aria-expanded={projectCreateDialogOpen}
@@ -4636,6 +4639,7 @@ export function DesktopSidebar({
                         }}
                       >
                         <div
+                          ref={projectCreateDialogRef}
                           role="dialog"
                           aria-modal="true"
                           aria-labelledby="project-create-dialog-title"

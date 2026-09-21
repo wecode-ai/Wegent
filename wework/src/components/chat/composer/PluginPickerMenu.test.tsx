@@ -105,6 +105,7 @@ describe('PluginPickerMenu', () => {
     await userEvent.click(trigger)
     const picker = await screen.findByTestId('composer-plugin-picker')
 
+    expect(picker).toHaveClass('bg-popover', 'text-text-primary')
     await waitFor(() =>
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
     )

@@ -3,8 +3,8 @@
 
 """Opaque, stateless handles for runtime conversations and user turns.
 
-Handles carry no permissions. Every use resolves the address through the caller's
-owned Runtime work listing before sending any RPC.
+Handles carry no permissions. Every use validates the caller's device ownership
+and resolves the task directly on that Runtime.
 """
 
 import base64

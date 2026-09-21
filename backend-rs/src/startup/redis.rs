@@ -11,6 +11,7 @@ pub async fn shared(config: &RedisConfig) -> RedisResult<RedisService> {
     let options = RedisServiceOptions::default()
         .with_password(config.password.clone())
         .with_timeout(Duration::from_secs(5));
-    let endpoint = format!("{}:{}:{}", config.host, config.port, config.db);
-    RedisService::noshard_with_options(endpoint.clone(), [endpoint], options).await
+    let master = config.endpoint();
+    let slave = config.slave_endpoint().unwrap_or_else(|| master.clone());
+    RedisService::noshard_with_options(master, [slave], options).await
 }

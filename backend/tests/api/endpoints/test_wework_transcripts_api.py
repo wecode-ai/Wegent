@@ -124,6 +124,49 @@ def test_commits_native_object_metadata_and_structured_summary(
     assert turns.json()["turns"][0]["payload"]["taskId"] == "task-1"
 
 
+def test_persists_the_most_recent_writer_after_lease_release(
+    test_client, test_token, test_db
+):
+    lease = _lease(test_client, test_token, client_id="electron-origin")
+    released = test_client.post(
+        "/api/wework-transcripts/transcript-1/lease/release",
+        headers=_headers(test_token),
+        json={
+            "clientId": "electron-origin",
+            "fencingToken": lease["fencingToken"],
+        },
+    )
+    assert released.status_code == 200
+    first_listing = test_client.get(
+        "/api/wework-transcripts?includeArchived=false",
+        headers=_headers(test_token),
+    )
+    assert first_listing.status_code == 200
+    assert first_listing.json()["items"][0]["writerClientId"] == "electron-origin"
+
+    other_lease = _lease(test_client, test_token, client_id="electron-other")
+    other_released = test_client.post(
+        "/api/wework-transcripts/transcript-1/lease/release",
+        headers=_headers(test_token),
+        json={
+            "clientId": "electron-other",
+            "fencingToken": other_lease["fencingToken"],
+        },
+    )
+    assert other_released.status_code == 200
+
+    listing = test_client.get(
+        "/api/wework-transcripts?includeArchived=false",
+        headers=_headers(test_token),
+    )
+
+    assert listing.status_code == 200
+    assert listing.json()["items"][0]["writerClientId"] == "electron-other"
+    transcript = test_db.query(WeworkTranscript).one()
+    assert transcript.writer_client_id == "electron-other"
+    assert transcript.writer_lease_expires_at.year == 1970
+
+
 def test_rejects_uploaded_segment_with_mismatched_digest(
     test_client, test_token, test_db, monkeypatch
 ):
@@ -666,3 +709,44 @@ def test_download_streams_the_object_through_backend(
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.headers["content-length"] == "10"
     assert response.content == b"encrypted!!"
+
+
+def test_download_reports_a_missing_storage_object_as_not_found(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.api.endpoints import wework_transcripts
+    from app.services.wework_transcript_storage import (
+        WeworkTranscriptStorageNotFoundError,
+    )
+
+    _lease(test_client, test_token)
+    transcript = test_db.query(WeworkTranscript).one()
+    archive = WeworkTranscriptArchive(
+        transcript_db_id=transcript.id,
+        from_sequence=0,
+        to_sequence=1,
+        storage_key="users/1/transcripts/key/missing.tgz.aes256gcm",
+        sha256="c" * 64,
+        size_bytes=10,
+        format="codex-snapshot.v1.tgz.aes256gcm",
+    )
+    test_db.add(archive)
+    test_db.commit()
+    monkeypatch.setattr(
+        wework_transcripts.wework_transcript_storage,
+        "stream",
+        lambda _key: (_ for _ in ()).throw(
+            WeworkTranscriptStorageNotFoundError("Wework transcript segment not found")
+        ),
+    )
+
+    response = test_client.get(
+        f"/api/wework-transcripts/transcript-1/archives/{archive.id}/download",
+        headers=_headers(test_token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "code": "archive_not_found",
+        "message": "Wework transcript segment not found",
+    }

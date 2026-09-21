@@ -91,7 +91,7 @@ jobs:
           name: backend-coverage
 
   test-plugin-auth-mysql:
-    name: Test Plugin Auth MySQL Transactions
+    name: Test Backend MySQL Regressions
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
@@ -122,6 +122,12 @@ jobs:
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
         run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py -n 0
+
+      - name: Verify namespace grants with MySQL connection collations
+        working-directory: backend
+        env:
+          TEAM_NAMESPACE_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+        run: uv run pytest integration_checks/test_team_namespace_collation_mysql.py -n 0
 
   test-executor:
     name: Test Executor

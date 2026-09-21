@@ -11,6 +11,7 @@
 
 mod anthropic;
 mod chat;
+mod coordinate;
 mod fork;
 mod harness_protocol;
 mod history;
@@ -39,6 +40,9 @@ use sha2::{Digest, Sha256};
 use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
+pub(crate) use coordinate::{
+    coordinate_leader_upstream, set_coordinate_members, CoordinateMemberRoute, MEMBER_MODEL_MARKER,
+};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
 
 pub(crate) const API_KEY: &str = "wework-local-router";
@@ -157,6 +161,7 @@ pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyU
             pending_model_switch_cleanup: false,
             last_used: Instant::now(),
             active_references: 1,
+            coordinate_members: HashMap::new(),
         },
     );
     log_executor_event(
@@ -294,6 +299,7 @@ struct RegisteredUpstream {
     pending_model_switch_cleanup: bool,
     last_used: Instant,
     active_references: usize,
+    coordinate_members: HashMap<String, CoordinateMemberRoute>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -378,6 +384,11 @@ pub(crate) fn register_with_vision_sidecar(
         .routes
         .get(&token)
         .is_some_and(|registered| registered.pending_model_switch_cleanup);
+    let coordinate_members = registry
+        .routes
+        .get(&token)
+        .map(|registered| registered.coordinate_members.clone())
+        .unwrap_or_default();
     registry.routes.insert(
         token.clone(),
         RegisteredUpstream {
@@ -389,6 +400,7 @@ pub(crate) fn register_with_vision_sidecar(
             pending_model_switch_cleanup,
             last_used: Instant::now(),
             active_references,
+            coordinate_members,
         },
     );
     log_executor_event(
@@ -785,14 +797,22 @@ async fn handle_for_token(
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
         authorize_task_thread(registered, &body)?;
-        let model_routing = begin_model_request(registered, &body);
         registered.last_used = Instant::now();
-        (
-            registered.upstream.clone(),
-            registered.vision_sidecar.clone(),
-            registered.history.clone(),
-            model_routing,
-        )
+        if let Some(member) = coordinate::member_route(registered, &body)? {
+            (
+                member.upstream.clone(),
+                member.vision_sidecar.clone(),
+                member.history.clone(),
+                ModelRequestRouting::default(),
+            )
+        } else {
+            (
+                registered.upstream.clone(),
+                registered.vision_sidecar.clone(),
+                registered.history.clone(),
+                begin_model_request(registered, &body),
+            )
+        }
     };
     log_stale_requested_model(&upstream, &body);
     let request_url = upstream
@@ -1210,6 +1230,7 @@ fn request_thread_identity(body: &[u8]) -> Option<RequestThreadIdentity> {
     let thread_id = metadata.get("thread_id")?.as_str()?.to_owned();
     let parent_thread_id = metadata
         .get("parent_thread_id")
+        .or_else(|| metadata.get("x-codex-parent-thread-id"))
         .and_then(Value::as_str)
         .map(str::to_owned)
         .or_else(|| {
@@ -3850,6 +3871,131 @@ mod tests {
         assert!(String::from_utf8_lossy(&body).contains("tools are unsupported"));
 
         unregister(&token);
+        server.abort();
+    }
+
+    /// Mirrors the upstream Responses pairing rule: a `function_call` must be
+    /// followed by its `function_call_output` before any other item, otherwise
+    /// the upstream rejects the turn with `No tool output found for tool call ...`.
+    fn upstream_rejects_interleaved_tool_items(body: &Value) -> Option<String> {
+        let mut pending = Vec::new();
+        for item in body.get("input")?.as_array()? {
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            match item_type {
+                "function_call" => pending.push(
+                    item.get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                "function_call_output" => {
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    match pending.iter().position(|pending| pending == call_id) {
+                        Some(position) => {
+                            pending.remove(position);
+                        }
+                        None => return Some(format!("unsolicited tool output for {call_id}")),
+                    }
+                }
+                _ => {
+                    if let Some(call_id) = pending.first() {
+                        return Some(format!("No tool output found for tool call {call_id}."));
+                    }
+                }
+            }
+        }
+        pending
+            .first()
+            .map(|call_id| format!("No tool output found for tool call {call_id}."))
+    }
+
+    #[tokio::test]
+    async fn harness_route_keeps_tool_calls_adjacent_to_their_outputs() {
+        let (body_tx, mut body_rx) = mpsc::channel(1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(move |Json(body): Json<Value>| {
+                        let body_tx = body_tx.clone();
+                        async move {
+                            let rejection = upstream_rejects_interleaved_tool_items(&body);
+                            let _ = body_tx.send(rejection).await;
+                            Json(json!({
+                                "output": [{
+                                    "type": "message",
+                                    "content": [{"type": "output_text", "text": "ok"}]
+                                }]
+                            }))
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register_harness(
+            "harness-tool-order-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "upstream-secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("deepseek-v4-flash".to_owned()),
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+        let request = json!({
+            "model": "wework-selected",
+            "max_tokens": 64,
+            "system": "You are a builder.",
+            "messages": [
+                {"role": "user", "content": "build the dashboard"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "I will start by inspecting the dataset."},
+                    {"type": "tool_use", "id": "call_00_stub00000000000000000001", "name": "read_dataset", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_00_stub00000000000000000001", "content": "ok"}
+                ]}
+            ],
+            "tools": [{
+                "name": "read_dataset",
+                "description": "Read.",
+                "input_schema": {"type": "object"}
+            }]
+        });
+
+        let response = handle_harness_messages(
+            Path(token.clone()),
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&request).expect("request body")),
+        )
+        .await
+        .expect("harness response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_rx.recv().await.expect("captured upstream body"),
+            None,
+            "the upstream must accept the encoded tool call/output group"
+        );
+
+        unregister_harness(&token);
         server.abort();
     }
 

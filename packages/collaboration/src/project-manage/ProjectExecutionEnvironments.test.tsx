@@ -24,8 +24,7 @@ const repositoryOptions = [
     id: 1,
     name: "wegent",
     fullName: "wecode-ai/wegent",
-    cloneUrl:
-      "ssh://git@git.example.com:2222/wecode-ai/wegent.git",
+    cloneUrl: "ssh://git@git.example.com:2222/wecode-ai/wegent.git",
     gitDomain: "git.example.com",
     provider: "gitlab",
   },
@@ -390,7 +389,7 @@ describe("ProjectExecutionEnvironments", () => {
       deviceId: 21,
       version: 2,
     });
-    expect(container?.textContent).toContain("环境已创建");
+    expect(container?.textContent).toContain("环境已初始化");
     expect(element("-21").textContent).toContain("环境已就绪");
     expect(
       container?.querySelector(`[data-testid="${prefix}-config-status"]`),
@@ -456,7 +455,7 @@ describe("ProjectExecutionEnvironments", () => {
       `[data-testid="${prefix}-environment-error"]`,
     );
     expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce();
-    expect(element("-21").textContent).toContain("环境创建失败");
+    expect(element("-21").textContent).toContain("环境初始化失败");
     expect(shown?.textContent).toBe(
       "Failed to prepare execution repositories: fatal: could not read " +
         "Username for 'https://git.example.com': terminal prompts disabled",
@@ -485,9 +484,9 @@ describe("ProjectExecutionEnvironments", () => {
       addButton.compareDocumentPosition(configuredEnvironment) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(element("-21").textContent).toContain("尚未创建环境");
+    expect(element("-21").textContent).toContain("环境未初始化");
     expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
-      "创建环境",
+      "初始化环境",
     );
     expect(
       container?.querySelector(`[data-testid="${prefix}-select"]`),
@@ -592,7 +591,7 @@ describe("ProjectExecutionEnvironments", () => {
       version: 2,
     });
     expect(element("-1824").textContent).toContain("环境已就绪");
-    expect(element("-1748").textContent).toContain("尚未创建环境");
+    expect(element("-1748").textContent).toContain("环境未初始化");
   });
 
   it("keeps the prepared device ready while another device initializes", async () => {
@@ -629,9 +628,9 @@ describe("ProjectExecutionEnvironments", () => {
       element<HTMLButtonElement>("-initialize-1824").click(),
     );
 
-    expect(element("-1824").textContent).toContain("正在创建环境");
+    expect(element("-1824").textContent).toContain("正在初始化环境");
     expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(element("-1748").textContent).not.toContain("正在创建环境");
+    expect(element("-1748").textContent).not.toContain("正在初始化环境");
   });
 
   it("renders each device's own persisted state independently", async () => {
@@ -663,16 +662,16 @@ describe("ProjectExecutionEnvironments", () => {
     });
 
     expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(element<HTMLButtonElement>("-initialize-1748").textContent).toContain(
-      "重新创建",
-    );
-    expect(element("-1824").textContent).toContain("环境创建失败");
-    expect(element<HTMLButtonElement>("-initialize-1824").textContent).toContain(
-      "重新创建",
-    );
-    expect(element("-21").textContent).toContain("尚未创建环境");
+    expect(
+      element<HTMLButtonElement>("-initialize-1748").textContent,
+    ).toContain("重新初始化");
+    expect(element("-1824").textContent).toContain("环境初始化失败");
+    expect(
+      element<HTMLButtonElement>("-initialize-1824").textContent,
+    ).toContain("重新初始化");
+    expect(element("-21").textContent).toContain("环境未初始化");
     expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
-      "创建环境",
+      "初始化环境",
     );
   });
 
@@ -698,7 +697,7 @@ describe("ProjectExecutionEnvironments", () => {
     });
 
     expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(element("-1824").textContent).toContain("尚未创建环境");
+    expect(element("-1824").textContent).toContain("环境未初始化");
 
     await rerender(api, {
       version: 3,
@@ -754,7 +753,7 @@ describe("ProjectExecutionEnvironments", () => {
 
     expect(api.projects.update).toHaveBeenCalledOnce();
     expect(api.projects.initializeExecutionEnvironment).not.toHaveBeenCalled();
-    expect(element("-1748").textContent).toContain("正在创建环境");
+    expect(element("-1748").textContent).toContain("正在初始化环境");
   });
 
   it("localizes status labels and filters in English", async () => {
@@ -920,7 +919,7 @@ describe("ProjectExecutionEnvironments", () => {
       assigned: [environment(21, "Assigned online", "online")],
     });
 
-    expect(element("-21").textContent).toContain("尚未创建环境");
+    expect(element("-21").textContent).toContain("环境未初始化");
 
     await rerender(api, {
       executionEnvironment: {
@@ -940,7 +939,7 @@ describe("ProjectExecutionEnvironments", () => {
 
     expect(element("-21").textContent).toContain("环境已就绪");
     expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
-      "重新创建",
+      "重新初始化",
     );
   });
 
@@ -1006,7 +1005,7 @@ describe("ProjectExecutionEnvironments", () => {
     await act(async () =>
       element<HTMLButtonElement>("-initialize-1824").click(),
     );
-    expect(element("-1824").textContent).toContain("正在创建环境");
+    expect(element("-1824").textContent).toContain("正在初始化环境");
 
     // A racing poll arrives while the create owns the status fields; it must
     // not flip the other device to ready or replace the in-flight state.
@@ -1027,7 +1026,7 @@ describe("ProjectExecutionEnvironments", () => {
       },
     });
 
-    expect(element("-1824").textContent).toContain("正在创建环境");
-    expect(element("-1748").textContent).toContain("尚未创建环境");
+    expect(element("-1824").textContent).toContain("正在初始化环境");
+    expect(element("-1748").textContent).toContain("环境未初始化");
   });
 });

@@ -485,6 +485,9 @@ def test_external_parent_remains_stored_in_description(
     )
 
     assert captured["description"] == f"Child details\n\n{PARENT_MARKER} {parent_id}"
+    assert "wegent:status:inbox" in captured["labels"]
+    assert "wegent:status:None" not in captured["labels"]
+    assert created["status"] == "inbox"
     assert created["parent_id"] == parent_id
     assert created["description"] == "Child details"
 

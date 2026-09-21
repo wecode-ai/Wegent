@@ -22,6 +22,12 @@ class WeworkTranscriptStorageError(RuntimeError):
     code = "transcript_storage_unavailable"
 
 
+class WeworkTranscriptStorageNotFoundError(WeworkTranscriptStorageError):
+    """Raised when transcript metadata points to a missing object."""
+
+    code = "archive_not_found"
+
+
 def _failure(
     operation: str,
     exc: Exception,
@@ -102,6 +108,16 @@ class WeworkTranscriptStorage:
         client = self.client
         try:
             response = client.get_object(self.bucket, object_key)
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                raise WeworkTranscriptStorageNotFoundError(
+                    "Wework transcript segment not found"
+                ) from exc
+            raise _failure(
+                "Failed to read transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
         except Exception as exc:
             raise _failure(
                 "Failed to read transcript segment",
