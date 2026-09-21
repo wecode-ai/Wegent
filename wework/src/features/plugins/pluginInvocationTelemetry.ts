@@ -5,8 +5,10 @@ import { trackPluginInvocationEvent } from '@/telemetry/businessEvents'
 type PluginDistribution = 'official' | 'enterprise' | 'personal' | 'unknown'
 type ExecutorLocation = 'local' | 'cloud' | 'remote' | 'unknown'
 type ExecutionSurface = 'task' | 'project_task' | 'automation' | 'unknown'
+type PluginCapabilityType = 'mcp' | 'skill'
 
 interface PendingInvocation {
+  capabilityType: PluginCapabilityType
   distribution: PluginDistribution
   executorLocation: ExecutorLocation
   executionSurface: ExecutionSurface
@@ -26,6 +28,7 @@ interface PluginOwner {
 const MAX_TRACKED_INVOCATIONS = 1_000
 const mcpOwnersByDevice = new Map<string, Map<string, PluginOwner | null>>()
 const pluginOwnersByDevice = new Map<string, Map<string, PluginOwner | null>>()
+const pluginRootOwnersByDevice = new Map<string, Map<string, PluginOwner | null>>()
 const executorLocations = new Map<string, ExecutorLocation>()
 const taskSurfaces = new Map<string, ExecutionSurface>()
 const pendingInvocations = new Map<string, PendingInvocation>()
@@ -79,6 +82,25 @@ function normalizedPluginId(value: string): string {
   return value.trim().toLowerCase()
 }
 
+function normalizedPath(value: string): string {
+  return value.trim().replaceAll('\\', '/').replace(/\/$/, '').toLowerCase()
+}
+
+function pluginRootFromSkillPath(value: string): string | null {
+  const path = normalizedPath(value)
+  if (!path.startsWith('/') && !/^[a-z]:\//.test(path)) return null
+  const cacheMarker = '/plugins/cache/'
+  const cacheIndex = path.indexOf(cacheMarker)
+  if (cacheIndex >= 0) {
+    const relativeParts = path.slice(cacheIndex + cacheMarker.length).split('/')
+    if (relativeParts.length >= 3 && relativeParts.slice(0, 3).every(Boolean)) {
+      return `${path.slice(0, cacheIndex + cacheMarker.length)}${relativeParts.slice(0, 3).join('/')}`
+    }
+  }
+  const skillsIndex = path.indexOf('/skills/')
+  return skillsIndex > 0 ? path.slice(0, skillsIndex) : null
+}
+
 function rememberOwner(
   owners: Map<string, PluginOwner | null>,
   rawKey: unknown,
@@ -104,6 +126,7 @@ export function publishPluginInvocationCatalog(
 ): void {
   const owners = new Map<string, PluginOwner | null>()
   const pluginOwners = new Map<string, PluginOwner | null>()
+  const pluginRootOwners = new Map<string, PluginOwner | null>()
   for (const plugin of [...localPlugins, ...cloudPlugins]) {
     if (
       !plugin.spec.enabled ||
@@ -134,6 +157,10 @@ export function publishPluginInvocationCatalog(
     rememberOwner(pluginOwners, payload.remotePluginId, owner)
     rememberOwner(pluginOwners, manifest.id, owner)
     rememberOwner(pluginOwners, `${pluginKey}@${marketplace}`, owner)
+    for (const skill of plugin.spec.components.skills ?? []) {
+      const pluginRoot = pluginRootFromSkillPath(skill.path)
+      if (pluginRoot) rememberOwner(pluginRootOwners, pluginRoot, owner)
+    }
     for (const mcp of plugin.spec.components.mcps ?? []) {
       const serverName = normalizedServerName(mcp.name)
       if (!serverName) continue
@@ -149,6 +176,7 @@ export function publishPluginInvocationCatalog(
   }
   mcpOwnersByDevice.set(deviceId, owners)
   pluginOwnersByDevice.set(deviceId, pluginOwners)
+  pluginRootOwnersByDevice.set(deviceId, pluginRootOwners)
 }
 
 export function publishPluginInvocationDevices(devices: readonly DeviceInfo[]): void {
@@ -227,6 +255,33 @@ function fallbackOwner(pluginId: string): PluginOwner {
   return { distribution, marketplace, pluginKey: pluginKey || pluginId, version: 'unknown' }
 }
 
+function commandText(block: Record<string, unknown>): string | null {
+  const input = record(block.toolInput ?? block.tool_input)
+  const direct = stringField(input, 'cmd', 'command', 'commandLine', 'command_line')
+  if (direct) return direct
+  const command = input.command
+  if (!Array.isArray(command)) return null
+  const parts = command.filter((part): part is string => typeof part === 'string' && !!part)
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
+function skillOwnerForBlock(
+  deviceId: string,
+  block: Record<string, unknown>,
+  toolName: string
+): PluginOwner | null {
+  if (!['bash', 'exec_command', 'shell', 'local_shell'].includes(toolName.toLowerCase()))
+    return null
+  const command = commandText(block)
+  const owners = pluginRootOwnersByDevice.get(deviceId)
+  if (!command || !owners || owners.size === 0) return null
+  const normalizedCommand = normalizedPath(command)
+  const root = [...owners.keys()]
+    .sort((left, right) => right.length - left.length)
+    .find(candidate => normalizedCommand.includes(`${candidate}/`))
+  return root ? (owners.get(root) ?? null) : null
+}
+
 function invocationContext(
   payload: Record<string, unknown>,
   block: Record<string, unknown>,
@@ -238,14 +293,16 @@ function invocationContext(
   const pluginId = stringField(block, 'pluginId', 'plugin_id')
   const serverName =
     stringField(block, 'mcpServer', 'mcp_server') ?? serverNameForTool(deviceId, toolName)
-  const owner = pluginId
+  const mcpOwner = pluginId
     ? (pluginOwnersByDevice.get(deviceId)?.get(normalizedPluginId(pluginId)) ??
       fallbackOwner(pluginId))
     : serverName
       ? mcpOwnersByDevice.get(deviceId)?.get(normalizedServerName(serverName))
       : null
+  const owner = mcpOwner ?? skillOwnerForBlock(deviceId, block, toolName)
   if (!owner) return null
   return {
+    capabilityType: mcpOwner ? 'mcp' : 'skill',
     distribution: owner.distribution,
     executorLocation: executorLocations.get(deviceId) ?? 'unknown',
     executionSurface: taskSurfaces.get(`${deviceId}:${taskId}`) ?? 'unknown',
@@ -277,7 +334,7 @@ function completeInvocation(
     completedInvocations.delete(completedInvocations.values().next().value!)
   }
   const properties = {
-    capability_type: 'mcp' as const,
+    capability_type: context.capabilityType,
     execution_surface: context.executionSurface,
     executor_location: context.executorLocation,
     plugin_distribution: context.distribution,
@@ -349,6 +406,7 @@ export function observeRuntimePluginInvocation(event: RuntimeEvent): void {
 export function resetPluginInvocationTelemetryForTest(): void {
   mcpOwnersByDevice.clear()
   pluginOwnersByDevice.clear()
+  pluginRootOwnersByDevice.clear()
   executorLocations.clear()
   taskSurfaces.clear()
   pendingInvocations.clear()

@@ -10,13 +10,13 @@ export interface PluginGeneratedEventMap {
     source: 'local' | 'cloud' | 'unknown'
   }
   plugin_invocation_succeeded: {
-    capability_type: 'mcp'
+    capability_type: 'mcp' | 'skill'
     execution_surface: 'task' | 'project_task' | 'automation' | 'unknown'
     executor_location: 'local' | 'cloud' | 'remote' | 'unknown'
     plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
   }
   plugin_invocation_failed: {
-    capability_type: 'mcp'
+    capability_type: 'mcp' | 'skill'
     execution_surface: 'task' | 'project_task' | 'automation' | 'unknown'
     executor_location: 'local' | 'cloud' | 'remote' | 'unknown'
     plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
@@ -126,13 +126,13 @@ export const PLUGIN_EVENT_VALUE_CONSTRAINTS = {
     source: ['local', 'cloud', 'unknown'],
   },
   plugin_invocation_succeeded: {
-    capability_type: ['mcp'],
+    capability_type: ['mcp', 'skill'],
     execution_surface: ['task', 'project_task', 'automation', 'unknown'],
     executor_location: ['local', 'cloud', 'remote', 'unknown'],
     plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
   },
   plugin_invocation_failed: {
-    capability_type: ['mcp'],
+    capability_type: ['mcp', 'skill'],
     execution_surface: ['task', 'project_task', 'automation', 'unknown'],
     executor_location: ['local', 'cloud', 'remote', 'unknown'],
     plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],

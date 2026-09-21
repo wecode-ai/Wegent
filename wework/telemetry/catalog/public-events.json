@@ -597,15 +597,15 @@
     },
     {
       "description": {
-        "zh-CN": "已确认归属插件的 MCP 工具调用成功完成",
-        "en": "A confirmed plugin-owned MCP tool invocation completed successfully"
+        "zh-CN": "已确认归属插件的 MCP 工具或 Skill 脚本调用成功完成",
+        "en": "A confirmed plugin-owned MCP tool or Skill script invocation completed successfully"
       },
       "eventSchemaVersion": 1,
       "key": "plugin.plugin_invocation_succeeded",
       "kind": "observation",
       "name": "plugin_invocation_succeeded",
       "properties": [
-        { "name": "capability_type", "type": "enum", "values": ["mcp"] },
+        { "name": "capability_type", "type": "enum", "values": ["mcp", "skill"] },
         {
           "name": "execution_surface",
           "type": "enum",
@@ -626,15 +626,15 @@
     },
     {
       "description": {
-        "zh-CN": "已确认归属插件的 MCP 工具调用失败",
-        "en": "A confirmed plugin-owned MCP tool invocation failed"
+        "zh-CN": "已确认归属插件的 MCP 工具或 Skill 脚本调用失败",
+        "en": "A confirmed plugin-owned MCP tool or Skill script invocation failed"
       },
       "eventSchemaVersion": 1,
       "key": "plugin.plugin_invocation_failed",
       "kind": "observation",
       "name": "plugin_invocation_failed",
       "properties": [
-        { "name": "capability_type", "type": "enum", "values": ["mcp"] },
+        { "name": "capability_type", "type": "enum", "values": ["mcp", "skill"] },
         {
           "name": "execution_surface",
           "type": "enum",

@@ -129,6 +129,125 @@ describe('plugin invocation telemetry', () => {
     unsubscribe()
   })
 
+  test('reports a successful shell command executed from an installed plugin Skill', () => {
+    const events: Array<{ name: string; properties: unknown; context?: unknown }> = []
+    const unsubscribe = subscribeBusinessEvents(value => events.push(value))
+    publishPluginInvocationCatalog(
+      'device-1',
+      [
+        plugin({
+          components: {
+            skills: [
+              {
+                name: 'private-plugin',
+                description: '',
+                path: '/Users/test/.wework/codex/plugins/cache/wegent/private-plugin/1.0.0/skills/private-plugin/SKILL.md',
+              },
+            ],
+            commands: [],
+            agents: [],
+            hooks: [],
+            mcps: [],
+            lsps: [],
+            monitors: [],
+            bins: [],
+          },
+          version: '1.0.0',
+        }),
+      ],
+      []
+    )
+    publishPluginInvocationDevices([
+      {
+        id: 1,
+        device_id: 'device-1',
+        name: 'Local',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+      },
+    ])
+
+    observeRuntimePluginInvocation(
+      event('response.block.created', {
+        block: {
+          id: 'call-skill-1',
+          type: 'tool',
+          tool_name: 'exec_command',
+          tool_input: {
+            cmd: 'sh "/Users/test/.wework/codex/plugins/cache/wegent/private-plugin/1.0.0/scripts/run.sh" list',
+          },
+          status: 'done',
+        },
+      })
+    )
+
+    expect(events).toMatchObject([
+      {
+        name: 'plugin_invocation_succeeded',
+        properties: {
+          capability_type: 'skill',
+          execution_surface: 'unknown',
+          executor_location: 'local',
+          plugin_distribution: 'enterprise',
+        },
+        context: {
+          pluginInvocation: {
+            marketplace: 'wegent',
+            pluginKey: 'private-plugin',
+            toolName: 'exec_command',
+            version: '1.0.0',
+          },
+        },
+      },
+    ])
+    unsubscribe()
+  })
+
+  test('does not treat an unrelated shell command as plugin usage', () => {
+    const events: Array<{ name: string; properties: unknown }> = []
+    const unsubscribe = subscribeBusinessEvents(value => events.push(value))
+    publishPluginInvocationCatalog(
+      'device-1',
+      [
+        plugin({
+          components: {
+            skills: [
+              {
+                name: 'private-plugin',
+                description: '',
+                path: '/Users/test/.wework/codex/plugins/cache/wegent/private-plugin/1.0.0/skills/private-plugin/SKILL.md',
+              },
+            ],
+            commands: [],
+            agents: [],
+            hooks: [],
+            mcps: [],
+            lsps: [],
+            monitors: [],
+            bins: [],
+          },
+        }),
+      ],
+      []
+    )
+
+    observeRuntimePluginInvocation(
+      event('response.block.created', {
+        block: {
+          id: 'call-shell-1',
+          type: 'tool',
+          tool_name: 'exec_command',
+          tool_input: { cmd: 'pwd' },
+          status: 'done',
+        },
+      })
+    )
+
+    expect(events).toEqual([])
+    unsubscribe()
+  })
+
   test('reports a failed terminal event and ignores unowned MCP calls', () => {
     const events: Array<{ name: string; properties: unknown }> = []
     const unsubscribe = subscribeBusinessEvents(value => events.push(value))
