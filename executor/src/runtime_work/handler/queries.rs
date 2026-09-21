@@ -5,6 +5,45 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn get_task(&self, payload: &Value) -> Result<Value, AppIpcError> {
+        let task_id = runtime_task_id(payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let link = self
+            .store
+            .get_task_summary(&task_id)
+            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link));
+        let Some(mut link) = link else {
+            return Ok(json!({
+                "success": false,
+                "code": "task_not_found",
+                "error": "Task not found on the owning Runtime",
+            }));
+        };
+        apply_local_execution_state(
+            &mut link,
+            self.is_active_local_task(&task_id),
+            self.queued_local_task_position(&task_id),
+        );
+        // Return only the identity/configuration needed by a client to continue.
+        // Execution profiles and transcript caches remain on the owning Runtime.
+        if let Some(handle) = link.runtime_handle.as_object_mut() {
+            handle.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "runtime"
+                        | "wegentTeam"
+                        | "modelSelection"
+                        | "model_selection"
+                        | "queuePosition"
+                )
+            });
+        }
+        Ok(json!({
+            "success": true,
+            "task": crate::runtime_work::response::local_task_json(link),
+        }))
+    }
+
     pub(super) async fn read_codex_recent_turns(&self, thread_id: &str) -> Result<Value, String> {
         load_codex_transcript(
             &self.codex_app_server,

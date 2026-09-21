@@ -55,10 +55,16 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
   总 rollout 超过旧版 128 MiB 阈值时，只要本次待同步 segment 未超过上限，仍可继续
   上传。
 
-两台电脑可以同时保持 Wework 打开。客户端每 5 秒拉取一次云端进度，写入时才申请短租约，
-上传完成立即释放；没有新 turn 的公司电脑不会长期占锁。正在运行的本地任务不会被云端恢复
-覆盖。两台电脑若同时完成同一 sequence，先提交者进入主线，后提交者按确定性 ID 建立分支，
-两边内容都保留。
+两台电脑可以同时保持 Wework 打开。Wework 为每个桌面安装持久化一个稳定设备 ID。
+`writer_client_id` 在租约有效时表示当前写入设备，租约释放后保留为最近一次写入设备；
+租约是否有效只由 `writer_lease_expires_at` 判断。客户端每 5 秒只拉取未归档会话：最近
+写入设备只上传该 transcript，不下载恢复；其他设备在本机缺少该 transcript 时自动恢复。
+因此全新设备会恢复其他设备上所有未归档任务，而同步来源设备不会反复下载自己生成的
+工作区。归档任务不会自动恢复。写入时才申请短租约，上传完成立即释放；没有新 turn 的
+电脑不会长期占锁。正在运行或已经绑定的本地任务不会被云端恢复覆盖。两台电脑若同时完成
+同一 sequence，先提交者进入主线，后提交者按确定性 ID 建立分支，两边内容都保留。
+设备创建冲突分支后，原本的本地任务会转为该 fork；同步器只恢复因此缺失的父主线，
+让主线与分支成为两个独立本地任务。fork 本身仍由来源设备只上传、不下载。
 
 已有 `wework_transcript_turns` 表继续保留，并沿用旧版本的摘要字段。该表不参与双机
 恢复，也不能替代原生 tgz。
@@ -81,7 +87,7 @@ stateDiagram-v2
     Reconcile --> BranchSnapshot: 对象或摘要不存在/不一致
     BranchSnapshot --> LeaseHeld: 创建确定性 fork transcript
 
-    [*] --> RestoreRequired: 本机没有该 transcript 或本机落后
+    [*] --> RestoreRequired: 非最近写入设备缺少未归档 transcript
     RestoreRequired --> Downloading: 经 Backend 下载最近快照和连续增量
     Downloading --> Staging: 下载并校验 SHA-256
     Staging --> Bound: 恢复工作区、rollout、thread 元数据和动态工具

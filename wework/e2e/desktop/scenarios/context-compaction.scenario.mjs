@@ -256,7 +256,7 @@ export function createDesktopScenario({
       })
       await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
       const initialSession = currentSessionContext(initialRequest)
-      assert.equal(initialSession.api_conversation_supported, false)
+      assert.equal(initialSession.api_conversation_supported, true)
       await captureScreenshot(control, 'context-compaction-01-ready.png', 'body')
 
       await control.command('click', '[data-testid="context-usage-button"]')

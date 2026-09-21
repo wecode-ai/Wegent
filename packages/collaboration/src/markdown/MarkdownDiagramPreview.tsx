@@ -67,7 +67,7 @@ export function MarkdownDiagramPreview({
     setFullscreen(true);
   };
 
-  useEscapeKey(closeFullscreen, fullscreen);
+  useEscapeKey(closeFullscreen, fullscreen, fullscreenDialogRef);
 
   useEffect(() => {
     if (fullscreen) {

@@ -1882,6 +1882,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
@@ -2168,6 +2169,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'remote-project-dialog'
       await control.command('click', '[data-testid="projects-create-button"]')
+      await control.command('waitFor', '[data-testid="projects-create-button-menu"]', {
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'project-create-local-option',
+        'Opening project creation did not move focus into the dialog'
+      )
+      await control.command('nativePress', '[data-testid="project-create-local-option"]', {
+        key: 'Escape',
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('projects-create-button-menu'),
+        'Escape did not close the project source dialog'
+      )
+      await control.command('click', '[data-testid="projects-create-button"]')
       await control.command('click', '[data-testid="project-create-remote-option"]')
       await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2211,6 +2229,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
     }
 
