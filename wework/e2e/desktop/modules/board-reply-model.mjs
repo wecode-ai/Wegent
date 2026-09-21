@@ -13,6 +13,7 @@ import {
 } from './response-protocol.mjs'
 
 const INITIAL = 'BOARD_REPLY_CLOUD_MODEL_INITIAL'
+const INVALID_MODEL = 'BOARD_REPLY_CLOUD_MODEL_INVALID'
 const REPLY = 'BOARD_REPLY_CLOUD_MODEL_CONTINUE'
 const MEMBER_REPLY = 'BOARD_MEMBER_CONTINUE'
 const PUBLIC_MODEL_ID = 'desktop-e2e-public-upstream-model'
@@ -100,7 +101,7 @@ async function readPersistedExecutions(
   taskId,
   prompts,
   timeoutMs,
-  requireCompleted = false
+  expectedStatus = null
 ) {
   const { io } = createRequire(
     new URL('../../../../packages/chat-core/package.json', import.meta.url)
@@ -144,9 +145,10 @@ async function readPersistedExecutions(
       if (
         runs.every(
           message =>
-            message?.runtimeAddress?.taskId &&
-            (!requireCompleted ||
-              (message.status === 'completed' && message.metadata.run_status === 'completed'))
+            message &&
+            (expectedStatus === 'failed' || message.runtimeAddress?.taskId) &&
+            (!expectedStatus ||
+              (message.status === expectedStatus && message.metadata.run_status === expectedStatus))
         )
       )
         return runs
@@ -267,7 +269,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           environment.device_key,
           'The project execution environment must have a device key'
         )
-        await requestJson(
+        const configured = await requestJson(
           cloud,
           `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
           {
@@ -276,8 +278,45 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
               version: agent.version,
               model: CLOUD_PUBLIC_MODEL_NAME,
               modelType: 'public',
+              modelOptions: {},
               executionMode: 'auto',
               executionDeviceId: environment.device_key,
+            }),
+          }
+        )
+        await control.command('fill', composer, { value: INVALID_MODEL })
+        await control.command('press', composer, { key: 'Enter' })
+        const [failedRun] = await readPersistedExecutions(
+          cloud,
+          issue.id,
+          [INVALID_MODEL],
+          uiTimeoutMs,
+          'failed'
+        )
+        assert.ok(
+          JSON.stringify(failedRun).includes('Cloud model identity is incomplete'),
+          'The execution must preserve the preflight failure reason'
+        )
+        const catalog = await requestJson(
+          cloud,
+          '/api/models/unified?scope=all&model_category_type=llm&client_origin=wework'
+        )
+        const model = catalog.data.find(
+          item => item.name === CLOUD_PUBLIC_MODEL_NAME && item.type === 'public'
+        )
+        assert.ok(model?.namespace, 'The cloud model must expose its namespace')
+        assert.equal(typeof model.resourceUserId, 'number')
+        await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              version: configured.version,
+              modelOptions: {
+                weworkCloudModelNamespace: model.namespace,
+                weworkCloudModelResourceUserId: String(model.resourceUserId),
+              },
             }),
           }
         )
@@ -327,7 +366,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           issue.id,
           [INITIAL, REPLY],
           uiTimeoutMs,
-          true
+          'completed'
         )
         assert.deepEqual(
           persisted.map(run => run.messageId),
@@ -339,7 +378,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           issue.id,
           [MEMBER_REPLY],
           uiTimeoutMs,
-          true
+          'completed'
         )
         assert.deepEqual(memberRun.runtimeAddress, initialRun.runtimeAddress)
         const transcript = await requestJson(memberCloud, '/api/runtime-work/transcript', {

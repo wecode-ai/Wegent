@@ -232,21 +232,31 @@ sequenceDiagram
   R-->>IPC: limit/active/active_task_ids/queued
   IPC->>SQL: 注入可信容量与 runtime_instance_id
   SQL->>SQL: 检查 O < D、agent < R、scope 空闲<br/>CAS queued → claimed
-  APP->>SQL: executions.start_requested
-  APP->>API: createRuntimeTask(taskId=codex-queue-{id})
-  alt 创建响应明确成功
-    API-->>APP: accepted
-    APP->>SQL: executions.runtime_start<br/>observed=accepted
-    R->>SQL: active turn callback<br/>status/observed=running
-  else Start 后结果不确定
-    API--xAPP: 响应丢失/异常
-    APP->>SQL: executions.dispatch_unknown
-    Note over SQL: 保持 claimed + stale + unknown
-  else Start 前配置校验失败
+  APP->>API: createRuntimeTask(taskId, beforeDispatch)
+  API->>API: 准备工作区、模型身份和执行参数
+  alt 准备失败
+    API--xAPP: 明确的配置错误
     APP->>SQL: executions.dispatch_failed
-    Note over SQL: 只有此处可安全 failed
+    Note over SQL: 尚未写 Start 围栏，可安全 failed
+  else 准备成功
+    API->>APP: await beforeDispatch()
+    APP->>SQL: executions.start_requested
+    SQL-->>APP: 确认围栏
+    APP-->>API: 允许发送
+    API->>R: runtime.tasks.create
+    alt 创建响应明确成功
+      API-->>APP: accepted
+      APP->>SQL: executions.runtime_start<br/>observed=accepted
+      R->>SQL: active turn callback<br/>status/observed=running
+    else Start 后结果不确定
+      API--xAPP: 响应丢失/异常
+      APP->>SQL: executions.dispatch_unknown
+      Note over SQL: 保持 claimed + stale + unknown
+    end
   end
 ```
+
+`beforeDispatch` 由最终发送请求的适配器在准备完成后调用，Hybrid 层透传回调。云端项目在本机执行时采用相同顺序，围栏和失败状态写入后端。云端模型必须携带目录返回的命名空间和资源所有者；缺失身份属于发送前失败，不能标记为结果未知。
 
 App IPC 不再提供 `executions.complete`/`executions.fail` 给调度器伪造终态。终态由 Local Executor 的 turn outcome 写回。
 

@@ -1556,6 +1556,22 @@ describe('createHybridWorkbenchServices', () => {
     expect(runtimeWork?.totalTasks).toBe(1)
   })
 
+  it('forwards the delivery fence to the selected runtime adapter', async () => {
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    const beforeDispatch = vi.fn(async () => undefined)
+    mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'local-task' })
+    mocks.cloudCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'cloud-task' })
+    for (const deviceId of ['local-device', 'cloud-device']) {
+      const request = { deviceId, wegentTeamId: 1, runtime: 'codex' as const, message: 'run' }
+      await services.runtimeWorkApi!.createRuntimeTask(request, beforeDispatch)
+      const create =
+        deviceId === 'local-device' ? mocks.localCreateRuntimeTask : mocks.cloudCreateRuntimeTask
+      expect(create).toHaveBeenCalledWith(expect.objectContaining(request), beforeDispatch)
+    }
+    expect(beforeDispatch).not.toHaveBeenCalled()
+  })
+
   it('routes runtime task creation by device source', async () => {
     const services = createServices()
     await services.deviceApi.listDevices()

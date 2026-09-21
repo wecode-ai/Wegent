@@ -1184,9 +1184,12 @@ export function createHybridWorkbenchServices(
     reorderQueuedRuntimeTask(data) {
       return routeByAddress(data).reorderQueuedRuntimeTask(data)
     },
-    async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+    async createRuntimeTask(
+      data: RuntimeTaskCreateRequest,
+      ...dispatchHooks: [beforeDispatch?: () => Promise<void>]
+    ) {
       if (data.origin?.projectStore === 'local') {
-        return localProjectServices.runtimeWorkApi!.createRuntimeTask(data)
+        return localProjectServices.runtimeWorkApi!.createRuntimeTask(data, ...dispatchHooks)
       }
       const startedAt = Date.now()
       logRuntimeTaskCreateStage('hybrid-create-started', {
@@ -1207,8 +1210,8 @@ export function createHybridWorkbenchServices(
         try {
           response =
             data.wegentTeamId && route === 'cloud'
-              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request)
-              : await api.createRuntimeTask(request)
+              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request, ...dispatchHooks)
+              : await api.createRuntimeTask(request, ...dispatchHooks)
         } catch (error) {
           if (data.wegentTeamId && route === 'cloud' && rejectsRuntimeTaskCreateV3(error)) {
             throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, {

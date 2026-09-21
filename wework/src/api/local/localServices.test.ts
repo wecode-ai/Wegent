@@ -3778,6 +3778,57 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
   })
 
+  test('prepares model identity before fencing and keeps transport failures after the fence', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example/api/runtime-work/llm-responses-proxy',
+        apiKey: 'test-token',
+      },
+    })
+    const data = {
+      deviceId: 'local-device',
+      workspacePath: '/tmp/project',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      message: 'run',
+      modelId: 'shared-model',
+      modelType: 'public' as const,
+    }
+    const beforeDispatch = vi.fn(async () => {
+      expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    })
+    await expect(services.runtimeWorkApi!.createRuntimeTask(data, beforeDispatch)).rejects.toThrow(
+      'Cloud model identity is incomplete'
+    )
+    expect(beforeDispatch).not.toHaveBeenCalled()
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    const valid = {
+      ...data,
+      modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+    }
+    const fenceError = new Error('Execution is no longer dispatchable')
+    await expect(
+      services.runtimeWorkApi!.createRuntimeTask(valid, async () => {
+        throw fenceError
+      })
+    ).rejects.toBe(fenceError)
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    const transportError = new Error('Runtime connection closed')
+    request.mockImplementation(async method => {
+      if (method === 'runtime.tasks.create') throw transportError
+      return { accepted: true }
+    })
+    await expect(services.runtimeWorkApi!.createRuntimeTask(valid, beforeDispatch)).rejects.toBe(
+      transportError
+    )
+    expect(beforeDispatch).toHaveBeenCalledOnce()
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(true)
+  })
+
   test('builds cloud model gateway config without resolving credentials', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
