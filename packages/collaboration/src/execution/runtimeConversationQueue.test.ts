@@ -76,6 +76,26 @@ describe('shared PC and Web conversation queue', () => {
     }
   )
 
+  it('rejects direct sends while waiting for the accepted turn to enter the lifecycle', async () => {
+    const { queue, port, transition } = setup()
+    let accept!: (result: { sent: boolean }) => void
+    vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (accept = resolve)))
+    queue.enqueue(message('one'))
+    queue.enqueue(message('two'))
+
+    const sending = queue.send('one', port)
+    expect(port.send).toHaveBeenCalledWith(message('one'))
+    await expect(queue.send('two', port)).resolves.toBe(false)
+    expect(port.send).toHaveBeenCalledTimes(1)
+
+    accept({ sent: true })
+    await sending
+    await expect(queue.send('two', port)).resolves.toBe(false)
+    transition()
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenLastCalledWith(message('two'))
+  })
+
   it('waits while busy and dispatches FIFO once per confirmed lifecycle transition', async () => {
     const { queue, port, transition } = setup()
     queue.enqueue(message('one'))

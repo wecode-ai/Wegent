@@ -189,6 +189,7 @@ export function useResizableRightSplitChat({
     function finishResize() {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
+      document.removeEventListener('pointercancel', handleCancel)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       setPanelResizeShieldActive(false)
@@ -247,12 +248,18 @@ export function useResizableRightSplitChat({
       finishResize()
     }
 
+    function handleCancel() {
+      if (collapsed) return
+      finishResize()
+    }
+
     setResizing(true)
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     setPanelResizeShieldActive(true)
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
+    document.addEventListener('pointercancel', handleCancel)
   }
 
   return { width, resizing, handleResizeStart }

@@ -63,7 +63,8 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
   }
   async send(id: string, port: RuntimeConversationQueuePort<Lifecycle>): Promise<boolean> {
     const message = this.messages.find(item => item.id === id && item.status !== 'sending')
-    if (!message || this.messages.some(item => item.status === 'sending')) return false
+    if (!message || this.awaitingNextTurn || this.messages.some(item => item.status === 'sending'))
+      return false
     this.awaitingNextTurn = { lifecycle: port.lifecycle() }
     this.patch(id, { status: 'sending', error: undefined, deliveryMode: 'message' })
     try {
