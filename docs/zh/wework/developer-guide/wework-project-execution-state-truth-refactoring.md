@@ -220,6 +220,8 @@ RPC 传输异常与明确 `emitted=false` 被区分；前者在 Start 围栏之�
 
 ## 6. Local/App 正常启动时序
 
+执行器注册后立即发送在线心跳，异步读取真实容量；读取完成后立即补发携带容量的心跳，供云端项目的 App 领取接口使用，不能等待下一个 30 秒周期。慢速容量读取不阻塞在线心跳。
+
 ```mermaid
 sequenceDiagram
   participant APP as Wework Dispatcher

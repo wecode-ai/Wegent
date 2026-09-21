@@ -756,6 +756,15 @@ async fn drain_available_runtime_work<T>(
         .await
         .ok();
     client.set_runtime_capacity(capacity);
+    // Publish the freshly read snapshot for App-originated HTTP claims too.
+    // The registration heartbeat runs before this asynchronous capacity read.
+    if let Err(error) = client.emit_liveness_heartbeat().await {
+        write_executor_error_line(&format_executor_log(
+            "runtime capacity heartbeat failed",
+            &[("error", error)],
+        ));
+        return;
+    }
 
     loop {
         let task = match client

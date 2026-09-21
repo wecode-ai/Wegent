@@ -216,6 +216,8 @@ An RPC transport failure is distinct from an explicit `emitted=false`. After the
 
 ## 6. Local/App startup sequence
 
+After registration, the executor sends a liveness heartbeat and reads its real capacity asynchronously. Once the read completes, it immediately publishes a heartbeat carrying that capacity for App-originated cloud project claims, without waiting for the next 30-second interval. A slow capacity read must not block liveness.
+
 ```mermaid
 sequenceDiagram
   participant APP as Wework Dispatcher
