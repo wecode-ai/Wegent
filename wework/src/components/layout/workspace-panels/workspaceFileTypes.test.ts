@@ -12,6 +12,9 @@ test.each([
 
 test.each([
   ['lib/main.dart', '', 'text'],
+  ['data.csv', '', 'text'],
+  ['data.tsv', 'text/tab-separated-values', 'text'],
+  ['data.CSV', 'application/octet-stream', 'text'],
   ['src/App.vue', '', 'unknown'],
   ['Dockerfile.dev', '', 'text'],
   ['Makefile', '', 'text'],

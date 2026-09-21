@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useCallback, useEffect, type ComponentProps } from 'react'
+import { Monitor } from 'lucide-react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import {
@@ -13,12 +14,28 @@ import {
 import { WorkspacePanelCards as ActualWorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
-const cloudDesktopExtensionMock = vi.hoisted(() => {
+const deviceSurfaceExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
 
   return {
     available: true,
     DeviceAction: vi.fn(),
+    workspaceMenuItem: vi.fn(() => ({
+      id: 'device-surface',
+      label: '设备界面',
+      icon: Monitor,
+      testId: 'workspace-add-device-surface-option',
+    })),
+    supportsDevice: vi.fn(
+      (device: {
+        bind_shell?: string
+        device_type: string
+        runtime_routes?: Array<{ kind: string }>
+      }) =>
+        (device.bind_shell ?? 'claudecode').toLowerCase() === 'claudecode' &&
+        (device.device_type === 'cloud' ||
+          Boolean(device.runtime_routes?.some(route => route.kind === 'cloud-relay')))
+    ),
     WorkspaceAction: vi.fn(
       ({
         disabled,
@@ -56,11 +73,11 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
         return (
           <button
             type="button"
-            data-testid="workspace-desktop-card"
+            data-testid="workspace-device-surface-card"
             disabled={disabled}
             onClick={() => void launchAction()}
           >
-            桌面
+            设备界面
           </button>
         )
       }
@@ -70,8 +87,8 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: deviceSurfaceExtensionMock,
 }))
 
 const runtimeConfigMocks = vi.hoisted(() => ({
@@ -208,6 +225,9 @@ const cloudDevices: DeviceInfo[] = [
     is_default: false,
     device_type: 'cloud',
     bind_shell: 'claudecode',
+    runtime_features: {
+      schemaVersion: 4,
+    },
   },
 ]
 
@@ -250,8 +270,8 @@ describe('WorkspacePanelCards', () => {
     vi.clearAllMocks()
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
-    cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.launch.mockResolvedValue(true)
+    deviceSurfaceExtensionMock.available = true
+    deviceSurfaceExtensionMock.launch.mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
@@ -280,11 +300,11 @@ describe('WorkspacePanelCards', () => {
     })
   })
 
-  test('renders terminal and desktop project tools', () => {
+  test('renders terminal and device surface tools', () => {
     render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
 
     expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('终端')
-    expect(screen.getByTestId('workspace-desktop-card')).toHaveTextContent('桌面')
+    expect(screen.getByTestId('workspace-device-surface-card')).toHaveTextContent('设备界面')
   })
 
   test('embeds the project terminal through the backend Socket.IO relay', async () => {
@@ -383,7 +403,7 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
   })
 
-  test('opens the project desktop through the cloud extension', async () => {
+  test('opens the project device surface through the extension', async () => {
     const onRequestClose = vi.fn()
     render(
       <WorkspacePanelCards
@@ -393,9 +413,9 @@ describe('WorkspacePanelCards', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
+    await userEvent.click(screen.getByTestId('workspace-device-surface-card'))
 
-    await waitFor(() => expect(cloudDesktopExtensionMock.launch).toHaveBeenCalledWith(undefined))
+    await waitFor(() => expect(deviceSurfaceExtensionMock.launch).toHaveBeenCalledWith(undefined))
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
@@ -415,29 +435,29 @@ describe('WorkspacePanelCards', () => {
     const actions = onMenuActionsChange.mock.lastCall?.[0]
     expect(actions).toMatchObject({
       terminal: { visible: true, disabled: false },
-      desktop: { visible: true, disabled: false },
+      extension: { visible: true, disabled: false, label: '设备界面' },
     })
     expect(actions.terminal).not.toHaveProperty('run')
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
     await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
 
-    await act(async () => actions.desktop.run())
+    await act(async () => actions.extension.run())
 
-    expect(cloudDesktopExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
+    expect(deviceSurfaceExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
     expect(onRequestClose).not.toHaveBeenCalled()
   })
 
-  test('hides the desktop card when the cloud desktop extension is unavailable', () => {
-    cloudDesktopExtensionMock.available = false
+  test('hides the device surface card when the extension is unavailable', () => {
+    deviceSurfaceExtensionMock.available = false
 
     render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
 
-    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
   })
 
-  test('disables the desktop card while its cloud device is offline', () => {
+  test('disables the device surface card while its device is offline', () => {
     render(
       <WorkspacePanelCards
         currentProject={cloudProject}
@@ -445,7 +465,7 @@ describe('WorkspacePanelCards', () => {
       />
     )
 
-    expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled()
+    expect(screen.getByTestId('workspace-device-surface-card')).toBeDisabled()
   })
 
   test('launches the native terminal for local project devices without cloud-only tools', async () => {
@@ -467,7 +487,7 @@ describe('WorkspacePanelCards', () => {
     )
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
     expect(window.open).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
@@ -649,7 +669,7 @@ describe('WorkspacePanelCards', () => {
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
     expect(startLocalTerminalMock).not.toHaveBeenCalled()
     expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
   })
 
   test('starts remote terminal on the active runtime workspace device and path', async () => {
@@ -771,6 +791,9 @@ describe('WorkspacePanelCards', () => {
             is_default: true,
             device_type: 'local',
             bind_shell: 'claudecode',
+            runtime_features: {
+              schemaVersion: 4,
+            },
             runtime_routes: [
               {
                 kind: 'local-ipc',
@@ -798,7 +821,7 @@ describe('WorkspacePanelCards', () => {
       />
     )
 
-    expect(await screen.findByTestId('workspace-desktop-card')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-device-surface-card')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
@@ -849,7 +872,7 @@ describe('WorkspacePanelCards', () => {
     render(<WorkspacePanelCards currentProject={cloudProject} devices={openClawCloudDevices} />)
 
     expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
   })
 
@@ -857,7 +880,7 @@ describe('WorkspacePanelCards', () => {
     render(<WorkspacePanelCards currentProject={project} devices={[]} />)
 
     expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-device-surface-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
@@ -873,7 +896,7 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
     expect(startProjectTerminalMock).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
+    expect(screen.getByTestId('workspace-device-surface-card')).not.toBeDisabled()
   })
 
   test('resets unavailable tools when the project changes', async () => {

@@ -40,7 +40,6 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
   ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ] as const
-type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
@@ -96,7 +95,9 @@ export interface CoreDshRuntime {
   version: string
   sourceFingerprint: string
   entry: string
-  pluginRoots: Record<CorePluginPackage, string>
+  pluginRoots: Record<string, string>
+  internalUiPackages?: string[]
+  internalUiBundles?: string[]
 }
 
 export interface CoreDshLaunch {
@@ -193,19 +194,53 @@ export async function selectCoreDshRuntime(
 ): Promise<CoreDshRuntime> {
   const runtime = await selectBundledDshRuntime(root, 'core', CORE_DSH_VERSION)
   const pluginsRoot = resolve(configuredPluginsRoot)
-  const pluginRoots = Object.fromEntries(
+  const internalPlugins = await readInternalCorePlugins(pluginsRoot)
+  const pluginRoots: Record<string, string> = Object.fromEntries(
     CORE_PLUGIN_PACKAGES.map(([packageName, directory]) => [
       packageName,
       join(pluginsRoot, directory),
     ])
-  ) as Record<CorePluginPackage, string>
+  )
+  for (const plugin of internalPlugins) {
+    if (plugin.name in pluginRoots) {
+      throw new Error(`Duplicate core DSH plugin: ${plugin.name}`)
+    }
+    pluginRoots[plugin.name] = join(pluginsRoot, plugin.directory)
+  }
   await Promise.all(
     Object.values(pluginRoots).map(pluginRoot => readFile(join(pluginRoot, 'package.json')))
   )
   return {
     ...runtime,
     pluginRoots,
+    internalUiPackages: internalPlugins.map(plugin => plugin.name),
+    internalUiBundles: internalPlugins.map(plugin => plugin.bundle),
   }
+}
+
+async function readInternalCorePlugins(
+  root: string
+): Promise<Array<{ name: string; directory: string; bundle: string }>> {
+  const manifest = await readJsonFile(join(root, 'internal-plugins.json'))
+  if (manifest === null) return []
+  if (!Array.isArray(manifest)) throw new Error('Invalid internal core plugin manifest')
+  return manifest.map(value => {
+    const plugin = objectRecord(value)
+    const name = plugin.name
+    const directory = plugin.directory
+    const bundle = plugin.bundle
+    if (
+      typeof name !== 'string' ||
+      !/^@[a-z0-9-]+\/[a-z0-9-]+$/.test(name) ||
+      typeof directory !== 'string' ||
+      !/^[a-z0-9-]+$/.test(directory) ||
+      typeof bundle !== 'string' ||
+      bundle !== name
+    ) {
+      throw new Error('Invalid internal core plugin entry')
+    }
+    return { name, directory, bundle }
+  })
 }
 
 export async function selectBundledDshRuntime(
@@ -255,7 +290,9 @@ async function prepareProfile(options: {
   }
   const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
   const managedDependencyNames = Object.keys(managedDependencies)
-  const managedBundles = options.managedUiPlugins ? CORE_BUNDLES : CORE_HOST_BUNDLES
+  const managedBundles: string[] = options.managedUiPlugins
+    ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
+    : [...CORE_HOST_BUNDLES]
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
@@ -331,7 +368,7 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
   await ensureCoreWorkspace(workspacePath)
   for (const packageName of managedDependencyNames) {
-    const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
+    const source = options.runtime.pluginRoots[packageName]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await rm(destination, { recursive: true, force: true })
     await copyManagedPlugin(source, destination)
@@ -519,7 +556,7 @@ function stringArray(value: unknown): string[] {
 
 function hasCurrentCoreDependencies(
   manifest: unknown,
-  managedDependencies: Partial<Record<CorePluginPackage, string>>
+  managedDependencies: Record<string, string>
 ): boolean {
   const dependencies = stringRecord(objectRecord(manifest).dependencies)
   return Object.entries(managedDependencies).every(
@@ -530,11 +567,14 @@ function hasCurrentCoreDependencies(
 function managedCoreDependencies(
   runtime: CoreDshRuntime,
   includeUiPlugins: boolean
-): Partial<Record<CorePluginPackage, string>> {
+): Record<string, string> {
   return Object.fromEntries(
     Object.entries(runtime.pluginRoots)
       .filter(
-        ([packageName]) => includeUiPlugins || !CORE_UI_DEPENDENCIES.includes(packageName as never)
+        ([packageName]) =>
+          includeUiPlugins ||
+          (!CORE_UI_DEPENDENCIES.includes(packageName as never) &&
+            !(runtime.internalUiPackages ?? []).includes(packageName))
       )
       .map(([packageName, root]) => [packageName, `file:${root}`])
   )

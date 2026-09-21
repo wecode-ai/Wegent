@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 from typing import Any, Iterable, Optional
 
@@ -31,6 +32,21 @@ from app.services.openapi.helpers import subtask_status_to_message_status
 
 SHELL_TOOL_NAMES = {"exec", "command_tool"}
 VIDEO_DOWNLOAD_URL_EXPIRES_SECONDS = 3600
+
+# Media MCP tools answer with base64 payloads. Callers that opt in get a
+# compact placeholder instead of the raw media bytes.
+# Data URLs may carry media-type parameters before the base64 marker, for
+# example ``data:image/jpeg;charset=utf-8;base64,...``.
+_DATA_URL_PATTERN = re.compile(
+    r"^data:(?P<mime>[^;,]*)(?:;[^;,]*)*;base64,(?P<payload>[A-Za-z0-9+/=\s]+)$",
+    re.IGNORECASE,
+)
+_MIME_KEYS = ("mimeType", "mime_type", "mediaType", "media_type")
+_INTERNAL_OUTPUT_KEYS = ("pending_user_input", "pending_user_input_payload")
+_MEDIA_MIME_PREFIXES = ("image/", "audio/", "video/")
+_BASE64_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+)
 
 
 def build_video_download_url(attachment_id: int) -> str:
@@ -60,7 +76,68 @@ def _parse_arguments(value: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _base64_payload_size(payload: str) -> int:
+    return len(payload.rstrip("=")) * 3 // 4
+
+
+def _is_base64_payload(payload: str) -> bool:
+    compact = "".join(payload.split())
+    return (
+        len(compact) >= 4
+        and not len(compact) % 4
+        and all(char in _BASE64_ALPHABET for char in compact)
+    )
+
+
+def _media_placeholder(*, size_bytes: int, mime_type: str = "") -> str:
+    label = mime_type or "media"
+    return f"<{label} payload omitted: {size_bytes} bytes>"
+
+
+def _is_media_mime(mime_type: str) -> bool:
+    normalized = mime_type.strip().lower()
+    return normalized.startswith(_MEDIA_MIME_PREFIXES)
+
+
+def _sanitize_tool_output_text(value: str, mime_type: str = "") -> str:
+    data_url = _DATA_URL_PATTERN.match(value)
+    if data_url:
+        payload = "".join(data_url.group("payload").split())
+        mime = data_url.group("mime") or mime_type
+        if _is_media_mime(mime):
+            return _media_placeholder(
+                size_bytes=_base64_payload_size(payload),
+                mime_type=mime,
+            )
+        return value
+    if mime_type and _is_media_mime(mime_type) and _is_base64_payload(value):
+        return _media_placeholder(
+            size_bytes=_base64_payload_size("".join(value.split())),
+            mime_type=mime_type,
+        )
+    return value
+
+
+def _sanitize_tool_output_value(value: Any, mime_type: str = "") -> Any:
+    if isinstance(value, str):
+        return _sanitize_tool_output_text(value, mime_type)
+    if isinstance(value, list):
+        return [_sanitize_tool_output_value(item, mime_type) for item in value]
+    if isinstance(value, dict):
+        hint = mime_type
+        for key in _MIME_KEYS:
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate:
+                hint = candidate
+                break
+        return {
+            key: _sanitize_tool_output_value(item, hint) for key, item in value.items()
+        }
+    return value
+
+
 def normalize_tool_output(value: Any) -> Any:
+    """Parse MCP tool output and drop internal state."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -68,11 +145,26 @@ def normalize_tool_output(value: Any) -> Any:
             return value
 
     if isinstance(value, dict):
-        sanitized = dict(value)
-        sanitized.pop("pending_user_input", None)
-        sanitized.pop("pending_user_input_payload", None)
-        return sanitized
+        return {
+            key: item for key, item in value.items() if key not in _INTERNAL_OUTPUT_KEYS
+        }
     return value
+
+
+def sanitize_mcp_tool_output(value: Any) -> Any:
+    """Replace media payloads in MCP tool output with a compact placeholder.
+
+    Image-fetching MCP tools answer with base64 blobs. Callers that opt in get
+    a placeholder instead of the raw bytes; non-media output is passed through.
+    """
+    return _sanitize_tool_output_value(normalize_tool_output(value))
+
+
+def build_mcp_tool_output(value: Any, *, omit_binary: bool = False) -> Any:
+    """Build the MCP tool output returned to API clients."""
+    if omit_binary:
+        return sanitize_mcp_tool_output(value)
+    return normalize_tool_output(value)
 
 
 def _extract_text_content(value: Any) -> str:
@@ -295,6 +387,7 @@ def _build_tool_item_from_tool_call(
     *,
     tool_call: dict[str, Any],
     block: Optional[dict[str, Any]],
+    omit_mcp_binary_output: bool = False,
 ) -> ResponseOutputItem:
     call_id = str(tool_call.get("id") or "")
     function = tool_call.get("function") or {}
@@ -339,7 +432,10 @@ def _build_tool_item_from_tool_call(
             server_label=str((block or {}).get("server_label") or ""),
             arguments=arguments,
             status=_shell_call_status(block),
-            output=normalize_tool_output((block or {}).get("tool_output")),
+            output=build_mcp_tool_output(
+                (block or {}).get("tool_output"),
+                omit_binary=omit_mcp_binary_output,
+            ),
         )
 
     return FunctionCallOutputItem(
@@ -351,7 +447,11 @@ def _build_tool_item_from_tool_call(
     )
 
 
-def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
+def _build_tool_item_from_block(
+    block: dict[str, Any],
+    *,
+    omit_mcp_binary_output: bool = False,
+) -> ResponseOutputItem:
     tool_use_id = str(block.get("tool_use_id") or block.get("id") or "")
     tool_name = str(block.get("tool_name") or "")
     tool_input = block.get("tool_input") or {}
@@ -383,7 +483,10 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
         )
 
     if protocol == "mcp_call":
-        tool_output = normalize_tool_output(block.get("tool_output"))
+        tool_output = build_mcp_tool_output(
+            block.get("tool_output"),
+            omit_binary=omit_mcp_binary_output,
+        )
         return MCPCallOutputItem(
             type="mcp_call",
             id=tool_use_id or f"mcp_{tool_name}",
@@ -409,6 +512,7 @@ def _build_items_from_messages_chain(
     result: dict[str, Any],
     content_override: str = "",
     status_override: Optional[str] = None,
+    omit_mcp_binary_output: bool = False,
 ) -> list[ResponseOutputItem]:
     messages_chain = result.get("messages_chain")
     if not isinstance(messages_chain, list) or not messages_chain:
@@ -434,7 +538,11 @@ def _build_items_from_messages_chain(
                 blocks=blocks,
             )
             output.append(
-                _build_tool_item_from_tool_call(tool_call=tool_call, block=tool_block)
+                _build_tool_item_from_tool_call(
+                    tool_call=tool_call,
+                    block=tool_block,
+                    omit_mcp_binary_output=omit_mcp_binary_output,
+                )
             )
 
         text = _extract_text_content(msg.get("content"))
@@ -479,6 +587,7 @@ def _build_items_from_blocks(
     result: dict[str, Any],
     content_override: str = "",
     status_override: Optional[str] = None,
+    omit_mcp_binary_output: bool = False,
 ) -> list[ResponseOutputItem]:
     blocks = result.get("blocks")
     if not isinstance(blocks, list) or not blocks:
@@ -508,7 +617,12 @@ def _build_items_from_blocks(
         if not isinstance(block, dict):
             continue
         if block.get("type") == "tool":
-            output.append(_build_tool_item_from_block(block))
+            output.append(
+                _build_tool_item_from_block(
+                    block,
+                    omit_mcp_binary_output=omit_mcp_binary_output,
+                )
+            )
         elif generation_item := build_generation_output_item_from_block(
             block,
             default_status=generation_default_status,
@@ -556,6 +670,7 @@ def build_output_items_for_subtask(
     *,
     content_override: str = "",
     status_override: Optional[str] = None,
+    omit_mcp_binary_output: bool = False,
 ) -> list[ResponseOutputItem]:
     if subtask.role != SubtaskRole.ASSISTANT:
         return []
@@ -569,6 +684,7 @@ def build_output_items_for_subtask(
         result=result,
         content_override=content_override,
         status_override=status_override,
+        omit_mcp_binary_output=omit_mcp_binary_output,
     )
     if items:
         return items
@@ -578,6 +694,7 @@ def build_output_items_for_subtask(
         result=result,
         content_override=content_override,
         status_override=status_override,
+        omit_mcp_binary_output=omit_mcp_binary_output,
     )
     if items:
         return items
@@ -604,6 +721,7 @@ def build_response_output(
     active_assistant_subtask_id: Optional[int] = None,
     active_assistant_status: Optional[str] = None,
     active_assistant_content: str = "",
+    omit_mcp_binary_output: bool = False,
 ) -> list[ResponseOutputItem]:
     output: list[ResponseOutputItem] = []
     for subtask in subtasks:
@@ -621,6 +739,7 @@ def build_response_output(
                 subtask,
                 content_override=content_override,
                 status_override=status_override,
+                omit_mcp_binary_output=omit_mcp_binary_output,
             )
         )
     return output

@@ -134,6 +134,10 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     include_full_content: bool = Field(default=False, alias="includeFullContent")
+    conversation_context_only: bool = Field(
+        default=False,
+        alias="conversationContextOnly",
+    )
 
 
 class RuntimeFileChangesRevertRequest(BaseModel):
