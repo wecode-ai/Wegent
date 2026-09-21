@@ -65,7 +65,8 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
     const message = this.messages.find(item => item.id === id && item.status !== 'sending')
     if (!message || this.awaitingNextTurn || this.messages.some(item => item.status === 'sending'))
       return false
-    this.awaitingNextTurn = { lifecycle: port.lifecycle() }
+    const lifecycleBeforeSend = port.lifecycle()
+    this.awaitingNextTurn = { lifecycle: lifecycleBeforeSend }
     this.patch(id, { status: 'sending', error: undefined, deliveryMode: 'message' })
     try {
       const result = await port.send(message)
@@ -74,10 +75,15 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
         return true
       }
       this.awaitingNextTurn = null
-      this.rejectSend(id, result.error || port.sendFailedText, port)
+      this.rejectSend(id, result.error || port.sendFailedText, port, lifecycleBeforeSend)
     } catch (cause) {
       this.awaitingNextTurn = null
-      this.rejectSend(id, cause instanceof Error ? cause.message : port.sendFailedText, port)
+      this.rejectSend(
+        id,
+        cause instanceof Error ? cause.message : port.sendFailedText,
+        port,
+        lifecycleBeforeSend
+      )
     }
     return false
   }
@@ -130,9 +136,15 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
     this.blocked.delete(id)
     this.patch(id, { status: 'failed', deliveryMode: undefined, notice: undefined, error })
   }
-  private rejectSend(id: string, error: string, port: RuntimeConversationQueuePort<Lifecycle>) {
+  private rejectSend(
+    id: string,
+    error: string,
+    port: RuntimeConversationQueuePort<Lifecycle>,
+    lifecycleBeforeSend: Lifecycle
+  ) {
     if (port.isBusyError(error)) {
-      this.blocked.set(id, port.lifecycle())
+      if (port.lifecycleChanged(lifecycleBeforeSend)) this.blocked.delete(id)
+      else this.blocked.set(id, lifecycleBeforeSend)
       this.patch(id, { status: 'queued', error: undefined })
     } else {
       this.fail(id, error)

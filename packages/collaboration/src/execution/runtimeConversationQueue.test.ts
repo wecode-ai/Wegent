@@ -128,6 +128,25 @@ describe('shared PC and Web conversation queue', () => {
       expect(queue.getSnapshot()).toEqual([])
     }
   )
+  it('retries a busy send when the lifecycle settled before the rejection arrived', async () => {
+    const { queue, port, transition } = setup()
+    let rejectBusy!: (result: { sent: boolean; error: string }) => void
+    vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (rejectBusy = resolve)))
+    queue.enqueue(message('one'))
+
+    const sending = queue.pump(port, false)
+    transition()
+    rejectBusy({ sent: false, error: 'busy' })
+    await sending
+
+    expect(queue.getSnapshot()[0]).toMatchObject({
+      status: 'queued',
+      error: undefined,
+    })
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenCalledTimes(2)
+    expect(queue.getSnapshot()).toEqual([])
+  })
   it('prevents duplicate dispatch and editing or removing an in-flight message', async () => {
     const { queue, port } = setup()
     let finish!: (result: { sent: boolean }) => void
