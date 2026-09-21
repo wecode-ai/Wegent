@@ -3231,6 +3231,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-runtime:device-1:local-board-task'))
+    expect(
+      screen.getByTestId('cloud-todo-card-progress-popup-runtime:device-1:local-board-task')
+    ).toBeInTheDocument()
+    expect(markRuntimeTaskRead).not.toHaveBeenCalled()
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+
+    await userEvent.click(
+      screen.getByTestId('cloud-todo-card-open-task-runtime:device-1:local-board-task')
+    )
     expect(markRuntimeTaskRead).toHaveBeenCalledWith({
       deviceId: 'device-1',
       taskId: 'local-board-task',
