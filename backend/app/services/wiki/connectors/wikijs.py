@@ -83,7 +83,7 @@ _PAGE_BY_ID_RENDER_QUERY = _single_page_query(
 _VERSION_QUERY = "query { system { info { currentVersion } } }"
 
 _MAX_ATTEMPTS = 3  # initial call + 2 retries, 5xx/network errors only
-WIKIJS_MIN_VERSION = (2, 5, 300)
+WIKIJS_MIN_VERSION = (2, 5, 0)
 WIKIJS_MIN_VERSION_LABEL = ".".join(str(part) for part in WIKIJS_MIN_VERSION)
 
 _HTML_TO_MARKDOWN = HtmlToMarkdownConverter()
