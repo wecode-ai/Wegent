@@ -26,6 +26,7 @@ import {
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
+import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
@@ -361,6 +362,7 @@ export function createHybridWorkbenchServices(
     apiKey: options.token,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
+  const localProjectServices = createLocalAppServices()
   const localServices = createLocalAppServices({
     listCloudInstalledPlugins: deviceId =>
       createPluginApi(
@@ -792,6 +794,9 @@ export function createHybridWorkbenchServices(
       if (isLocalDeviceId(deviceId)) {
         return localServices.deviceApi.executeCommand(deviceId, data)
       }
+      if (shouldUseCloudDeviceCommand(data.command_key)) {
+        return cloudServices.deviceApi.executeCommand(deviceId, data)
+      }
       return cloudRuntimeIpc.request<DeviceCommandResponse>(
         'device.execute_command',
         data,
@@ -886,7 +891,13 @@ export function createHybridWorkbenchServices(
       try {
         const response = await routeByAddress(data).getRuntimeTranscript(data)
         const snapshot = runtimeExecutionSnapshot(data, response)
-        if (snapshot && cloudServices.projectChatClient?.reconcileExecutionSnapshot) {
+        if (
+          snapshot &&
+          response.origin?.projectStore !== 'local' &&
+          (data.runtimeHandle?.origin as { projectStore?: string } | undefined)?.projectStore !==
+            'local' &&
+          cloudServices.projectChatClient?.reconcileExecutionSnapshot
+        ) {
           // Cloud write-back must not prevent an offline local history read.
           // A failed report is retried on the next read, never cached as saved.
           void cloudServices.projectChatClient.reconcileExecutionSnapshot(snapshot).catch(error => {
@@ -926,9 +937,23 @@ export function createHybridWorkbenchServices(
       return routeByAddress(data.address).revertRuntimeFileChanges(data)
     },
     sendRuntimeMessage(data: RuntimeSendRequest) {
+      if (
+        data.origin?.projectStore === 'local' ||
+        (data.address.runtimeHandle?.origin as { projectStore?: string } | undefined)
+          ?.projectStore === 'local'
+      ) {
+        return localProjectServices.runtimeWorkApi!.sendRuntimeMessage(data)
+      }
       return routeByAddress(data.address).sendRuntimeMessage(data)
     },
     interruptAndSendRuntimeMessage(data) {
+      if (
+        data.origin?.projectStore === 'local' ||
+        (data.address.runtimeHandle?.origin as { projectStore?: string } | undefined)
+          ?.projectStore === 'local'
+      ) {
+        return localProjectServices.runtimeWorkApi!.interruptAndSendRuntimeMessage(data)
+      }
       return routeByAddress(data.address).interruptAndSendRuntimeMessage(data)
     },
     rollbackRuntimeTask(data: RuntimeRollbackRequest) {
@@ -1158,6 +1183,9 @@ export function createHybridWorkbenchServices(
       return routeByAddress(data).reorderQueuedRuntimeTask(data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+      if (data.origin?.projectStore === 'local') {
+        return localProjectServices.runtimeWorkApi!.createRuntimeTask(data)
+      }
       const startedAt = Date.now()
       logRuntimeTaskCreateStage('hybrid-create-started', {
         taskId: data.taskId ?? null,
@@ -1383,9 +1411,13 @@ export function createHybridWorkbenchServices(
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins(deviceId: string) {
-      const cloudPlugins = await cloudServices.pluginApi?.listPlugins(deviceId).catch(() => [])
-      if (!isLocalDeviceId(deviceId)) return cloudPlugins ?? []
-      const localPlugins = await localServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      const cloudPlugins = (
+        await cloudServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      )?.map(plugin => ({ ...plugin, catalogSource: 'cloud' as const }))
+      if (deviceId && !isLocalDeviceId(deviceId)) return cloudPlugins ?? []
+      const localPlugins = (
+        await localServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      )?.map(plugin => ({ ...plugin, catalogSource: 'local' as const }))
       return mergeProjectPluginCatalogs(localPlugins ?? [], cloudPlugins ?? [])
     },
   }
@@ -1406,7 +1438,8 @@ export function createHybridWorkbenchServices(
     branchNameApi: localServices.branchNameApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
-    localProjectChatAgentApi: localServices.localProjectChatAgentApi,
+    localExecutionServices: localProjectServices,
+    localProjectChatAgentApi: localProjectServices.localProjectChatAgentApi,
     localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,
     localHarnessModelApi: localServices.localHarnessModelApi,
     localProjectChatClient: localServices.localProjectChatClient,
@@ -1416,12 +1449,7 @@ export function createHybridWorkbenchServices(
       defaultLocation: 'cloud',
     },
     projectSpaceDetailServices: {
-      local: localServices.projectSpaceDetailServices?.local
-        ? {
-            ...localServices.projectSpaceDetailServices.local,
-            pluginApi: projectPluginApi,
-          }
-        : undefined,
+      local: localProjectServices.projectSpaceDetailServices?.local,
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,

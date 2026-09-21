@@ -275,11 +275,18 @@ const harnessAppTabMocks = vi.hoisted(() => ({
 const dshExtensionMocks = vi.hoisted(() => ({
   bindConversationController: vi.fn(() => vi.fn()),
 }))
-const cloudDesktopExtensionMock = vi.hoisted(() => {
+const deviceSurfaceExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
 
   return {
     available: false,
+    supportsDevice: vi.fn(() => true),
+    workspaceMenuItem: vi.fn(() => ({
+      id: 'device-surface',
+      label: '设备界面',
+      icon: () => null,
+      testId: 'workspace-add-device-surface-option',
+    })),
     DeviceAction: () => null,
     WorkspaceAction: ({
       onLaunchActionChange,
@@ -302,8 +309,8 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: deviceSurfaceExtensionMock,
 }))
 
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
@@ -870,8 +877,8 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
     deliveryApiMock.findCloudContextForTask.mockRejectedValue(new Error('Context not found'))
     deliveryApiMock.trackProjectTask.mockImplementation(() => new Promise(() => {}))
-    cloudDesktopExtensionMock.available = false
-    cloudDesktopExtensionMock.launch.mockResolvedValue(true)
+    deviceSurfaceExtensionMock.available = false
+    deviceSurfaceExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024,
@@ -1422,7 +1429,11 @@ describe('DesktopWorkbenchLayout', () => {
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
       services: {
-        deviceApi: { readWorkspaceFileChunk: vi.fn() },
+        deviceApi: {
+          listDevices: vi.fn(async () => []),
+          listSkills: vi.fn(async () => []),
+          readWorkspaceFileChunk: vi.fn(),
+        },
         ...(deliveryApiMock.available
           ? {
               deliveryApi: {
@@ -1647,6 +1658,9 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      runtime_features: {
+        schemaVersion: 4,
+      },
     }
     const workspaceProject = {
       id: 12,
@@ -3089,6 +3103,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
+  test('shows only the local runtime selector in the task composer', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Codex')
+    expect(screen.queryByTestId('workbench-team-selector')).not.toBeInTheDocument()
+  })
+
   test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
     deliveryApiMock.available = true
@@ -4174,7 +4195,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
   })
 
-  test('keeps a collapsed Electron task title clear of titlebar controls', () => {
+  test('keeps a collapsed Electron task title clear of titlebar controls', async () => {
     runtimeMocks.electron = true
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
 
@@ -4243,6 +4264,16 @@ describe('DesktopWorkbenchLayout', () => {
       'wework的聊天链路现在代码逻辑比较混乱'
     )
     expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
+    await userEvent.click(screen.getByTestId('conversation-rename-button'))
+    expect(screen.getByTestId('conversation-rename-input')).toHaveValue(
+      'wework的聊天链路现在代码逻辑比较混乱，尤其是状态方面，经常出现消息结束了但是发送按钮还显示运行中'
+    )
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(screen.getByTestId('conversation-project-button'))
+    expect(screen.getByTestId('conversation-project-popover')).toHaveTextContent(
+      '/workspace/project-alpha'
+    )
+    await userEvent.keyboard('{Escape}')
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
@@ -6883,14 +6914,12 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(
-      screen.queryByTestId('connection-cloud-desktop-button-24a59054-4638-4744-983d-372706c30fcd')
+      screen.queryByTestId('connection-device-surface-button-24a59054-4638-4744-983d-372706c30fcd')
     ).not.toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
     expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.queryByText('桌面')).not.toBeInTheDocument()
     expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
     expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
-    expect(screen.queryByText('云桌面')).not.toBeInTheDocument()
     expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
     expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
     expect(screen.getByText('CPU')).toBeInTheDocument()
@@ -13388,7 +13417,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeLocalTerminalMock).not.toHaveBeenCalled()
   }, 30_000)
 
-  test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
+  test('omits the device surface add-menu item when the extension is unavailable', async () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
@@ -13397,11 +13426,13 @@ describe('DesktopWorkbenchLayout', () => {
     const menu = screen.getByTestId('workspace-terminal-new-tab-menu')
     expect(within(menu).getByTestId('workspace-add-terminal-option')).toBeInTheDocument()
     expect(within(menu).queryByTestId('workspace-add-ide-option')).not.toBeInTheDocument()
-    expect(within(menu).queryByTestId('workspace-add-desktop-option')).not.toBeInTheDocument()
+    expect(
+      within(menu).queryByTestId('workspace-add-device-surface-option')
+    ).not.toBeInTheDocument()
   })
 
   test('opens the bottom workspace add menu without replacing the terminal', async () => {
-    cloudDesktopExtensionMock.available = true
+    deviceSurfaceExtensionMock.available = true
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
@@ -13439,15 +13470,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
     expect(within(menu).getByTestId('workspace-add-terminal-option')).toHaveTextContent('终端')
     expect(within(menu).queryByTestId('workspace-add-ide-option')).not.toBeInTheDocument()
-    expect(within(menu).getByTestId('workspace-add-desktop-option')).toHaveTextContent('桌面')
+    expect(within(menu).getByTestId('workspace-add-device-surface-option')).toHaveTextContent(
+      '设备界面'
+    )
     expect(within(menu).queryByTestId('workspace-add-review-option')).not.toBeInTheDocument()
     expect(within(menu).queryByTestId('workspace-add-browser-option')).not.toBeInTheDocument()
     expect(within(menu).queryByTestId('workspace-add-files-option')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('workspace-add-desktop-option'))
+    await userEvent.click(screen.getByTestId('workspace-add-device-surface-option'))
 
     await waitFor(() =>
-      expect(cloudDesktopExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
+      expect(deviceSurfaceExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
     )
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')

@@ -147,6 +147,7 @@ format_worker_count() {
 
 run_wework_full_renderer_tests() {
     local test_workers="$1"
+    local test_timeout_ms="${WEWORK_PRE_PUSH_TEST_TIMEOUT_MS:-15000}"
     local shard_count=2
     local shard
     local shard_exit=0
@@ -158,6 +159,7 @@ run_wework_full_renderer_tests() {
         shard_logs+=("$TEMP_DIR/wework_test_shard_${shard}.log")
         pnpm --filter wework exec vitest run --dir src --pool=threads \
             --maxWorkers "$test_workers" \
+            --testTimeout "$test_timeout_ms" \
             --shard="$shard/$shard_count" \
             > "${shard_logs[$((shard - 1))]}" 2>&1 &
         shard_pids+=("$!")

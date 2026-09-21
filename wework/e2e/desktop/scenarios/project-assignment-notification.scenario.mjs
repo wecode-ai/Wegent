@@ -587,7 +587,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       assert.equal(forbiddenRead.status, 404, 'Another user must not read the recipient inbox')
 
-      const createTaskButton = `${activeSurface} [data-testid="cloud-todo-create-task"]`
+      const createTaskButton = `${activeSurface} [data-testid="cloud-todo-start-default-assistant"]`
       const taskPanel = `${activeSurface} [data-testid="work-item-new-task-chat-panel"]`
       const boundTaskPanel = `${activeSurface} [data-testid="work-item-task-chat-panel"]`
       const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`

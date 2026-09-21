@@ -190,6 +190,22 @@ impl RuntimeWorkRpcHandler {
         } else {
             transcript.items.push(item);
         }
+        let progress = (notification.method == "item/completed").then(|| {
+            transcript
+                .items
+                .iter()
+                .filter_map(|item| {
+                    (string_field(item, "type").as_deref() == Some("agentMessage"))
+                        .then(|| string_field(item, "text"))
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        });
+        drop(active_items);
+        if let Some(progress) = progress.filter(|text| !text.is_empty()) {
+            self.project_queue_progress(local_task_id, &progress);
+        }
     }
 
     fn record_active_codex_plan_delta(&self, local_task_id: &str, turn_id: &str, params: &Value) {

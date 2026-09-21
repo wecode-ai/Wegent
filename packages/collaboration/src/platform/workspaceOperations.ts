@@ -13,6 +13,7 @@ export type WorkspaceOperationState =
   | "completed";
 
 export type WorkspaceProjectIssuesSnapshot =
+  | { status: "loading" }
   | { status: "available"; issues: CollaborationIssue[] }
   | { status: "unavailable" };
 
@@ -86,7 +87,7 @@ export function createWorkspaceOperationsSnapshot({
   const operations = projects
     .map<WorkspaceProjectOperation>((project) => {
       const projectSnapshot = projectIssues[project.id] ?? {
-        status: "unavailable",
+        status: "loading",
       };
       const unavailable = projectSnapshot.status === "unavailable";
       const issues =

@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { X } from 'lucide-react'
 import { useState } from 'react'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
@@ -34,6 +35,13 @@ export function PluginShareDialog({
   const [scope, setScope] = useState(access.scope)
   const [targets, setTargets] = useState(access.targets)
   const [allowCopy, setAllowCopy] = useState(access.allowCopy)
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    () => {
+      if (!saving) onClose()
+    },
+    true,
+    '[data-testid="plugin-share-save"]:not([disabled])'
+  )
 
   const addTarget = (target: PluginAccessTarget) => {
     setTargets(current =>
@@ -48,6 +56,7 @@ export function PluginShareDialog({
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center p-0 sm:items-center sm:p-4">
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="plugin-share-title"

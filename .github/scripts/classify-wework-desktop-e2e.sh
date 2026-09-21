@@ -7,6 +7,8 @@ core_segments=(
   workspace-tabs
   collaboration-shared-core
   collaboration-settings-matrix
+  collaboration-first-use
+  collaboration-local-agent-capabilities
   collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
@@ -145,7 +147,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-agent-automation-chain
+  project-automation,collaboration-first-use,collaboration-local-agent-capabilities,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -447,6 +449,14 @@ classify_wework_path() {
       return
       ;;
 
+    # The cloud suite covers VNC-related desktop changes.
+    wework/src/components/vnc/* | \
+      wework/src/pages/DeviceDesktopPage* | \
+      wework/src/pages/deviceDesktopRoute.ts)
+      select_target "cloud:all"
+      return
+      ;;
+
     # Cloud execution has a separate backend/executor-backed desktop suite.
     wework/src/api/cloud/* | \
       wework/src/features/cloud-connection/* | \
@@ -514,6 +524,14 @@ classify_wework_path() {
       select_target "core:collaboration-settings-matrix"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs)
+      select_target "core:collaboration-first-use"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-local-agent-capabilities.scenario.mjs)
+      select_target "core:collaboration-local-agent-capabilities"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
       select_target "core:collaboration-agent-automation-chain"
       return
@@ -543,6 +561,13 @@ classify_wework_path() {
       wework/src/features/todo/WorkItemComposerGuide*)
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
+      if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
+        select_target "core:collaboration-local-agent-capabilities"
+      fi
+      if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
+        "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
+        select_target "core:collaboration-first-use"
+      fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
         select_target "core:cloud-context-resilience"
       fi
@@ -919,12 +944,16 @@ classify_path() {
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-settings-matrix"
+      select_target "core:collaboration-first-use"
+      select_target "core:collaboration-local-agent-capabilities"
       select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-settings-matrix"
+      select_target "core:collaboration-first-use"
+      select_target "core:collaboration-local-agent-capabilities"
       select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)

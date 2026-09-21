@@ -34,7 +34,11 @@ import {
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { getLocalExecutorStatus, readLocalExecutorLog } from '@/desktop/localExecutor'
+import {
+  failNextLocalExecutorRequestForE2E,
+  getLocalExecutorStatus,
+  readLocalExecutorLog,
+} from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
@@ -1675,6 +1679,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       await waitForDesktopControlTick()
       return ''
+    case 'failNextLocalCodexModelList': {
+      const failedRequest = failNextLocalExecutorRequestForE2E(
+        'runtime.codex.models.list',
+        'Desktop E2E intentional local Codex catalog failure'
+      )
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      await failedRequest
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'dispatchRuntimeLifecycleEvent':
       window.dispatchEvent(
         new CustomEvent('wework:e2e:runtime-task-lifecycle', {

@@ -3078,6 +3078,41 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 }
 
 #[test]
+fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("restored-fork-router");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "restored-task".to_owned(),
+        model_config: json!({
+            "base_url": "https://example.test/v1",
+            "api_key": "restored-secret",
+            "model_id": "gpt-5.6-luna",
+            "api_format": "openai-responses",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config_for_fork(&request, "restored-thread")
+        .expect("restored thread should recreate a missing local route");
+
+    assert_eq!(
+        launch_config.model_provider.as_deref(),
+        Some(codex_model_catalog::PROVIDER_ID)
+    );
+    let registration = launch_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("restored fork should have an independent route");
+    local_model_proxy::bind_fork_thread(&registration.0, "restored-fork-thread")
+        .expect("the new thread should own the route");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
     let request = ExecutionRequest {
         system_prompt: "Judge the supplied content without answering it.".to_owned(),

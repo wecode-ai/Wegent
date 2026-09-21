@@ -118,7 +118,7 @@ export function canUseForRemoteProjectCreation(device: DeviceLike): boolean {
   )
 }
 
-function selectedRuntimeRouteKind(device: DeviceLike, deviceId?: string | null) {
+function selectedRuntimeRoute(device: DeviceLike, deviceId?: string | null) {
   const normalizedDeviceId = deviceId?.trim()
   if (!normalizedDeviceId) return null
 
@@ -127,8 +127,12 @@ function selectedRuntimeRouteKind(device: DeviceLike, deviceId?: string | null) 
       route =>
         route.device_id.trim() === normalizedDeviceId ||
         route.runtime_device_id.trim() === normalizedDeviceId
-    )?.kind ?? null
+    ) ?? null
   )
+}
+
+function selectedRuntimeRouteKind(device: DeviceLike, deviceId?: string | null) {
+  return selectedRuntimeRoute(device, deviceId)?.kind ?? null
 }
 
 export function supportsCloudSessions(device: DeviceLike, deviceId?: string | null): boolean {

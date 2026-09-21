@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { DialogForm } from "../controls/DialogForm";
+
 import {
   Cloud,
   GitBranch,
@@ -170,9 +172,17 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
 
   return renderModal({
     title: labels.title,
-    onClose,
+    onClose: () => {
+      if (!state.saving) onClose();
+    },
     children: (
-      <>
+      <DialogForm
+        style={{ display: "contents" }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void commands.submit();
+        }}
+      >
         <div className="collaboration-project-create-body">
           <label className="collaboration-project-create-field">
             <span>{labels.name}</span>
@@ -461,20 +471,25 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           )}
         </div>
         <footer className="collaboration-project-create-footer">
-          <button type="button" onClick={onClose}>
+          <button
+            type="button"
+            disabled={state.saving}
+            onClick={() => {
+              if (!state.saving) onClose();
+            }}
+          >
             {labels.cancel}
           </button>
           <button
-            type="button"
+            type="submit"
             className="collaboration-primary-button"
             data-testid={testIds?.confirm ?? "cloud-project-create-confirm"}
             disabled={!state.canSubmit}
-            onClick={() => void commands.submit()}
           >
             {state.saving ? labels.creating : labels.create}
           </button>
         </footer>
-      </>
+      </DialogForm>
     ),
   });
 }

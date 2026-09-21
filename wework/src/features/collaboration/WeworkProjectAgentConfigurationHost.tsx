@@ -140,30 +140,32 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
 }
 
 /**
- * Wework manages Agents only through the resource library, so `添加智能体`
- * opens the resource-library form directly and configured rows can edit the
- * Agent resource they point at.
+ * Wework manages Agents through the resource library. Existing resources can
+ * be selected, while the same dialog can create or edit the backing resource.
  */
 export function createWeworkProjectAgentConfigurationHost(
   agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
   localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
   localModelApi?: WorkbenchServices['modelApi'],
-  localPluginApi?: {
-    listPlugins(deviceId: string): Promise<import('@/types/api').RuntimeProjectPluginRef[]>
-  }
+  pluginApi?: WorkbenchServices['pluginApi'],
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
 ): ProjectAgentConfigurationHost {
   return {
     ...weworkProjectAgentConfigurationHost,
     ...(agentResourceApi
       ? {
-          supportsExistingAgentSelection: false,
-          renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
+          supportsExistingAgentSelection: true,
+          supportsCrossLocationAgentSelection: true,
+          renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                deviceApi={deviceApi}
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onCreated}
+                ownerOptions={ownerOptions}
+                pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />
             )
@@ -172,11 +174,13 @@ export function createWeworkProjectAgentConfigurationHost(
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                deviceApi={deviceApi}
                 editingTeamId={agent.teamId}
                 key={agent.teamId}
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onSaved}
+                pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />
             )
@@ -185,25 +189,31 @@ export function createWeworkProjectAgentConfigurationHost(
       : {}),
     ...(localAgentApi && localModelApi
       ? {
-          renderLocalAgentCreator({ onClose, onCreated }) {
+          renderLocalAgentCreator({ onClose, onCreated, projectId }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
+                deviceApi={deviceApi}
                 modelApi={localModelApi}
-                pluginApi={localPluginApi}
+                pluginApi={pluginApi}
+                projectId={projectId}
+                skillApi={agentResourceApi}
                 onClose={onClose}
                 onSaved={onCreated}
               />
             )
           },
-          renderLocalAgentEditor({ resourceId, onClose, onSaved }) {
+          renderLocalAgentEditor({ projectId, resourceId, onClose, onSaved }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
+                deviceApi={deviceApi}
                 editingAgentId={resourceId}
                 key={resourceId}
                 modelApi={localModelApi}
-                pluginApi={localPluginApi}
+                pluginApi={pluginApi}
+                projectId={projectId}
+                skillApi={agentResourceApi}
                 onClose={onClose}
                 onSaved={onSaved}
               />

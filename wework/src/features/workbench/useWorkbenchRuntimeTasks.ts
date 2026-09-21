@@ -32,6 +32,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
+  findRuntimeTaskProjectWork,
   findRuntimeTaskWorkspace,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
@@ -194,13 +195,7 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options?: { fallbackProject?: ProjectWithTasks | null }
     ) => {
-      const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
-        item.deviceWorkspaces.some(
-          workspace =>
-            workspace.deviceId === address.deviceId &&
-            workspace.tasks.some(task => task.taskId === address.taskId)
-        )
-      )
+      const runtimeProjectWork = findRuntimeTaskProjectWork(state.runtimeWork, address)
       const project = runtimeProjectWork
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
@@ -355,12 +350,11 @@ export function useWorkbenchRuntimeTasks({
     async (address: RuntimeTaskAddress, title: string) => {
       const response = await executorClient.runtime.renameRuntimeTask({ address, title })
       if (!response.accepted) {
-        dispatch({ type: 'error_set', error: response.error || 'Failed to rename runtime task' })
-        return
+        throw new Error(response.error || 'Failed to rename runtime task')
       }
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists]
+    [executorClient, refreshWorkLists]
   )
 
   const archiveProjectConversations = useCallback(

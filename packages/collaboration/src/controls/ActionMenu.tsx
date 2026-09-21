@@ -1,3 +1,4 @@
+import { useEscapeKey } from "../markdown/useEscapeKey";
 import type {
   ComponentType,
   KeyboardEvent as ReactKeyboardEvent,
@@ -110,6 +111,8 @@ export function ActionMenu({
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const submenuItemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const pointerSelectionRef = useRef(false);
+  const initialItemFocusRef = useRef<"first" | "last" | null>(null);
+  const contextMenuPreviousFocusRef = useRef<HTMLElement | null>(null);
   const submenuCloseTimeoutRef = useRef<number | null>(null);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
@@ -165,9 +168,16 @@ export function ActionMenu({
       onOpenChange?.(false);
       if (restoreFocus) {
         window.requestAnimationFrame(() => triggerRef.current?.focus());
+      } else if (contextMenuPosition) {
+        window.requestAnimationFrame(() => {
+          if (contextMenuPreviousFocusRef.current?.isConnected) {
+            contextMenuPreviousFocusRef.current.focus();
+          }
+          contextMenuPreviousFocusRef.current = null;
+        });
       }
     },
-    [cancelSubmenuClose, onContextMenuClose, onOpenChange],
+    [cancelSubmenuClose, contextMenuPosition, onContextMenuClose, onOpenChange],
   );
   const menuOpen = open || Boolean(contextMenuPosition);
   const openSubmenuItem = items.find((item) => item.testId === openSubmenuId);
@@ -181,6 +191,8 @@ export function ActionMenu({
     if (menuOpen) {
       closeMenu();
     } else {
+      initialItemFocusRef.current = event.detail === 0 ? "first" : null;
+      if (!initialItemFocusRef.current) event.currentTarget.blur();
       setOpen(true);
       onOpenChange?.(true);
     }
@@ -193,6 +205,7 @@ export function ActionMenu({
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     if (!menuOpen) {
+      initialItemFocusRef.current = event.key === "ArrowUp" ? "last" : "first";
       setMenuPosition(null);
       setOpen(true);
       onOpenChange?.(true);
@@ -394,12 +407,24 @@ export function ActionMenu({
     if (!menuOpen) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
+      if (contextMenuPosition) {
+        contextMenuPreviousFocusRef.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+      }
+      if (
+        menuRef.current?.contains(document.activeElement) ||
+        submenuRef.current?.contains(document.activeElement)
+      )
+        return;
       const items = menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)',
+        '[role^="menuitem"]:not(:disabled)',
       );
-      if (!items?.length) return;
       const target =
-        document.activeElement === triggerRef.current ? items[0] : null;
+        initialItemFocusRef.current && !contextMenuPosition && items?.length
+          ? items[initialItemFocusRef.current === "last" ? items.length - 1 : 0]
+          : menuRef.current;
       target?.focus();
     });
 
@@ -413,25 +438,27 @@ export function ActionMenu({
         closeMenu();
       }
     };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [closeMenu, contextMenuPosition, menuOpen]);
+
+  useEscapeKey(
+    () => {
       if (openSubmenuId) {
         setOpenSubmenuId(null);
         setSubmenuPosition(null);
         itemRefs.current[openSubmenuId]?.focus();
         return;
       }
-      closeMenu(true);
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [closeMenu, menuOpen, openSubmenuId]);
+      closeMenu(initialItemFocusRef.current !== null && !contextMenuPosition);
+    },
+    menuOpen,
+    menuRef,
+  );
 
   const trigger = (
     <button
@@ -478,6 +505,21 @@ export function ActionMenu({
             {...portalTheme}
             ref={menuRef}
             role="menu"
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+                return;
+              event.preventDefault();
+              const availableItems = items.filter(
+                (item) => !item.disabled && !item.separator && !item.custom,
+              );
+              const target =
+                event.key === "ArrowUp" || event.key === "End"
+                  ? availableItems.at(-1)
+                  : availableItems[0];
+              if (target) itemRefs.current[target.testId]?.focus();
+            }}
             data-testid={menuTestId ?? `${testId}-menu`}
             data-embedded-browser-occlusion
             aria-label={ariaLabel}
@@ -489,7 +531,7 @@ export function ActionMenu({
             }}
             className={[
               portalTheme.className,
-              "fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl",
+              "fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl outline-none",
               width ? `w-[${width}px]` : "",
             ].join(" ")}
           >

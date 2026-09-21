@@ -4,7 +4,10 @@
 
 import type { ReactNode } from "react";
 
-import type { CollaborationView } from "../types";
+import type {
+  CollaborationDefaultAssistant,
+  CollaborationView,
+} from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
@@ -53,6 +56,7 @@ export interface CollaborationPlatformHostAdapter {
     workspaceLocations?: readonly ("local" | "cloud")[];
     sidebarPresentation?: "full" | "context";
   };
+  defaultAssistant?: CollaborationDefaultAssistant;
   navigate(location: CollaborationPlatformLocation): void;
   manageResource?(
     kind: "agents" | "environments",

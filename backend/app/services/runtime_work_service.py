@@ -73,6 +73,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskMaterializeRequest,
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
@@ -731,10 +732,9 @@ async def _dispatch_runtime_send(
     """Send a runtime task message with the required execution request.
 
     The executor requires ``executionRequest`` to spawn a new turn (it carries
-    model config, user info, skills, etc.). The Wework frontend builds this
-    client-side for direct local sends; the IM continuation path flows through
-    the backend RPC, so we rebuild it from the default task-mode team while
-    preserving the model selected for the bound runtime task.
+    model config, user info, skills, etc.). Backend clients use the same compiler
+    as Wework's Team materialization, preserving the original task binding and
+    selected model. Unbound tasks use the direct Wework execution builder.
     Request-user-input responses use a dedicated executor channel and do not
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
@@ -3816,6 +3816,7 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
         deviceId=address.device_id,
         workspacePath=workspace_path,
         localTaskId=address.local_task_id.strip(),
+        runtimeHandle=address.runtime_handle,
     )
 
 
@@ -4333,11 +4334,19 @@ def _apply_runtime_create_request(
     execution_request.runtime_project_key = request.runtime_project_key
     execution_request.runtime_project_name = request.runtime_project_name
     execution_request.runtime_workspace_roots = list(request.runtime_workspace_roots)
-    execution_request.project_plugin_ids = [
-        str(plugin["id"])
+    requested_plugin_ids = [
+        str(plugin["id"]).strip()
         for plugin in request.project_plugins
-        if plugin.get("id") is not None
+        if plugin.get("id") is not None and str(plugin["id"]).strip()
     ]
+    execution_request.project_plugin_ids = list(
+        dict.fromkeys(
+            [
+                *getattr(execution_request, "project_plugin_ids", []),
+                *requested_plugin_ids,
+            ]
+        )
+    )
     execution_request.runtime_executable_path = request.runtime_executable_path
     execution_request.claude_permission_mode = request.runtime_permission_mode
     execution_request.client_user_message_id = request.client_user_message_id
@@ -4825,9 +4834,11 @@ def _build_runtime_send_execution_request(
         workspace_source="local_path",
     )
     team_id = _runtime_address_team_id(address)
-    request = RuntimeTaskCreateRequest(
+    request = RuntimeTaskMaterializeRequest(
         schemaVersion=3 if team_id is not None else 2,
         wegentTeamId=team_id,
+        newSession=False,
+        taskId=address.local_task_id,
         deviceId=address.device_id,
         workspacePath=address.workspace_path,
         runtime="codex",
@@ -4838,12 +4849,14 @@ def _build_runtime_send_execution_request(
         attachmentIds=attachment_ids,
         additionalContext=additional_context,
     )
-    return _build_runtime_execution_request(
+    execution_request = _build_runtime_execution_request(
         db=db,
         user_id=user_id,
         request=request,
         target=target,
     )
+    execution_request.new_session = False
+    return execution_request
 
 
 def _runtime_address_team_id(address: RuntimeTaskAddress) -> Optional[int]:

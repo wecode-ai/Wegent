@@ -945,6 +945,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        if request.is_local_project() {
+            request.clear_backend_credentials();
+            return;
+        }
         self.rewrite_model_gateway_backend(request);
         let connection = match self.backend_connection_snapshot() {
             Ok(Some(connection)) => connection,
@@ -1022,6 +1026,7 @@ impl RuntimeWorkRpcHandler {
         }
         let result = match method {
             "runtime.tasks.list" => self.list_tasks(&payload).await,
+            "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
@@ -1193,6 +1198,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.tasks.get"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"

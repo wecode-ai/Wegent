@@ -201,7 +201,7 @@ Set `WEGENT_REMOTE_DEVICE_REBUILD_IMAGE=<new-version-or-digest>` to include an i
 
 The intranet firewall on the target host must allow the browser to reach port 17888, but this port must not be exposed to the public internet. Port 17888 only serves token-protected IDE sessions. The session gateway validates the token, sets an HttpOnly cookie, and redirects to a URL without the token; it does not expose anonymous code-server access.
 
-By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at the automatically detected address, so the detected device IP must be reachable from the user's browser. Public Wework does not provide cloud desktop support; some product distributions may add it through the optional extension.
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at the automatically detected address, so the detected device IP must be reachable from the user's browser.
 
 - `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process only listens on the container loopback address with `auth: none`; the session gateway validates the short-lived token before the browser can reach it.
@@ -360,16 +360,16 @@ The **Settings** → **Connections** page lists ClaudeCode devices that the curr
 
 Cloud devices display online status, executor version, CPU, memory, and disk usage. When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online. The Wework frontend can configure the scaling Wiki link in the resource note card with `VITE_CLOUD_DEVICE_SCALING_WIKI_URL`, guiding users to request a larger cloud device or clean workspace cache when CPU, MEM, or disk stays above 80%.
 
-Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, cloud desktop, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
+Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
 
-Online cloud and remote Docker devices can open interactive sessions directly:
+Online cloud and remote Docker devices can open Terminal and IDE sessions directly.
 
-| Action       | Backend API                                 | Description                                                                                                                                                                                           |
-| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Terminal** | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
-| **IDE**      | `POST /api/devices/{device_id}/code-server` | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
+| Action       | Supported devices               | Backend API                                 | Description                                                                                                                                                                                           |
+| ------------ | ------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal** | Cloud and remote Docker devices | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
+| **IDE**      | Cloud and remote Docker devices | `POST /api/devices/{device_id}/code-server` | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
 
-Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Buttons for supported sessions are disabled while the device is offline.
 
 The more menu contains lower-frequency management actions:
 

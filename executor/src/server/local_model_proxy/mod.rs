@@ -3821,6 +3821,131 @@ mod tests {
         server.abort();
     }
 
+    /// Mirrors the upstream Responses pairing rule: a `function_call` must be
+    /// followed by its `function_call_output` before any other item, otherwise
+    /// the upstream rejects the turn with `No tool output found for tool call ...`.
+    fn upstream_rejects_interleaved_tool_items(body: &Value) -> Option<String> {
+        let mut pending = Vec::new();
+        for item in body.get("input")?.as_array()? {
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            match item_type {
+                "function_call" => pending.push(
+                    item.get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                "function_call_output" => {
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    match pending.iter().position(|pending| pending == call_id) {
+                        Some(position) => {
+                            pending.remove(position);
+                        }
+                        None => return Some(format!("unsolicited tool output for {call_id}")),
+                    }
+                }
+                _ => {
+                    if let Some(call_id) = pending.first() {
+                        return Some(format!("No tool output found for tool call {call_id}."));
+                    }
+                }
+            }
+        }
+        pending
+            .first()
+            .map(|call_id| format!("No tool output found for tool call {call_id}."))
+    }
+
+    #[tokio::test]
+    async fn harness_route_keeps_tool_calls_adjacent_to_their_outputs() {
+        let (body_tx, mut body_rx) = mpsc::channel(1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(move |Json(body): Json<Value>| {
+                        let body_tx = body_tx.clone();
+                        async move {
+                            let rejection = upstream_rejects_interleaved_tool_items(&body);
+                            let _ = body_tx.send(rejection).await;
+                            Json(json!({
+                                "output": [{
+                                    "type": "message",
+                                    "content": [{"type": "output_text", "text": "ok"}]
+                                }]
+                            }))
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register_harness(
+            "harness-tool-order-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "upstream-secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("deepseek-v4-flash".to_owned()),
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+        let request = json!({
+            "model": "wework-selected",
+            "max_tokens": 64,
+            "system": "You are a builder.",
+            "messages": [
+                {"role": "user", "content": "build the dashboard"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "I will start by inspecting the dataset."},
+                    {"type": "tool_use", "id": "call_00_stub00000000000000000001", "name": "read_dataset", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_00_stub00000000000000000001", "content": "ok"}
+                ]}
+            ],
+            "tools": [{
+                "name": "read_dataset",
+                "description": "Read.",
+                "input_schema": {"type": "object"}
+            }]
+        });
+
+        let response = handle_harness_messages(
+            Path(token.clone()),
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&request).expect("request body")),
+        )
+        .await
+        .expect("harness response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_rx.recv().await.expect("captured upstream body"),
+            None,
+            "the upstream must accept the encoded tool call/output group"
+        );
+
+        unregister_harness(&token);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn retries_rate_limited_model_requests_until_success() {
         let request_count = Arc::new(AtomicUsize::new(0));

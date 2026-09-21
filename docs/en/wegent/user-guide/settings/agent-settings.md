@@ -11,6 +11,7 @@ This guide covers everything you need to configure AI agents in Wegent through t
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Agents in collaboration projects](#-agents-in-collaboration-projects)
 - [Accessing Agent Settings](#-accessing-agent-settings)
 - [Creating an Agent](#-creating-an-agent)
 - [Configuring Bots](#-configuring-bots)
@@ -27,6 +28,7 @@ This guide covers everything you need to configure AI agents in Wegent through t
 ### What is an Agent?
 
 An **Agent** is your AI assistant in Wegent. It can:
+
 - Execute development tasks
 - Answer questions
 - Review code
@@ -41,14 +43,36 @@ Agent = Bot(s) + Collaboration Mode
 Bot = Executor + Model + Prompt + Tools
 ```
 
-| Component | Description | Example |
-|-----------|-------------|---------|
-| **Agent** | User-facing AI assistant | "Code Assistant" |
-| **Bot** | Building block of an Agent | "Frontend Developer Bot" |
-| **Executor** | Runtime environment | ClaudeCode, Dify, Chat |
-| **Model** | AI brain | Claude Sonnet 4, GPT-4o |
-| **Prompt** | Personality & expertise | System instructions |
-| **Tools** | External capabilities | GitHub MCP, Skills |
+| Component    | Description                | Example                  |
+| ------------ | -------------------------- | ------------------------ |
+| **Agent**    | User-facing AI assistant   | "Code Assistant"         |
+| **Bot**      | Building block of an Agent | "Frontend Developer Bot" |
+| **Executor** | Runtime environment        | ClaudeCode, Dify, Chat   |
+| **Model**    | AI brain                   | Claude Sonnet 4, GPT-4o  |
+| **Prompt**   | Personality & expertise    | System instructions      |
+| **Tools**    | External capabilities      | GitHub MCP, Skills       |
+
+---
+
+## 🧩 Agents in collaboration projects
+
+Wegent Web and Wework use the same agent creation form in collaboration projects. The form keeps four independent dimensions:
+
+| Dimension             | Meaning                                    | Examples                                                  |
+| --------------------- | ------------------------------------------ | --------------------------------------------------------- |
+| **Agent source**      | Where the agent definition is stored       | Current project, shared agent                             |
+| **Hosting mode**      | Which class of environment hosts the agent | Device execution, Wegent-managed                          |
+| **Executor type**     | Which runtime the agent uses               | Codex, Claude Code                                        |
+| **Capability source** | How Skills, Plugins, and MCP are obtained  | Follow the runtime device, manually selected capabilities |
+
+These four dimensions are independent. **Wegent-managed is a hosting mode, not an Agent source or executor type.** A shared agent retains its hosting mode, executor, and capability configuration in its own definition, while the project stores a reference to it. A shared agent may be dispatched to an eligible device or hosted by Wegent. An agent created in the current project stores its executor, model, system prompt, and capability requirements directly from the form.
+
+### Capability sources
+
+- **Follow the runtime device**: the task uses the Plugins, Skills, MCP servers, and local capabilities available to the current user on whichever device runs it. The agent is not permanently bound to the device used during creation.
+- **Manually select capabilities**: the selected Plugins, Skills, and MCP configuration are saved with the agent. Before a task starts, the system selects or prepares an eligible execution device and synchronizes those capabilities into its runtime.
+
+The system prompt editor uses the same reference interaction as the task composer. Supported capability references can be inserted with `@` or `/`. A reference expresses a capability requirement; it does not implicitly bind the agent to the current computer.
 
 ---
 
@@ -60,14 +84,14 @@ Bot = Executor + Model + Prompt + Tools
 2. Click **Settings** in the sidebar
 3. You'll see these tabs:
 
-| Tab | Description |
-|-----|-------------|
-| **Team** | Manage your agents |
-| **Bot** | Manage individual bots |
-| **Models** | Configure AI models |
-| **Shells** | Custom executors |
-| **Skills** | Chat and Claude Code skills |
-| **Integrations** | Git tokens |
+| Tab              | Description                 |
+| ---------------- | --------------------------- |
+| **Team**         | Manage your agents          |
+| **Bot**          | Manage individual bots      |
+| **Models**       | Configure AI models         |
+| **Shells**       | Custom executors            |
+| **Skills**       | Chat and Claude Code skills |
+| **Integrations** | Git tokens                  |
 
 ### Quick Access
 
@@ -85,31 +109,31 @@ Bot = Executor + Model + Prompt + Tools
 
 ### Step 2: Basic Information
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| **Name** | Yes | Agent name (e.g., "Code Assistant") |
-| **Description** | No | What this agent does |
-| **Icon** | No | Visual identifier |
-| **Bind Mode** | Yes | Where agent appears (Chat/Code) |
-| **Requires Repository** | No | Need code repo to work? |
+| Field                   | Required | Description                         |
+| ----------------------- | -------- | ----------------------------------- |
+| **Name**                | Yes      | Agent name (e.g., "Code Assistant") |
+| **Description**         | No       | What this agent does                |
+| **Icon**                | No       | Visual identifier                   |
+| **Bind Mode**           | Yes      | Where agent appears (Chat/Code)     |
+| **Requires Repository** | No       | Need code repo to work?             |
 
 #### Bind Mode Options
 
-| Mode | Description |
-|------|-------------|
+| Mode     | Description                            |
+| -------- | -------------------------------------- |
 | **Chat** | Appears in Chat mode for conversations |
-| **Code** | Appears in Code mode for development |
-| **Both** | Available in both modes |
+| **Code** | Appears in Code mode for development   |
+| **Both** | Available in both modes                |
 
 ### Step 3: Select Collaboration Mode
 
 Choose how your agent works:
 
-| Mode | Bots | Best For |
-|------|------|----------|
-| **Solo** | 1 | Simple tasks, beginners |
-| **Pipeline** | 2+ | Sequential workflows |
-| **Coordinate** | 2+ | Parallel analysis |
+| Mode           | Bots | Best For                |
+| -------------- | ---- | ----------------------- |
+| **Solo**       | 1    | Simple tasks, beginners |
+| **Pipeline**   | 2+   | Sequential workflows    |
+| **Coordinate** | 2+   | Parallel analysis       |
 
 The web UI currently offers Solo, Pipeline, and Coordinate when creating or editing agents.
 
@@ -138,22 +162,22 @@ Click **Save** to create your agent. It will appear in your agent list.
 
 ### Bot Components
 
-| Component | Required | Description |
-|-----------|----------|-------------|
-| **Name** | Yes | Unique identifier |
-| **Executor** | Yes | Runtime environment |
-| **Model** | No | AI model (can inherit) |
-| **Prompt** | No | System instructions |
-| **MCP Config** | No | External tools |
-| **Skills** | No | Chat and Claude Code skills |
+| Component      | Required | Description                 |
+| -------------- | -------- | --------------------------- |
+| **Name**       | Yes      | Unique identifier           |
+| **Executor**   | Yes      | Runtime environment         |
+| **Model**      | No       | AI model (can inherit)      |
+| **Prompt**     | No       | System instructions         |
+| **MCP Config** | No       | External tools              |
+| **Skills**     | No       | Chat and Claude Code skills |
 
 ### Executor Types
 
-| Executor | Description | Use Case |
-|----------|-------------|----------|
-| **ClaudeCode** | Claude Code SDK in Docker | Code development |
-| **Chat** | Direct LLM API | Simple conversations |
-| **Dify** | External Dify API | Dify workflows |
+| Executor       | Description               | Use Case             |
+| -------------- | ------------------------- | -------------------- |
+| **ClaudeCode** | Claude Code SDK in Docker | Code development     |
+| **Chat**       | Direct LLM API            | Simple conversations |
+| **Dify**       | External Dify API         | Dify workflows       |
 
 ### Writing Effective Prompts
 
@@ -222,6 +246,7 @@ Bot A → Bot B → Bot C → Result
 **Best for**: Development → Review → Testing workflows
 
 **Configuration**:
+
 1. Select **Leader** bot (first in pipeline)
 2. Add **Member** bots in order
 3. Optionally enable **Require Confirmation** between stages
@@ -271,6 +296,7 @@ See [Model Configuration Guide](./configuring-models.md) for details.
 ### Per-Task Model Override
 
 When sending a task:
+
 1. Click the **Model** selector in chat input
 2. Choose a different model
 3. Enable **Force Override** if needed
@@ -297,8 +323,11 @@ MCP tools extend bot capabilities with external services.
   "github": {
     "command": "docker",
     "args": [
-      "run", "-i", "--rm",
-      "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+      "run",
+      "-i",
+      "--rm",
+      "-e",
+      "GITHUB_PERSONAL_ACCESS_TOKEN",
       "ghcr.io/github/github-mcp-server"
     ],
     "env": {
@@ -344,11 +373,11 @@ Skills add reusable capabilities to Chat and Claude Code bots.
 
 ### 2. Choose Right Executor
 
-| Task | Executor |
-|------|----------|
+| Task             | Executor   |
+| ---------------- | ---------- |
 | Code development | ClaudeCode |
-| Simple Q&A | Chat |
-| Dify workflows | Dify |
+| Simple Q&A       | Chat       |
+| Dify workflows   | Dify       |
 
 ### 3. Write Clear Prompts
 
@@ -358,11 +387,11 @@ Skills add reusable capabilities to Chat and Claude Code bots.
 
 ### 4. Optimize Costs
 
-| Complexity | Model |
-|------------|-------|
-| Simple | Claude Haiku / GPT-3.5 |
-| Medium | Claude Sonnet / GPT-4o |
-| Complex | Claude Opus / GPT-4 |
+| Complexity | Model                  |
+| ---------- | ---------------------- |
+| Simple     | Claude Haiku / GPT-3.5 |
+| Medium     | Claude Sonnet / GPT-4o |
+| Complex    | Claude Opus / GPT-4    |
 
 ### 5. Use Descriptive Names
 
@@ -386,11 +415,11 @@ An Agent can have one Bot (Solo) or multiple Bots (other modes).
 
 ### Q: Which collaboration mode should I use?
 
-| Scenario | Mode |
-|----------|------|
-| Simple tasks | Solo |
-| Sequential workflow | Pipeline |
-| Parallel analysis | Coordinate |
+| Scenario            | Mode       |
+| ------------------- | ---------- |
+| Simple tasks        | Solo       |
+| Sequential workflow | Pipeline   |
+| Parallel analysis   | Coordinate |
 
 ### Q: Can I edit an Agent after creation?
 

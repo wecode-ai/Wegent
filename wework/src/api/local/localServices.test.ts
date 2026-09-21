@@ -1,3 +1,4 @@
+import * as codexPlugins from './codexPlugins'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import {
@@ -53,6 +54,29 @@ describe('createLocalAppServices', () => {
     delete window.weworkElectronNetwork
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('loads project plugins from installed inventory without the online app catalog', async () => {
+    const api = codexPlugins.createLocalCodexPluginApi()
+    const listApps = vi.fn().mockRejectedValue(new Error('Online app catalog unavailable'))
+    const listInstalledPlugins = vi.fn().mockResolvedValue({ items: [] })
+    const factory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listApps,
+      listInstalledPlugins,
+    })
+    try {
+      const services = createLocalAppServices({ subscribe: vi.fn().mockResolvedValue(vi.fn()) })
+      await expect(services.pluginApi!.listPlugins('local')).resolves.toEqual([])
+      expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
+      expect(listApps).not.toHaveBeenCalled()
+      listInstalledPlugins.mockRejectedValue(new Error('Installed inventory unavailable'))
+      await expect(services.pluginApi!.listPlugins('local')).rejects.toThrow(
+        'Installed inventory unavailable'
+      )
+    } finally {
+      factory.mockRestore()
+    }
   })
 
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {
@@ -1174,6 +1198,112 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('keeps the last successful local Codex catalog when refresh fails', async () => {
+    let catalogRequestCount = 0
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: true },
+          stderr: '',
+          error: null,
+        }
+      }
+      if (method === 'runtime.codex.models.list') {
+        catalogRequestCount += 1
+        if (catalogRequestCount > 1) {
+          throw new Error('catalog temporarily unavailable')
+        }
+        return {
+          providers: [
+            {
+              id: 'openai',
+              displayName: 'CodeX',
+              type: 'official',
+              current: true,
+              available: true,
+              error: null,
+              data: OFFICIAL_CODEX_MODELS,
+            },
+          ],
+          data: OFFICIAL_CODEX_MODELS,
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.modelApi.listModels()
+    const refreshed = await services.modelApi.listModels()
+
+    expect(refreshed.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'gpt-5.6-sol',
+          config: expect.objectContaining({ weworkModelKind: 'codex-official' }),
+        }),
+      ])
+    )
+    expect(refreshed.data.some(model => model.name === 'codex-official-unavailable')).toBe(false)
+  })
+
+  test('shows an unavailable official Codex entry when auth status cannot be verified', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        throw new Error('auth status temporarily unavailable')
+      }
+      if (method === 'runtime.codex.models.list') {
+        return {
+          providers: [
+            {
+              id: 'openai',
+              displayName: 'CodeX',
+              type: 'official',
+              current: true,
+              available: true,
+              error: null,
+              data: OFFICIAL_CODEX_MODELS,
+            },
+          ],
+          data: OFFICIAL_CODEX_MODELS,
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const models = await services.modelApi.listModels()
+
+    expect(models.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'codex-official-unavailable',
+          compatibilityDisabled: true,
+          config: expect.objectContaining({
+            unavailableReason: 'Unable to verify local Codex authentication',
+          }),
+        }),
+      ])
+    )
+    expect(models.data.some(model => model.name === 'gpt-5.6-sol')).toBe(false)
+  })
+
   test('normalizes runtime handles returned by local executor task lists', async () => {
     const request = vi.fn().mockResolvedValue({
       workspaces: [
@@ -1512,6 +1642,7 @@ describe('createLocalAppServices', () => {
         skill_names: ['planner'],
         preload_skills: [{ name: 'planner', namespace: 'default' }],
         user_selected_skills: [{ name: 'planner', namespace: 'default' }],
+        additional_skills: [{ name: 'planner', namespace: 'default' }],
         attachments: [
           {
             id: -45,
