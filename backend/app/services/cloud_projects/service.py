@@ -29,7 +29,10 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
     normalize_provider_config,
 )
-from app.services.cloud_project_visibility import accessible_cloud_projects
+from app.services.cloud_project_visibility import (
+    accessible_cloud_projects,
+    workspace_project_ids,
+)
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.execution_environment_initialization import (
@@ -45,7 +48,6 @@ from app.services.workspaces.environment_status import execution_environment_sta
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
-    project_ids_for_workspace,
     resource_grant,
     workspace_id_for_project,
 )
@@ -194,12 +196,10 @@ class CloudProjectService:
         *,
         workspace_id: int | None = None,
     ) -> list[CloudProject]:
-        if workspace_id is not None:
-            require_workspace_role(db, workspace_id, user_id)
         query = accessible_cloud_projects(db, user_id)
         if workspace_id is not None:
             query = query.filter(
-                CloudProject.id.in_(project_ids_for_workspace(db, workspace_id))
+                CloudProject.id.in_(workspace_project_ids(workspace_id))
             )
         return query.order_by(CloudProject.updated_at.desc()).all()
 

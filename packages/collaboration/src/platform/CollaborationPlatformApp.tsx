@@ -73,6 +73,7 @@ import type {
   CollaborationPlatformLocation,
   CollaborationWorkspaceView,
 } from "./types";
+import { buildWorkspaceNavigation } from "./workspaceNavigation";
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
 import {
   createWorkspaceOperationsSnapshot,
@@ -602,19 +603,14 @@ function CollaborationPlatformNavigation({
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
-  const navigationWorkspaces = useMemo(
+  const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
-      workspaceNavigationContext
-        ? [
-            ...workspaces.map((workspace) => ({ workspace, canOpen: true })),
-            ...(workspaces.some(
-              (workspace) => workspace.id === workspaceNavigationContext.id,
-            )
-              ? []
-              : [{ workspace: workspaceNavigationContext, canOpen: false }]),
-          ]
-        : workspaces.map((workspace) => ({ workspace, canOpen: true })),
-    [workspaceNavigationContext, workspaces],
+      buildWorkspaceNavigation(
+        workspaces,
+        projects,
+        workspaceNavigationContext,
+      ),
+    [workspaces, projects, workspaceNavigationContext],
   );
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () =>
@@ -853,9 +849,8 @@ function CollaborationPlatformNavigation({
               candidate.location === "local"
                 ? messages.localSource
                 : messages.cloudSource;
-            const candidateProjects = projects.filter(
-              (project) => project.workspace_id === candidate.id,
-            );
+            const candidateProjects =
+              projectsByWorkspace.get(candidate.id) ?? [];
             const workspaceActive =
               host.location.workspaceId === candidate.id &&
               !host.location.projectId;

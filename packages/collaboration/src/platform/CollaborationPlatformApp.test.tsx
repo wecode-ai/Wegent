@@ -2689,6 +2689,47 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it.each(["Reporter", "RestrictedAnalyst"] as const)(
+    "discovers a %s project from home without workspace membership or extra requests",
+    async (role) => {
+      const visibleProject = {
+        ...project,
+        access_role: role,
+        workspace_context: {
+          id: workspace.id,
+          public_id: "parent-public",
+          name: workspace.name,
+        },
+      };
+      const { api } = createApi({
+        initialWorkspaces: [],
+        initialProjects: [visibleProject],
+      });
+      api.workspaces!.getNavigationContext = vi.fn(async () => {
+        throw new Error("Parent context must come from the project list");
+      });
+      const renderProject = vi.fn(() => (
+        <div data-testid="accessible-project">Project content</div>
+      ));
+      await render(<PlatformHarness api={api} renderProject={renderProject} />);
+
+      const parent = byTestId(`collaboration-workspace-${workspace.id}`);
+      expect(parent.textContent).toContain(workspace.name);
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-workspace-actions"]',
+        ),
+      ).toBeNull();
+      await click(byTestId(`collaboration-workspace-project-${project.id}`));
+      expect(byTestId("accessible-project")).toBeTruthy();
+      expect(api.workspaces!.getNavigationContext).not.toHaveBeenCalled();
+      expect(api.workspaces!.get).not.toHaveBeenCalled();
+      expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
+      expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+    },
+  );
+
   it("passes the minimal parent context to a custom restricted project renderer", async () => {
     const restrictedProject = {
       ...project,

@@ -24,6 +24,7 @@ export interface CollaborationStatus {
 export interface CollaborationProject {
   id: CollaborationProjectId
   workspace_id?: string | null
+  workspace_context?: Omit<CollaborationWorkspaceNavigationContext, 'location'> | null
   public_id: string
   project_key: string
   name: string

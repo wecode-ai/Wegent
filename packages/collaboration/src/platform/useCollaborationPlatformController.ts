@@ -519,10 +519,18 @@ export function useCollaborationPlatformController({
           }));
         }
         if (location.projectId) {
-          const workspaceNavigationContext =
-            workspaceSummary || !api.workspaces.getNavigationContext
-              ? null
-              : await api.workspaces.getNavigationContext(location.workspaceId);
+          const parentContext = workspaceProjects.find(
+            (project) => project.id === location.projectId,
+          )?.workspace_context;
+          const workspaceNavigationContext = workspaceSummary
+            ? null
+            : parentContext
+              ? { ...parentContext, location: "cloud" as const }
+              : api.workspaces.getNavigationContext
+                ? await api.workspaces.getNavigationContext(
+                    location.workspaceId,
+                  )
+                : null;
           if (revision !== loadRevisionRef.current) return;
           setState((current) => ({
             ...current,
