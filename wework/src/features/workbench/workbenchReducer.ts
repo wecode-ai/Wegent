@@ -24,6 +24,7 @@ import {
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
+  findRuntimeTaskProjectWork,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
@@ -733,8 +734,16 @@ function reconcileCurrentRuntimeTaskAddress(
 function resolveCurrentProjectAfterRefresh(
   currentProject: ProjectWithTasks | null,
   projects: ProjectWithTasks[],
-  runtimeWork: RuntimeWorkListResponse | null | undefined
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  currentRuntimeTask: RuntimeTaskAddress | null
 ): ProjectWithTasks | null {
+  const taskProject = findRuntimeTaskProjectWork(runtimeWork, currentRuntimeTask)
+  if (taskProject) {
+    return (
+      projects.find(project => project.id === runtimeProjectUiId(taskProject.project)) ??
+      runtimeProjectToProject(taskProject)
+    )
+  }
   if (!currentProject) return null
 
   const backendProject = projects.find(project => project.id === currentProject.id)
@@ -954,19 +963,28 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'bootstrapped': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
+      const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
+        state.currentRuntimeTask,
+        devices,
+        runtimeWork
+      )
+      const currentProject =
+        action.currentProject === undefined ? state.currentProject : action.currentProject
       return {
         ...state,
         user: action.user,
         projects: action.projects,
         devices,
         runtimeWork,
-        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
-          state.currentRuntimeTask,
-          devices,
-          runtimeWork
-        ),
-        currentProject:
-          action.currentProject === undefined ? state.currentProject : action.currentProject,
+        currentRuntimeTask,
+        currentProject: currentRuntimeTask
+          ? resolveCurrentProjectAfterRefresh(
+              currentProject,
+              action.projects,
+              runtimeWork,
+              currentRuntimeTask
+            )
+          : currentProject,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
@@ -986,20 +1004,22 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           ? state.runtimeWork
           : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
       const runtimeWork = mergedRuntimeWork
+      const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
+        state.currentRuntimeTask,
+        devices,
+        runtimeWork
+      )
       const refreshedState = {
         ...state,
         projects: action.projects,
         devices,
         runtimeWork,
-        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
-          state.currentRuntimeTask,
-          devices,
-          runtimeWork
-        ),
+        currentRuntimeTask,
         currentProject: resolveCurrentProjectAfterRefresh(
           state.currentProject,
           action.projects,
-          runtimeWork
+          runtimeWork,
+          currentRuntimeTask
         ),
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
@@ -1043,6 +1063,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         action.runtimeWork
       )
       const runtimeWork = mergedRuntimeWork
+      const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
+        state.currentRuntimeTask,
+        state.devices,
+        runtimeWork
+      )
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
@@ -1054,13 +1079,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: resolveCurrentProjectAfterRefresh(
           state.currentProject,
           state.projects,
-          runtimeWork
+          runtimeWork,
+          currentRuntimeTask
         ),
-        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
-          state.currentRuntimeTask,
-          state.devices,
-          runtimeWork
-        ),
+        currentRuntimeTask,
       }
     }
     case 'runtime_task_pin_changed': {
