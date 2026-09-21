@@ -109,7 +109,6 @@ try {
       join(electronRoot, 'resources', 'bundled-hooks'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
-      join(electronRoot, 'resources', 'vnc'),
       join(repositoryRoot, 'LICENSE'),
     ],
     icon,

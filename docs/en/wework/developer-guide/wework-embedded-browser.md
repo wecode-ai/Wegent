@@ -184,38 +184,6 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 - Page action scripts may only perform behavior that matches the current tool semantics. Do not wrap arbitrary DOM mutations in internal evaluate calls to bypass safety checks.
 - macOS App Transport Security permits HTTP only for embedded web content. An invalid server certificate must first fail system trust evaluation; only then may the browser continue that server-trust challenge and publish risk state containing the native WebView identity and origin to the frontend. Register the TLS handler before the first navigation so initial loading cannot race asynchronous `with_webview` configuration. Keep the warning across same-origin pages, and clear it after cross-origin navigation or WebView closure.
 
-## Optional Cloud Desktop Extension
-
-The public Wework codebase defines only cloud-desktop UI slots, the internal-page classifier contract, and an unavailable default implementation. It does not include connection credentials, launch targets, launch orchestration, a concrete remote desktop protocol, authentication endpoint, proxy, page, or third-party client assets. The workbench and device settings use this capability only through `src/extensions/cloud-desktop-contract.ts`; the default implementation sets `available` to `false`, so no desktop action is shown.
-
-Product distributions may provide an implementation for `@extensions/cloud-desktop` at build time. The generic contract exposes `DeviceAction` and `WorkspaceAction` entry points for settings and project workspaces. A concrete implementation owns its connection types, launch target, asynchronous state, and launch orchestration, and must use `isCurrent` to ignore asynchronous requests after the project, device, or connection context changes. Public Wework provides only an unavailable fallback and must not contain concrete remote-desktop protocols, pages, assets, or dedicated copy.
-
-### Wecode VNC implementation
-
-The Wecode distribution provides the cloud-device Desktop action under **Settings → Connections** and in project workspaces. The settings action opens the system default browser through a Wecode viewer bridge bound only to a random `127.0.0.1` port; the project workspace action continues to use Wework's embedded browser. Both entries first read `GET /api/cloud-devices/{device_id}/vnc-config`, then establish a noVNC WebSocket connection through `/vnc-proxy/{device_id}` without depending on the optional `/status.vnc_url` field.
-
-The WebSocket URL and Bearer token must not appear in the browser address, history, or React-visible route. The extension calls `prepare_vnc_session` to place the connection data in a two-minute in-memory handoff session owned by the Tauri Rust process. Both the project workspace's embedded browser and the settings action's system browser open `http://127.0.0.1:<ephemeral-port>/vnc.html?sessionId=...&sandboxId=...`; only the browser hosting the page differs. The page must always retrieve the in-memory configuration through same-origin `/session/{sessionId}` and must not switch to IPC based on `window.__TAURI_INTERNALS__`, because a remote child WebView created by Tauri may expose that object without receiving remote IPC access. The loopback bridge validates the Host header, disables CORS and caching, and sends `no-referrer`, so it does not write the token to the page URL or disk. The two-minute limit applies only to the handoff from the main WebView to the VNC page. After the first read, the VNC page caches the authenticated WebSocket URL for its own lifetime, so disconnect retries do not depend on the handoff TTL. If a full page reload occurs after the handoff expires, the user must reopen the desktop from the cloud-device entry.
-
-The VNC page sets its connected marker only after a real noVNC connection succeeds. Disconnect and connection-error paths must clear the marker and expose retry state. Cloud desktop pages do not support web annotation mode. The settings action hands the restricted loopback viewer to the system browser, while the project workspace hands the same viewer to Wework's embedded browser. The viewer URL must not be exported as a general-purpose web link.
-
-#### Code ownership and host boundary
-
-VNC is a Wecode distribution capability, not a default capability of the public Wework embedded browser. Code follows these ownership rules:
-
-- `wework/wecode/features/vnc/` owns the VNC API, session orchestration, settings action, workspace desktop entry, open flow, page, noVNC assets, and unit tests.
-- `wework/wecode/extensions/cloud-desktop.tsx` binds the VNC feature's settings `DeviceAction` and workspace `WorkspaceAction` to the generic `cloudDesktopExtension` contract.
-- `wework/wecode/extensions/desktop-control.ts` owns Wecode desktop-automation actions for closing, evaluating, and relabeling embedded browsers. Public automation delegates unhandled commands only through `wework/src/extensions/desktop-control-contract.ts`.
-- `wework/wecode/vitePlugins.mjs` owns the Wecode build-plugin collection and loads the VNC asset plugin internally. Public `vite.config.ts` only loads the optional Wecode plugin collection and does not recognize VNC files or asset names.
-- `wework/wecode/e2e/desktop/` owns the simulated RFB server, VNC HTTP/WebSocket fixture, feature state, and cloud-desktop verification flow. The Wecode wrapper injects an optional scenario into public Desktop E2E through `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`; the public runner does not import Wecode directly.
-- `wework/wecode/i18n/` owns VNC-specific English and Chinese copy and registers it in internal builds through the generic i18n extension-resource contract.
-- `wework/src-tauri/src/wecode/vnc_session.rs` owns VNC credential handoff, TTL, security validation, the loopback viewer bridge, and native unit tests.
-
-Public `wework/src/` keeps only protocol-neutral cloud-desktop UI slots and the internal-page classifier, the unavailable fallback, host calls, and the desktop-control and i18n extension contracts and delegation entries. It does not own cloud-desktop connection types, launch orchestration, dedicated copy, or concrete embedded-browser evaluation actions. Public component tests verify extension wiring only; concrete VNC integration assertions belong to Wecode feature tests or Desktop E2E.
-
-`wework/src-tauri/src/wecode/` owns `VncSessionState` initialization, loopback bridge startup, and the dedicated command-registration list. Public `lib.rs` composes the native build only through generic Wecode setup and invoke-handler entries and does not identify concrete VNC commands. Backend VNC configuration APIs, the WebSocket proxy, and this documentation remain outside Wework's Wecode directory. Apart from those composition entries, public Vite configuration, React components, E2E control code, and tests must not add VNC, noVNC, or dedicated IPC implementations.
-
-Changes to these flows must preserve IPC command names, the two-minute handoff TTL, authentication, the RFB handshake, existing `data-testid` values, error recovery, and project-workspace embedded-browser behavior. Verification must cover ownership-boundary tests, VNC feature tests, public host tests, TypeScript, ESLint, the Vite build, Rust tests, and real Desktop E2E. The settings E2E must additionally prove that the system browser completes the RFB handshake without creating a Wework browser tab.
-
 ## Annotation Flow
 
 The browser address bar includes an annotation icon. The implementation has three layers:

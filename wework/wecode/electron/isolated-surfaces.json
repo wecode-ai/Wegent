@@ -1,0 +1,9 @@
+[
+  {
+    "path": "/device-desktop",
+    "partitionPrefix": "wework-vnc-surface-route:",
+    "identityParameter": "deviceId",
+    "modeParameter": "vncSurface",
+    "modeValue": "isolated"
+  }
+]

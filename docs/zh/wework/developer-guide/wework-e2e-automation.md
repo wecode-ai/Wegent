@@ -26,12 +26,6 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
-仅运行 Wecode 云设备桌面场景：
-
-```bash
-pnpm --filter wework e2e:desktop:wecode
-```
-
 仅运行云端项目桌面 E2E：
 
 ```bash

@@ -44,7 +44,6 @@ import {
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
-import type { VncSessionManager } from './vnc-session-manager.js'
 import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
 import type { SchemeQueue } from './scheme-queue.js'
 import {
@@ -107,7 +106,6 @@ export interface ElectronDesktopServices {
   feedback: FeedbackBundleManager
   quitApplication: () => void
   openRuntimeTask: (taskAddressId: string) => void
-  vnc?: VncSessionManager
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
@@ -1052,19 +1050,6 @@ export function registerDesktopServiceCapabilities(
   router.register('feedback.submitBundle', params =>
     services.feedback.submit(feedbackSubmitRequestParam(params))
   )
-  router.register('vnc.externalBridgeUrl', () => requiredVnc(services.vnc).externalBridgeUrl())
-  router.register('vnc.prepareSession', params =>
-    requiredVnc(services.vnc).prepareSession({
-      sessionId: stringParam(params, 'sessionId'),
-      wsUrl: stringParam(params, 'wsUrl'),
-      token: stringParam(params, 'token'),
-    })
-  )
-}
-
-function requiredVnc(vnc: VncSessionManager | undefined): VncSessionManager {
-  if (!vnc) throw new HostCapabilityError('unavailable', 'VNC session service is unavailable')
-  return vnc
 }
 
 export function registerBrowserAnnotationCapabilities(

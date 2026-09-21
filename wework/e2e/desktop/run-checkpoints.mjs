@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
+import { DESKTOP_CHECKPOINTS, VNC_DESKTOP_CHECKPOINT } from './checkpoints.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
@@ -15,6 +15,9 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
+  ...(VNC_DESKTOP_CHECKPOINT
+    ? { [VNC_DESKTOP_CHECKPOINT.name]: VNC_DESKTOP_CHECKPOINT.scenarioModule }
+    : {}),
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
@@ -69,6 +72,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  ...(VNC_DESKTOP_CHECKPOINT ? [VNC_DESKTOP_CHECKPOINT.name] : []),
   'plugin-account-auth',
   'codex-account-login',
   'cloud-space-mention',

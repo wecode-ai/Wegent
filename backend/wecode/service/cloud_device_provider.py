@@ -681,6 +681,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             or settings.EXECUTOR_LATEST_VERSION
         )
         update_available = self._is_update_available(executor_version, latest_version)
+        runtime_features = self._project_runtime_features(spec, online_info)
 
         return {
             "id": device_kind.id,
@@ -702,6 +703,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             "update_available": update_available,
             "bind_shell": spec.get("bindShell", "claudecode"),
             "cloud_config": spec.get("cloudConfig"),
+            "runtime_features": runtime_features,
         }
 
     async def _get_online_info(
@@ -780,6 +782,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             update_available = self._is_update_available(
                 executor_version, latest_version
             )
+            runtime_features = self._project_runtime_features(spec, online_info)
 
             result.append(
                 {
@@ -806,10 +809,42 @@ class CloudDeviceProvider(BaseDeviceProvider):
                     "update_available": update_available,
                     "bind_shell": spec.get("bindShell", "claudecode"),
                     "cloud_config": spec.get("cloudConfig"),
+                    "runtime_features": runtime_features,
                 }
             )
 
         return result
+
+    def _project_runtime_features(
+        self,
+        spec: Dict[str, Any],
+        online_info: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Project cached cloud capabilities without an N+1 Nevis status query."""
+        raw_features = online_info.get("runtime_features") if online_info else None
+        features = dict(raw_features) if isinstance(raw_features, dict) else {}
+        try:
+            schema_version = int(features.get("schemaVersion") or 0)
+        except (TypeError, ValueError):
+            schema_version = 0
+        features["schemaVersion"] = max(schema_version, 4)
+        cloud_config = spec.get("cloudConfig")
+        sandbox_id = (
+            str(cloud_config.get("sandboxId") or "").strip()
+            if isinstance(cloud_config, dict)
+            else ""
+        )
+        if online_info is not None and self.is_configured() and sandbox_id:
+            features["desktop"] = {
+                "version": 1,
+                "available": True,
+                "protocol": "rfb",
+                "transport": "websocket",
+                "clipboard": "text",
+            }
+        else:
+            features.pop("desktop", None)
+        return features
 
     async def refresh_heartbeat(
         self,

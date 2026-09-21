@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { constants as zlibConstants, deflateSync, inflateSync } from 'node:zlib'
 
 const CLOUD_DEVICE_NAME = 'Wework Desktop E2E Cloud Device'
 const CLOUD_DEVICE_SANDBOX_ID = 'wework-desktop-e2e-sandbox'
 const CLOUD_DEVICE_TOKEN = 'wework-desktop-e2e-cloud-token'
 const DEFAULT_CLOUD_DEVICE_ID = 'wework-desktop-e2e-cloud-device'
+const EXTENDED_CLIPBOARD_FORMAT_TEXT = 1
+const EXTENDED_CLIPBOARD_ACTION_CAPS = 1 << 24
+const EXTENDED_CLIPBOARD_ACTION_REQUEST = 1 << 25
+const EXTENDED_CLIPBOARD_ACTION_NOTIFY = 1 << 27
+const EXTENDED_CLIPBOARD_ACTION_PROVIDE = 1 << 28
+const VNC_CLIPBOARD_TEXT = 'Wework 剪贴板 😀\nsecond line'
 
 function json(response, statusCode, value) {
   response.writeHead(statusCode, {
@@ -12,6 +19,12 @@ function json(response, statusCode, value) {
     'Content-Type': 'application/json; charset=utf-8',
   })
   response.end(`${JSON.stringify(value)}\n`)
+}
+
+async function readJsonRequest(request) {
+  const chunks = []
+  for await (const chunk of request) chunks.push(Buffer.from(chunk))
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 function websocketBinaryFrame(payload) {
@@ -39,12 +52,10 @@ function consumeWebSocketFrames(buffer) {
       payloadLength = Number(extendedLength)
       headerLength = 10
     }
-
     const masked = Boolean(second & 0x80)
     const maskLength = masked ? 4 : 0
     const frameLength = headerLength + maskLength + payloadLength
     if (buffer.length - offset < frameLength) break
-
     const maskOffset = offset + headerLength
     const payloadOffset = maskOffset + maskLength
     const payload = Buffer.from(buffer.subarray(payloadOffset, payloadOffset + payloadLength))
@@ -79,14 +90,68 @@ function rfbServerInit() {
   return Buffer.concat([header, name])
 }
 
-async function waitForSnapshot(control, predicate, message, timeoutMs) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    if (predicate(snapshot)) return snapshot
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+function rfbRawFramebufferUpdate() {
+  const update = Buffer.alloc(4 + 12 + 4 * 4 * 4)
+  update.writeUInt16BE(1, 2)
+  update.writeUInt16BE(4, 8)
+  update.writeUInt16BE(4, 10)
+  update.writeInt32BE(0, 12)
+  for (let offset = 16; offset < update.length; offset += 4) {
+    update[offset] = 0x35
+    update[offset + 1] = 0x7d
+    update[offset + 2] = 0xc8
+    update[offset + 3] = 0
   }
-  throw new Error(message)
+  return update
+}
+
+function rfbServerCutText(data, extended = false) {
+  const header = Buffer.alloc(8)
+  header[0] = 3
+  header.writeInt32BE(extended ? -data.length : data.length, 4)
+  return Buffer.concat([header, data])
+}
+
+function extendedClipboardFlags(action) {
+  const flags = Buffer.alloc(4)
+  flags.writeUInt32BE((action | EXTENDED_CLIPBOARD_FORMAT_TEXT) >>> 0)
+  return flags
+}
+
+function rfbExtendedClipboardCaps() {
+  const data = Buffer.alloc(8)
+  data.writeUInt32BE(
+    (EXTENDED_CLIPBOARD_ACTION_CAPS |
+      EXTENDED_CLIPBOARD_ACTION_REQUEST |
+      EXTENDED_CLIPBOARD_ACTION_NOTIFY |
+      EXTENDED_CLIPBOARD_ACTION_PROVIDE |
+      EXTENDED_CLIPBOARD_FORMAT_TEXT) >>>
+      0
+  )
+  return rfbServerCutText(data, true)
+}
+
+function rfbExtendedClipboardProvide(text) {
+  const textBytes = Buffer.from(`${text.replace(/\r\n|\r|\n/g, '\r\n')}\0`, 'utf8')
+  const input = Buffer.alloc(4 + textBytes.length)
+  input.writeUInt32BE(textBytes.length)
+  textBytes.copy(input, 4)
+  const data = Buffer.concat([
+    extendedClipboardFlags(EXTENDED_CLIPBOARD_ACTION_PROVIDE),
+    deflateSync(input),
+  ])
+  return rfbServerCutText(data, true)
+}
+
+function readExtendedClipboardText(data) {
+  const inflated = inflateSync(data.subarray(4), { finishFlush: zlibConstants.Z_SYNC_FLUSH })
+  const textLength = inflated.readUInt32BE(0)
+  const textBytes = inflated.subarray(4, 4 + textLength)
+  const trailingNull = textBytes[textBytes.length - 1] === 0 ? 1 : 0
+  return textBytes
+    .subarray(0, textBytes.length - trailingNull)
+    .toString('utf8')
+    .replaceAll('\r\n', '\n')
 }
 
 class VncDesktopScenario {
@@ -99,10 +164,21 @@ class VncDesktopScenario {
       deviceId,
       deviceName: CLOUD_DEVICE_NAME,
     }
-    this.vncConfigRequests = 0
+    this.vncSessionRequests = 0
+    this.vncSessionRevocations = 0
     this.vncProtocolError = null
     this.vncRfbConnections = 0
-    this.vncStatusRequests = 0
+    this.vncClientClipboardText = null
+    this.vncH264Advertised = false
+    this.vncCopyShortcutReceived = false
+    this.vncPasteShortcutReceived = false
+    this.vncKeyEvents = []
+    this.vncClientClipboardAnnounced = false
+    this.vncClipboardClientActions = []
+    this.vncClipboardCapabilitiesReady = false
+    this.vncDeviceClipboardText = VNC_CLIPBOARD_TEXT
+    this.vncDeviceClipboardCommands = []
+    this.consumedTickets = new Set()
     this.vncSockets = new Set()
     this.server = null
     this.upgradeHandler = null
@@ -110,16 +186,12 @@ class VncDesktopScenario {
 
   attachServer(server) {
     this.server = server
-    this.upgradeHandler = (request, socket, head) => {
-      this.handleUpgrade(request, socket, head)
-    }
+    this.upgradeHandler = (request, socket, head) => this.handleUpgrade(request, socket, head)
     server.on('upgrade', this.upgradeHandler)
   }
 
   close() {
-    if (this.server && this.upgradeHandler) {
-      this.server.off('upgrade', this.upgradeHandler)
-    }
+    if (this.server && this.upgradeHandler) this.server.off('upgrade', this.upgradeHandler)
     for (const socket of this.vncSockets) socket.destroy()
     this.vncSockets.clear()
     this.server = null
@@ -128,10 +200,18 @@ class VncDesktopScenario {
 
   diagnostics() {
     return {
-      vncConfigRequests: this.vncConfigRequests,
       vncProtocolError: this.vncProtocolError,
       vncRfbConnections: this.vncRfbConnections,
-      vncStatusRequests: this.vncStatusRequests,
+      vncSessionRequests: this.vncSessionRequests,
+      vncSessionRevocations: this.vncSessionRevocations,
+      vncClipboardCapabilitiesReady: this.vncClipboardCapabilitiesReady,
+      vncClientClipboardAnnounced: this.vncClientClipboardAnnounced,
+      vncClipboardClientActions: this.vncClipboardClientActions,
+      vncClientClipboardText: this.vncClientClipboardText,
+      vncDeviceClipboardCommands: this.vncDeviceClipboardCommands,
+      vncDeviceClipboardText: this.vncDeviceClipboardText,
+      vncCopyShortcutReceived: this.vncCopyShortcutReceived,
+      vncPasteShortcutReceived: this.vncPasteShortcutReceived,
     }
   }
 
@@ -150,6 +230,16 @@ class VncDesktopScenario {
             executor_version: '1.8.5',
             client_ip: '127.0.0.1',
             cloud_config: this.cloudDeviceConfig,
+            runtime_features: {
+              schemaVersion: 4,
+              desktop: {
+                version: 1,
+                available: true,
+                protocol: 'rfb',
+                transport: 'websocket',
+                clipboard: 'text',
+              },
+            },
           },
         ],
         total: 1,
@@ -157,50 +247,78 @@ class VncDesktopScenario {
       return true
     }
 
-    if (request.method === 'GET' && url.pathname === `/api/cloud-devices/${this.deviceId}/status`) {
+    const sessionPath = `/api/devices/${this.deviceId}/vnc`
+    const commandPath = `/api/devices/${this.deviceId}/commands`
+    if (request.method === 'POST' && url.pathname === commandPath) {
+      if (request.headers.authorization !== `Bearer ${CLOUD_DEVICE_TOKEN}`) {
+        json(response, 401, { error: 'Desktop E2E command authorization is missing' })
+        return true
+      }
+      const body = await readJsonRequest(request)
+      this.vncDeviceClipboardCommands.push(body.command_key)
+      if (body.command_key === 'vnc_clipboard_read') {
+        json(response, 200, {
+          success: true,
+          exit_code: 0,
+          stdout: Buffer.from(this.vncDeviceClipboardText, 'utf8').toString('base64'),
+          stderr: '',
+        })
+        return true
+      }
+      if (body.command_key === 'vnc_clipboard_write') {
+        this.vncDeviceClipboardText = Buffer.from(
+          body.env?.WEWORK_VNC_CLIPBOARD_BASE64 ?? '',
+          'base64'
+        ).toString('utf8')
+        json(response, 200, { success: true, exit_code: 0, stdout: '', stderr: '' })
+        return true
+      }
+      json(response, 400, { error: `Unexpected command: ${body.command_key}` })
+      return true
+    }
+    if (request.method === 'POST' && url.pathname === sessionPath) {
       if (request.headers.authorization !== `Bearer ${CLOUD_DEVICE_TOKEN}`) {
         json(response, 401, { error: 'Desktop E2E VNC authorization is missing' })
         return true
       }
-      this.vncStatusRequests += 1
+      this.vncSessionRequests += 1
+      const sequence = this.vncSessionRequests
+      const sessionId = `vnc-e2e-${sequence}`
+      const ticket = `single-use-${sequence}`
       json(response, 200, {
-        sandbox_id: CLOUD_DEVICE_SANDBOX_ID,
-        status: 'running',
-        vnc_url: null,
+        session_id: sessionId,
+        device_id: this.deviceId,
+        type: 'vnc',
+        path: '',
+        url: `ws://${request.headers.host}/vnc-proxy/sessions/${sessionId}?ticket=${ticket}`,
+        transport: 'websocket',
+        expires_at: '2099-01-01T00:00:00Z',
       })
       return true
     }
 
     if (
-      request.method !== 'GET' ||
-      url.pathname !== `/api/cloud-devices/${this.deviceId}/vnc-config`
+      request.method === 'DELETE' &&
+      /^\/api\/devices\/vnc-sessions\/vnc-e2e-\d+$/.test(url.pathname)
     ) {
-      return false
-    }
-
-    if (request.headers.authorization !== `Bearer ${CLOUD_DEVICE_TOKEN}`) {
-      json(response, 401, { error: 'Desktop E2E VNC authorization is missing' })
+      this.vncSessionRevocations += 1
+      response.writeHead(204, { 'Access-Control-Allow-Origin': '*' })
+      response.end()
       return true
     }
-    this.vncConfigRequests += 1
-    json(response, 200, {
-      wss_url: 'wss://unused.example.test/vnc',
-      signature: 'unused-signature',
-      sandbox_id: CLOUD_DEVICE_SANDBOX_ID,
-    })
-    return true
+    return false
   }
 
   handleUpgrade(request, socket, head) {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (
-      url.pathname !== `/vnc-proxy/${this.deviceId}` ||
-      url.searchParams.get('token') !== CLOUD_DEVICE_TOKEN
-    ) {
+    const match = url.pathname.match(/^\/vnc-proxy\/sessions\/(vnc-e2e-(\d+))$/)
+    const ticket = url.searchParams.get('ticket')
+    if (!match || ticket !== `single-use-${match[2]}` || this.consumedTickets.has(ticket)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }
+    this.consumedTickets.add(ticket)
 
     const key = request.headers['sec-websocket-key']
     if (typeof key !== 'string') {
@@ -226,6 +344,78 @@ class VncDesktopScenario {
 
     let buffered = Buffer.from(head)
     let stage = 0
+    const sendExtendedClipboard = (action, text) => {
+      if (action !== EXTENDED_CLIPBOARD_ACTION_PROVIDE) {
+        socket.write(websocketBinaryFrame(rfbServerCutText(extendedClipboardFlags(action), true)))
+        return
+      }
+      socket.write(websocketBinaryFrame(rfbExtendedClipboardProvide(text)))
+    }
+    const matchesKeyEventTail = expected => {
+      const tail = this.vncKeyEvents.slice(-expected.length)
+      return (
+        tail.length === expected.length &&
+        tail.every(
+          ([keysym, down], index) => keysym === expected[index][0] && down === expected[index][1]
+        )
+      )
+    }
+    const updateClipboardShortcuts = () => {
+      const expectedPaste = [
+        [0xffe3, 1],
+        [0x0076, 1],
+        [0x0076, 0],
+        [0xffe3, 0],
+      ]
+      const expectedCopy = [
+        [0xffe9, 0],
+        [0xffeb, 0],
+        [0xffe3, 1],
+        [0x0063, 1],
+        [0x0063, 0],
+        [0xffe3, 0],
+      ]
+      if (!this.vncPasteShortcutReceived && matchesKeyEventTail(expectedPaste)) {
+        this.vncPasteShortcutReceived = true
+      }
+      if (!this.vncCopyShortcutReceived && matchesKeyEventTail(expectedCopy)) {
+        this.vncCopyShortcutReceived = true
+        sendExtendedClipboard(EXTENDED_CLIPBOARD_ACTION_NOTIFY)
+      }
+    }
+    const handleConnectedMessage = payload => {
+      if (payload[0] === 2) {
+        const count = payload.readUInt16BE(2)
+        for (let index = 0; index < count; index += 1) {
+          if (payload.readInt32BE(4 + index * 4) === 50) this.vncH264Advertised = true
+        }
+        return
+      }
+      if (payload[0] === 4 && payload.length === 8) {
+        this.vncKeyEvents.push([payload.readUInt32BE(4), payload[1]])
+        updateClipboardShortcuts()
+        return
+      }
+      if (payload[0] !== 6 || payload.length < 12) return
+
+      const length = payload.readInt32BE(4)
+      if (length >= 0 || payload.length !== 8 + Math.abs(length)) return
+      const data = payload.subarray(8)
+      const flags = data.readUInt32BE(0)
+      const action = flags & 0xff000000
+      this.vncClipboardClientActions.push(action)
+      if ((action & EXTENDED_CLIPBOARD_ACTION_CAPS) !== 0) {
+        this.vncClipboardCapabilitiesReady = true
+      } else if (action === EXTENDED_CLIPBOARD_ACTION_REQUEST) {
+        sendExtendedClipboard(EXTENDED_CLIPBOARD_ACTION_PROVIDE, VNC_CLIPBOARD_TEXT)
+      } else if (action === EXTENDED_CLIPBOARD_ACTION_NOTIFY) {
+        this.vncClientClipboardAnnounced = true
+      } else if (action === EXTENDED_CLIPBOARD_ACTION_PROVIDE) {
+        if (this.vncClientClipboardAnnounced) {
+          this.vncClientClipboardText = readExtendedClipboardText(data)
+        }
+      }
+    }
     const handleData = chunk => {
       try {
         buffered = Buffer.concat([buffered, chunk])
@@ -236,7 +426,7 @@ class VncDesktopScenario {
             socket.end()
             return
           }
-          if (frame.opcode !== 1 && frame.opcode !== 2) continue
+          if (frame.opcode !== 2) continue
           if (stage === 0) {
             assert.match(frame.payload.toString('ascii'), /^RFB 003\.00[378]\n$/)
             socket.write(websocketBinaryFrame(Buffer.from([1, 1])))
@@ -247,9 +437,17 @@ class VncDesktopScenario {
             stage = 2
           } else if (stage === 2) {
             assert.equal(frame.payload.length, 1, 'noVNC sent an invalid ClientInit message')
-            socket.write(websocketBinaryFrame(rfbServerInit()))
+            socket.write(
+              Buffer.concat([
+                websocketBinaryFrame(rfbServerInit()),
+                websocketBinaryFrame(rfbRawFramebufferUpdate()),
+                websocketBinaryFrame(rfbExtendedClipboardCaps()),
+              ])
+            )
             this.vncRfbConnections += 1
             stage = 3
+          } else {
+            handleConnectedMessage(frame.payload)
           }
         }
       } catch (error) {
@@ -262,38 +460,6 @@ class VncDesktopScenario {
     if (buffered.length > 0) handleData(Buffer.alloc(0))
   }
 
-  async waitForSystemBrowserDesktopConnection() {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < this.uiTimeoutMs) {
-      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
-      if (this.vncRfbConnections === 1) return
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    throw new Error('The system browser did not connect to the cloud desktop viewer')
-  }
-
-  async waitForEmbeddedBrowserDesktopConnection(control) {
-    await control.command('waitFor', '[data-testid="right-workspace-browser-tab"]', {
-      timeoutMs: this.uiTimeoutMs,
-    })
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < this.uiTimeoutMs) {
-      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
-      if (this.vncRfbConnections >= 2) {
-        const pageState = JSON.parse(
-          await control.command('evalEmbeddedBrowserJson', 'workspace-browser', {
-            timeoutMs: this.uiTimeoutMs,
-            value:
-              '({ connected: document.documentElement.dataset.vncConnected === "true", hasTauriInternals: Boolean(window.__TAURI_INTERNALS__), url: window.location.href })',
-          })
-        )
-        if (pageState.connected) return pageState
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    throw new Error('The embedded browser did not connect to the cloud desktop viewer')
-  }
-
   async verify(control) {
     await control.command('click', '[data-testid="settings-button"]')
     await control.command('click', '[data-testid="settings-menu-button"]')
@@ -301,84 +467,83 @@ class VncDesktopScenario {
       timeoutMs: this.uiTimeoutMs,
     })
     await control.command('click', '[data-testid="settings-nav-connections"]')
-    await control.command('waitFor', `[data-testid="connection-vnc-button-${this.deviceId}"]`, {
-      enabled: true,
+    const desktopButton = `[data-testid="connection-vnc-desktop-button-${this.deviceId}"]`
+    await control.command('waitFor', desktopButton, { enabled: true, timeoutMs: this.uiTimeoutMs })
+    await control.command('nativePress', desktopButton, { key: 'Tab' })
+    const parentControlClientId = control.activeControlClientId
+    await control.command('click', desktopButton)
+    const surfaceStartedAt = Date.now()
+    while (
+      control.activeControlClientId === parentControlClientId &&
+      Date.now() - surfaceStartedAt < this.uiTimeoutMs
+    ) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    assert.notEqual(
+      control.activeControlClientId,
+      parentControlClientId,
+      'The isolated VNC Chromium renderer did not register its control client'
+    )
+    await control.command('waitFor', '[data-testid="vnc-viewer-status"]', {
       timeoutMs: this.uiTimeoutMs,
     })
-    await control.command('click', `[data-testid="connection-vnc-button-${this.deviceId}"]`)
-    await this.waitForSystemBrowserDesktopConnection()
-    const browserSnapshot = await waitForSnapshot(
-      control,
-      snapshot => snapshot.testIds.includes('wework-settings-page'),
-      'Opening the cloud desktop in the system browser unexpectedly left settings',
-      this.uiTimeoutMs
-    )
-    assert.equal(
-      browserSnapshot.testIds.includes('wework-settings-page'),
-      true,
-      'Opening the cloud desktop in the system browser should keep settings open'
-    )
-    assert.equal(
-      browserSnapshot.testIds.includes('right-workspace-browser-tab'),
-      false,
-      'Opening the cloud desktop unexpectedly created a Wework browser tab'
-    )
-    assert.equal(
-      this.vncStatusRequests,
-      0,
-      'Opening the cloud desktop unexpectedly requested an optional status VNC URL'
-    )
-    assert.equal(
-      this.vncConfigRequests,
-      1,
-      'Opening the cloud desktop did not prepare exactly one VNC configuration'
-    )
+    const startedAt = Date.now()
+    while (this.vncRfbConnections !== 1 && Date.now() - startedAt < this.uiTimeoutMs) {
+      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
     assert.equal(this.vncProtocolError, null, 'The noVNC RFB handshake failed')
-    assert.equal(
-      this.vncRfbConnections,
-      1,
-      'The system browser did not complete the noVNC RFB handshake'
-    )
-
-    await control.command('click', '[data-testid="settings-back-button"]')
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('wework-settings-page'),
-      'The explicit settings back action did not return to the workspace',
-      this.uiTimeoutMs
-    )
-
-    await control.command('openEmbeddedCloudDesktop', '', {
-      value: JSON.stringify({
-        apiBaseUrl: `${control.url}/api`,
-        deviceId: this.deviceId,
-        socketBaseUrl: control.url,
-        token: CLOUD_DEVICE_TOKEN,
-      }),
+    assert.equal(this.vncRfbConnections, 1, 'Chromium did not complete the noVNC RFB handshake')
+    assert.equal(this.vncSessionRequests, 1, 'The viewer did not request one Backend VNC session')
+    await control.command('waitFor', '[data-testid="vnc-viewer"][data-vnc-first-frame="true"]', {
+      timeoutMs: this.uiTimeoutMs,
     })
-    const embeddedPageState = await this.waitForEmbeddedBrowserDesktopConnection(control)
-    assert.match(
-      embeddedPageState.url,
-      /^http:\/\/127\.0\.0\.1:\d+\/vnc\.html\?/,
-      'The embedded browser did not host the loopback VNC viewer'
-    )
+    const capabilityStartedAt = Date.now()
+    while (!this.vncClipboardCapabilitiesReady && Date.now() - capabilityStartedAt < 10_000) {
+      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
     assert.equal(
-      embeddedPageState.hasTauriInternals,
+      this.vncClipboardCapabilitiesReady,
       true,
-      'The VNC regression requires a Tauri-created remote child WebView'
+      'noVNC did not acknowledge extended clipboard capabilities'
+    )
+    await control.command('focusMainWindow', 'body')
+    await control.command('press', '[data-testid="vnc-viewer"]', { key: 'Meta+C' })
+    await control.command('waitFor', '[data-testid="vnc-viewer-clipboard-notice"]', {
+      timeoutMs: this.uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="vnc-viewer-paste-button"]')
+    const clipboardStartedAt = Date.now()
+    while (
+      (!this.vncPasteShortcutReceived ||
+        !this.vncDeviceClipboardCommands.includes('vnc_clipboard_write')) &&
+      Date.now() - clipboardStartedAt < this.uiTimeoutMs
+    ) {
+      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    assert.equal(this.vncH264Advertised, true, 'noVNC did not advertise H.264 in Electron')
+    assert.equal(
+      this.vncCopyShortcutReceived,
+      true,
+      'The macOS copy shortcut did not send remote Control+C'
     )
     assert.equal(
-      this.vncConfigRequests,
-      2,
-      'The two desktop targets did not each request one VNC configuration'
+      this.vncDeviceClipboardText,
+      VNC_CLIPBOARD_TEXT,
+      'The Executor UTF-8 clipboard round trip changed the text'
     )
-    assert.equal(this.vncProtocolError, null, 'The embedded noVNC RFB handshake failed')
+    assert.deepEqual(
+      this.vncDeviceClipboardCommands,
+      ['vnc_clipboard_read', 'vnc_clipboard_write'],
+      'The viewer did not read and write through the device clipboard bridge'
+    )
     assert.equal(
-      this.vncRfbConnections,
-      2,
-      'The embedded browser did not complete the noVNC RFB handshake'
+      this.vncPasteShortcutReceived,
+      true,
+      'The clipboard action did not send remote Control+V'
     )
-    await control.command('closeEmbeddedBrowser', 'workspace-browser')
   }
 }
 

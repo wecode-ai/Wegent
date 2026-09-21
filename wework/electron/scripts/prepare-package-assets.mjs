@@ -87,9 +87,6 @@ await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled
 await cp(join(sharedResourcesRoot, 'bundled-hooks'), join(resourcesRoot, 'bundled-hooks'), {
   recursive: true,
 })
-await cp(join(weworkRoot, 'wecode', 'features', 'vnc', 'assets'), join(resourcesRoot, 'vnc'), {
-  recursive: true,
-})
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {

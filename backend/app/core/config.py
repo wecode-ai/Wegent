@@ -116,7 +116,6 @@ class Settings(BaseSettings):
     MCP_ENABLE_DNS_REBINDING_PROTECTION: bool = False
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
-
     WEB_CONTENT_MAX_IMAGES_PER_CONTEXT: int = 20
     WEB_CONTENT_ALLOWED_MEDIA_HOSTS: list[str] = []
 

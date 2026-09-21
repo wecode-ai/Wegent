@@ -751,12 +751,15 @@ describe('DocumentUpload dingtalk source', () => {
     fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
     expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
 
+    expect(mockGetDocs).toHaveBeenCalledTimes(1)
     mockGetDocs.mockRejectedValueOnce(new Error('directory unavailable'))
-    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+    })
 
-    expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent(
-      'Failed to refresh'
-    )
+    expect(mockSyncDocs).toHaveBeenCalledTimes(1)
+    expect(mockGetDocs).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('dingtalk-import-error')).toHaveTextContent('Failed to refresh')
     expect(screen.getByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
   })

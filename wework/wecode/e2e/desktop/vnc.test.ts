@@ -7,38 +7,24 @@ const scenarioEntryPath = resolve(import.meta.dirname, 'index.mjs')
 
 interface Scenario {
   authToken: string
-  cloudDeviceConfig: {
-    deviceId: string
-    deviceName: string
-    sandboxId: string
-  }
-  diagnostics: () => {
-    vncStatusRequests: number
-    vncConfigRequests: number
-    vncProtocolError: string | null
-    vncRfbConnections: number
-  }
+  cloudDeviceConfig: Record<string, string>
+  diagnostics: () => Record<string, number | string | null>
   handleHttp: (request: unknown, response: unknown, url: URL) => Promise<boolean>
 }
 
 async function createScenario(): Promise<Scenario | null> {
   expect(existsSync(scenarioEntryPath)).toBe(true)
   if (!existsSync(scenarioEntryPath)) return null
-
   const moduleUrl = pathToFileURL(scenarioEntryPath).href
   const { createDesktopScenario } = (await import(/* @vite-ignore */ moduleUrl)) as {
     createDesktopScenario: (options: { uiTimeoutMs: number }) => Scenario
   }
-  return createDesktopScenario({
-    uiTimeoutMs: 120_000,
-  })
+  return createDesktopScenario({ uiTimeoutMs: 120_000 })
 }
 
 function response() {
   let body = ''
   let statusCode = 0
-  const headers: Record<string, string> = {}
-
   return {
     end(value = '') {
       body += String(value)
@@ -46,49 +32,17 @@ function response() {
     get body() {
       return body
     },
-    get headers() {
-      return headers
-    },
     get statusCode() {
       return statusCode
     },
-    writeHead(value: number, nextHeaders: Record<string, string>) {
+    writeHead(value: number) {
       statusCode = value
-      Object.assign(headers, nextHeaders)
     },
   }
 }
 
 describe('Wecode Desktop VNC scenario', () => {
-  test('provides the unchanged cloud-device identity and desktop token', async () => {
-    const scenario = await createScenario()
-    if (!scenario) return
-
-    expect(scenario.authToken).toBe('wework-desktop-e2e-cloud-token')
-    expect(scenario.cloudDeviceConfig).toEqual({
-      sandboxId: 'wework-desktop-e2e-sandbox',
-      deviceId: 'wework-desktop-e2e-cloud-device',
-      deviceName: 'Wework Desktop E2E Cloud Device',
-    })
-  })
-
-  test('rejects a configuration request without the desktop bearer token', async () => {
-    const scenario = await createScenario()
-    if (!scenario) return
-    const result = response()
-
-    const handled = await scenario.handleHttp(
-      { headers: {}, method: 'GET' },
-      result,
-      new URL('http://127.0.0.1/api/cloud-devices/wework-desktop-e2e-cloud-device/vnc-config')
-    )
-
-    expect(handled).toBe(true)
-    expect(result.statusCode).toBe(401)
-    expect(JSON.parse(result.body)).toEqual({ error: 'Desktop E2E VNC authorization is missing' })
-  })
-
-  test('owns the cloud device fixture used by the desktop flow', async () => {
+  test('owns the cloud device fixture and advertises the generic desktop capability', async () => {
     const scenario = await createScenario()
     if (!scenario) return
     const result = response()
@@ -101,75 +55,63 @@ describe('Wecode Desktop VNC scenario', () => {
 
     expect(handled).toBe(true)
     expect(result.statusCode).toBe(200)
-    expect(JSON.parse(result.body)).toEqual({
-      items: [
-        {
-          id: 9002,
-          device_id: 'wework-desktop-e2e-cloud-device',
-          name: 'Wework Desktop E2E Cloud Device',
-          status: 'online',
-          is_default: false,
-          device_type: 'cloud',
-          bind_shell: 'claudecode',
-          executor_version: '1.8.5',
-          client_ip: '127.0.0.1',
-          cloud_config: {
-            sandboxId: 'wework-desktop-e2e-sandbox',
-            deviceId: 'wework-desktop-e2e-cloud-device',
-            deviceName: 'Wework Desktop E2E Cloud Device',
-          },
+    const body = JSON.parse(result.body)
+    expect(body.items[0]).toMatchObject({
+      device_id: 'wework-desktop-e2e-cloud-device',
+      device_type: 'cloud',
+      runtime_features: {
+        desktop: {
+          available: true,
+          clipboard: 'text',
+          protocol: 'rfb',
+          transport: 'websocket',
         },
-      ],
-      total: 1,
+      },
     })
   })
 
-  test('returns the unchanged VNC configuration to an authorized request', async () => {
+  test('rejects a session request without the HTTP bearer token', async () => {
     const scenario = await createScenario()
     if (!scenario) return
     const result = response()
 
     const handled = await scenario.handleHttp(
-      {
-        headers: { authorization: 'Bearer wework-desktop-e2e-cloud-token' },
-        method: 'GET',
-      },
+      { headers: { host: '127.0.0.1:43123' }, method: 'POST' },
       result,
-      new URL('http://127.0.0.1/api/cloud-devices/wework-desktop-e2e-cloud-device/vnc-config')
+      new URL('http://127.0.0.1/api/devices/wework-desktop-e2e-cloud-device/vnc')
     )
 
     expect(handled).toBe(true)
-    expect(result.statusCode).toBe(200)
-    expect(JSON.parse(result.body)).toEqual({
-      wss_url: 'wss://unused.example.test/vnc',
-      signature: 'unused-signature',
-      sandbox_id: 'wework-desktop-e2e-sandbox',
-    })
-    expect(scenario.diagnostics().vncConfigRequests).toBe(1)
+    expect(result.statusCode).toBe(401)
+    expect(JSON.parse(result.body)).toEqual({ error: 'Desktop E2E VNC authorization is missing' })
   })
 
-  test('mirrors the real cloud status response without a browser-facing VNC URL', async () => {
+  test('returns only a short-lived Backend session URL to an authorized request', async () => {
     const scenario = await createScenario()
     if (!scenario) return
     const result = response()
 
-    const handled = await scenario.handleHttp(
+    await scenario.handleHttp(
       {
-        headers: { authorization: 'Bearer wework-desktop-e2e-cloud-token' },
-        method: 'GET',
+        headers: {
+          authorization: 'Bearer wework-desktop-e2e-cloud-token',
+          host: '127.0.0.1:43123',
+        },
+        method: 'POST',
       },
       result,
-      new URL('http://127.0.0.1/api/cloud-devices/wework-desktop-e2e-cloud-device/status')
+      new URL('http://127.0.0.1/api/devices/wework-desktop-e2e-cloud-device/vnc')
     )
 
-    expect(handled).toBe(true)
-    expect(result.statusCode).toBe(200)
-    expect(JSON.parse(result.body)).toEqual({
-      sandbox_id: 'wework-desktop-e2e-sandbox',
-      status: 'running',
-      vnc_url: null,
+    const body = JSON.parse(result.body)
+    expect(body).toMatchObject({
+      session_id: 'vnc-e2e-1',
+      transport: 'websocket',
+      type: 'vnc',
     })
-    expect(scenario.diagnostics().vncStatusRequests).toBe(1)
+    expect(body.url).toBe('ws://127.0.0.1:43123/vnc-proxy/sessions/vnc-e2e-1?ticket=single-use-1')
+    expect(JSON.stringify(body)).not.toContain('wework-desktop-e2e-cloud-token')
+    expect(JSON.stringify(body)).not.toContain('signature')
   })
 
   test('exposes deterministic protocol diagnostics', async () => {
@@ -177,10 +119,10 @@ describe('Wecode Desktop VNC scenario', () => {
     if (!scenario) return
 
     expect(scenario.diagnostics()).toEqual({
-      vncStatusRequests: 0,
-      vncConfigRequests: 0,
       vncProtocolError: null,
       vncRfbConnections: 0,
+      vncSessionRequests: 0,
+      vncSessionRevocations: 0,
     })
   })
 })

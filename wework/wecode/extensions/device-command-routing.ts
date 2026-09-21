@@ -1,9 +1,5 @@
-/**
- * Wecode device command routing policy.
- *
- * Return `true` for a command key that the cloud backend must execute over
- * HTTP instead of the local Electron bridge. The Wecode distribution owns this
- * policy but currently has no cloud-only device command, so every command keeps
- * going through the bridge.
- */
-export const shouldUseCloudDeviceCommand: (commandKey: string) => boolean = () => false
+const CLOUD_DEVICE_COMMANDS = new Set(['vnc_clipboard_read', 'vnc_clipboard_write'])
+
+export function shouldUseCloudDeviceCommand(commandKey: string): boolean {
+  return CLOUD_DEVICE_COMMANDS.has(commandKey)
+}

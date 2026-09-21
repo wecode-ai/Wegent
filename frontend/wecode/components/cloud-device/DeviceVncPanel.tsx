@@ -4,10 +4,19 @@
 
 import { useEffect, useState } from 'react'
 
-import { X, Maximize2, Minimize2, ExternalLink } from 'lucide-react'
+import {
+  AlertCircle,
+  ExternalLink,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+  X,
+} from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { cloudDeviceApis, validatedVncSessionUrl } from '@wecode/apis'
 
 import { CloudDeviceFilesViewer } from './CloudDeviceFilesViewer'
 import { VncViewer } from './VncViewer'
@@ -27,6 +36,11 @@ interface DeviceVncPanelProps {
   readonly containerClassName?: string
   readonly borderPosition?: 'left' | 'top'
 }
+
+type VncSessionState =
+  | { status: 'loading' }
+  | { status: 'ready'; websocketUrl: string }
+  | { status: 'error'; message: string }
 
 /**
  * VNC panel component for cloud devices
@@ -49,6 +63,8 @@ export function DeviceVncPanel({
   const { t } = useTranslation('devices')
   const [activeTab, setActiveTab] = useState<'desktop' | 'files'>('desktop')
   const [filesUrl, setFilesUrl] = useState<string | null>(null)
+  const [vncAttempt, setVncAttempt] = useState(0)
+  const [vncSession, setVncSession] = useState<VncSessionState>({ status: 'loading' })
   const showFilesTab = !hideFilesTab
   const credentialsText = t('vnc_files_credentials', {
     password: deviceId,
@@ -57,6 +73,45 @@ export function DeviceVncPanel({
   useEffect(() => {
     setFilesUrl(null)
   }, [deviceId])
+
+  useEffect(() => {
+    if (activeTab !== 'desktop') return
+    let active = true
+    let sessionId: string | null = null
+    setVncSession({ status: 'loading' })
+
+    void (async () => {
+      try {
+        const session = await cloudDeviceApis.startVncSession(deviceId, ownerUserId)
+        let websocketUrl: string
+        try {
+          websocketUrl = validatedVncSessionUrl(session)
+        } catch (error) {
+          await cloudDeviceApis.revokeVncSession(session.session_id).catch(() => undefined)
+          throw error
+        }
+        if (!active) {
+          await cloudDeviceApis.revokeVncSession(session.session_id).catch(() => undefined)
+          return
+        }
+        sessionId = session.session_id
+        setVncSession({ status: 'ready', websocketUrl })
+      } catch (error) {
+        if (!active) return
+        setVncSession({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'VNC session failed',
+        })
+      }
+    })()
+
+    return () => {
+      active = false
+      if (sessionId) {
+        void cloudDeviceApis.revokeVncSession(sessionId).catch(() => undefined)
+      }
+    }
+  }, [activeTab, deviceId, ownerUserId, vncAttempt])
 
   const handleFilesConfigChange = (
     config: { available: boolean; files_url?: string | null } | null
@@ -168,7 +223,36 @@ export function DeviceVncPanel({
 
       <div className="relative min-h-0 flex-1">
         {activeTab === 'desktop' ? (
-          <VncViewer deviceId={deviceId} ownerUserId={ownerUserId} />
+          vncSession.status === 'ready' ? (
+            <VncViewer
+              websocketUrl={vncSession.websocketUrl}
+              onReconnectRequired={() => setVncAttempt(current => current + 1)}
+            />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#1a1a1a]">
+              {vncSession.status === 'loading' ? (
+                <div className="text-center" data-testid="vnc-session-loading">
+                  <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm text-gray-400">{t('vnc_loading')}</p>
+                </div>
+              ) : (
+                <div className="text-center" data-testid="vnc-session-error">
+                  <AlertCircle className="mx-auto mb-3 h-8 w-8 text-red-400" />
+                  <p className="mb-1 text-sm text-red-400">{t('vnc_error')}</p>
+                  <p className="mb-3 max-w-[300px] text-xs text-gray-500">{vncSession.message}</p>
+                  <button
+                    type="button"
+                    onClick={() => setVncAttempt(current => current + 1)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/10"
+                    data-testid="vnc-session-retry"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {t('vnc_reconnect')}
+                  </button>
+                </div>
+              )}
+            </div>
+          )
         ) : (
           <CloudDeviceFilesViewer
             deviceId={deviceId}
