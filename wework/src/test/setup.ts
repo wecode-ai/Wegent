@@ -23,7 +23,9 @@ Object.defineProperty(globalThis, 'ResizeObserver', {
 
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
-let testAppPreferences: Record<string, unknown> = {}
+let testAppPreferences: Record<string, unknown> = {
+  localCodexSubscriptionEnabled: true,
+}
 
 const testApps = [
   {
@@ -497,7 +499,9 @@ beforeEach(() => {
   clearDshUiModuleCache()
   installDefaultDshUiTestRuntime()
   installDefaultDshUiTestModules()
-  testAppPreferences = {}
+  testAppPreferences = {
+    localCodexSubscriptionEnabled: true,
+  }
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',

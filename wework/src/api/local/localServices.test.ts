@@ -17,6 +17,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
 import { resolveEffectiveLocalCodexProxy } from '@/desktop/systemProxy'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
@@ -199,6 +200,8 @@ describe('createLocalAppServices', () => {
   })
 
   test('returns local bootstrap data without backend', async () => {
+    // Opt into the local Codex subscription so the codex model branch runs.
+    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
@@ -766,6 +769,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
+    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     saveLocalModelConfig({
       id: 'pending-model',
       displayName: 'Pending model',
@@ -1022,6 +1026,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('accepts an already loaded catalog model when an idle restart is unavailable', async () => {
+    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'loaded-model',
       displayName: 'Loaded model',
@@ -1062,6 +1067,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('retries an idle catalog restart after startup requests drain', async () => {
+    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'startup-pending-model',
       displayName: 'Startup pending model',
@@ -1110,6 +1116,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('hides official Codex models without auth while keeping provider models', async () => {
+    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'device.execute_command') {
         return {
@@ -1302,6 +1309,34 @@ describe('createLocalAppServices', () => {
       ])
     )
     expect(models.data.some(model => model.name === 'gpt-5.6-sol')).toBe(false)
+  })
+
+  test('omits codex models and skips the codex RPC when the subscription is off', async () => {
+    await updateAppPreferences({ localCodexSubscriptionEnabled: false })
+    const request = vi.fn().mockResolvedValue({})
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const models = await services.modelApi.listModels()
+
+    expect(request).not.toHaveBeenCalled()
+    expect(
+      models.data.some(
+        model =>
+          (model.config as Record<string, unknown> | undefined)?.weworkModelKind ===
+            'codex-official' ||
+          (model.config as Record<string, unknown> | undefined)?.weworkModelKind ===
+            'codex-provider'
+      )
+    ).toBe(false)
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {

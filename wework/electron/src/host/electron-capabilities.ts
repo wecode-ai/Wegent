@@ -110,6 +110,7 @@ export interface ElectronDesktopServices {
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   quitApplication: () => void
+  relaunchApplication: () => void
   openRuntimeTask: (taskAddressId: string) => void
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
@@ -302,6 +303,9 @@ export function createElectronCapabilityRouter(
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('app.quit', (_params, context) => {
     context.deferUntilResponseSent(desktopServices.quitApplication)
+  })
+  router.register('app.relaunch', (_params, context) => {
+    context.deferUntilResponseSent(desktopServices.relaunchApplication)
   })
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)

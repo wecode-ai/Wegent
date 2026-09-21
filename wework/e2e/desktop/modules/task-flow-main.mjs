@@ -1029,6 +1029,14 @@ async function main() {
   await mkdir(resultDir, { recursive: true })
   await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
+  // The local Codex subscription defaults to off for real users; E2E exercises
+  // the legacy behavior, so opt in before the app reads its preferences.
+  const electronUserDataDirectorySeed = join(resultDir, 'electron-user-data')
+  await mkdir(electronUserDataDirectorySeed, { recursive: true })
+  await writeFile(
+    join(electronUserDataDirectorySeed, 'app-preferences.json'),
+    `${JSON.stringify({ localCodexSubscriptionEnabled: true }, null, 2)}\n`
+  )
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')

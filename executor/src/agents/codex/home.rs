@@ -12,6 +12,15 @@ use super::strip_wework_browser_instructions;
 
 pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUBSCRIPTION_ENABLED";
+
+/// Returns whether the local Codex subscription is opted in via the desktop
+/// preference threaded through the executor environment.
+fn codex_subscription_enabled() -> bool {
+    env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
 
 /// Resolves the isolated Codex home owned by the Wework executor.
 pub(crate) fn wework_codex_home() -> PathBuf {
@@ -181,6 +190,44 @@ fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
 
 fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
     let target = codex_home.join("auth.json");
+    let native_source = user_codex_auth_path().filter(|path| path.is_file());
+
+    if !codex_subscription_enabled() {
+        // Subscription disabled: remove a previously-created auth link/copy that
+        // points at the native auth. Never touch a user-managed real file. The
+        // native source may be absent (e.g. deleted after linking), in which case
+        // a stale/dangling link is still cleaned up below.
+        if let Ok(metadata) = fs::symlink_metadata(&target) {
+            if metadata.file_type().is_symlink() {
+                // Remove any symlink at the target. It was either created by the
+                // enabled path (pointing at native auth) or is now dangling; both
+                // should be cleared so the managed home no longer carries auth.
+                fs::remove_file(&target).map_err(|error| {
+                    format!(
+                        "failed to remove disabled Codex auth link {}: {error}",
+                        target.display()
+                    )
+                })?;
+            } else if has_managed_auth_marker(codex_home) {
+                // Real file copied by the enabled path on Windows; remove only the
+                // copy wework created, leaving user-managed files untouched.
+                fs::remove_file(&target).map_err(|error| {
+                    format!(
+                        "failed to remove disabled Codex auth copy {}: {error}",
+                        target.display()
+                    )
+                })?;
+                remove_managed_auth_marker(codex_home)?;
+            }
+        }
+        return Ok(());
+    }
+
+    let Some(source) = native_source else {
+        // No native auth to link; leave any existing target untouched.
+        return Ok(());
+    };
+
     if let Ok(metadata) = fs::symlink_metadata(&target) {
         if metadata.file_type().is_symlink() && !target.exists() {
             fs::remove_file(&target).map_err(|error| {
@@ -190,12 +237,10 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
                 )
             })?;
         } else {
+            write_managed_auth_marker(codex_home)?;
             return Ok(());
         }
     }
-    let Some(source) = user_codex_auth_path().filter(|path| path.is_file()) else {
-        return Ok(());
-    };
 
     #[cfg(unix)]
     {
@@ -205,18 +250,19 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
                 target.display(),
                 source.display()
             )
-        })
+        })?;
     }
     #[cfg(not(unix))]
     {
-        fs::copy(&source, &target).map(|_| ()).map_err(|error| {
+        fs::copy(&source, &target).map_err(|error| {
             format!(
                 "failed to copy Codex auth {} -> {}: {error}",
                 source.display(),
                 target.display()
             )
-        })
+        })?;
     }
+    write_managed_auth_marker(codex_home)
 }
 
 fn user_codex_auth_path() -> Option<PathBuf> {
@@ -225,6 +271,38 @@ fn user_codex_auth_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .map(|home| home.join("auth.json"))
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
+}
+
+// Marker file written alongside a wework-managed Codex auth so the disable
+// path can distinguish its own copy (Windows) from a user-managed auth file.
+const MANAGED_AUTH_MARKER: &str = ".wework-managed-auth";
+
+fn managed_auth_marker_path(codex_home: &Path) -> PathBuf {
+    codex_home.join(MANAGED_AUTH_MARKER)
+}
+
+fn write_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
+    fs::write(managed_auth_marker_path(codex_home), []).map_err(|error| {
+        format!(
+            "failed to write Codex auth marker {}: {error}",
+            managed_auth_marker_path(codex_home).display()
+        )
+    })
+}
+
+fn has_managed_auth_marker(codex_home: &Path) -> bool {
+    managed_auth_marker_path(codex_home).exists()
+}
+
+fn remove_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
+    match fs::remove_file(managed_auth_marker_path(codex_home)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove Codex auth marker {}: {error}",
+            managed_auth_marker_path(codex_home).display()
+        )),
+    }
 }
 
 pub(crate) fn executor_home() -> PathBuf {

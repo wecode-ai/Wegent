@@ -1389,6 +1389,9 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  const codexSubscriptionPreferences = await preferences.read()
+  environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED =
+    codexSubscriptionPreferences.localCodexSubscriptionEnabled === true ? 'true' : 'false'
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
@@ -1506,6 +1509,10 @@ async function configureDesktopRuntime(): Promise<void> {
           events: desktopHostEvents,
           feedback,
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
+          relaunchApplication: () => {
+            app.relaunch()
+            requestApplicationShutdown(() => app.quit())
+          },
           openRuntimeTask: taskAddressId =>
             dispatchTrayAction({
               type: 'open-task',

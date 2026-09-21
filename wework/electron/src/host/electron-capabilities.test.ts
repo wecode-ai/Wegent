@@ -881,6 +881,12 @@ describe('createWorkbenchCapabilityRouter', () => {
     expect(granted).toContain('deviceDiagnostics.microphone')
   })
 
+  test('grants app.relaunch to the core principal', () => {
+    const granted = coreGrantedCapabilities()
+    expect(granted).toContain('app.relaunch')
+    expect(granted).toContain('app.quit')
+  })
+
   test('reports capability available only while the scoped owner is visible', async () => {
     const hidden = createWorkbenchCapabilityRouter(
       {

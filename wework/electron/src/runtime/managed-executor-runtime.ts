@@ -7,6 +7,7 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { rm } from 'node:fs/promises'
@@ -205,7 +206,13 @@ export function prepareManagedExecutorEnvironment(
   const executorHome = managedExecutorHome(options)
   const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
-  if (nativeCodexHome) prepareCodexAuth(nativeCodexHome, codexHome)
+  if (nativeCodexHome) {
+    if (isCodexSubscriptionEnabled(options.environment)) {
+      prepareCodexAuth(nativeCodexHome, codexHome)
+    } else {
+      removeCodexAuthLink(nativeCodexHome, codexHome)
+    }
+  }
   return {
     ...options.environment,
     CODEX_HOME: codexHome,
@@ -242,12 +249,24 @@ function resolveNativeCodexHome(
   return join(home, '.codex')
 }
 
+function isCodexSubscriptionEnabled(environment: NodeJS.ProcessEnv): boolean {
+  return environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED === 'true'
+}
+
+// Marker file written alongside a wework-managed Codex auth so the disable
+// path can distinguish its own copy/link from a user-managed auth file.
+const MANAGED_AUTH_MARKER = '.wework-managed-auth'
+
 function prepareCodexAuth(nativeCodexHome: string, managedCodexHome: string): void {
   const source = join(nativeCodexHome, 'auth.json')
   const target = join(managedCodexHome, 'auth.json')
   mkdirSync(managedCodexHome, { recursive: true, mode: 0o700 })
   if (samePath(source, target) || !existsSync(source)) return
-  if (existsSync(target)) return
+  if (existsSync(target)) {
+    // Refresh the managed marker for an existing managed auth (link or copy).
+    writeManagedAuthMarker(managedCodexHome)
+    return
+  }
   try {
     const metadata = lstatSync(target)
     if (!metadata.isSymbolicLink()) return
@@ -259,9 +278,62 @@ function prepareCodexAuth(nativeCodexHome: string, managedCodexHome: string): vo
   }
   if (process.platform === 'win32') {
     copyFileSync(source, target)
-    return
+  } else {
+    symlinkSync(source, target)
   }
-  symlinkSync(source, target)
+  writeManagedAuthMarker(managedCodexHome)
+}
+
+// Removes a wework-managed Codex auth when the subscription is disabled. On
+// unix it removes a symlink that points at the native auth.json; on Windows
+// (where the auth is copied as a real file) it removes the copy only when the
+// managed marker is present. User-managed auth files are always preserved.
+function removeCodexAuthLink(nativeCodexHome: string, managedCodexHome: string): void {
+  const source = join(nativeCodexHome, 'auth.json')
+  const target = join(managedCodexHome, 'auth.json')
+  if (samePath(source, target)) return
+  try {
+    const metadata = lstatSync(target)
+    if (metadata.isSymbolicLink()) {
+      // A symlink may point at the native auth (unix) or have gone stale. Only
+      // remove it when it resolves to the native source; other links are
+      // user-managed and left in place.
+      const linked = resolve(managedCodexHome, readlinkSync(target))
+      if (linked === resolve(source)) {
+        rmSync(target, { force: true })
+        removeManagedAuthMarker(managedCodexHome)
+      }
+      return
+    }
+    // Real file (Windows copy or a user upload): remove only if wework created it.
+    if (hasManagedAuthMarker(managedCodexHome)) {
+      rmSync(target, { force: true })
+      removeManagedAuthMarker(managedCodexHome)
+    }
+  } catch {
+    // Missing or unreadable target is expected when the subscription was never linked.
+  }
+}
+
+function writeManagedAuthMarker(managedCodexHome: string): void {
+  try {
+    writeFileSync(join(managedCodexHome, MANAGED_AUTH_MARKER), '', { mode: 0o600 })
+  } catch {
+    // The marker is best-effort; missing it only means a Windows copy is not
+    // auto-removed on disable, which the user can still clear manually.
+  }
+}
+
+function hasManagedAuthMarker(managedCodexHome: string): boolean {
+  return existsSync(join(managedCodexHome, MANAGED_AUTH_MARKER))
+}
+
+function removeManagedAuthMarker(managedCodexHome: string): void {
+  try {
+    rmSync(join(managedCodexHome, MANAGED_AUTH_MARKER), { force: true })
+  } catch {
+    // Best-effort cleanup.
+  }
 }
 
 function samePath(left: string, right: string): boolean {
