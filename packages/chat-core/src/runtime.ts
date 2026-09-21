@@ -103,6 +103,7 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
+  origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
   historyUnavailable?: boolean;
   taskId?: string;
   workspacePath: string;

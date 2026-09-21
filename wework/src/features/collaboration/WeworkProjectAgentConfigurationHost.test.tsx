@@ -82,14 +82,14 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('removes existing-Agent selection once the resource library is reachable', () => {
+  it('keeps existing resources selectable alongside the resource-library form', () => {
     const api = {
       listModels: vi.fn(async () => []),
       listSkills: vi.fn(async () => []),
     } as unknown as ReturnType<typeof createAgentResourceApi>
     const host = createWeworkProjectAgentConfigurationHost(api)
 
-    expect(host.supportsExistingAgentSelection).toBe(false)
+    expect(host.supportsExistingAgentSelection).toBe(true)
     expect(host.renderAgentCreator).toBeTypeOf('function')
     expect(host.renderAgentEditor).toBeTypeOf('function')
   })

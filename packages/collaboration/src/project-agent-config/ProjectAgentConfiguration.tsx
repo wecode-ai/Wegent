@@ -57,8 +57,9 @@ export function ProjectAgentConfiguration({
   const workspaceId = project.workspace_id;
   const usesLocalAgentCreator =
     project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
-  const supportsAgentCreation =
-    usesLocalAgentCreator || Boolean(host?.renderAgentCreator);
+  const supportsAgentCreation = Boolean(
+    usesLocalAgentCreator || host?.renderAgentCreator,
+  );
   const supportsExistingAgentSelection =
     host?.supportsExistingAgentSelection ?? true;
   const defaultMode: ProjectAgentMode = supportsExistingAgentSelection
@@ -291,12 +292,12 @@ export function ProjectAgentConfiguration({
     if (!agent) return;
     setError(null);
     try {
-      // Project rows keep their own copy of the resource name; workspace rows
-      // derive it from the resource, so a reload is enough there.
-      if (scope === "project" && saved.name && saved.name !== agent.name) {
+      // Project rows refresh their materialized Agent configuration after the
+      // backing resource changes; workspace rows derive it on read.
+      if (scope === "project") {
         await api.agents.update(project.id, agent.id, {
           version: agent.version,
-          name: saved.name,
+          ...(saved.name ? { name: saved.name } : {}),
         });
       }
       await reloadAgents();

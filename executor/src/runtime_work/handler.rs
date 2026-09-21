@@ -945,6 +945,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        if request.is_local_project() {
+            request.clear_backend_credentials();
+            return;
+        }
         self.rewrite_model_gateway_backend(request);
         let connection = match self.backend_connection_snapshot() {
             Ok(Some(connection)) => connection,

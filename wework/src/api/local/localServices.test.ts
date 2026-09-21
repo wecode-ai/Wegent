@@ -1,3 +1,4 @@
+import * as codexPlugins from './codexPlugins'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import {
@@ -53,6 +54,29 @@ describe('createLocalAppServices', () => {
     delete window.weworkElectronNetwork
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('loads project plugins from installed inventory when composer metadata is unavailable', async () => {
+    const api = codexPlugins.createLocalCodexPluginApi()
+    const listApps = vi.fn().mockRejectedValue(new Error('Online app catalog unavailable'))
+    const listInstalledPlugins = vi.fn().mockResolvedValue({ items: [] })
+    const factory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+      ...api,
+      listApps,
+      listInstalledPlugins,
+    })
+    try {
+      const services = createLocalAppServices({ subscribe: vi.fn().mockResolvedValue(vi.fn()) })
+      await expect(services.pluginApi!.listPlugins('local')).resolves.toEqual([])
+      expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
+      expect(listApps).toHaveBeenCalledOnce()
+      listInstalledPlugins.mockRejectedValue(new Error('Installed inventory unavailable'))
+      await expect(services.pluginApi!.listPlugins('local')).rejects.toThrow(
+        'Installed inventory unavailable'
+      )
+    } finally {
+      factory.mockRestore()
+    }
   })
 
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {

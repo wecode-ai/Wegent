@@ -3,12 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { APIRequestContext, expect, Page, test, TestInfo } from '@playwright/test'
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
+import JSZip from 'jszip'
 import {
   authHeaders,
   clearToolScenario,
@@ -43,7 +42,6 @@ const MCP_SERVER_NAME = 'collaboration-evidence'
 const CLAUDE_ARTIFACT_NAME = 'collaboration-claudecode-runtime-evidence.txt'
 const PLUGIN_NAME = `${TEST_PREFIX}-plugin`
 const PLUGIN_MARKER = 'COLLABORATION_AGENT_REAL_PLUGIN'
-const execFileAsync = promisify(execFile)
 
 interface VersionedResource {
   version: number
@@ -697,7 +695,6 @@ test.describe('Collaboration agent execution', () => {
 
   async function uploadPlugin(request: APIRequestContext): Promise<CollaborationPlugin> {
     const root = await mkdtemp(join(tmpdir(), 'wegent-agent-plugin-'))
-    const archivePath = `${root}.zip`
     try {
       const manifestRoot = join(root, '.codex-plugin')
       const pluginSkillRoot = join(root, 'skills', PLUGIN_NAME)
@@ -735,8 +732,19 @@ test.describe('Collaboration agent execution', () => {
           '',
         ].join('\n')
       )
-      await execFileAsync('zip', ['-qr', archivePath, '.'], { cwd: root })
-      const archive = await readFile(archivePath)
+      const pluginArchive = new JSZip()
+      pluginArchive.file(
+        '.codex-plugin/plugin.json',
+        await readFile(join(manifestRoot, 'plugin.json'))
+      )
+      pluginArchive.file(
+        `skills/${PLUGIN_NAME}/SKILL.md`,
+        await readFile(join(pluginSkillRoot, 'SKILL.md'))
+      )
+      const archive = await pluginArchive.generateAsync({
+        type: 'nodebuffer',
+        compression: 'DEFLATE',
+      })
       const initResponse = await request.post(
         `${PROVIDER_NATIVE_API_URL}/api/plugins/submissions/init`,
         {
@@ -831,10 +839,7 @@ test.describe('Collaboration agent execution', () => {
         displayName: installedSpec?.displayName || PLUGIN_NAME,
       }
     } finally {
-      await Promise.all([
-        rm(root, { recursive: true, force: true }),
-        rm(archivePath, { force: true }),
-      ])
+      await rm(root, { recursive: true, force: true })
     }
   }
 
