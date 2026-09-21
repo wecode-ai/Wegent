@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 
-from app.services.notification_copy import assignment_copy
+from app.services.notification_copy import NotificationTarget, assignment_message
 from app.services.wework_notifications import create_notification
 
 
@@ -11,31 +11,18 @@ def notify_project_task_assignee(
     *,
     user_id: int,
     actor_user_id: int,
-    project_id: str,
-    project_name: str,
-    item_id: str,
-    item_title: str,
+    target: NotificationTarget,
     assigner_name: str,
 ) -> None:
-    copy = assignment_copy(
-        assigner_name=assigner_name,
-        item_title=item_title,
-        project_name=project_name,
-    )
+    message = assignment_message(assigner_name=assigner_name, target=target)
     create_notification(
         db,
         user_id=user_id,
         actor_user_id=actor_user_id,
-        kind="assignment",
-        title=copy.title,
-        body=copy.body,
-        project_id=project_id,
-        item_id=item_id,
-        payload={
-            "projectId": project_id,
-            "projectName": project_name,
-            "itemId": item_id,
-            "itemTitle": item_title,
-            "assignerName": assigner_name,
-        },
+        kind=message.kind,
+        title=message.title,
+        body=message.body,
+        project_id=target.project_id,
+        item_id=target.item_id,
+        payload=message.payload,
     )

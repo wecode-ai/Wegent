@@ -786,9 +786,14 @@ def test_send_notifies_mentioned_project_member(
     )
     assert notification.kind == "mention"
     assert notification.actor_user_id == test_user.id
-    assert notification.url == f"wework://boards/{project.id}/issues/{item.id}"
+    assert (
+        notification.url == f"wework://boards/{project.id}/issues/{item.id}"
+        f"/comments/{message.message_id}"
+    )
     assert notification.payload["projectId"] == str(project.id)
     assert notification.payload["itemTitle"] == item.title
+    assert notification.payload["itemStatus"] == "收集箱"
+    assert notification.payload["commentId"] == message.message_id
     assert "@reviewer please take a look" in notification.body
     assert message.metadata["mentions"][0]["id"] == str(member.id)
     schedule.assert_called_once()

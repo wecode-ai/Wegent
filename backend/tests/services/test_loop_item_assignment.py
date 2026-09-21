@@ -21,6 +21,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
+from app.services.notification_copy import NotificationTarget
 from tests.utils.agent_resources import create_runnable_wegent_team
 
 
@@ -329,10 +330,13 @@ def test_assign_to_other_member_sends_notification(
         test_db,
         actor_user_id=test_user.id,
         user_id=member.id,
-        project_id=str(project.id),
-        project_name=project.name,
-        item_id=item.id,
-        item_title=item.title,
+        target=NotificationTarget(
+            project_id=str(project.id),
+            project_name=project.name,
+            item_id=item.id,
+            item_title=item.title,
+            item_status="收集箱",
+        ),
         assigner_name=test_user.user_name,
     )
 

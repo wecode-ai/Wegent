@@ -17,7 +17,7 @@ from app.services.im.session_service import im_session_service
 from app.services.notification_copy import (
     RUNTIME_REPLY_HINT,
     notification_message,
-    runtime_update_copy,
+    runtime_message,
 )
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -87,16 +87,15 @@ class IMNotificationDispatcher:
             user_id=user_id,
             address=address,
         )
-        copy = runtime_update_copy(
+        message = runtime_message(
             task_title=title or str(address.get("localTaskId") or "本地任务"),
             status=status,
             content=content,
         )
-        message = notification_message(copy.title, copy.body)
         return await self._send_to_sessions(
             db,
             sessions,
-            message,
+            notification_message(message.title, message.body),
             runtime_task=address,
         )
 

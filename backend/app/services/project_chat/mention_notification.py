@@ -7,11 +7,9 @@ from app.models.delivery import CloudProject, LoopItem
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.project_chat import ProjectChatMention
-from app.services.notification_copy import mention_copy
+from app.services.notification_copy import comment_preview, mention_message
+from app.services.notification_target import board_notification_target
 from app.services.wework_notifications import create_notification
-
-MENTION_KIND = "mention"
-COMMENT_PREVIEW_MAX_CHARS = 200
 
 
 def notify_project_chat_mentions(
@@ -19,10 +17,12 @@ def notify_project_chat_mentions(
     *,
     project: CloudProject,
     item: LoopItem | None,
+    comment_id: str,
     actor_user_id: int,
     actor_name: str,
     content: str,
     mentions: list[ProjectChatMention],
+    reply_preview: str | None = None,
 ) -> None:
     """Notify every mentioned project member inside the comment transaction.
 
@@ -37,13 +37,14 @@ def notify_project_chat_mentions(
     if not member_ids:
         return
 
-    preview = _comment_preview(content)
-    item_title = item.title if item is not None else None
-    copy = mention_copy(
+    preview = comment_preview(content)
+    target = board_notification_target(project, item)
+    message = mention_message(
         actor_name=actor_name,
-        item_title=item_title,
-        project_name=project.name,
         preview=preview,
+        comment_id=comment_id,
+        target=target,
+        reply_preview=reply_preview,
     )
     for recipient_id in _mentioned_member_ids(mentions, member_ids):
         if recipient_id == actor_user_id:
@@ -52,19 +53,13 @@ def notify_project_chat_mentions(
             db,
             user_id=recipient_id,
             actor_user_id=actor_user_id,
-            kind=MENTION_KIND,
-            title=copy.title,
-            body=copy.body,
+            kind=message.kind,
+            title=message.title,
+            body=message.body,
             project_id=str(project.id),
             item_id=item.id if item is not None else None,
-            payload={
-                "projectId": str(project.id),
-                "projectName": project.name,
-                "itemId": item.id if item is not None else None,
-                "itemTitle": item_title,
-                "actorName": actor_name,
-                "commentPreview": preview,
-            },
+            comment_id=message.comment_id,
+            payload=message.payload,
         )
 
 
@@ -117,10 +112,3 @@ def _project_member_ids(db: Session, project: CloudProject) -> set[int]:
     if project.created_by_user_id:
         member_ids.add(int(project.created_by_user_id))
     return member_ids
-
-
-def _comment_preview(content: str) -> str:
-    collapsed = " ".join(content.split())
-    if len(collapsed) <= COMMENT_PREVIEW_MAX_CHARS:
-        return collapsed
-    return f"{collapsed[: COMMENT_PREVIEW_MAX_CHARS - 1]}…"

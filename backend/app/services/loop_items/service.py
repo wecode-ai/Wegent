@@ -88,6 +88,7 @@ from app.services.loop_item_unread import (
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
+from app.services.notification_target import board_notification_target
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
@@ -1623,10 +1624,7 @@ class LoopItemService:
             db,
             actor_user_id=actor_user_id,
             user_id=target_user_id,
-            project_id=str(project_id),
-            project_name=project.name,
-            item_id=item.id,
-            item_title=item.title,
+            target=board_notification_target(project, item),
             assigner_name=actor.user_name,
         )
 
@@ -1878,10 +1876,7 @@ class LoopItemService:
                 db,
                 actor_user_id=user_id,
                 user_id=target_user_id,
-                project_id=str(project_id),
-                project_name=project.name or "",
-                item_id=item.id,
-                item_title=item.title or item.id,
+                target=board_notification_target(project, item),
                 assigner_name=assigner.user_name if assigner else str(user_id),
             )
 

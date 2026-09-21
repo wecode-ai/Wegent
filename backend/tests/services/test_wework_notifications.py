@@ -125,7 +125,7 @@ def test_assignment_persists_once_and_honors_opt_out(test_db, test_user):
     assert len(rows) == 1
     assert rows[0].user_id == member.id
     assert rows[0].url == issue_url(str(project.id), item.id)
-    assert rows[0].payload["assignerName"] == test_user.user_name
+    assert rows[0].payload["actorName"] == test_user.user_name
 
 
 def test_version_conflict_rolls_back_notification(
@@ -279,6 +279,15 @@ def test_scheme_encodes_external_issue_identifiers():
     )
 
 
+def test_scheme_can_land_on_one_comment():
+    assert (
+        issue_url("12", "WEG-12", "3f/9")
+        == "wework://boards/12/issues/WEG-12/comments/3f%2F9"
+    )
+    # A comment link is only meaningful inside an item.
+    assert issue_url("12", None, "comment-1") == "wework://boards/12"
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -289,6 +298,10 @@ def test_scheme_encodes_external_issue_identifiers():
         "wework://boards/12/issues/%00",
         "wework://boards/12/issues/%FF",
         "wework://boards/12/issues/%ZZ",
+        "wework://boards/12/issues/WEG-12/comments",
+        "wework://boards/12/comments/comment-1",
+        "wework://boards/12/issues/WEG-12/notes/comment-1",
+        "wework://boards/12/issues/WEG-12/comments/%00",
         "wework://user@boards/12",
         "wework://boards?redirect=x",
         123,
@@ -319,6 +332,17 @@ def test_explicit_click_target_overrides_source_link(test_db, test_user):
         ),
     )
     assert row.url == "wework://boards"
+
+
+def test_click_target_can_point_at_one_comment(test_client, test_db, test_token):
+    url = "wework://boards/12/issues/WEG-12/comments/c-1"
+    response = test_client.post(
+        "/api/v1/wework-notifications",
+        json={"title": "Hello", "body": "你好", "url": url},
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+    assert response.status_code == 201
+    assert test_db.query(WeworkNotification).one().url == url
 
 
 def test_read_all_updates_only_unread_notifications_of_current_user(

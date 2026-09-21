@@ -17,9 +17,16 @@ logger = logging.getLogger(__name__)
 _PENDING = "wework_notification_ids"
 
 
-def issue_url(project_id: str, item_id: str | None = None) -> str:
+def issue_url(
+    project_id: str, item_id: str | None = None, comment_id: str | None = None
+) -> str:
+    """The Wework destination for a board item, optionally one comment inside it."""
+
     url = f"wework://boards/{quote(project_id, safe='')}"
-    return f"{url}/issues/{quote(item_id, safe='')}" if item_id else url
+    if not item_id:
+        return url
+    url = f"{url}/issues/{quote(item_id, safe='')}"
+    return f"{url}/comments/{quote(comment_id, safe='')}" if comment_id else url
 
 
 def create_notification(
@@ -31,6 +38,7 @@ def create_notification(
     body: str,
     project_id: str | None = None,
     item_id: str | None = None,
+    comment_id: str | None = None,
     url: str | None = None,
     kind: str = "message",
     payload: dict | None = None,
@@ -46,7 +54,7 @@ def create_notification(
         url=(
             url
             if url is not None
-            else issue_url(project_id, item_id) if project_id else ""
+            else issue_url(project_id, item_id, comment_id) if project_id else ""
         ),
         payload=payload or {},
         created_at=now,
