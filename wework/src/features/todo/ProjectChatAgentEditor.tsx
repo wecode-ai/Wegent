@@ -230,7 +230,7 @@ export function ProjectChatAgentEditor({
   )
 
   const save = async () => {
-    if (busy || !name.trim()) return
+    if (busy || loadingAgent || !name.trim()) return
     if (!model) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return

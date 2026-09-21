@@ -3558,7 +3558,14 @@ describe('DesktopWorkbenchLayout', () => {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
       },
-      { lastTurnId: 'turn-1' }
+      {
+        source: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          workspacePath: '/workspace/project-alpha',
+        },
+        lastTurnId: 'turn-1',
+      }
     )
   })
 
@@ -4157,7 +4164,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
   })
 
-  test('keeps a collapsed Electron task title clear of titlebar controls', () => {
+  test('keeps a collapsed Electron task title clear of titlebar controls', async () => {
     runtimeMocks.electron = true
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
 
@@ -4226,6 +4233,16 @@ describe('DesktopWorkbenchLayout', () => {
       'wework的聊天链路现在代码逻辑比较混乱'
     )
     expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
+    await userEvent.click(screen.getByTestId('conversation-rename-button'))
+    expect(screen.getByTestId('conversation-rename-input')).toHaveValue(
+      'wework的聊天链路现在代码逻辑比较混乱，尤其是状态方面，经常出现消息结束了但是发送按钮还显示运行中'
+    )
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(screen.getByTestId('conversation-project-button'))
+    expect(screen.getByTestId('conversation-project-popover')).toHaveTextContent(
+      '/workspace/project-alpha'
+    )
+    await userEvent.keyboard('{Escape}')
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')

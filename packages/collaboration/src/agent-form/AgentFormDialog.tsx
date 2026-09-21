@@ -5,6 +5,8 @@
 import { Bot, ChevronRight, LoaderCircle, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { DialogForm } from "../controls/DialogForm";
+
 function classes(...values: Array<string | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
@@ -113,12 +115,16 @@ export function AgentFormDialog({
         if (event.target === event.currentTarget && !busy) onClose();
       }}
     >
-      <section
+      <DialogForm
         aria-labelledby={titleId}
         aria-modal="true"
         className="flex max-h-[86dvh] w-full max-w-[700px] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-text-primary shadow-xl"
         data-agent-form="shared"
         data-testid={testIds.dialog}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy && !saveDisabled) onSave();
+        }}
         role="dialog"
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-5">
@@ -265,8 +271,7 @@ export function AgentFormDialog({
               className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:opacity-80 disabled:opacity-40"
               data-testid={testIds.save}
               disabled={busy || saveDisabled}
-              onClick={onSave}
-              type="button"
+              type="submit"
             >
               {busy ? (
                 <LoaderCircle
@@ -278,7 +283,7 @@ export function AgentFormDialog({
             </button>
           </div>
         </footer>
-      </section>
+      </DialogForm>
     </div>
   );
 }
