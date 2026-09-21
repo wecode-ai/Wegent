@@ -106,7 +106,7 @@ describe('notification center', () => {
       ...entry,
       kind: 'mention',
       title: 'hajimi 在「修复登录」提到了你',
-      body: '麻烦看下这个改动\n\n看板：test-pro',
+      body: '麻烦看下这个改动',
       payload: {
         projectId: '12',
         projectName: 'test-pro',
@@ -130,5 +130,33 @@ describe('notification center', () => {
     expect(summary).toHaveTextContent('进行中')
     expect(summary).toHaveTextContent('todo.priority')
     expect(screen.getByText('notifications.in_reply_to')).toBeVisible()
+    const row = screen.getByTestId('wework-notification-n1')
+    expect(row).toHaveAttribute('data-unread', 'true')
+    // The board is part of the summary line, so the body must not repeat it.
+    expect(row).not.toHaveTextContent('看板：test-pro')
+    expect(row).toHaveTextContent('麻烦看下这个改动')
+  })
+
+  it('omits the body of a notification that has no detail of its own', async () => {
+    const assignment = {
+      ...entry,
+      kind: 'assignment',
+      title: 'admin 把「修复登录」分配给了你',
+      body: '',
+      payload: {
+        projectId: '12',
+        projectName: 'test-pro',
+        itemId: 'WEG-12',
+        itemTitle: '修复登录',
+        actorName: 'admin',
+      },
+    }
+    api.list.mockResolvedValue({ items: [assignment], unread_count: 1, next_offset: null })
+    render(view())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    const row = await screen.findByTestId('wework-notification-n1')
+    expect(row).toHaveTextContent('admin 把「修复登录」分配给了你')
+    expect(screen.getByTestId('wework-notification-summary-n1')).toHaveTextContent('test-pro')
+    expect(screen.queryByTestId('wework-notification-body-n1')).toBeNull()
   })
 })

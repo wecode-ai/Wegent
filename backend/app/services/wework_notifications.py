@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.wework_notification import WeworkNotification
 from app.schemas.wework_notification import NotificationCreate
+from app.services.notification_copy import board_footer
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
@@ -123,13 +124,27 @@ async def deliver_notification(notification_id: str) -> None:
             sessions = await im_session_service.list_user_sessions(
                 db, user_id=notification.user_id
             )
+            # The inbox renders the board as part of its summary line, so the
+            # body only carries the detail; a push has no summary to read, and
+            # therefore closes with the board itself.
+            payload = (
+                notification.payload if isinstance(notification.payload, dict) else {}
+            )
+            text = "\n\n".join(
+                part
+                for part in (
+                    notification.body,
+                    board_footer(str(payload.get("projectName") or "")),
+                )
+                if part
+            )
             for session in sessions:
                 if session.user_id != notification.user_id:
                     continue
                 result = await im_notification_dispatcher.send_notification(
                     db,
                     session,
-                    notification.body,
+                    text,
                     title=notification.title,
                     url=notification.url,
                 )

@@ -1,5 +1,6 @@
 """Inbox persistence, transaction, authorization and IM contracts."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -235,8 +236,6 @@ def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
 async def test_im_receives_message_even_when_live_push_fails(
     test_db, test_user, with_source, url
 ):
-    from types import SimpleNamespace
-
     row = create_notification(
         test_db,
         user_id=test_user.id,
@@ -270,6 +269,38 @@ async def test_im_receives_message_even_when_live_push_fails(
     assert send.call_args.args[2] == "Review failed"
     assert send.call_args.kwargs["title"] == "Review"
     assert send.call_args.kwargs["url"] == row.url
+
+
+async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_user):
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="hajimi 在「修复登录」提到了你",
+        body="麻烦看下这个改动",
+        project_id="123",
+        item_id="WEG-12",
+        payload={"projectId": "123", "projectName": "test-pro"},
+    )
+    test_db.commit()
+    session = SimpleNamespace(channel_type="dingtalk", user_id=test_user.id)
+    with (
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=SimpleNamespace(emit=AsyncMock()),
+        ),
+        patch(
+            "app.services.im.session_service.im_session_service.list_user_sessions",
+            AsyncMock(return_value=[session]),
+        ),
+        patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
+            AsyncMock(return_value={"success": True}),
+        ) as send,
+    ):
+        await deliver_notification(row.id)
+    assert send.call_args.args[2] == "麻烦看下这个改动\n\n看板：test-pro"
 
 
 def test_scheme_encodes_external_issue_identifiers():

@@ -24,6 +24,12 @@ def comment_preview(content: str, limit: int = COMMENT_PREVIEW_MAX_CHARS) -> str
     return f"{collapsed[: limit - 1]}…"
 
 
+def board_footer(project_name: str | None) -> str:
+    """The board line a push closes with; the inbox shows it in its summary."""
+
+    return f"{BOARD_LABEL}：{project_name}" if project_name else ""
+
+
 @dataclass(frozen=True)
 class NotificationTarget:
     """The board entry a notification points at."""
@@ -56,11 +62,6 @@ class NotificationTarget:
                 payload[key] = value
         return payload
 
-    def footer(self) -> str:
-        """The board line every body closes with."""
-
-        return f"{BOARD_LABEL}：{self.project_name}" if self.project_name else ""
-
 
 @dataclass(frozen=True)
 class NotificationMessage:
@@ -80,14 +81,6 @@ def notification_message(title: str, body: str) -> str:
     if not title:
         return body
     return f"{title}\n\n{body}" if body else title
-
-
-def with_footer(detail: str, footer: str) -> str:
-    """Put the detail first and close with the board it belongs to."""
-
-    if not footer:
-        return detail
-    return f"{detail}\n\n{footer}" if detail else footer
 
 
 def mention_message(
@@ -112,7 +105,7 @@ def mention_message(
     return NotificationMessage(
         kind="mention",
         title=f"{actor_name} {where}提到了你",
-        body=with_footer(preview, target.footer()),
+        body=preview,
         payload=payload,
         comment_id=comment_id,
     )
@@ -128,7 +121,7 @@ def assignment_message(
     return NotificationMessage(
         kind="assignment",
         title=f"{assigner_name} 把「{target.item_title}」分配给了你",
-        body=target.footer(),
+        body="",
         payload={**target.payload(), "actorName": assigner_name},
     )
 
@@ -153,7 +146,7 @@ def execution_message(
     return NotificationMessage(
         kind="execution",
         title=f"「{item_title}」{prefix}",
-        body=with_footer(body, target.footer()),
+        body=body,
         payload=payload,
     )
 

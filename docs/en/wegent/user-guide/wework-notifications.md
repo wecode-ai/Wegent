@@ -14,7 +14,7 @@ Delivery also attempts the recipient's connected private IM sessions. IM failure
 
 Typing `@` in an Issue comment opens the project member picker and inserts `@Member`. Only project members can be mentioned; mentioning a non-member is rejected. Mentioned members receive an inbox notification and a DingTalk push when connected, and both links open the Issue. Mentioning an agent is unchanged and still triggers execution.
 
-The title names the actor and the Issue; the body carries the comment preview and the board name. The DingTalk push bolds that title above the same body and a “view details” link, so the inbox entry and the IM message read as one message.
+The title names the actor and the Issue, and the second line carries the board, the item key, the current column (plus priority and deadline for assignments). The body holds the comment preview, and a reply also shows the comment it answered. The inbox reads its source from that summary line, so the body does not repeat the board; a DingTalk push has no summary and therefore appends the board before its “view details” link.
 
 ## Task execution notifications
 

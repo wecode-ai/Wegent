@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { Bell } from 'lucide-react'
+import { AtSign, Bell, Bot, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import { createHttpClient } from '@/api/http'
 import {
   createNotificationsApi,
@@ -14,6 +14,14 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { AnchorPopover } from '@/features/todo/AnchorPopover'
 import { cn } from '@/lib/utils'
 import { openWeworkScheme } from './schemeEvents'
+
+/** The glyph that tells the kinds of notification apart at a glance. */
+function notificationKindIcon(kind: string): LucideIcon {
+  if (kind === 'mention') return AtSign
+  if (kind === 'assignment') return ClipboardCheck
+  if (kind === 'execution') return Bot
+  return Bell
+}
 
 export function NotificationCenter() {
   const connection = useContext(CloudConnectionContext)
@@ -226,45 +234,80 @@ function ConnectedNotificationCenter({ baseUrl, token }: { baseUrl: string; toke
           {inbox?.items.length === 0 && (
             <p className="p-2 text-sm text-text-secondary">{t('notifications.empty')}</p>
           )}
-          {inbox?.items.map(notification => {
-            const summary = summaryParts(notification.payload).join(' · ')
-            return (
-              <button
-                key={notification.id}
-                data-testid={`wework-notification-${notification.id}`}
-                disabled={busy}
-                className={cn(
-                  'block w-full rounded-lg p-2 text-left hover:bg-muted disabled:opacity-50',
-                  !notification.read_at && 'bg-muted/50'
-                )}
-                onClick={() => openNotification(notification)}
-              >
-                <span className="block text-sm font-medium">{notification.title}</span>
-                {summary && (
-                  <span
-                    data-testid={`wework-notification-summary-${notification.id}`}
-                    className="mt-0.5 block text-xs text-text-secondary"
+          {inbox && inbox.items.length > 0 && (
+            <div className="flex flex-col gap-1.5 px-1 pb-1">
+              {inbox.items.map(notification => {
+                const summary = summaryParts(notification.payload).join(' · ')
+                const unread = !notification.read_at
+                const KindIcon = notificationKindIcon(notification.kind)
+                return (
+                  <button
+                    key={notification.id}
+                    data-testid={`wework-notification-${notification.id}`}
+                    data-unread={unread ? 'true' : undefined}
+                    disabled={busy}
+                    className={cn(
+                      'block w-full rounded-xl border p-2.5 text-left transition-colors disabled:opacity-50',
+                      unread
+                        ? 'border-primary/35 bg-primary/[0.06] hover:bg-primary/[0.1]'
+                        : 'border-border/60 bg-background hover:bg-muted/60'
+                    )}
+                    onClick={() => openNotification(notification)}
                   >
-                    {summary}
-                  </span>
-                )}
-                <span className="mt-1 block whitespace-pre-wrap text-sm text-text-primary">
-                  {notification.body}
-                </span>
-                {notification.payload.replyPreview && (
-                  <span className="mt-1 block whitespace-pre-wrap text-xs text-text-secondary">
-                    {t('notifications.in_reply_to', {
-                      preview: notification.payload.replyPreview,
-                    })}
-                  </span>
-                )}
-                <span className="mt-1 block text-xs text-text-secondary">
-                  {!notification.read_at && `${t('notifications.unread')} · `}
-                  {new Date(notification.created_at).toLocaleString()}
-                </span>
-              </button>
-            )
-          })}
+                    <span className="flex items-start gap-2">
+                      <span
+                        aria-hidden
+                        className={cn(
+                          'mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full',
+                          unread ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
+                        )}
+                      >
+                        <KindIcon className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-text-primary">
+                          {notification.title}
+                        </span>
+                        {summary && (
+                          <span
+                            data-testid={`wework-notification-summary-${notification.id}`}
+                            className="mt-0.5 block text-xs text-text-secondary"
+                          >
+                            {summary}
+                          </span>
+                        )}
+                      </span>
+                      {unread && (
+                        <span
+                          aria-hidden
+                          className="mt-2 h-1.5 w-1.5 flex-none rounded-full bg-primary"
+                        />
+                      )}
+                    </span>
+                    {notification.body && (
+                      <span
+                        data-testid={`wework-notification-body-${notification.id}`}
+                        className="mt-2 block whitespace-pre-wrap text-sm text-text-primary"
+                      >
+                        {notification.body}
+                      </span>
+                    )}
+                    {notification.payload.replyPreview && (
+                      <span className="mt-2 block border-l-2 border-border pl-2 text-xs text-text-secondary">
+                        {t('notifications.in_reply_to', {
+                          preview: notification.payload.replyPreview,
+                        })}
+                      </span>
+                    )}
+                    <span className="mt-2 block text-xs text-text-secondary">
+                      {unread && `${t('notifications.unread')} · `}
+                      {new Date(notification.created_at).toLocaleString()}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {inbox?.next_offset != null && (
             <button
               data-testid="wework-notifications-more"

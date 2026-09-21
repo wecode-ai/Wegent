@@ -3,6 +3,7 @@
 from app.services.notification_copy import (
     NotificationTarget,
     assignment_message,
+    board_footer,
     comment_preview,
     execution_message,
     mention_message,
@@ -33,7 +34,7 @@ def test_mention_message_names_the_actor_item_and_landing_comment() -> None:
 
     assert message.kind == "mention"
     assert message.title == "hajimi 在「修复登录」提到了你"
-    assert message.body == "麻烦看下这个改动\n\n看板：test-pro"
+    assert message.body == "麻烦看下这个改动"
     assert message.comment_id == "comment-1"
     assert message.payload == {
         "projectId": "12",
@@ -60,7 +61,7 @@ def test_mention_message_without_a_reply_omits_the_reply_preview() -> None:
     )
 
     assert message.title == "hajimi 在评论中提到了你"
-    assert message.body == "hi\n\n看板：test-pro"
+    assert message.body == "hi"
     assert "replyPreview" not in message.payload
 
 
@@ -68,7 +69,8 @@ def test_assignment_message_carries_the_priority_and_due_date() -> None:
     message = assignment_message(assigner_name="admin", target=TARGET)
 
     assert message.title == "admin 把「修复登录」分配给了你"
-    assert message.body == "看板：test-pro"
+    # The inbox shows the board in its summary line, so the body stays empty.
+    assert message.body == ""
     assert message.payload["itemPriority"] == "high"
     assert message.payload["itemDueAt"] == "2026-09-30T00:00:00"
     assert message.payload["actorName"] == "admin"
@@ -96,7 +98,7 @@ def test_execution_message_uses_one_headline_per_state() -> None:
         "cancelled": "「修复登录」已取消",
     }
     failed = execution_message(target=TARGET, status="failed", detail="构建失败")
-    assert failed.body == "构建失败\n\n看板：test-pro"
+    assert failed.body == "构建失败"
     assert failed.payload["status"] == "failed"
 
 
@@ -120,3 +122,9 @@ def test_notification_message_keeps_the_headline_above_the_detail() -> None:
 def test_comment_preview_collapses_whitespace_and_truncates() -> None:
     assert comment_preview("a\n\nb   c") == "a b c"
     assert comment_preview("x" * 30, limit=10) == "xxxxxxxxx…"
+
+
+def test_board_footer_carries_the_board_a_push_cannot_look_up() -> None:
+    assert board_footer("test-pro") == "看板：test-pro"
+    assert board_footer("") == ""
+    assert board_footer(None) == ""
