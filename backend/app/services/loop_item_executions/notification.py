@@ -66,7 +66,7 @@ def _notify_execution_lifecycle(
         return
 
     message = execution_message(
-        target=board_notification_target(project, item),
+        target=board_notification_target(db, project, item),
         status=status,
         detail=content,
         execution_id=str(execution.id) if execution.id else None,

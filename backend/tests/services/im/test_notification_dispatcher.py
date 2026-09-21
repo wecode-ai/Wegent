@@ -13,6 +13,7 @@ from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
+from app.services.notification_copy import NotificationLink
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -321,7 +322,10 @@ async def test_runtime_task_update_uses_global_im_notification_target(
     assert result["sent"] == 1
     assert calls[1]["chat_id"] == 100200300
     assert calls[1]["text"] == (
-        "任务「Native Codex task」有新的 AI 回复\n\nImplemented from native Codex"
+        "你的任务有新的 AI 回复\n\n"
+        "任务标题：Native Codex task\n\n"
+        "任务状态：有新的 AI 回复\n\n"
+        "最新回复：Implemented from native Codex"
     )
 
 
@@ -388,8 +392,10 @@ async def test_dingtalk_runtime_notification_enables_quoted_reply_continuation(
     assert calls[1] == {
         "user_ids": ["staff-1"],
         "content": (
-            "任务「Native Codex task」有新的 AI 回复\n\n"
-            "Implemented from native Codex\n\n"
+            "你的任务有新的 AI 回复\n\n"
+            "任务标题：Native Codex task\n\n"
+            "任务状态：有新的 AI 回复\n\n"
+            "最新回复：Implemented from native Codex\n\n"
             "引用本通知回复，即可继续该任务。"
         ),
     }
@@ -445,7 +451,15 @@ async def test_dingtalk_notification_pushes_the_inbox_headline_above_a_link(
         session,
         "看板：test-pro",
         title="hajimi 在「修复登录」提到了你",
-        url="wework://boards/12/issues/ISSUE-1",
+        links=[
+            NotificationLink(
+                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+            ),
+            NotificationLink(
+                label="在浏览器打开",
+                url="http://localhost:3000/collaboration/12/issues/ISSUE-1",
+            ),
+        ],
     )
 
     assert result["success"] is True
@@ -455,7 +469,8 @@ async def test_dingtalk_notification_pushes_the_inbox_headline_above_a_link(
         "text": (
             "**hajimi 在「修复登录」提到了你**\n\n"
             "看板：test-pro\n\n"
-            "[查看详情](wework://boards/12/issues/ISSUE-1)"
+            "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
+            " · [在浏览器打开](http://localhost:3000/collaboration/12/issues/ISSUE-1)"
         ),
     }
 

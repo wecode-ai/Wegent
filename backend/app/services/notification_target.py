@@ -2,13 +2,16 @@
 
 import re
 
+from sqlalchemy.orm import Session
+
 from app.models.delivery import CloudProject, LoopItem
+from app.models.user import User
 from app.services.loop_item_status_history import project_board_statuses
 from app.services.notification_copy import NotificationTarget
 
 
 def board_notification_target(
-    project: CloudProject, item: LoopItem | None
+    db: Session, project: CloudProject, item: LoopItem | None
 ) -> NotificationTarget:
     """Collect the board fields a recipient needs to recognise the item."""
 
@@ -23,7 +26,17 @@ def board_notification_target(
         item_status=board_status_label(project, item.status),
         item_priority=item.priority,
         item_due_at=item.due_at.isoformat() if item.due_at else None,
+        assignee_name=assignee_name(db, item),
     )
+
+
+def assignee_name(db: Session, item: LoopItem) -> str | None:
+    """The member who owns the item right now, when a person owns it."""
+
+    if not item.assignee_user_id:
+        return None
+    user = db.get(User, item.assignee_user_id)
+    return user.user_name if user is not None else None
 
 
 def board_status_label(project: CloudProject, status: str | None) -> str | None:

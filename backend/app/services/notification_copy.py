@@ -7,12 +7,15 @@ state it is in, and which comment they were mentioned in — are built here
 instead of being spelled out again at every call site.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 BOARD_LABEL = "看板"
 RUNTIME_REPLY_HINT = "引用本通知回复，即可继续该任务。"
 COMMENT_PREVIEW_MAX_CHARS = 200
+WEWORK_LINK_LABEL = "在 Wework 打开"
+WEB_LINK_LABEL = "在浏览器打开"
 
 
 def comment_preview(content: str, limit: int = COMMENT_PREVIEW_MAX_CHARS) -> str:
@@ -24,10 +27,30 @@ def comment_preview(content: str, limit: int = COMMENT_PREVIEW_MAX_CHARS) -> str
     return f"{collapsed[: limit - 1]}…"
 
 
-def board_footer(project_name: str | None) -> str:
-    """The board line a push closes with; the inbox shows it in its summary."""
+def fact_block(
+    *,
+    facts: Sequence[tuple[str, str | None]],
+    detail: str = "",
+    detail_label: str = "",
+) -> str:
+    """Render the ``标签：值`` block an IM push closes with.
 
-    return f"{BOARD_LABEL}：{project_name}" if project_name else ""
+    DingTalk collapses a single newline inside a markdown message, so every line
+    is separated by a blank one to keep the facts readable on a phone.
+    """
+
+    lines = [f"{label}：{value}" for label, value in facts if value]
+    if detail and detail_label:
+        lines.append(f"{detail_label}：{detail}")
+    return "\n\n".join(lines)
+
+
+@dataclass(frozen=True)
+class NotificationLink:
+    """One destination a push offers the recipient."""
+
+    label: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -42,6 +65,7 @@ class NotificationTarget:
     item_status: str | None = None
     item_priority: str | None = None
     item_due_at: str | None = None
+    assignee_name: str | None = None
 
     def payload(self) -> dict[str, Any]:
         """The board fields every board notification carries."""
@@ -57,6 +81,7 @@ class NotificationTarget:
             ("itemStatus", self.item_status),
             ("itemPriority", self.item_priority),
             ("itemDueAt", self.item_due_at),
+            ("assigneeName", self.assignee_name),
         ):
             if value:
                 payload[key] = value
@@ -81,6 +106,88 @@ def notification_message(title: str, body: str) -> str:
     if not title:
         return body
     return f"{title}\n\n{body}" if body else title
+
+
+def push_copy(
+    *,
+    kind: str,
+    title: str,
+    body: str = "",
+    payload: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """The headline and detail block an IM push shows for a stored notification.
+
+    The inbox renders ``title`` above ``body`` next to its own summary line, so
+    the stored copy stays short. A push has no summary line, so it restates the
+    facts the recipient needs as ``标签：值`` lines and drops the item name from
+    the headline those facts already carry.
+    """
+
+    data = payload or {}
+    facts = _push_facts(
+        data,
+        run_status=(
+            _EXECUTION_TAILS.get(str(data.get("status")))
+            if kind in {"execution", "runtime"}
+            else None
+        ),
+    )
+    headline = _push_headline(kind, title, data)
+    if not facts:
+        # A notification without structured context keeps its own body.
+        return headline, body.strip()
+    return headline, fact_block(
+        facts=facts,
+        detail=body.strip(),
+        detail_label=_detail_label(kind, data),
+    )
+
+
+def _push_headline(kind: str, title: str, payload: dict[str, Any]) -> str:
+    if kind == "execution":
+        tail = _EXECUTION_TAILS.get(str(payload.get("status")), "有新的进展")
+        return f"你的任务{tail}"
+    if kind == "mention":
+        actor = payload.get("actorName")
+        return f"{actor} 在评论中提到了你" if actor else title
+    return title
+
+
+def _push_facts(
+    payload: dict[str, Any], *, run_status: str | None = None
+) -> list[tuple[str, str | None]]:
+    """The ``标签：值`` facts a push shows.
+
+    A run notice reports the run's own state; a comment or assignment notice has
+    no run, so it reports the board column the item sits in.
+    """
+
+    facts = [
+        ("任务标题", payload.get("itemTitle")),
+        ("任务编号", payload.get("itemKey") or payload.get("itemId")),
+        ("任务状态", run_status or payload.get("itemStatus")),
+        ("当前负责人", payload.get("assigneeName")),
+        (BOARD_LABEL, payload.get("projectName")),
+    ]
+    return [(label, value) for label, value in facts if value]
+
+
+_DETAIL_LABELS = {
+    "completed": "任务结果",
+    "failed": "失败原因",
+    "FAILED": "失败原因",
+    "cancelled": "取消原因",
+    "CANCELLED": "取消原因",
+}
+
+
+def _detail_label(kind: str, payload: dict[str, Any]) -> str:
+    if kind == "mention":
+        return "评论内容"
+    label = _DETAIL_LABELS.get(str(payload.get("status")))
+    if label:
+        return label
+    return "最新回复" if kind == "runtime" else "说明"
 
 
 def mention_message(
@@ -118,9 +225,10 @@ def assignment_message(
 ) -> NotificationMessage:
     """A board item was assigned to the recipient."""
 
+    where = f"「{target.item_title}」" if target.item_title else "任务"
     return NotificationMessage(
         kind="assignment",
-        title=f"{assigner_name} 把「{target.item_title}」分配给了你",
+        title=f"{assigner_name} 把{where}分配给了你",
         body="",
         payload={**target.payload(), "actorName": assigner_name},
     )
@@ -162,8 +270,12 @@ def runtime_message(
     prefix, body = _execution_copy(task_title, status=status, detail=content)
     return NotificationMessage(
         kind="runtime",
-        title=f"任务「{task_title}」{prefix}",
-        body=body,
+        title=f"你的任务{prefix}",
+        body=fact_block(
+            facts=[("任务标题", task_title), ("任务状态", prefix)],
+            detail=body,
+            detail_label=_detail_label("runtime", {"status": status}),
+        ),
     )
 
 

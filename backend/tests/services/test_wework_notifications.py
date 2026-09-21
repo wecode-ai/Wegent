@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
@@ -15,6 +16,7 @@ from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
     issue_url,
+    notification_links,
     send_wework_notification,
 )
 from tests.services.test_loop_item_assignment import (
@@ -268,7 +270,7 @@ async def test_im_receives_message_even_when_live_push_fails(
         await deliver_notification(row.id)
     assert send.call_args.args[2] == "Review failed"
     assert send.call_args.kwargs["title"] == "Review"
-    assert send.call_args.kwargs["url"] == row.url
+    assert send.call_args.kwargs["links"] == notification_links(row)
 
 
 async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_user):
@@ -280,6 +282,7 @@ async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_
         body="麻烦看下这个改动",
         project_id="123",
         item_id="WEG-12",
+        kind="mention",
         payload={"projectId": "123", "projectName": "test-pro"},
     )
     test_db.commit()
@@ -300,7 +303,45 @@ async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_
         ) as send,
     ):
         await deliver_notification(row.id)
-    assert send.call_args.args[2] == "麻烦看下这个改动\n\n看板：test-pro"
+    assert send.call_args.args[2] == "看板：test-pro\n\n评论内容：麻烦看下这个改动"
+
+
+def test_push_offers_the_desktop_deep_link_and_the_web_page(test_db, test_user):
+    """A push must stay usable for a recipient who does not run Wework."""
+
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="hajimi 在评论中提到了你",
+        body="麻烦看下这个改动",
+        project_id="123",
+        item_id="WEG-12",
+        kind="mention",
+        payload={"projectId": "123", "itemId": "WEG-12", "projectName": "test-pro"},
+    )
+    test_db.commit()
+
+    assert [(link.label, link.url) for link in notification_links(row)] == [
+        ("在 Wework 打开", row.url),
+        (
+            "在浏览器打开",
+            f"{settings.FRONTEND_URL.rstrip('/')}/collaboration/123/issues/WEG-12",
+        ),
+    ]
+
+
+def test_push_without_a_board_item_has_nothing_to_open(test_db, test_user):
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Greeting",
+        body="你好",
+    )
+    test_db.commit()
+
+    assert notification_links(row) == []
 
 
 def test_scheme_encodes_external_issue_identifiers():

@@ -38,7 +38,7 @@ def notify_project_chat_mentions(
         return
 
     preview = comment_preview(content)
-    target = board_notification_target(project, item)
+    target = board_notification_target(db, project, item)
     message = mention_message(
         actor_name=actor_name,
         preview=preview,

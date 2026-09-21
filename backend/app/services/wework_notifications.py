@@ -9,9 +9,15 @@ from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.wework_notification import WeworkNotification
 from app.schemas.wework_notification import NotificationCreate
-from app.services.notification_copy import board_footer
+from app.services.notification_copy import (
+    WEB_LINK_LABEL,
+    WEWORK_LINK_LABEL,
+    NotificationLink,
+    push_copy,
+)
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,40 @@ def issue_url(
         return url
     url = f"{url}/issues/{quote(item_id, safe='')}"
     return f"{url}/comments/{quote(comment_id, safe='')}" if comment_id else url
+
+
+def web_issue_url(project_id: str, item_id: str) -> str:
+    """The board page of one item for a recipient without the desktop app."""
+
+    base = settings.FRONTEND_URL.rstrip("/")
+    return (
+        f"{base}/collaboration/{quote(project_id, safe='')}"
+        f"/issues/{quote(item_id, safe='')}"
+    )
+
+
+def notification_links(notification: WeworkNotification) -> list[NotificationLink]:
+    """Every destination a push for one stored notification should offer.
+
+    The inbox opens inside Wework, so the stored url is the desktop deep link;
+    a push reaches recipients who may not run Wework, so it carries the web
+    board page as well.
+    """
+
+    payload = notification.payload if isinstance(notification.payload, dict) else {}
+    links: list[NotificationLink] = []
+    if notification.url:
+        links.append(NotificationLink(label=WEWORK_LINK_LABEL, url=notification.url))
+    project_id = payload.get("projectId")
+    item_id = payload.get("itemId")
+    if project_id and item_id:
+        links.append(
+            NotificationLink(
+                label=WEB_LINK_LABEL,
+                url=web_issue_url(str(project_id), str(item_id)),
+            )
+        )
+    return links
 
 
 def create_notification(
@@ -124,19 +164,14 @@ async def deliver_notification(notification_id: str) -> None:
             sessions = await im_session_service.list_user_sessions(
                 db, user_id=notification.user_id
             )
-            # The inbox renders the board as part of its summary line, so the
-            # body only carries the detail; a push has no summary to read, and
-            # therefore closes with the board itself.
             payload = (
                 notification.payload if isinstance(notification.payload, dict) else {}
             )
-            text = "\n\n".join(
-                part
-                for part in (
-                    notification.body,
-                    board_footer(str(payload.get("projectName") or "")),
-                )
-                if part
+            headline, text = push_copy(
+                kind=notification.kind,
+                title=notification.title,
+                body=notification.body,
+                payload=payload,
             )
             for session in sessions:
                 if session.user_id != notification.user_id:
@@ -145,8 +180,8 @@ async def deliver_notification(notification_id: str) -> None:
                     db,
                     session,
                     text,
-                    title=notification.title,
-                    url=notification.url,
+                    title=headline,
+                    links=notification_links(notification),
                 )
                 if not result.get("success"):
                     logger.warning(

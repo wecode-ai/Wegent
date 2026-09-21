@@ -16,6 +16,7 @@ from app.models.kind import Kind
 from app.services.im.session_service import im_session_service
 from app.services.notification_copy import (
     RUNTIME_REPLY_HINT,
+    NotificationLink,
     notification_message,
     runtime_message,
 )
@@ -175,17 +176,18 @@ class IMNotificationDispatcher:
         text: str,
         *,
         title: str = "",
-        url: str = "",
-        link_label: str = NOTIFICATION_LINK_LABEL,
+        links: Sequence[NotificationLink] = (),
     ) -> dict[str, Any]:
         """Send one inbox notification, linking it when the channel supports it.
 
         The headline is kept with the body so a pushed notification mirrors the
-        inbox row it came from: DingTalk bolds it above a clickable link, other
-        channels receive the two as plain text followed by the address.
+        inbox row it came from: DingTalk bolds it above the links, other channels
+        receive the text followed by the addresses. A notification can offer more
+        than one destination — the web board and the Wework deep link — so the
+        links travel as a list.
         """
 
-        if not url:
+        if not links:
             return await self.send_text(db, session, notification_message(title, text))
         try:
             channel = self._get_channel(db, session.channel_id)
@@ -205,12 +207,13 @@ class IMNotificationDispatcher:
                     config,
                     text,
                     markdown=True,
-                    url=url,
-                    link_label=link_label,
+                    links=links,
                     headline=title,
                 )
             return await self.send_text(
-                db, session, f"{notification_message(title, text)}\n\n{url}"
+                db,
+                session,
+                f"{notification_message(title, text)}\n\n{_plain_links(links)}",
             )
         except Exception as exc:
             logger.exception(
@@ -318,8 +321,7 @@ class IMNotificationDispatcher:
         text: str,
         *,
         markdown: bool = False,
-        url: str = "",
-        link_label: str = NOTIFICATION_LINK_LABEL,
+        links: Sequence[NotificationLink] = (),
         headline: str = "",
     ) -> dict[str, Any]:
         from app.services.channels.dingtalk.sender import DingTalkRobotSender
@@ -346,8 +348,8 @@ class IMNotificationDispatcher:
         sender = DingTalkRobotSender(client_id, client_secret)
         if markdown:
             content = f"**{headline}**\n\n{text}" if headline else text
-            if url:
-                content = f"{content}\n\n[{link_label}]({url})"
+            if links:
+                content = f"{content}\n\n{_markdown_links(links)}"
             result = await sender.send_markdown_message(
                 user_ids=[recipient_id],
                 title=_notification_preview_title(headline or text),
@@ -491,6 +493,18 @@ def _dedupe_sessions(
         seen.add(session.session_key)
         deduped.append(session)
     return deduped
+
+
+def _markdown_links(links: Sequence[NotificationLink]) -> str:
+    """Render every destination as one clickable DingTalk markdown line."""
+
+    return " · ".join(f"[{link.label}]({link.url})" for link in links)
+
+
+def _plain_links(links: Sequence[NotificationLink]) -> str:
+    """Render the destinations for channels that cannot carry a link label."""
+
+    return "\n".join(link.url for link in links)
 
 
 def _result_reply_reference(result: dict[str, Any]) -> int | str | None:

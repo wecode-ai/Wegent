@@ -3,11 +3,11 @@
 from app.services.notification_copy import (
     NotificationTarget,
     assignment_message,
-    board_footer,
     comment_preview,
     execution_message,
     mention_message,
     notification_message,
+    push_copy,
     runtime_message,
 )
 
@@ -20,6 +20,7 @@ TARGET = NotificationTarget(
     item_status="进行中",
     item_priority="high",
     item_due_at="2026-09-30T00:00:00",
+    assignee_name="崔嘉琪",
 )
 
 
@@ -45,6 +46,7 @@ def test_mention_message_names_the_actor_item_and_landing_comment() -> None:
         "itemStatus": "进行中",
         "itemPriority": "high",
         "itemDueAt": "2026-09-30T00:00:00",
+        "assigneeName": "崔嘉琪",
         "actorName": "hajimi",
         "commentId": "comment-1",
         "commentPreview": "麻烦看下这个改动",
@@ -105,11 +107,17 @@ def test_execution_message_uses_one_headline_per_state() -> None:
 def test_runtime_message_mirrors_the_board_headline_shape() -> None:
     assert (
         runtime_message(task_title="重构通知", status="completed", content="").title
-        == "任务「重构通知」已完成"
+        == "你的任务已完成"
+    )
+    assert (
+        runtime_message(task_title="重构通知", status="completed", content="").body
+        == "任务标题：重构通知\n\n"
+        "任务状态：已完成\n\n"
+        "任务结果：任务已完成，请打开任务查看结果。"
     )
     assert (
         runtime_message(task_title="重构通知", status="updated", content="改好了").body
-        == "改好了"
+        == "任务标题：重构通知\n\n任务状态：有新的 AI 回复\n\n最新回复：改好了"
     )
 
 
@@ -124,7 +132,62 @@ def test_comment_preview_collapses_whitespace_and_truncates() -> None:
     assert comment_preview("x" * 30, limit=10) == "xxxxxxxxx…"
 
 
-def test_board_footer_carries_the_board_a_push_cannot_look_up() -> None:
-    assert board_footer("test-pro") == "看板：test-pro"
-    assert board_footer("") == ""
-    assert board_footer(None) == ""
+def test_push_copy_restates_the_facts_an_inbox_summary_already_shows() -> None:
+    message = execution_message(
+        target=TARGET, status="completed", detail="实现完成，已通过自测。"
+    )
+
+    headline, text = push_copy(
+        kind=message.kind,
+        title=message.title,
+        body=message.body,
+        payload=message.payload,
+    )
+
+    assert headline == "你的任务已完成"
+    assert text == "\n\n".join(
+        (
+            "任务标题：修复登录",
+            "任务编号：WEG-12",
+            "任务状态：已完成",
+            "当前负责人：崔嘉琪",
+            "看板：test-pro",
+            "任务结果：实现完成，已通过自测。",
+        )
+    )
+
+
+def test_push_copy_leads_with_the_actor_for_a_mention() -> None:
+    message = mention_message(
+        actor_name="hajimi",
+        preview="麻烦看下这个改动",
+        comment_id="comment-1",
+        target=TARGET,
+    )
+
+    headline, text = push_copy(
+        kind=message.kind,
+        title=message.title,
+        body=message.body,
+        payload=message.payload,
+    )
+
+    assert headline == "hajimi 在评论中提到了你"
+    assert text.endswith("评论内容：麻烦看下这个改动")
+
+
+def test_push_copy_skips_the_facts_a_notification_does_not_have() -> None:
+    message = assignment_message(
+        assigner_name="admin",
+        target=NotificationTarget(project_id="12", project_name="test-pro"),
+    )
+
+    headline, text = push_copy(
+        kind=message.kind,
+        title=message.title,
+        body=message.body,
+        payload=message.payload,
+    )
+
+    assert headline == "admin 把任务分配给了你"
+    assert text == "看板：test-pro"
