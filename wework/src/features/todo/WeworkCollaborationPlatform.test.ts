@@ -2064,6 +2064,49 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
+  it('reloads the default Agent created by another concurrent resource request', async () => {
+    const defaultAgent = {
+      id: 'LA-default',
+      name: 'current-device-assistant',
+      displayName: '当前设备助手',
+      capabilityDescription: '自动使用运行设备能力',
+      capabilityMode: 'follow_device',
+      systemPrompt: '',
+      runtime: 'codex',
+      model: 'gpt-5',
+      modelType: 'public',
+      modelNamespace: 'default',
+      status: 'active',
+      executionDeviceId: null,
+      version: 1,
+    }
+    const list = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([defaultAgent])
+    const detailServices = {
+      ...createLocalDetailServices(),
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [{ name: 'gpt-5', type: 'public', namespace: 'default' }],
+        }),
+      },
+      localProjectChatAgentApi: {
+        list,
+        ensureDefault: vi.fn().mockResolvedValue(null),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
+
+    await expect(api?.resources?.list()).resolves.toMatchObject({
+      agents: [
+        {
+          id: 'LA-default',
+          name: '当前设备助手',
+          location: 'local',
+        },
+      ],
+    })
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps local Agent resources local when cloud resource loading fails', async () => {
     const detailServices = {
       ...createLocalDetailServices(),

@@ -798,8 +798,9 @@ impl LocalTaskStore {
         project_id: &str,
         input: ChatAgentCreate,
     ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let initialized = connection.query_row(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let initialized = transaction.query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM loop_items
                 WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
@@ -809,9 +810,11 @@ impl LocalTaskStore {
             |row| row.get::<_, bool>(0),
         )?;
         if initialized {
+            transaction.commit()?;
             return Ok(None);
         }
-        let id = insert_chat_agent(&connection, project_id, input)?;
+        let id = insert_chat_agent(&transaction, project_id, input)?;
+        transaction.commit()?;
         drop(connection);
         self.get_chat_agent(project_id, &id).map(Some)
     }
@@ -4845,6 +4848,32 @@ mod tests {
             .unwrap()
     }
 
+    fn default_chat_agent_input() -> ChatAgentCreate {
+        ChatAgentCreate {
+            name: "current-device-assistant".to_owned(),
+            display_name: Some("Current device assistant".to_owned()),
+            namespace: Some("default".to_owned()),
+            runtime: "codex".to_owned(),
+            model: Some("gpt-5".to_owned()),
+            model_type: Some("public".to_owned()),
+            model_namespace: Some("default".to_owned()),
+            capability_description: None,
+            capability_mode: Some("follow_device".to_owned()),
+            system_prompt: Some(String::new()),
+            visibility: Some("creator_admin".to_owned()),
+            execution_environment: Some("local".to_owned()),
+            execution_mode: Some("auto".to_owned()),
+            execution_device_id: None,
+            max_concurrent_executions: 1,
+            workspace_policy: "project".to_owned(),
+            local_project_id: None,
+            created_by_user_id: Some(7),
+            plugins: Vec::new(),
+            additional_skills: Vec::new(),
+            mcp_servers: json!({}),
+        }
+    }
+
     fn accept_and_start(store: &LocalTaskStore, claimed: &LocalExecution) -> LocalExecution {
         let device_id = claimed.runtime_device_id.as_deref().unwrap();
         let task_id = claimed.runtime_task_id.as_deref().unwrap();
@@ -4939,29 +4968,7 @@ mod tests {
     #[test]
     fn default_chat_agent_is_created_once_and_stays_deleted() {
         let (_directory, store, project) = chat_agent_store();
-        let input = ChatAgentCreate {
-            name: "current-device-assistant".to_owned(),
-            display_name: Some("Current device assistant".to_owned()),
-            namespace: Some("default".to_owned()),
-            runtime: "codex".to_owned(),
-            model: Some("gpt-5".to_owned()),
-            model_type: Some("public".to_owned()),
-            model_namespace: Some("default".to_owned()),
-            capability_description: None,
-            capability_mode: Some("follow_device".to_owned()),
-            system_prompt: Some(String::new()),
-            visibility: Some("creator_admin".to_owned()),
-            execution_environment: Some("local".to_owned()),
-            execution_mode: Some("auto".to_owned()),
-            execution_device_id: None,
-            max_concurrent_executions: 1,
-            workspace_policy: "project".to_owned(),
-            local_project_id: None,
-            created_by_user_id: Some(7),
-            plugins: Vec::new(),
-            additional_skills: Vec::new(),
-            mcp_servers: json!({}),
-        };
+        let input = default_chat_agent_input();
 
         let created = store
             .ensure_default_chat_agent(&project.id, input.clone())
@@ -4980,6 +4987,46 @@ mod tests {
             .ensure_default_chat_agent(&project.id, input)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn default_chat_agent_initialization_is_atomic_across_store_connections() {
+        let (_directory, store, project) = chat_agent_store();
+        let db_path = store.path.clone();
+        drop(store);
+        let barrier = Arc::new(Barrier::new(2));
+        let initializers = (0..2)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let db_path = db_path.clone();
+                let project_id = project.id.clone();
+                std::thread::spawn(move || {
+                    let store = LocalTaskStore::open(db_path).unwrap();
+                    barrier.wait();
+                    store
+                        .ensure_default_chat_agent(&project_id, default_chat_agent_input())
+                        .unwrap()
+                        .is_some()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            initializers
+                .into_iter()
+                .map(|initializer| initializer.join().unwrap())
+                .filter(|created| *created)
+                .count(),
+            1
+        );
+        assert_eq!(
+            LocalTaskStore::open(db_path)
+                .unwrap()
+                .list_chat_agents(&project.id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

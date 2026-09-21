@@ -143,7 +143,9 @@ export function createLocalWorkspaceApi(
           executionDeviceId: null,
           workspacePolicy: 'project',
         })
-        if (created) agents = [created]
+        agents = created
+          ? [created]
+          : ((await projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)) ?? [])
       }
     }
     const ownerName = locale === 'zh-CN' ? '本地空间' : 'Local space'
