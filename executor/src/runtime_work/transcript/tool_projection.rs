@@ -104,6 +104,7 @@ fn new_tool_block(
         object.insert("tool_input".to_owned(), tool_input);
     }
     if let Some(object) = block.as_object_mut() {
+        insert_plugin_provenance(object, item);
         if let Some(completed_at) = item_completed_at(item) {
             object.insert("completedAt".to_owned(), json!(completed_at));
         }
@@ -114,6 +115,20 @@ fn new_tool_block(
         }
     }
     block
+}
+
+fn insert_plugin_provenance(object: &mut Map<String, Value>, item: &Value) {
+    if item_type(item) != "mcptoolcall" {
+        return;
+    }
+    if let Some(plugin_id) =
+        string_field(item, "pluginId").or_else(|| string_field(item, "plugin_id"))
+    {
+        object.insert("plugin_id".to_owned(), Value::String(plugin_id));
+    }
+    if let Some(server) = string_field(item, "server") {
+        object.insert("mcp_server".to_owned(), Value::String(server));
+    }
 }
 
 fn enrich_tool_block(

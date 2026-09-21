@@ -47,6 +47,43 @@ describe('telemetry dispatcher', () => {
     })
   })
 
+  test('keeps plugin invocation identity internal while projecting coarse public dimensions', () => {
+    const accept = vi.fn()
+    const dispatcher = createTelemetryDispatcher({
+      distribution: 'public',
+      internalSinks: () => [],
+      publicSink: { id: 'public', accept },
+    })
+    dispatcher.publish({
+      name: 'plugin_invocation_succeeded',
+      occurredAt: '2026-09-21',
+      properties: {
+        capability_type: 'mcp',
+        execution_surface: 'task',
+        executor_location: 'local',
+        plugin_distribution: 'personal',
+      },
+      context: {
+        pluginInvocation: {
+          marketplace: 'private-marketplace',
+          pluginKey: 'private-plugin',
+          toolName: 'private_server.search',
+          version: '1.0.0',
+        },
+      },
+    })
+
+    expect(accept).toHaveBeenCalledWith({
+      name: 'plugin_invocation_succeeded',
+      properties: {
+        capability_type: 'mcp',
+        execution_surface: 'task',
+        executor_location: 'local',
+        plugin_distribution: 'personal',
+      },
+    })
+  })
+
   test('projects public fields and does not forward internal context', async () => {
     const publicSink = vi.fn()
     const internalSink = vi.fn()

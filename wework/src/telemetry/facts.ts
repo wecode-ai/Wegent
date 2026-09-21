@@ -33,7 +33,16 @@ export interface TelemetryUserContext {
   readonly userName: string
 }
 
+export interface PluginInvocationIdentityContext {
+  readonly durationMs?: number
+  readonly marketplace: string
+  readonly pluginKey: string
+  readonly toolName: string
+  readonly version: string
+}
+
 export interface WeworkTelemetryContext {
+  readonly pluginInvocation?: PluginInvocationIdentityContext
   readonly smartApp?: SmartAppIdentityContext
   readonly user?: TelemetryUserContext
 }

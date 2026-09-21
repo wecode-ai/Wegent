@@ -411,6 +411,79 @@
           "values": ["local", "cloud", "unknown"]
         }
       ]
+    },
+    {
+      "key": "plugin.plugin_invocation_succeeded",
+      "eventName": "plugin_invocation_succeeded",
+      "name": {
+        "zh-CN": "插件调用成功",
+        "en": "Plugin invocation succeeded"
+      },
+      "description": {
+        "zh-CN": "已确认归属插件的 MCP 工具调用成功完成",
+        "en": "A confirmed plugin-owned MCP tool invocation completed successfully"
+      },
+      "publicProperties": [
+        {
+          "name": "capability_type",
+          "type": "enum",
+          "values": ["mcp"]
+        },
+        {
+          "name": "execution_surface",
+          "type": "enum",
+          "values": ["task", "project_task", "automation", "unknown"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.plugin_invocation_failed",
+      "eventName": "plugin_invocation_failed",
+      "name": {
+        "zh-CN": "插件调用失败",
+        "en": "Plugin invocation failed"
+      },
+      "description": {
+        "zh-CN": "已确认归属插件的 MCP 工具调用失败",
+        "en": "A confirmed plugin-owned MCP tool invocation failed"
+      },
+      "publicProperties": [
+        {
+          "name": "capability_type",
+          "type": "enum",
+          "values": ["mcp"]
+        },
+        {
+          "name": "execution_surface",
+          "type": "enum",
+          "values": ["task", "project_task", "automation", "unknown"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        },
+        {
+          "name": "plugin_distribution",
+          "type": "enum",
+          "values": ["official", "enterprise", "personal", "unknown"]
+        },
+        {
+          "name": "failure_stage",
+          "type": "enum",
+          "values": ["invoke", "timeout", "cancelled", "unknown"]
+        }
+      ]
     }
   ]
 }

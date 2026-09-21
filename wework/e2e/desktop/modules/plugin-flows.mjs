@@ -7,6 +7,7 @@ import {
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
+import { telemetryEvents } from './response-protocol.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -629,6 +630,37 @@ async function verifyPluginLifecycle({ control, fixture }) {
     control.scenarioRequests.get('official_plugin')?.length,
     5,
     'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
+  )
+  const telemetryRequest = await control.awaitTelemetryEvent(
+    'plugin_invocation_failed',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const invocationEvent = telemetryEvents(telemetryRequest.payload).find(
+    event => event.event === 'plugin_invocation_failed'
+  )
+  assert.deepEqual(
+    {
+      capability_type: invocationEvent?.properties?.capability_type,
+      execution_surface: invocationEvent?.properties?.execution_surface,
+      executor_location: invocationEvent?.properties?.executor_location,
+      failure_stage: invocationEvent?.properties?.failure_stage,
+      plugin_distribution: invocationEvent?.properties?.plugin_distribution,
+    },
+    {
+      capability_type: 'mcp',
+      execution_surface: 'task',
+      executor_location: 'local',
+      failure_stage: 'invoke',
+      plugin_distribution: 'official',
+    },
+    'The plugin invocation telemetry did not preserve the expected public dimensions'
+  )
+  assert.equal(
+    Object.keys(invocationEvent?.properties ?? {}).some(key =>
+      /plugin_key|plugin_name|marketplace|tool_name|task_id/.test(key)
+    ),
+    false,
+    'The public plugin invocation event exposed a private plugin or task identifier'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }

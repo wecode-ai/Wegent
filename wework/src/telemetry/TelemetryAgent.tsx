@@ -136,9 +136,13 @@ export function TelemetryAgent() {
   useEffect(
     () =>
       subscribeBusinessEvents(event => {
+        const context =
+          distribution === 'internal'
+            ? { ...userContext(distribution, user), ...event.context }
+            : undefined
         dispatcher.publish({
           ...event,
-          context: userContext(distribution, user),
+          context,
           occurredAt: new Date().toISOString(),
         })
       }),

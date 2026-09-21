@@ -11,8 +11,12 @@ const publicCatalogJsonPath = path.join(weworkDirectory, 'telemetry/catalog/publ
 const publicCatalogMarkdownPath = path.join(weworkDirectory, 'telemetry/catalog/public-events.md')
 const SAFE_IDENTIFIER_PATTERN = /^[a-z][a-z0-9_]*$/
 const SAFE_PROPERTY_NAMES = new Set([
+  'capability_type',
   'domain',
+  'execution_surface',
+  'executor_location',
   'failure_stage',
+  'plugin_distribution',
   'source',
   'scope',
   'surface',

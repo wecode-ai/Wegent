@@ -9,6 +9,19 @@ export interface PluginGeneratedEventMap {
     scope: 'plugin' | 'component'
     source: 'local' | 'cloud' | 'unknown'
   }
+  plugin_invocation_succeeded: {
+    capability_type: 'mcp'
+    execution_surface: 'task' | 'project_task' | 'automation' | 'unknown'
+    executor_location: 'local' | 'cloud' | 'remote' | 'unknown'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+  }
+  plugin_invocation_failed: {
+    capability_type: 'mcp'
+    execution_surface: 'task' | 'project_task' | 'automation' | 'unknown'
+    executor_location: 'local' | 'cloud' | 'remote' | 'unknown'
+    plugin_distribution: 'official' | 'enterprise' | 'personal' | 'unknown'
+    failure_stage: 'invoke' | 'timeout' | 'cancelled' | 'unknown'
+  }
   plugin_create_request_succeeded: { domain: 'plugin' }
   plugin_create_request_failed: { domain: 'plugin'; failure_stage: 'request' | 'confirm' }
   plugin_publish_request_succeeded: { domain: 'plugin' }
@@ -50,6 +63,19 @@ export const PLUGIN_EVENT_PROPERTY_KEYS = {
   plugin_installed: ['source'],
   plugin_uninstalled: ['source'],
   plugin_enabled_changed: ['enabled', 'scope', 'source'],
+  plugin_invocation_succeeded: [
+    'capability_type',
+    'execution_surface',
+    'executor_location',
+    'plugin_distribution',
+  ],
+  plugin_invocation_failed: [
+    'capability_type',
+    'execution_surface',
+    'executor_location',
+    'plugin_distribution',
+    'failure_stage',
+  ],
   plugin_create_request_succeeded: ['domain'],
   plugin_create_request_failed: ['domain', 'failure_stage'],
   plugin_publish_request_succeeded: ['domain'],
@@ -98,6 +124,19 @@ export const PLUGIN_EVENT_VALUE_CONSTRAINTS = {
     enabled: [true, false],
     scope: ['plugin', 'component'],
     source: ['local', 'cloud', 'unknown'],
+  },
+  plugin_invocation_succeeded: {
+    capability_type: ['mcp'],
+    execution_surface: ['task', 'project_task', 'automation', 'unknown'],
+    executor_location: ['local', 'cloud', 'remote', 'unknown'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+  },
+  plugin_invocation_failed: {
+    capability_type: ['mcp'],
+    execution_surface: ['task', 'project_task', 'automation', 'unknown'],
+    executor_location: ['local', 'cloud', 'remote', 'unknown'],
+    plugin_distribution: ['official', 'enterprise', 'personal', 'unknown'],
+    failure_stage: ['invoke', 'timeout', 'cancelled', 'unknown'],
   },
   plugin_create_request_succeeded: {
     domain: ['plugin'],
