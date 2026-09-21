@@ -207,9 +207,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('waitFor', scoped('[data-testid="collaboration-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      assert.ok(
-        cloudWorkspaceListFailures > 0,
-        'Entering the local workspace did not exercise the unavailable cloud workspace service'
+      assert.equal(
+        cloudWorkspaceListFailures,
+        0,
+        'Entering the local workspace unexpectedly reloaded the unavailable cloud workspace service'
       )
       assertLocalIsolation()
 
@@ -341,14 +342,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
-          visible: false,
+          text: '云端空间',
           timeoutMs: uiTimeoutMs,
         }
       )
 
-      assert.ok(
-        cloudWorkspaceListFailures > 0,
-        'Returning to all spaces did not exercise the unavailable cloud workspace service'
+      assert.equal(
+        cloudWorkspaceListFailures,
+        0,
+        'Returning to the local workspace unexpectedly reloaded the unavailable cloud workspace service'
       )
       assertLocalIsolation()
     },

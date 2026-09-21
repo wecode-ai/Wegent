@@ -15,6 +15,9 @@ import {
 } from '../../scripts/lib/executor-package-target.mjs'
 import {
   CORE_PLUGIN_DIRECTORIES,
+  INTERNAL_CORE_PLUGIN_MANIFEST,
+  INTERNAL_CORE_PLUGINS,
+  corePluginSource,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
 import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plugin-resources.mjs'
@@ -90,10 +93,13 @@ await cp(join(weworkRoot, 'wecode', 'features', 'vnc', 'assets'), join(resources
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {
-  await cp(join(weworkRoot, 'dsh', directory), join(corePluginsRoot, corePluginTarget(directory)), {
+  await cp(corePluginSource(weworkRoot, directory), join(corePluginsRoot, corePluginTarget(directory)), {
     recursive: true,
     filter: source => !source.endsWith('.test.mjs'),
   })
+}
+if (INTERNAL_CORE_PLUGINS.length > 0) {
+  await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
 }
 const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
 await extractWeworkAppStaticResources(corePluginsRoot, weworkAppStaticRoot)

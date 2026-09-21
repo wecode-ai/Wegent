@@ -1,4 +1,4 @@
-import { Monitor, SquareTerminal, X } from 'lucide-react'
+import { SquareTerminal, X } from 'lucide-react'
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
@@ -171,15 +171,17 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
         onSelect: openTerminalTab,
       })
     }
-    if (activeMenuActions.desktop.visible) {
+    if (activeMenuActions.extension?.visible) {
+      const extension = activeMenuActions.extension
       items.push({
-        id: 'desktop',
-        testId: 'workspace-add-desktop-option',
-        icon: Monitor,
-        label: t('workbench.desktop', '桌面'),
-        disabled: activeMenuActions.desktop.disabled,
-        title: activeMenuActions.desktop.title,
-        onSelect: activeMenuActions.desktop.run,
+        id: extension.id,
+        testId: extension.testId,
+        icon: extension.icon,
+        label: extension.label,
+        telemetryPanel: extension.telemetryPanel,
+        disabled: extension.disabled,
+        title: extension.title,
+        onSelect: extension.run,
       })
     }
     return items

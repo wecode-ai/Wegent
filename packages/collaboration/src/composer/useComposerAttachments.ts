@@ -7,6 +7,7 @@ export interface MultiAttachmentUploadState {
 }
 import { isValidFileSize, releaseAttachmentPreview, isWorkspaceImageFile } from './attachmentFiles'
 import { readTextAttachmentMetadata } from '../issue-detail/attachmentPresentation'
+import { isPastedTextFile } from './pastedTextAttachment'
 
 export interface ComposerAttachmentsOptions {
   onAction?: (action: 'upload' | 'delete' | 'failed') => void
@@ -134,6 +135,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
                 text_length: attachment.text_length ?? textMetadata.text_length,
               }
             : attachment
+          if (isPastedTextFile(file)) enrichedAttachment = { ...enrichedAttachment, ui_kind: 'pasted-text' }
           if (previewUrl) {
             if (enrichedAttachment.local_preview_url !== previewUrl) {
               releaseAttachmentPreview(enrichedAttachment)

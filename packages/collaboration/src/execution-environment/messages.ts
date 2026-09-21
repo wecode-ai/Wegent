@@ -14,12 +14,12 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_provisioning": "准备中",
     "todo.execution_environment_error": "异常",
     "todo.execution_environment_ready": "环境已就绪",
-    "todo.execution_environment_preparing": "正在创建环境",
-    "todo.execution_environment_initialization_error": "环境创建失败",
-    "todo.execution_environment_uninitialized": "尚未创建环境",
+    "todo.execution_environment_preparing": "正在初始化环境",
+    "todo.execution_environment_initialization_error": "环境初始化失败",
+    "todo.execution_environment_uninitialized": "环境未初始化",
     "todo.execution_environment_configuration": "环境配置",
     "todo.execution_environment_configuration_description":
-      "定义创建执行环境时使用的代码来源和初始化命令。",
+      "定义初始化执行环境时使用的代码来源和初始化命令。",
     "todo.execution_environment_repositories": "代码仓库",
     "todo.execution_environment_repositories_description":
       "主仓库是智能体默认工作目录；其他仓库会克隆到同一环境下的独立目录。",
@@ -39,12 +39,12 @@ export const executionEnvironmentMessages: Record<
       "步骤按顺序执行；工作目录为空时在主仓库执行，也可以指定任一仓库目录。",
     "todo.add_setup_step": "添加步骤",
     "todo.no_setup_steps": "没有初始化步骤，仓库克隆完成后即可使用。",
-    "todo.execution_environment_create": "创建环境",
+    "todo.execution_environment_create": "初始化环境",
     "todo.execution_environment_primary_repository_required":
-      "请先为主仓库选择 Git 仓库，再创建环境。",
-    "todo.execution_environment_reinitialize": "重新创建",
+      "请先为主仓库选择 Git 仓库，再初始化环境。",
+    "todo.execution_environment_reinitialize": "重新初始化",
     "todo.execution_environment_create_hint":
-      "填写配置后，在一台在线设备上点击“创建环境”；创建过程会同时保存配置并完成初始化。",
+      "填写配置后，在一台在线设备上点击“初始化环境”；初始化过程会同时保存配置。",
     "todo.execution_environment_status_filter": "状态",
     "todo.execution_environment_all_statuses": "全部",
     "todo.execution_environment_no_matches": "没有符合当前状态的执行环境",
@@ -67,13 +67,13 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_provisioning": "Preparing",
     "todo.execution_environment_error": "Error",
     "todo.execution_environment_ready": "Environment ready",
-    "todo.execution_environment_preparing": "Creating environment",
+    "todo.execution_environment_preparing": "Initializing environment",
     "todo.execution_environment_initialization_error":
-      "Environment creation failed",
-    "todo.execution_environment_uninitialized": "No environment",
+      "Environment initialization failed",
+    "todo.execution_environment_uninitialized": "Environment not initialized",
     "todo.execution_environment_configuration": "Environment configuration",
     "todo.execution_environment_configuration_description":
-      "Define the code source and initialization commands used to create an execution environment.",
+      "Define the code source and commands used to initialize an execution environment.",
     "todo.execution_environment_repositories": "Code repositories",
     "todo.execution_environment_repositories_description":
       "The primary repository is the agent's default working directory. Other repositories are cloned into separate paths in the same environment.",
@@ -96,12 +96,12 @@ export const executionEnvironmentMessages: Record<
     "todo.add_setup_step": "Add step",
     "todo.no_setup_steps":
       "No initialization steps. The environment is ready after repositories are cloned.",
-    "todo.execution_environment_create": "Create environment",
+    "todo.execution_environment_create": "Initialize environment",
     "todo.execution_environment_primary_repository_required":
-      "Select a Git repository for the primary repository before creating the environment.",
-    "todo.execution_environment_reinitialize": "Recreate",
+      "Select a Git repository for the primary repository before initializing the environment.",
+    "todo.execution_environment_reinitialize": "Reinitialize",
     "todo.execution_environment_create_hint":
-      "Complete the configuration, then create the environment on an online device. Creation saves the configuration and initializes it.",
+      "Complete the configuration, then initialize the environment on an online device. Initialization also saves the configuration.",
     "todo.execution_environment_status_filter": "Status",
     "todo.execution_environment_all_statuses": "All",
     "todo.execution_environment_no_matches":

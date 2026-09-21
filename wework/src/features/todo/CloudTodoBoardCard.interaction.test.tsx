@@ -108,6 +108,36 @@ describe('board progress activation', () => {
     expect(onClick).not.toHaveBeenCalled()
   })
 
+  it('scopes the card shortcut hover state to the current card', async () => {
+    const onClick = vi.fn()
+    const onConfirm = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        display={minimalDisplay}
+        onClick={onClick}
+        onArchive={vi.fn()}
+        processingStatus={false}
+        cardAction={{
+          kind: 'confirm',
+          label: '确认完成',
+          testId: 'card-confirm',
+          onClick: onConfirm,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-drop-WEG-85')
+    const shortcut = screen.getByTestId('card-confirm')
+    expect(card).toHaveClass('group/cloud-todo-card')
+    expect(shortcut).toHaveClass('group-hover/cloud-todo-card:opacity-100')
+    expect(shortcut).not.toHaveClass('group-hover:opacity-100')
+
+    await userEvent.click(shortcut)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
   it('never opens or marks read on hover, focus, or an ordinary Issue click', async () => {
     vi.useFakeTimers()
     const onClick = vi.fn()

@@ -304,11 +304,18 @@ fn resolve_workspace_path(path: &str) -> PathBuf {
     }
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
+pub(super) fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir().unwrap_or_else(|| PathBuf::from(path));
     }
-    if let Some(rest) = path.strip_prefix("~/") {
+    let rest = path.strip_prefix("~/").or_else(|| {
+        if cfg!(windows) {
+            path.strip_prefix("~\\")
+        } else {
+            None
+        }
+    });
+    if let Some(rest) = rest {
         if let Some(home) = home_dir() {
             return home.join(rest);
         }
@@ -859,6 +866,26 @@ mod tests {
 
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn expands_platform_home_relative_paths() {
+        // Serialize against the git_auth tests that repoint HOME process-wide.
+        let _env = crate::test_env::lock();
+        let home = home_dir().expect("test user has a home directory");
+        assert_eq!(expand_tilde("~"), home);
+        assert_eq!(expand_tilde("~/test/SKILL.md"), home.join("test/SKILL.md"));
+        let windows_path = r"~\test\SKILL.md";
+        let expected = if cfg!(windows) {
+            home.join(r"test\SKILL.md")
+        } else {
+            PathBuf::from(windows_path)
+        };
+        assert_eq!(expand_tilde(windows_path), expected);
+        assert_eq!(
+            expand_tilde("./test/SKILL.md"),
+            PathBuf::from("./test/SKILL.md")
+        );
+    }
 
     fn run_test_git(command: &mut StdCommand) -> Output {
         clear_local_git_env(command);

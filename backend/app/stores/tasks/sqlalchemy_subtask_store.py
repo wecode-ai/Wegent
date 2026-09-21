@@ -709,6 +709,27 @@ class SqlAlchemySubtaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.first()
 
+    def get_user_by_task_source_message(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        channel_type: str,
+        channel_id: int,
+        message_id: str,
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]:
+        """Find a user turn by its external message identity within a task."""
+        query = db.query(Subtask).filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.USER,
+            Subtask.result["source"]["channel_type"].as_string() == channel_type,
+            Subtask.result["source"]["channel_id"].as_integer() == channel_id,
+            Subtask.result["source"]["message_id"].as_string() == message_id,
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        return query.first()
+
     def get_first_user_before_message_id(
         self,
         db: Session,

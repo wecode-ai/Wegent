@@ -25,6 +25,8 @@ export const activityMessages: Record<
     "workbench.retry_failed": "重试失败",
     "activity.task_conversation_model_required": "请先选择模型，再设置执行参数",
     "workbench.show_text_attachment_in_composer": "在文本框中显示",
+    "workbench.pasted_text_attachment": "粘贴的文本",
+    "workbench.adding_pasted_text_attachment": "正在添加粘贴的文本…",
     "workbench.appshot_attachment_label": "应用快照",
     "activity.task_conversation_placeholder": "要求后续变更",
     "activity.task_conversation_empty": "在这里继续任务对话",
@@ -118,6 +120,8 @@ export const activityMessages: Record<
     "activity.task_conversation_model_required":
       "Choose a model before configuring execution options",
     "workbench.show_text_attachment_in_composer": "Show in composer",
+    "workbench.pasted_text_attachment": "Pasted text",
+    "workbench.adding_pasted_text_attachment": "Adding pasted text…",
     "workbench.appshot_attachment_label": "Appshot",
     "activity.task_conversation_placeholder": "Ask for follow-up changes",
     "activity.task_conversation_empty": "Continue the task conversation here",

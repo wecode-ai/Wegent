@@ -10,7 +10,7 @@ const publicIntegrationFiles = [
   'src/components/layout/workspace-panels/WorkspacePanelCards.test.tsx',
   'src/components/layout/DesktopWorkbenchLayout.test.tsx',
   'src/components/settings/ConnectionsSettingsPage.test.tsx',
-  'src/extensions/cloud-desktop-contract.ts',
+  'src/extensions/device-surface-contract.ts',
   'src/lib/external-links.ts',
 ]
 const vncImplementationToken = /vnc|\bRFB\b|prepare_vnc_session|get_vnc_session_config/i
@@ -24,7 +24,7 @@ describe('VNC code ownership', () => {
 
   test('keeps connection and launch implementation out of the public cloud desktop contract', () => {
     const publicContract = readFileSync(
-      resolve(weworkDirectory, 'src/extensions/cloud-desktop-contract.ts'),
+      resolve(weworkDirectory, 'src/extensions/device-surface-contract.ts'),
       'utf8'
     )
 

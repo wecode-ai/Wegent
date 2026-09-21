@@ -14,28 +14,27 @@ import { cn } from '@/lib/utils'
 
 import { DeviceVncPanel } from '@wecode/components/cloud-device'
 
-export interface AdminDeviceMonitorVncExtension {
+export interface AdminDeviceMonitorExtension {
   renderAction: (device: AdminDeviceInfo) => ReactNode
   renderPanel: () => ReactNode
 }
 
 function isVncDeviceAvailable(device: AdminDeviceInfo): boolean {
   return (
-    device.device_type === 'cloud' &&
-    device.bind_shell === 'claudecode'
+    device.device_type === 'cloud' && device.bind_shell === 'claudecode'
     // Note: Admin page shows VNC button even for offline devices
   )
 }
 
 /**
- * Internal VNC extension for the admin device monitor.
+ * Wecode implementation of the admin device monitor extension.
  *
  * The open-source panel only knows how to call this extension. All VNC-specific
  * state, layout, and rendering stay within the wecode namespace.
  */
-export function useAdminDeviceMonitorVncExtension(
+export function useAdminDeviceMonitorExtension(
   devices: AdminDeviceInfo[] = []
-): AdminDeviceMonitorVncExtension {
+): AdminDeviceMonitorExtension {
   const { t } = useTranslation('devices')
   const isMobile = useIsMobile()
   const [activeVncDeviceDetails, setActiveVncDeviceDetails] = useState<AdminDeviceInfo | null>(null)

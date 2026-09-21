@@ -390,6 +390,7 @@ class ContextService:
         subtask_id: int = 0,
         extra_type_data: Optional[Dict[str, Any]] = None,
         storage_purpose: str = "default",
+        *,
         commit: bool = True,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
@@ -403,7 +404,7 @@ class ContextService:
             subtask_id: Subtask ID to link to (0 means unlinked)
             extra_type_data: Additional metadata to merge into type_data
             storage_purpose: Explicit purpose used to select external storage
-            commit: Whether to commit and refresh before returning
+            commit: Commit locally; False leaves the transaction to the caller
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
@@ -483,32 +484,26 @@ class ContextService:
                 )
         except Exception as exc:
             logger.exception(f"Failed to save context {context.id} to storage: {exc}")
-            db.rollback()
+            if commit:
+                db.rollback()
             raise
 
         if external_storage is not None and stored.skip_parsing:
             context.status = ContextStatus.READY.value
             truncation_info = None
-            if commit:
-                db.commit()
-                db.refresh(context)
-            else:
-                db.flush()
-            return context, truncation_info
-
-        # Update status to PARSING
-        context.status = ContextStatus.PARSING.value
-        # Parse document
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError as e:
-            if commit:
-                db.commit()
-            raise
+        else:
+            context.status = ContextStatus.PARSING.value
+            db.flush()
+            try:
+                truncation_info = self._parse_and_update_context(
+                    context=context,
+                    binary_data=binary_data,
+                    extension=extension,
+                )
+            except DocumentParseError:
+                if commit:
+                    db.commit()
+                raise
 
         if commit:
             db.commit()

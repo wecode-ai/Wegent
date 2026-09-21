@@ -1,7 +1,7 @@
 import { Loader2, Monitor } from 'lucide-react'
 import { useEffect } from 'react'
 
-import type { CloudDesktopWorkspaceActionProps } from '@/extensions/cloud-desktop-contract'
+import type { DeviceSurfaceWorkspaceActionProps } from '@/extensions/device-surface-contract'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useCloudDesktopLaunch } from './useCloudDesktopLaunch'
 
@@ -9,7 +9,7 @@ export function WorkspaceDesktopAction({
   onLaunchActionChange,
   testIdsEnabled = true,
   ...props
-}: CloudDesktopWorkspaceActionProps) {
+}: DeviceSurfaceWorkspaceActionProps) {
   const { t } = useTranslation('vnc')
   const launch = useCloudDesktopLaunch({
     ...props,

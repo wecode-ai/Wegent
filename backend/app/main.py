@@ -943,13 +943,7 @@ def create_socketio_asgi_app():
     Create combined ASGI app with Socket.IO mounted.
 
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
-    and everything else to FastAPI.
-
-    Note: We use a custom ASGI router instead of socketio.ASGIApp because
-    socketio.ASGIApp does not properly forward non-Socket.IO WebSocket
-    connections to the other_asgi_app, returning 403 instead.
-    VNC WebSocket connections are handled directly in this router to bypass
-    FastAPI middleware issues with WebSocket upgrade in uvicorn.
+    and everything else through registered distribution wrappers to FastAPI.
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
@@ -976,17 +970,17 @@ def create_socketio_asgi_app():
     register_wework_runtime_namespace(sio)
     _logger.info("Wework runtime namespace registered during ASGI app creation")
 
-    # Create VNC interceptor wrapper for FastAPI
-    # This intercepts VNC WebSocket connections before they reach FastAPI
-    from wecode.api.vnc_websocket_middleware import create_vnc_interceptor_app
+    # Distribution-specific WebSocket handlers wrap FastAPI before Socket.IO.
+    # The Wecode distribution registers its VNC interceptor through
+    # ``register_asgi_wrapper`` while ``wecode.api`` is imported.
+    from app.core.asgi_extensions import wrap_asgi_app
 
-    vnc_interceptor_app = create_vnc_interceptor_app(_fastapi_app)
+    wrapped_app = wrap_asgi_app(_fastapi_app)
 
-    # Create Socket.IO ASGI app with the VNC interceptor as other_asgi_app
-    # This ensures Socket.IO handles /socket.io/* and everything else goes to vnc_interceptor_app
+    # Create combined ASGI app
     return socketio.ASGIApp(
         sio,
-        other_asgi_app=vnc_interceptor_app,
+        other_asgi_app=wrapped_app,
         socketio_path="/socket.io",
     )
 

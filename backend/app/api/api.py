@@ -79,6 +79,7 @@ from app.api.endpoints import (
     workspaces,
     xiaoxin_knowledge_sync,
 )
+from app.api.endpoints.admin.device_ip import router as admin_device_ip_router
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
 
@@ -175,6 +176,11 @@ api_router.include_router(
     admin_notification.router,
     prefix="/admin/notifications",
     tags=["admin-notifications"],
+)
+api_router.include_router(
+    admin_device_ip_router,
+    prefix="/internal/admin/devices",
+    tags=["internal-admin"],
 )
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(grey.router, prefix="/grey", tags=["grey"])

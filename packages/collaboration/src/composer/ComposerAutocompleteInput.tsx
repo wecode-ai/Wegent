@@ -93,6 +93,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   rows,
   textareaRef,
   className,
+  scrollContainerClassName,
   nativeEmptyCaret = false,
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   disableAutocomplete = false,
@@ -189,7 +190,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       isMenuOpen: isCatalogMenuOpen,
     })
   const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
-  const canPickNativeWorkspacePaths = Boolean(onPickWorkspacePaths)
+  const canPickNativeWorkspacePaths = Boolean(onPickWorkspacePaths && onPasteFiles)
 
   useEffect(() => {
     valueRef.current = value
@@ -638,7 +639,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
 
   const selectMentionMenuRow = useCallback(
     (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
-      if (row.kind === 'files-action' && !onPickWorkspacePaths) return false
+      if (row.kind === 'files-action' && !canPickNativeWorkspacePaths) return false
       const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
       const editor = editorRef.current
       if (!trigger || !editor) return false
@@ -715,11 +716,15 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       if (row.kind === 'files-action' && onPickWorkspacePaths) {
         setActionError(null)
         void onPickWorkspacePaths(workspaceTarget?.path)
-          .then(entries => {
-            if (entries.length === 0) return
+          .then(async ({ attachmentFiles, referenceEntries }) => {
             const currentEditor = editorRef.current
             if (!currentEditor) return
-            const references = entries
+            if (attachmentFiles.length) await onPasteFiles?.(attachmentFiles)
+            if (!referenceEntries.length) {
+              currentEditor.focus()
+              return
+            }
+            const references = referenceEntries
               .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
               .join(' ')
             const current = currentEditor.getSnapshot()
@@ -744,6 +749,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       return true
     },
     [
+      canPickNativeWorkspacePaths,
       closeAutocompleteMenu,
       cloudSpaceDirectReference,
       commitEditorValue,
@@ -754,6 +760,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       selectMentionCandidate,
       workspaceTarget?.path,
       onPickWorkspacePaths,
+      onPasteFiles,
     ]
   )
 
@@ -928,6 +935,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         rows={rows}
         textareaRef={textareaRef}
         className={className}
+        scrollContainerClassName={scrollContainerClassName}
         services={editorServices}
         nativeEmptyCaret={nativeEmptyCaret}
       />
