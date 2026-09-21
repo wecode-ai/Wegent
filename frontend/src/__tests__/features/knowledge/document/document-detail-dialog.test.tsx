@@ -39,10 +39,13 @@ jest.mock('next/dynamic', () => () => {
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    // Resolve against the real zh-CN knowledge namespace the way i18next does:
-    // a missing key surfaces as the raw key, so a regression is visible here
-    // instead of shipping untranslated keys into the watermark canvas.
-    t: (key: string) => {
+    t: (key: string, options?: { name?: string }) => {
+      if (key === 'document.document.externalSource.wikiConnectionName') {
+        return `${key}:${options?.name || ''}`
+      }
+      // Resolve against the real zh-CN knowledge namespace the way i18next does:
+      // a missing key surfaces as the raw key, so a regression is visible here
+      // instead of shipping untranslated keys into the watermark canvas.
       const locale = jest.requireActual('@/i18n/locales/zh-CN/knowledge.json') as Record<
         string,
         unknown
@@ -67,6 +70,7 @@ jest.mock('@/features/theme/ThemeProvider', () => ({
 }))
 
 const mockListKnowledgeBases = jest.fn()
+const mockListWikiConnections = jest.fn()
 
 const mockProtectionExtension = {
   renderBoundary: jest.fn(({ children }: { children: React.ReactNode }) => (
@@ -93,6 +97,12 @@ jest.mock('@/apis/knowledge', () => ({
 jest.mock('@/apis/knowledge-base', () => ({
   knowledgeBaseApi: {
     updateDocumentContent: jest.fn(),
+  },
+}))
+
+jest.mock('@/apis/wiki', () => ({
+  wikiApis: {
+    listConnections: (...args: unknown[]) => mockListWikiConnections(...args),
   },
 }))
 
@@ -195,6 +205,11 @@ beforeEach(() => {
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
   mockExtensionRegistered = false
   mockProtectionExtension.renderBoundary.mockClear()
+  mockListWikiConnections.mockReset()
+  mockListWikiConnections.mockResolvedValue({
+    connections: [],
+    available_connectors: [],
+  })
 })
 
 const baseDocument: KnowledgeDocument = {
@@ -439,6 +454,65 @@ describe('DocumentDetailDialog external source info', () => {
     expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
   })
 
+  it('identifies a deleted synchronized wiki source', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          external_provider: 'wiki',
+          source_config: {
+            external: {
+              ...externalMeta,
+              provider: 'wiki',
+              status: 'inaccessible',
+              sync: {
+                enabled: true,
+                last_error_code: 'external_source_missing',
+              },
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent(
+      'Wiki 源文档不存在'
+    )
+  })
+
+  it('labels a transient synchronization error separately from a missing source', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          external_provider: 'wiki',
+          source_config: {
+            external: {
+              ...externalMeta,
+              provider: 'wiki',
+              status: 'sync_error',
+              last_error: 'temporary failure',
+              sync: {
+                enabled: true,
+                last_error_code: 'wiki_unreachable',
+              },
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent('同步失败')
+  })
+
   it('hides the source info for regular documents', () => {
     render(
       <DocumentDetailDialog
@@ -451,6 +525,54 @@ describe('DocumentDetailDialog external source info', () => {
     )
 
     expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+
+  it('shows the source link and current connection name for a synchronized wiki document', async () => {
+    mockListWikiConnections.mockResolvedValue({
+      connections: [
+        {
+          id: 'conn-primary',
+          display_name: 'Operations Wiki',
+          enabled: true,
+          connector_type: 'wikijs',
+          site_url: 'https://wiki.example.com',
+          default_locale: null,
+          api_key_masked: '****',
+          available_connectors: [],
+        },
+      ],
+      available_connectors: [],
+    })
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...baseDocument,
+          source_type: 'external',
+          source_config: {
+            external: {
+              provider: 'wiki',
+              title: 'Operations handbook',
+              url: 'https://wiki.example.com/operations/handbook',
+              sync: { enabled: true, connection_id: 'conn-primary' },
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-info')).toHaveTextContent('wiki')
+    expect(screen.getByTestId('external-source-link')).toHaveAttribute(
+      'href',
+      'https://wiki.example.com/operations/handbook'
+    )
+    expect(await screen.findByTestId('external-wiki-connection-name')).toHaveTextContent(
+      'document.document.externalSource.wikiConnectionName:Operations Wiki'
+    )
+    expect(mockListWikiConnections).toHaveBeenCalledTimes(1)
   })
 
   it.each([

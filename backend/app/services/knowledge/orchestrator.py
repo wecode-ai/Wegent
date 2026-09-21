@@ -29,7 +29,11 @@ from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import (
+    DocumentIndexStatus,
+    DocumentSourceType,
+    KnowledgeDocument,
+)
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -45,16 +49,23 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.services.knowledge.attachment_cleanup import (
+    EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER,
     delete_attachment_best_effort,
+    mark_attachments_for_orphan_cleanup,
 )
 from app.services.knowledge.code_wiki.source import SourceRepository
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
 )
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
     ExternalImportLostWriteError,
+)
+from app.services.knowledge.external_refresh_snapshot import (
+    get_external_refresh_snapshot,
+    stage_external_refresh_attachment,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
@@ -882,8 +893,6 @@ class KnowledgeOrchestrator:
     @staticmethod
     def _assert_external_document_previewable(document: KnowledgeDocument) -> None:
         """Reject placeholders; stored content does not depend on index health."""
-        from app.models.knowledge import DocumentSourceType
-
         if document.source_type != DocumentSourceType.EXTERNAL.value:
             return
         if not document.attachment_id:
@@ -966,7 +975,7 @@ class KnowledgeOrchestrator:
         limit: int = MAX_DOCUMENT_READ_LIMIT,
     ) -> DocumentDetailResponse:
         """Aggregate optional document content and summary into a detail response."""
-        self._get_document_with_access_or_raise(
+        document = self._get_document_with_access_or_raise(
             db=db,
             user=user,
             document_id=document_id,
@@ -1806,16 +1815,37 @@ class KnowledgeOrchestrator:
         owner_user_id = document.user_id
         previous_attachment_id = document.attachment_id
         previous_converted_id = document.converted_attachment_id
+        retry_orphan_cleanup = document.external_provider == WIKI_PROVIDER_ID
+        has_refresh_snapshot = (
+            get_external_refresh_snapshot(document, generation) is not None
+        )
         attachment, _ = context_service.upload_attachment(
             db=db,
             user_id=owner_user_id,
             filename=_build_filename(content.name, content.file_extension),
             binary_data=content.content,
             subtask_id=0,
+            lifecycle_owner=(
+                EXTERNAL_WIKI_ATTACHMENT_LIFECYCLE_OWNER
+                if retry_orphan_cleanup
+                else None
+            ),
         )
 
         attachment_id = attachment.id
         try:
+            if retry_orphan_cleanup:
+                mark_attachments_for_orphan_cleanup(
+                    db,
+                    {
+                        value
+                        for value in (
+                            previous_attachment_id,
+                            previous_converted_id,
+                        )
+                        if value
+                    },
+                )
             self._land_external_content(db, document, content, attachment, generation)
         except Exception as exc:
             # A failed commit can have an uncertain outcome; keep any linked body.
@@ -1826,16 +1856,27 @@ class KnowledgeOrchestrator:
                 .scalar()
             )
             if linked_attachment_id != attachment_id:
-                delete_attachment_best_effort(db, owner_user_id, attachment_id)
+                delete_attachment_best_effort(
+                    db,
+                    owner_user_id,
+                    attachment_id,
+                    retry_orphan_cleanup=retry_orphan_cleanup,
+                )
             if isinstance(exc, ObjectDeletedError):
                 raise ExternalImportLostWriteError(
                     f"Document {document_id} was deleted while importing"
                 ) from exc
             raise
 
-        for previous_id in {previous_attachment_id, previous_converted_id}:
-            if previous_id and previous_id != attachment_id:
-                delete_attachment_best_effort(db, owner_user_id, previous_id)
+        if not has_refresh_snapshot:
+            for previous_id in {previous_attachment_id, previous_converted_id}:
+                if previous_id and previous_id != attachment_id:
+                    delete_attachment_best_effort(
+                        db,
+                        owner_user_id,
+                        previous_id,
+                        retry_orphan_cleanup=retry_orphan_cleanup,
+                    )
 
         db.refresh(document)
 
@@ -1893,9 +1934,15 @@ class KnowledgeOrchestrator:
 
         # Refresh the provider-owned source metadata; never touch the user's
         # own document name or folder.
+        existing_external = document.external_source_config
+        incoming_external = dict(content.metadata or {})
+        existing_sync = existing_external.get("sync")
+        incoming_sync = incoming_external.get("sync")
+        if isinstance(existing_sync, dict) and isinstance(incoming_sync, dict):
+            incoming_external["sync"] = {**existing_sync, **incoming_sync}
         merged_external = {
-            **document.external_source_config,
-            **dict(content.metadata or {}),
+            **existing_external,
+            **incoming_external,
             "status": "accessible",
         }
         # Reading the source succeeded even if later conversion/indexing fails.
@@ -1904,6 +1951,11 @@ class KnowledgeOrchestrator:
         merged_source_config["external"] = merged_external
         # A conversion belongs to the previous body, never to its replacement.
         merged_source_config.pop("converted_attachment_id", None)
+        stage_external_refresh_attachment(
+            merged_source_config,
+            generation=generation,
+            attachment_id=attachment.id,
+        )
 
         update_fields = {
             KnowledgeDocument.attachment_id: attachment.id,
@@ -1912,6 +1964,9 @@ class KnowledgeOrchestrator:
             KnowledgeDocument.source_config: merged_source_config,
             KnowledgeDocument.updated_at: now,
         }
+        sync_config = merged_external.get("sync")
+        if isinstance(sync_config, dict) and sync_config.get("enabled"):
+            update_fields[KnowledgeDocument.name] = content.name[:255]
 
         updated = (
             db.query(KnowledgeDocument)

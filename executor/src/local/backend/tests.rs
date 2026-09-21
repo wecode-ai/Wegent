@@ -323,3 +323,17 @@ fn heartbeat_reports_runtime_capacity_and_installation_identity() {
     );
     assert_eq!(payload["runtime_capacity"]["queued"], 1);
 }
+
+#[test]
+fn local_project_request_keeps_device_without_backend_context() {
+    let config = backend_config("local-device");
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".into(), json!({"projectStore":"local"}));
+    normalize_local_task_request(&mut request, &config);
+    assert_eq!(request.device_id.as_deref(), Some("local-device"));
+    assert!(request.backend_url.is_none());
+    assert!(request.auth_token.is_none());
+    assert!(request.runtime_auth_token.is_none());
+}

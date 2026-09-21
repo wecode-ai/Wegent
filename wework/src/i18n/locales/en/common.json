@@ -4876,5 +4876,33 @@
     "without_notification": "Do not notify",
     "with_notification": "Notify",
     "connect": "Connect to the cloud to view notifications"
+  },
+  "localAgent": {
+    "create": "Create local Agent",
+    "edit": "Edit local Agent",
+    "name": "Name",
+    "runtime": "Runtime",
+    "model": "Model",
+    "runtimeDefault": "Runtime default",
+    "workspace": "Code workspace",
+    "standalone": "Standalone workspace",
+    "instructions": "Instructions",
+    "approval": "Execution",
+    "automatic": "Run automatically",
+    "manual": "Require approval",
+    "skills": "Local skill names (one per line)",
+    "mcp": "MCP server configuration (JSON)",
+    "plugins": "Installed plugins",
+    "reload": "Reload",
+    "notFound": "Local Agent was not found",
+    "invalidMcp": "MCP configuration must be a JSON object",
+    "deviceUnavailable": "Local executor is unavailable",
+    "modelsLoading": "Loading models… You can use the runtime default.",
+    "modelsFailed": "Could not load models: {{error}}",
+    "modelUnavailable": "The saved model “{{model}}” is unavailable locally. Select a local model or the runtime default.",
+    "loadPlugins": "Choose installed plugins",
+    "reloadPlugins": "Reload installed plugins",
+    "pluginsLoading": "Loading installed plugins… Other settings can still be edited.",
+    "pluginsFailed": "Could not load installed plugins: {{error}}"
   }
 }
