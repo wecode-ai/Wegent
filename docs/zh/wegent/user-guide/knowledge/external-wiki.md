@@ -54,7 +54,7 @@ pdf, doc, docx, ppt, pptx, xls, xlsx, csv, txt, md, markdown
 ### 通用条件
 
 - Wegent 后端能够访问目标 Wiki.js 或 GitLab 地址。
-- 环境开关 `EXTERNAL_DOC_SYNC_ENABLED` 已启用（默认启用）。
+- 环境开关 `EXTERNAL_DOC_SYNC_ENABLED` 已显式设置为 `true`（默认关闭）。
 - 当前用户拥有目标知识库的编辑权限。
 - 目标连接可以使用 HTTP 或 HTTPS；站点地址必须是后端实际能够连接的地址。
 
@@ -300,7 +300,7 @@ GitLab 项目 Wiki 由独立的 Wiki API 管理，不按代码仓库分支选择
 
 | 环境变量                                            | 默认值       | 说明                                   |
 | --------------------------------------------------- | ------------ | -------------------------------------- |
-| `EXTERNAL_DOC_SYNC_ENABLED`                         | `true`       | 外部文档同步总开关                     |
+| `EXTERNAL_DOC_SYNC_ENABLED`                         | `false`      | 外部文档绑定与定时同步总开关           |
 | `EXTERNAL_DOC_SYNC_CRON`                            | `0 21 * * *` | 巡检调度（UTC crontab）                |
 | `EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE`                 | `500`        | 每批扫描的本地文档数                   |
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`               | `10000`      | 单次运行最多处理文档数                 |

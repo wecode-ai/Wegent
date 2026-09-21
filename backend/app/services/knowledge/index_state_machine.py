@@ -160,7 +160,7 @@ def _record_transition(
         "knowledge.replace_active": replace_active,
     },
 )
-def prepare_document_index_enqueue(
+def _prepare_document_index_enqueue(
     db: Session,
     document_id: int,
     *,
@@ -170,11 +170,10 @@ def prepare_document_index_enqueue(
     capture_refresh_snapshot: bool = False,
 ) -> IndexEnqueueDecision:
     """
-    Prepare a document for a new indexing generation.
+    Implement the atomic transition into a new indexing generation.
 
-    This function is called before sending a Celery task. It updates the
-    business state in the database so later duplicate requests can be skipped.
-    A guarded handoff may only advance the generation it already owns.
+    Public callers use one of the preparation functions below so the external
+    refresh snapshot policy stays out of the generic enqueue interface.
     """
     document = (
         db.query(KnowledgeDocument)
@@ -316,6 +315,46 @@ def prepare_document_index_enqueue(
         generation=next_generation,
         reason="scheduled",
         previous_status=current_status,
+    )
+
+
+def prepare_document_index_enqueue(
+    db: Session,
+    document_id: int,
+    *,
+    allow_if_success: bool = False,
+    replace_active: bool = False,
+    expected_generation: Optional[int] = None,
+) -> IndexEnqueueDecision:
+    """Prepare an ordinary document for a new indexing generation."""
+    return _prepare_document_index_enqueue(
+        db,
+        document_id,
+        allow_if_success=allow_if_success,
+        replace_active=replace_active,
+        expected_generation=expected_generation,
+        capture_refresh_snapshot=False,
+    )
+
+
+def prepare_external_refresh_enqueue(
+    db: Session,
+    document_id: int,
+    *,
+    expected_generation: Optional[int] = None,
+) -> IndexEnqueueDecision:
+    """Atomically preserve the live body and queue a synchronized refresh.
+
+    Snapshot capture and stale-attempt recovery run while the document row is
+    locked by the same transaction that advances ``index_generation``. This
+    keeps callers from having to coordinate snapshot ordering themselves.
+    """
+    return _prepare_document_index_enqueue(
+        db,
+        document_id,
+        allow_if_success=True,
+        expected_generation=expected_generation,
+        capture_refresh_snapshot=True,
     )
 
 

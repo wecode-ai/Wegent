@@ -58,7 +58,7 @@ pipeline. Wiki.js and GitLab do not require a dedicated retrieval Skill.
 ### General
 
 - The Wegent backend can reach the target Wiki.js or GitLab address.
-- `EXTERNAL_DOC_SYNC_ENABLED` is enabled. It is enabled by default.
+- `EXTERNAL_DOC_SYNC_ENABLED` is explicitly set to `true`. It is disabled by default.
 - The current user has edit permission on the target knowledge base.
 - The target can use HTTP or HTTPS; the site URL must be reachable from the
   backend.
@@ -339,7 +339,7 @@ Yes. Each knowledge base has an independent synchronized document and index.
 
 | Environment variable                                | Default      | Description                                                       |
 | --------------------------------------------------- | ------------ | ----------------------------------------------------------------- |
-| `EXTERNAL_DOC_SYNC_ENABLED`                         | `true`       | Master switch for external document synchronization               |
+| `EXTERNAL_DOC_SYNC_ENABLED`                         | `false`      | Master switch for external document binding and scheduled sync    |
 | `EXTERNAL_DOC_SYNC_CRON`                            | `0 21 * * *` | Inspection schedule in UTC crontab format                         |
 | `EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE`                 | `500`        | Local documents scanned per batch                                 |
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`               | `10000`      | Maximum documents processed per run                               |

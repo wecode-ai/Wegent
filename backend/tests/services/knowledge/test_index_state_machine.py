@@ -27,6 +27,7 @@ from app.services.knowledge.index_state_machine import (
     mark_document_index_started,
     mark_document_index_succeeded,
     prepare_document_index_enqueue,
+    prepare_external_refresh_enqueue,
 )
 from app.services.knowledge.processing_errors import build_processing_error
 
@@ -749,12 +750,7 @@ def test_failed_external_refresh_restores_previous_body_and_failed_state(
         cleanup,
     )
 
-    prepared = prepare_document_index_enqueue(
-        test_db,
-        document.id,
-        allow_if_success=True,
-        capture_refresh_snapshot=True,
-    )
+    prepared = prepare_external_refresh_enqueue(test_db, document.id)
     attempt = begin_external_import_attempt(
         test_db,
         document.id,
@@ -821,12 +817,7 @@ def test_successful_external_refresh_reaps_previous_body_after_finalization(
         cleanup,
     )
 
-    prepared = prepare_document_index_enqueue(
-        test_db,
-        document.id,
-        allow_if_success=True,
-        capture_refresh_snapshot=True,
-    )
+    prepared = prepare_external_refresh_enqueue(test_db, document.id)
     attempt = begin_external_import_attempt(
         test_db,
         document.id,
@@ -860,5 +851,70 @@ def test_successful_external_refresh_reaps_previous_body_after_finalization(
         test_db,
         test_user.id,
         111,
+        retry_orphan_cleanup=True,
+    )
+
+
+def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_synced_refresh_document(
+        test_db,
+        test_user,
+        index_status=DocumentIndexStatus.SUCCESS,
+    )
+    document.clear_processing_error_payload()
+    test_db.commit()
+    cleanup = MagicMock()
+    monkeypatch.setattr(
+        "app.services.knowledge.attachment_cleanup.delete_attachment_best_effort",
+        cleanup,
+    )
+
+    prepared = prepare_external_refresh_enqueue(test_db, document.id)
+    attempt = begin_external_import_attempt(
+        test_db,
+        document.id,
+        prepared.generation,
+    )
+    test_db.refresh(document)
+    source_config = dict(document.source_config)
+    external = dict(source_config["external"])
+    sync = dict(external["sync"])
+    sync["content_version"] = "v2"
+    external["sync"] = sync
+    source_config["external"] = external
+    document.source_config = source_config
+    document.attachment_id = 222
+    document.index_status = DocumentIndexStatus.INDEXING
+    test_db.commit()
+    test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
+        {
+            KnowledgeDocument.updated_at: _utcnow()
+            - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS + 5)
+        },
+        synchronize_session=False,
+    )
+    test_db.commit()
+    test_db.expire_all()
+
+    retried = prepare_external_refresh_enqueue(test_db, document.id)
+
+    test_db.refresh(document)
+    assert retried.should_enqueue is True
+    assert retried.reason == "scheduled_after_stale_recovery"
+    assert retried.generation == attempt.generation + 1
+    assert document.attachment_id == 111
+    assert document.index_status == DocumentIndexStatus.QUEUED
+    assert document.external_source_config["sync"]["content_version"] == "v1"
+    snapshot = document.source_config["_pending_external_refresh"]
+    assert snapshot["generation"] == retried.generation
+    assert snapshot["previous_attachment_id"] == 111
+    cleanup.assert_called_once_with(
+        test_db,
+        test_user.id,
+        222,
         retry_orphan_cleanup=True,
     )

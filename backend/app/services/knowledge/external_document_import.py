@@ -30,6 +30,7 @@ from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
 from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.external_document_providers import (
     DetachedExternalDocumentProvider,
+    DirectExternalDocumentImportProvider,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
@@ -44,6 +45,7 @@ from app.services.knowledge.index_state_machine import (
     mark_document_index_enqueue_failed,
     mark_document_index_failed,
     prepare_document_index_enqueue,
+    prepare_external_refresh_enqueue,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
@@ -105,7 +107,7 @@ class ExternalDocumentImportService:
         external_resource_ids: list[str],
     ) -> dict[str, DocumentIndexStatus]:
         """Read current copies without fetching provider content or queuing work."""
-        provider = self._validate_import_context(
+        provider = self._validate_provider_context(
             db, user, knowledge_base_id, provider_id
         )
         rows = (
@@ -191,13 +193,19 @@ class ExternalDocumentImportService:
             document.external_provider == WIKI_PROVIDER_ID
             and is_synchronized_external_document(document)
         )
-        decision = prepare_document_index_enqueue(
-            db=db,
-            document_id=document.id,
-            allow_if_success=True,
-            expected_generation=expected_generation,
-            capture_refresh_snapshot=synchronized,
-        )
+        if synchronized:
+            decision = prepare_external_refresh_enqueue(
+                db=db,
+                document_id=document.id,
+                expected_generation=expected_generation,
+            )
+        else:
+            decision = prepare_document_index_enqueue(
+                db=db,
+                document_id=document.id,
+                allow_if_success=True,
+                expected_generation=expected_generation,
+            )
         if not decision.should_enqueue:
             if decision.reason in {"already_in_progress", "stale_generation"}:
                 db.refresh(document)
@@ -236,9 +244,19 @@ class ExternalDocumentImportService:
         narrow entry lets an async source such as Wiki validate remote pages
         before reusing the same placeholder and worker pipeline.
         """
-        provider = self._validate_import_context(
+        provider = self._validate_provider_context(
             db, user, knowledge_base_id, provider_id
         )
+        from app.services.knowledge.external_sync_providers import (  # noqa: PLC0415
+            get_external_sync_provider,
+        )
+
+        sync_provider = get_external_sync_provider(provider_id)
+        if sync_provider is None:
+            raise ExternalDocumentImportError(
+                f"External document provider does not support resolved import: "
+                f"{provider_id}"
+            )
         if len(resolved_documents) > MAX_EXTERNAL_BATCH_IMPORT:
             raise ExternalDocumentImportError(
                 f"At most {MAX_EXTERNAL_BATCH_IMPORT} documents can be imported "
@@ -248,7 +266,7 @@ class ExternalDocumentImportService:
             assert_document_can_be_placed_in_folder(
                 db, knowledge_base_id, folder_id, content_origin=ContentOrigin.USER
             )
-        provider.preflight_resolved_import(db, user, resolved_documents)
+        sync_provider.preflight_resolved_import(db, user, resolved_documents)
         plans, duplicates, requested_count = self._plan_resolved_imports(
             db,
             knowledge_base_id,
@@ -451,7 +469,7 @@ class ExternalDocumentImportService:
         without dispatching duplicate work.
         Raises ExternalDocumentImportError when the request itself is invalid.
         """
-        provider = self._validate_import_context(
+        provider = self._validate_direct_import_context(
             db, user, knowledge_base_id, provider_id
         )
         if folder_id:
@@ -568,7 +586,7 @@ class ExternalDocumentImportService:
         self,
         db: Session,
         user: User,
-        provider: ExternalDocumentProvider,
+        provider: DirectExternalDocumentImportProvider,
         knowledge_base_id: int,
         resource_ids: list[str],
     ) -> tuple[
@@ -621,7 +639,7 @@ class ExternalDocumentImportService:
         self,
         db: Session,
         user: User,
-        provider: ExternalDocumentProvider,
+        provider: DirectExternalDocumentImportProvider,
         knowledge_base_id: int,
         folder_id: int,
         resolved: list[tuple[str, dict]],
@@ -661,7 +679,7 @@ class ExternalDocumentImportService:
     @staticmethod
     def _resolve_existing_source(
         db: Session,
-        provider: ExternalDocumentProvider,
+        provider: DirectExternalDocumentImportProvider,
         document: KnowledgeDocument,
     ) -> dict:
         """Use the original importer's authorization, as the worker does."""
@@ -671,7 +689,7 @@ class ExternalDocumentImportService:
         return provider.resolve_importable(db, owner, document.external_resource_id)
 
     @staticmethod
-    def _validate_import_context(
+    def _validate_provider_context(
         db: Session,
         user: User,
         knowledge_base_id: int,
@@ -701,6 +719,28 @@ class ExternalDocumentImportService:
                 status_code=403,
             )
         return provider
+
+    @classmethod
+    def _validate_direct_import_context(
+        cls,
+        db: Session,
+        user: User,
+        knowledge_base_id: int,
+        provider_id: str,
+    ) -> DirectExternalDocumentImportProvider:
+        """Validate a provider that supports caller-supplied resource IDs."""
+        provider = cls._validate_provider_context(
+            db, user, knowledge_base_id, provider_id
+        )
+        if isinstance(provider, DirectExternalDocumentImportProvider):
+            return provider
+        if provider.provider_id == WIKI_PROVIDER_ID:
+            raise ExternalDocumentImportError(
+                "Wiki documents must be imported through the Wiki selector"
+            )
+        raise ExternalDocumentImportError(
+            f"External document provider does not support direct import: {provider_id}"
+        )
 
     @staticmethod
     def _find_existing_document(

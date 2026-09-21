@@ -31,6 +31,7 @@ from app.services.knowledge.external_document_import import (
     run_external_document_import,
 )
 from app.services.knowledge.external_document_providers import (
+    DirectExternalDocumentImportProvider,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
@@ -133,6 +134,13 @@ class TestProviderRegistry:
 
         assert provider is not None
         assert provider.provider_id == "dingtalk"
+        assert isinstance(provider, DirectExternalDocumentImportProvider)
+
+    def test_wiki_provider_does_not_claim_direct_import(self) -> None:
+        provider = get_external_document_provider("wiki")
+
+        assert provider is not None
+        assert not isinstance(provider, DirectExternalDocumentImportProvider)
 
     def test_unknown_provider_returns_none(self) -> None:
         assert get_external_document_provider("nope") is None
@@ -921,6 +929,44 @@ class TestImportDocument:
 
 
 class TestImportDocuments:
+    def test_wiki_status_lookup_does_not_require_direct_import_capability(
+        self,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+
+        statuses = external_document_import_service.get_import_statuses(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            external_resource_ids=["page-1"],
+        )
+
+        assert statuses == {}
+
+    def test_rejects_wiki_through_direct_import_seam(
+        self,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="wiki",
+                external_resource_ids=["page-1"],
+            )
+
+        assert exc_info.value.status_code == 400
+        assert str(exc_info.value) == (
+            "Wiki documents must be imported through the Wiki selector"
+        )
+
     def test_validates_all_settled_updates_before_dispatching_any(
         self,
         test_db: Session,

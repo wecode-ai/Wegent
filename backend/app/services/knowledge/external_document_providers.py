@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral seam for importing external documents.
+"""Provider-neutral seams for fetching and directly importing external documents.
 
-An external document provider resolves one external document — identified by
-the requesting user plus a provider-scoped resource ID — into content that the
-existing attachment / conversion / indexing pipeline can consume. DingTalk is
-the first adapter; a new provider only registers an adapter here and reuses
-the import state machine instead of duplicating it.
+Every provider can fetch a persisted external identity into content that the
+attachment / conversion / indexing pipeline can consume. Providers that also
+resolve caller-supplied resource IDs implement the narrower direct-import
+interface. A new adapter registers here and reuses the import state machine
+instead of duplicating it.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import Any, AsyncIterator
 
 import aiohttp
 from sqlalchemy.orm import Session
@@ -34,9 +34,6 @@ from app.services.plugin_upstream_fetch import UpstreamFetchError, validate_upst
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from app.services.knowledge.external_sync_providers import ResolvedExternalDocument
 
 EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS = 180
 _SPREADSHEET_MCP_SERVICES = {
@@ -183,30 +180,9 @@ class PreparedExternalDocumentFetch:
 
 
 class ExternalDocumentProvider(ABC):
-    """Contract every external document provider adapter must fulfil."""
+    """Contract for fetching a persisted external document body."""
 
     provider_id: str
-
-    def preflight_resolved_import(
-        self,
-        db: Session,
-        user: User,
-        resolved_documents: list[ResolvedExternalDocument],
-    ) -> None:
-        """Validate provider state immediately before resolved metadata is stored."""
-
-    @abstractmethod
-    def resolve_importable(
-        self,
-        db: Session,
-        user: User,
-        external_resource_id: str,
-    ) -> dict[str, Any]:
-        """Validate the external resource and return its display metadata.
-
-        Raises ExternalDocumentImportError when the resource does not exist
-        for this user or cannot be imported.
-        """
 
     @abstractmethod
     async def fetch_content(
@@ -224,6 +200,23 @@ class ExternalDocumentProvider(ABC):
         Raises ExternalSourceUnavailableError when the provider can tell the
         resource is gone or access was revoked, ExternalDocumentFetchError
         for transient failures.
+        """
+
+
+class DirectExternalDocumentImportProvider(ExternalDocumentProvider):
+    """Provider that can synchronously resolve a caller-supplied resource ID."""
+
+    @abstractmethod
+    def resolve_importable(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> dict[str, Any]:
+        """Validate the external resource and return its display metadata.
+
+        Raises ExternalDocumentImportError when the resource does not exist
+        for this user or cannot be imported.
         """
 
 
@@ -282,7 +275,7 @@ def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
     return update_time
 
 
-class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
+class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
     provider_id = "dingtalk"

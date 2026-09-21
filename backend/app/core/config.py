@@ -343,7 +343,7 @@ class Settings(BaseSettings):
     WIKI_TREE_MAX_PAGES: int = Field(
         default=5000, ge=1
     )  # Tree browse page-list upper bound
-    EXTERNAL_DOC_SYNC_ENABLED: bool = True
+    EXTERNAL_DOC_SYNC_ENABLED: bool = False
     EXTERNAL_DOC_SYNC_CRON: str = "0 21 * * *"
     EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE: int = 500
     EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS: int = 10000

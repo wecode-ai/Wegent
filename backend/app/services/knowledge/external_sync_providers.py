@@ -144,6 +144,15 @@ class ExternalSyncProvider(ABC):
         """Resolve server-owned metadata for selected provider resources."""
 
     @abstractmethod
+    def preflight_resolved_import(
+        self,
+        db: Session,
+        user: User,
+        resolved_documents: list[ResolvedExternalDocument],
+    ) -> None:
+        """Validate provider state immediately before resolved metadata is stored."""
+
+    @abstractmethod
     def prepare_remote_inspection(
         self, db: Session, candidates: Sequence[SyncCandidate]
     ) -> PreparedExternalSyncBatch:
@@ -280,14 +289,6 @@ class WikiExternalSyncProvider(
     """Wiki.js adapter for initial import, daily inspection and body fetch."""
 
     provider_id = WIKI_PROVIDER_ID
-
-    def resolve_importable(
-        self, db: Session, user: User, external_resource_id: str
-    ) -> dict[str, Any]:
-        """The legacy synchronous import endpoint cannot resolve remote Wiki I/O."""
-        raise ExternalDocumentImportError(
-            "Wiki documents must be imported through the Wiki selector"
-        )
 
     async def resolve_selections(
         self,
