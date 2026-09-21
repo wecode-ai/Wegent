@@ -69,6 +69,34 @@ async function seedLocalProject(command: DesktopControlCommand): Promise<string>
   return JSON.stringify(response)
 }
 
+async function readLocalProject(command: DesktopControlCommand): Promise<string> {
+  const projectId = command.value?.trim()
+  if (!projectId) {
+    throw new Error('readLocalProject requires a project ID')
+  }
+  const projects =
+    await requestLocalExecutor<Array<{ id?: string; metadata?: Record<string, unknown> }>>(
+      'projects.list'
+    )
+  return JSON.stringify(projects.find(project => project.id === projectId) ?? null)
+}
+
+async function preflightLocalWorktree(command: DesktopControlCommand): Promise<string> {
+  const input = JSON.parse(command.value ?? '{}') as {
+    sourcePath?: string
+    ref?: string
+  }
+  if (!input.sourcePath?.trim()) {
+    throw new Error('preflightLocalWorktree requires a source path')
+  }
+  return JSON.stringify(
+    await requestLocalExecutor('runtime.worktrees.preflight', {
+      sourcePath: input.sourcePath.trim(),
+      ...(input.ref?.trim() ? { ref: input.ref.trim() } : {}),
+    })
+  )
+}
+
 async function readLocalTerminalSnapshot(command: DesktopControlCommand): Promise<string> {
   const sessionId = command.value?.trim()
   if (!sessionId) {
@@ -114,6 +142,10 @@ export async function executeVerificationControlCommand(
       return { handled: true, value: clickAt(command, dependencies) }
     case 'seedLocalProject':
       return { handled: true, value: await seedLocalProject(command) }
+    case 'readLocalProject':
+      return { handled: true, value: await readLocalProject(command) }
+    case 'preflightLocalWorktree':
+      return { handled: true, value: await preflightLocalWorktree(command) }
     case 'readLocalTerminalSnapshot':
       return { handled: true, value: await readLocalTerminalSnapshot(command) }
     case 'reloadApp':

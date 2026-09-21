@@ -277,6 +277,12 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
           CloudProject['automatic_processing_rules']
         >)
       : [],
+    execution_environment:
+      record.metadata.execution_environment &&
+      typeof record.metadata.execution_environment === 'object' &&
+      !Array.isArray(record.metadata.execution_environment)
+        ? (record.metadata.execution_environment as CloudProject['execution_environment'])
+        : undefined,
     created_by_user_id: 0,
     current_user_id: 0,
     current_user_name: '',
@@ -919,6 +925,7 @@ export function createLocalDeliveryApi(
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        execution_environment?: CloudProject['execution_environment']
         version: number
       }
     ) {

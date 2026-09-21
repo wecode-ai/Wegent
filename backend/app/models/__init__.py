@@ -27,6 +27,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectIncomingEvent,
     ProjectIncomingHook,
+    WorkspaceCleanupIntent,
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
@@ -106,6 +107,7 @@ __all__ = [
     "LoopItemCollaborator",
     "ProjectIncomingEvent",
     "ProjectIncomingHook",
+    "WorkspaceCleanupIntent",
     "ProjectAutomationRule",
     "ProjectAutomationRun",
     "Delivery",

@@ -147,3 +147,83 @@ async def test_registered_device_reports_runtime_acceptance(monkeypatch):
             "error": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_registered_device_acknowledges_workspace_cleanup(monkeypatch):
+    namespace = DeviceNamespace()
+    namespace.get_session = AsyncMock(
+        return_value={
+            "user_id": 17,
+            "device_id": "cloud-device",
+        }
+    )
+    calls = []
+
+    def acknowledge(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(
+        device_namespace_module,
+        "_acknowledge_workspace_cleanup",
+        acknowledge,
+    )
+
+    result = await namespace.on_runtime_workspace_cleanup_accept(
+        "socket-1",
+        {
+            "intent_id": "cleanup-1",
+            "issue_version": 4,
+        },
+    )
+
+    assert result == {"success": True}
+    assert calls == [
+        {
+            "owner_user_id": 17,
+            "runtime_device_id": "cloud-device",
+            "intent_id": "cleanup-1",
+            "issue_version": 4,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_registered_device_claims_workspace_cleanup(monkeypatch):
+    namespace = DeviceNamespace()
+    namespace.get_session = AsyncMock(
+        return_value={
+            "user_id": 17,
+            "device_id": "cloud-device",
+        }
+    )
+    calls = []
+
+    def claim(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(
+        device_namespace_module,
+        "_claim_workspace_cleanup",
+        claim,
+    )
+
+    result = await namespace.on_runtime_workspace_cleanup_claim(
+        "socket-1",
+        {
+            "intent_id": "cleanup-1",
+            "issue_version": 4,
+        },
+    )
+
+    assert result == {"success": True}
+    assert calls == [
+        {
+            "owner_user_id": 17,
+            "runtime_device_id": "cloud-device",
+            "intent_id": "cleanup-1",
+            "issue_version": 4,
+        }
+    ]

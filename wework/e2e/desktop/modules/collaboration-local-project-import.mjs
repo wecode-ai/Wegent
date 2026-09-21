@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { runChecked } from './shared.mjs'
 import { inCollaborationSidebar } from './workspace-flows.mjs'
+
+async function waitForLocalProject(control, projectId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const project = JSON.parse(
+      await control.command('readLocalProject', 'body', { value: projectId })
+    )
+    if (project?.metadata?.execution_environment) return project
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`The local collaboration Project ${projectId} did not persist its Git environment`)
+}
 
 export async function verifyCollaborationLocalProjectImport(
   control,
@@ -10,12 +23,50 @@ export async function verifyCollaborationLocalProjectImport(
 ) {
   const key = 'issue-home-local-project-e2e'
   const path = join(executorHome, 'issue-home-project')
+  const repositoryUrl = 'https://github.com/wecode-ai/issue-home-project.git'
   await mkdir(path, { recursive: true })
+  await runChecked('git', ['init', '-b', 'main'], { cwd: path })
+  await writeFile(join(path, 'README.md'), '# Issue home project\n')
+  await runChecked('git', ['config', 'user.name', 'Wework E2E'], { cwd: path })
+  await runChecked('git', ['config', 'user.email', 'wework-e2e@example.com'], { cwd: path })
+  await runChecked('git', ['add', 'README.md'], { cwd: path })
+  await runChecked('git', ['commit', '-m', 'Initial commit'], { cwd: path })
+  await runChecked('git', ['remote', 'add', 'origin', repositoryUrl], { cwd: path })
   const projectId = `local-code-${createHash('sha256').update(key).digest('hex')}`
   const projectName = '任务项目自动进入本地空间'
   await control.command('seedLocalProject', 'body', {
     value: JSON.stringify({ projectKey: key, name: projectName, path }),
   })
+  const localProject = await waitForLocalProject(control, projectId, workbenchReadyTimeoutMs)
+  assert.deepEqual(
+    localProject.metadata.execution_environment,
+    {
+      repositories: [
+        {
+          name: 'issue-home-project',
+          path: 'issue-home-project',
+          primary: true,
+          ref: 'main',
+          url: repositoryUrl,
+        },
+      ],
+      setup_steps: [],
+    },
+    'The generated collaboration Project did not inherit the current Git repository'
+  )
+  const worktreePreflight = JSON.parse(
+    await control.command('preflightLocalWorktree', 'body', {
+      value: JSON.stringify({ sourcePath: path, ref: 'main' }),
+    })
+  )
+  assert.equal(worktreePreflight.supported, true, 'The executor does not support worktrees')
+  assert.equal(worktreePreflight.gitRepository, true, 'The imported project is not Git-backed')
+  assert.equal(worktreePreflight.refValid, true, 'The imported project branch is not usable')
+  assert.equal(
+    worktreePreflight.gitCommonDirWritable,
+    true,
+    'The imported project cannot create worktrees'
+  )
   const row = inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${projectId}"]`)
   for (let pass = 0; pass < 2; pass += 1) {
     const readyCount = control.readyCount
@@ -93,16 +144,6 @@ export async function verifyCollaborationLocalProjectImport(
       'Reload must not duplicate imported Task projects'
     )
     assert.equal(Number(await control.command('getElementCount', `${row} svg`)), 0)
-    await control.command('hover', row)
-    await control.command(
-      'click',
-      inCollaborationSidebar(`[data-testid="collaboration-project-new-conversation-${projectId}"]`)
-    )
-    await control.command(
-      'waitFor',
-      scoped('[data-testid="collaboration-issue-project-trigger"]'),
-      { text: projectName }
-    )
     assert.equal(
       Number(await control.command('getElementCount', scoped('.collaboration-loading'))),
       0,

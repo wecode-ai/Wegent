@@ -8,6 +8,7 @@ Executors pull cloud work through their current Socket.IO connection. Celery
 only repairs durable leases, detects stalls, and publishes queue metrics.
 """
 
+import asyncio
 import logging
 
 from prometheus_client import Counter, Gauge
@@ -82,6 +83,7 @@ def scan_robot_queue(self) -> dict:
                 )
                 or 0
             )
+            asyncio.run(consume_queues_background())
             return {
                 "status": "ok",
                 "requeued": requeued,
@@ -105,7 +107,11 @@ def _queued_devices(db) -> list[tuple[int, str]]:
         )
         .distinct()
     ).all()
-    return [(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]]
+    devices = {(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]}
+    from app.services.workspace_cleanup_intents import due_execution_targets
+
+    devices.update(due_execution_targets(db))
+    return sorted(devices)
 
 
 async def consume_queues_background() -> None:

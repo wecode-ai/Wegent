@@ -1024,6 +1024,7 @@ class IssueWorkflowPlanningService:
     ) -> None:
         if item.status == next_status:
             return
+        previous_status = item.status
         project = db.get(CloudProject, item.cloud_project_id)
         metadata = dict(item.metadata_json or {})
         if project is not None:
@@ -1044,6 +1045,16 @@ class IssueWorkflowPlanningService:
             else None
         )
         item.version += 1
+        from app.services.workspace_cleanup_intents import sync_issue_status
+
+        sync_issue_status(
+            db,
+            item=item,
+            previous_status=previous_status,
+            next_status=next_status,
+            next_version=item.version,
+            completed_at=item.completed_at,
+        )
 
     @staticmethod
     def _complete_stage(workflow: dict, stage_id: str) -> bool:
