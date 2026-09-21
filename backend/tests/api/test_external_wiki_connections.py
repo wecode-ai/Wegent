@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.endpoints.external_wiki import (
+    create_kb_binding,
     delete_wiki_connection,
 )
 from app.api.endpoints.external_wiki import (
@@ -114,6 +115,76 @@ def test_binding_accepts_long_gitlab_repository_path() -> None:
     )
 
     assert request.page_ids == [path]
+
+
+@pytest.mark.asyncio
+async def test_disabled_scheduled_sync_does_not_block_manual_binding(
+    monkeypatch,
+) -> None:
+    db = MagicMock()
+    user = _user()
+    resolved_documents = [SimpleNamespace(resource_id="42")]
+    provider = SimpleNamespace(
+        resolve_selections=AsyncMock(return_value=resolved_documents)
+    )
+    import_documents = MagicMock(
+        return_value=SimpleNamespace(
+            created=[],
+            updated=[],
+            processing=[],
+            duplicates=[],
+        )
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.settings.EXTERNAL_DOC_SYNC_ENABLED",
+        False,
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki._load_kb",
+        MagicMock(return_value=SimpleNamespace(id=11)),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki._require_kb_edit",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.get_external_sync_provider",
+        MagicMock(return_value=provider),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.external_wiki.external_document_import_service.import_resolved_documents",
+        import_documents,
+    )
+
+    result = await create_kb_binding(
+        knowledge_base_id=11,
+        body=WikiBindingCreateRequest(
+            page_ids=["42"],
+            connection_id="conn-primary",
+        ),
+        db=db,
+        current_user=user,
+    )
+
+    assert result.created_count == 0
+    assert result.updated_count == 0
+    assert result.processing_count == 0
+    provider.resolve_selections.assert_awaited_once_with(
+        db,
+        user,
+        "conn-primary",
+        ["42"],
+        project_path=None,
+        branch=None,
+    )
+    import_documents.assert_called_once_with(
+        db=db,
+        user=user,
+        knowledge_base_id=11,
+        provider_id="wiki",
+        resolved_documents=resolved_documents,
+        folder_id=0,
+    )
 
 
 @pytest.mark.asyncio

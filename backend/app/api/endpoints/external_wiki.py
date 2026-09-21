@@ -517,8 +517,6 @@ async def create_kb_binding(
     kb = _load_kb(db, knowledge_base_id)
     _require_kb_edit(db, kb, current_user)
     try:
-        if not settings.EXTERNAL_DOC_SYNC_ENABLED:
-            raise WikiApiError("bad_request", "外部文档同步功能未启用")
         provider = get_external_sync_provider(WIKI_PROVIDER_ID)
         if provider is None:
             raise WikiApiError("bad_request", "Wiki 同步服务不可用")
