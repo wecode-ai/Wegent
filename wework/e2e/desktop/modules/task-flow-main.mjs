@@ -1013,9 +1013,14 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true }),
   ])
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
+    writeFile(
+      join(electronUserDataDirectory, 'app-preferences.json'),
+      `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`
+    ),
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
     writeFile(
       join(workspacePath, FILE_PANEL_LINK_NAME),

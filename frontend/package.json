@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node scripts/prepare-internal-assets.mjs && node scripts/prepare-file-viewer-assets.mjs && next dev",
     "dev:proxy": "node server.cjs",
-    "build": "node scripts/build-novnc.js && node scripts/prepare-internal-assets.mjs && node scripts/prepare-file-viewer-assets.mjs && NODE_OPTIONS='--max-old-space-size=4096' next build",
+    "build": "node scripts/prepare-internal-assets.mjs && node scripts/prepare-file-viewer-assets.mjs && NODE_OPTIONS='--max-old-space-size=4096' next build",
     "start": "next start",
     "start:proxy": "NODE_ENV=production node server.cjs",
     "lint": "next lint",
@@ -60,7 +60,6 @@
     "@heroicons/react": "^2.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@mermaid-js/parser": "^0.6.3",
-    "@novnc/novnc": "^1.6.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/context-zone": "^2.2.0",
     "@opentelemetry/core": "^2.2.0",

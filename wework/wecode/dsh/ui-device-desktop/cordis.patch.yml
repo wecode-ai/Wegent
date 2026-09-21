@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-device-desktop
+      name: '@wegent/dsh-ui-device-desktop'

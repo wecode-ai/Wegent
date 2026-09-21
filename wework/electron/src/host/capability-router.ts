@@ -145,8 +145,6 @@ export const HOST_CAPABILITIES = [
   'smartApps.stop',
   'smartApps.storeContextToken',
   'smartApps.storeProxyToken',
-  'vnc.externalBridgeUrl',
-  'vnc.prepareSession',
   'smartApps.takeContextToken',
   'smartApps.takeProxyToken',
   'smartApps.update',

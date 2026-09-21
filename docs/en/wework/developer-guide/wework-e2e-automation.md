@@ -26,12 +26,6 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
-Run only the Wecode cloud-device desktop scenario:
-
-```bash
-pnpm --filter wework e2e:desktop:wecode
-```
-
 Run only the cloud-project desktop E2E:
 
 ```bash

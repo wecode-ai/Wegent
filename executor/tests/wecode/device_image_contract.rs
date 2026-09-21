@@ -23,7 +23,7 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
 
     let publish_script =
         fs::read_to_string("../wecode/docker/device/build-and-publish.sh").unwrap();
-    assert!(publish_script.contains("--file docker/device/Dockerfile"));
+    assert!(publish_script.contains("--file wecode/docker/device/Dockerfile"));
     assert!(publish_script.contains("registry.api.weibo.com/ci/wegent-device"));
     assert!(publish_script.contains("pushregistry.api.weibo.com/ci/wegent-device"));
     assert!(publish_script.contains("from build.build_image import BuildImage"));

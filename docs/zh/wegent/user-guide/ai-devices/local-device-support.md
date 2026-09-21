@@ -380,13 +380,12 @@ wegent-executor
 
 在线云设备和远程 Docker 设备支持直接打开终端和 IDE。
 
-| 操作     | 适用设备                 | 后端接口                                         | 说明                                                                                                                                 |
-| -------- | ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **终端** | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/terminal`         | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE**  | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/code-server`      | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
-| **桌面** | 云设备                   | `GET /api/cloud-devices/{device_id}/vnc-config`  | 通过 Wework 的本机回环会话桥接，在系统默认浏览器中打开云设备 VNC 桌面                                                                |
+| 操作     | 适用设备                 | 后端接口                                    | 说明                                                                                                                                 |
+| -------- | ------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **终端** | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
+| **IDE**  | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
 
-终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。桌面会话通过 `/vnc-proxy/{device_id}` 建立 WebSocket；设置页和工作区入口都使用不含凭据的本机回环 viewer 地址，前者交给系统默认浏览器，后者在 Wework 内置浏览器中打开。代理地址和登录 token 只保存在 Tauri 会话注册表及 VNC 页的本机内存中，不会写入地址栏或浏览历史，也不会通过跨域读取开放。两分钟有效期只用于主 WebView 向 VNC 页交接凭据；VNC 页打开后可使用自己的内存缓存进行断线重试。设备离线时，终端、IDE 和桌面按钮不可用。
+终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，对应按钮不可用。
 
 更多菜单提供低频管理操作：
 

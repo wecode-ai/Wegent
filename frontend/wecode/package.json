@@ -1,0 +1,8 @@
+{
+  "name": "@wegent/wecode-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "@novnc/novnc": "1.7.0"
+  }
+}

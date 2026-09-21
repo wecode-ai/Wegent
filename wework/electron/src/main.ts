@@ -88,7 +88,6 @@ import {
 } from './host/image-context-actions.js'
 import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
-import { VncSessionManager } from './host/vnc-session-manager.js'
 import {
   prepareDesktopComponents,
   shouldStageDesktopComponentUpdates,
@@ -213,7 +212,6 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
-let vncSessions: VncSessionManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -1318,8 +1316,6 @@ async function shutdown(): Promise<void> {
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
-  const vnc = vncSessions
-  vncSessions = null
   const controlBridge = desktopControlBridge
   desktopControlBridge = null
   const computerUseService = computerUse
@@ -1330,7 +1326,6 @@ async function shutdown(): Promise<void> {
     browserBridge?.stop(),
     controlBridge?.stop(),
     computerUseService?.stop(),
-    vnc?.stop(),
     development?.stop(),
     desktopRuntime?.stop(),
   ])
@@ -1407,11 +1402,6 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory,
     logDirectories: runtimeLogDirectories,
   })
-  const vncAssets = app.isPackaged
-    ? join(process.resourcesPath, 'vnc')
-    : resolve(packageRoot, '..', 'wecode', 'features', 'vnc', 'assets')
-  vncSessions = new VncSessionManager(vncAssets)
-  await vncSessions.start()
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
@@ -1529,7 +1519,6 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
-          vnc: vncSessions,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,

@@ -14,7 +14,6 @@ import logging
 from typing import Any
 
 import httpx
-import websockets
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -22,12 +21,10 @@ from fastapi import (
     Depends,
     HTTPException,
     Request,
-    WebSocket,
     status,
 )
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
-from websockets.exceptions import InvalidStatus
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -40,7 +37,6 @@ from wecode.schemas.cloud_device import (
     CloudDeviceResponse,
     CreateCloudDeviceRequest,
     NevisSandboxStatus,
-    VncConfigResponse,
 )
 from wecode.service.cloud_device_git_tokens import build_cloud_device_git_accounts
 from wecode.service.cloud_device_ip_index import (
@@ -511,65 +507,6 @@ async def get_cloud_device_nevis_status(
         )
 
 
-@router.get("/{device_id}/vnc-config", response_model=VncConfigResponse)
-async def get_vnc_config(
-    device_id: str,
-    user_id: int | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """Get VNC WebSocket connection configuration for a cloud device.
-
-    Returns the upstream WSS URL and authentication signature needed
-    by server.cjs to proxy VNC WebSocket connections to Nevis.
-
-    Args:
-        device_id: Cloud device ID (UUID or sandbox ID)
-
-    Returns:
-        VncConfigResponse with wss_url, signature, and sandbox_id
-
-    Raises:
-        HTTPException 404: If device not found
-        HTTPException 503: If Nevis is not configured
-    """
-    if not cloud_device_provider.is_configured():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cloud device provider is not configured",
-        )
-
-    device_status = await _get_accessible_cloud_device_status(
-        device_id,
-        db,
-        current_user,
-        user_id,
-    )
-    sandbox_id = _resolve_sandbox_id(device_id, device_status)
-
-    # Build upstream VNC WebSocket URL from Nevis settings
-    base_url = nevis_settings.NEVIS_BASE_URL.rstrip("/")
-    # Convert http(s):// to ws(s)://
-    if base_url.startswith("https://"):
-        wss_base = "wss://" + base_url[len("https://") :]
-    elif base_url.startswith("http://"):
-        wss_base = "ws://" + base_url[len("http://") :]
-    else:
-        wss_base = "wss://" + base_url
-
-    manager_id = nevis_settings.NEVIS_MANAGER_ID
-    wss_url = (
-        f"{wss_base}/apis/sandboxes/v1/managers/{manager_id}"
-        f"/sandboxes/{sandbox_id}/vnc"
-    )
-
-    return VncConfigResponse(
-        wss_url=wss_url,
-        signature=nevis_settings.NEVIS_SIGNATURE,
-        sandbox_id=sandbox_id,
-    )
-
-
 @router.get("/{device_id}/file-config", response_model=CloudDeviceFileConfigResponse)
 async def get_cloud_device_file_config(
     device_id: str,
@@ -746,176 +683,6 @@ async def get_cloud_device_metrics_history(
     )
 
     return results
-
-
-def _build_vnc_wss_url(sandbox_id: str) -> str:
-    """Build upstream Nevis VNC WebSocket URL from settings."""
-    base_url = nevis_settings.NEVIS_BASE_URL.rstrip("/")
-    if base_url.startswith("https://"):
-        wss_base = "wss://" + base_url[len("https://") :]
-    elif base_url.startswith("http://"):
-        wss_base = "ws://" + base_url[len("http://") :]
-    else:
-        wss_base = "wss://" + base_url
-
-    manager_id = nevis_settings.NEVIS_MANAGER_ID
-    return (
-        f"{wss_base}/apis/sandboxes/v1/managers/{manager_id}"
-        f"/sandboxes/{sandbox_id}/vnc"
-    )
-
-
-def _connect_vnc_upstream(upstream_url: str, signature: str) -> Any:
-    """Open a direct, uncompressed WebSocket connection to Nevis VNC."""
-    return websockets.connect(
-        upstream_url,
-        additional_headers={"X-Signature": signature},
-        compression=None,
-        proxy=None,
-        max_size=None,
-        ping_interval=20,
-        ping_timeout=20,
-        close_timeout=5,
-    )
-
-
-async def vnc_websocket_proxy(
-    websocket: WebSocket,
-    device_id: str,
-    token: str = "",
-    user_id: int | None = None,
-):
-    """WebSocket proxy for VNC connections to Nevis cloud devices.
-
-    Authenticates the user via JWT token, resolves the sandbox ID,
-    and proxies bidirectional binary data between the browser (noVNC)
-    and the upstream Nevis VNC WebSocket.
-
-    The ASGI VNC interceptor exposes this handler at
-    ``/vnc-proxy/{device_id}``. When server.cjs is used, it handles the same
-    public path and forwards the connection itself.
-
-    Query params:
-        token: JWT authentication token
-    """
-    logger.info(
-        f"[VNC Proxy] Handler called: device_id={device_id}, has_token={bool(token)}"
-    )
-
-    # Accept the WebSocket connection first.
-    # Under uvicorn, calling websocket.close() before accept() results in
-    # HTTP 403 instead of a proper WebSocket close frame. So we accept first
-    # and then close with an appropriate code if auth fails.
-    await websocket.accept()
-
-    if not token:
-        logger.warning("[VNC Proxy] No token provided, closing")
-        await websocket.close(code=4001, reason="Missing token")
-        return
-
-    # Authenticate user from token
-    try:
-        from app.core.security import get_current_user_from_token
-        from app.db.session import SessionLocal
-
-        db = SessionLocal()
-        try:
-            user = get_current_user_from_token(token, db)
-            logger.info(
-                f"[VNC Proxy] Auth result: user={user.user_name if user else None}"
-            )
-            if not user:
-                await websocket.close(code=4001, reason="Invalid token")
-                return
-
-            # Verify device access for the authenticated user.
-            resolved_user_id = _resolve_target_user_id(user, user_id)
-            device_status = await cloud_device_provider.get_status(
-                db=db,
-                user_id=resolved_user_id,
-                device_id=device_id,
-            )
-            logger.info(f"[VNC Proxy] Device status: {bool(device_status)}")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.exception(f"[VNC Proxy] Auth/device lookup failed: {e}")
-        await websocket.close(code=4001, reason="Authentication failed")
-        return
-
-    if not device_status:
-        logger.warning(f"[VNC Proxy] Device not found: {device_id}")
-        await websocket.close(code=4004, reason="Device not found")
-        return
-
-    # Resolve sandbox ID
-    cloud_config = device_status.get("cloud_config") or {}
-    sandbox_id = cloud_config.get("sandboxId", device_id)
-
-    # Build upstream VNC URL
-    upstream_url = _build_vnc_wss_url(sandbox_id)
-    signature = nevis_settings.NEVIS_SIGNATURE
-
-    logger.info(
-        f"[VNC Proxy] Connecting to upstream for device={device_id}, "
-        f"sandbox={sandbox_id}, url={upstream_url}"
-    )
-
-    close_code = 1000
-    close_reason = ""
-    try:
-        async with _connect_vnc_upstream(upstream_url, signature) as upstream:
-            logger.info(f"[VNC Proxy] Upstream connected for sandbox={sandbox_id}")
-
-            async def client_to_upstream():
-                """Forward messages from browser to Nevis."""
-                try:
-                    while True:
-                        data = await websocket.receive_bytes()
-                        await upstream.send(data)
-                except Exception:
-                    pass
-
-            async def upstream_to_client():
-                """Forward messages from Nevis to browser."""
-                try:
-                    async for message in upstream:
-                        if isinstance(message, bytes):
-                            await websocket.send_bytes(message)
-                        else:
-                            await websocket.send_text(message)
-                except Exception:
-                    pass
-
-            # Run both directions concurrently
-            done, pending = await asyncio.wait(
-                [
-                    asyncio.create_task(client_to_upstream()),
-                    asyncio.create_task(upstream_to_client()),
-                ],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            # Cancel remaining task
-            for task in pending:
-                task.cancel()
-
-    except InvalidStatus as e:
-        close_code = 1011
-        close_reason = "VNC upstream rejected connection"
-        logger.error(
-            f"[VNC Proxy] Upstream rejected connection for sandbox={sandbox_id}: "
-            f"status={e.response.status_code}"
-        )
-    except Exception as e:
-        close_code = 1011
-        close_reason = "VNC upstream connection failed"
-        logger.error(f"[VNC Proxy] Error for sandbox={sandbox_id}: {e}")
-    finally:
-        try:
-            await websocket.close(code=close_code, reason=close_reason)
-        except Exception:
-            pass
-        logger.info(f"[VNC Proxy] Connection closed for sandbox={sandbox_id}")
 
 
 @router.get("/config")

@@ -1,8 +1,24 @@
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+// The cloud-device-vnc checkpoint is internal-only: its scenario module lives
+// under wecode/, which the open-source checkout does not contain. Keep the
+// checkpoint out of the catalog there so every consumer, including the CI
+// classifier that validates its plan against this list, stays consistent.
+const internalVncScenarioModule = '../../wecode/e2e/desktop/index.mjs'
+
+export const VNC_DESKTOP_CHECKPOINT = existsSync(
+  resolve(import.meta.dirname, internalVncScenarioModule)
+)
+  ? { name: 'cloud-device-vnc', scenarioModule: internalVncScenarioModule }
+  : null
+
 export const DESKTOP_CHECKPOINTS = [
   'remote-device-onboarding',
   'workspace-tabs',
   'cloud-project-creation',
   'cloud-device-lifecycle',
+  ...(VNC_DESKTOP_CHECKPOINT ? [VNC_DESKTOP_CHECKPOINT.name] : []),
   'cloud-space-mention',
   'collaboration-shared-core',
   'collaboration-settings-matrix',
