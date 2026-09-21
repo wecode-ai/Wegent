@@ -5,13 +5,9 @@ import { dirname, join } from 'node:path'
 import {
   assistantMessage,
   createSse,
-  mcpToolRequestEvents,
-  namespacedFunctionCall,
   readRequestBody,
-  requestContainsToolOutput,
   responseCompleted,
   responseCreated,
-  selectMcpTool,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
@@ -25,12 +21,12 @@ const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
 const SKILL_NAME = `local-agent-skill-${process.pid}`
 const SKILL_ID = 91001
 const SKILL_MARKER = 'LOCAL_AGENT_REAL_SKILL'
-const PLUGIN_NAME = 'wework-space'
+const PLUGIN_NAME = 'smart-app-builder'
 const PLUGIN_MARKETPLACE = 'wework-personal'
 const PLUGIN_ID = `${PLUGIN_NAME}@${PLUGIN_MARKETPLACE}`
-const PLUGIN_TOOL = 'send_notification'
-const PLUGIN_SEARCH_CALL_ID = 'local-agent-plugin-search'
-const PLUGIN_TOOL_CALL_ID = 'local-agent-plugin-call'
+const PLUGIN_VERSION = '0.1.0'
+const PLUGIN_SKILL_NAME = 'create-smart-app'
+const PLUGIN_SKILL_MARKER = 'inspect → contract → doctor → verify → preview → pack'
 const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function scoped(selector) {
@@ -140,50 +136,37 @@ export async function createDesktopScenario({
         stagedSkill.content.includes(SKILL_MARKER),
         'The staged local Skill did not contain the selected Skill content'
       )
-      const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
+      assert.ok(serialized.includes(PLUGIN_NAME), 'The local Agent did not receive its plugin')
       assert.ok(
-        executorLog.includes(`[wework-space-mcp] stage=tools_list`) &&
-          executorLog.includes(`tools=${PLUGIN_TOOL}`),
-        'The local Agent plugin did not start and expose its MCP tool'
+        serialized.includes(`${PLUGIN_NAME}:${PLUGIN_SKILL_NAME}`),
+        'The local Agent plugin entry Skill was not attached to the model request'
       )
-      let events
-      if (requestContainsToolOutput(body, PLUGIN_TOOL_CALL_ID)) {
-        assert.ok(
-          executorLog.includes(`stage=tool_call tool=${PLUGIN_TOOL}`),
-          'The selected local Agent plugin tool was not invoked'
-        )
-        verifiedRequest = body
-        events = [assistantMessage(COMPLETION_MARKER)]
-      } else if (requestContainsToolOutput(body, PLUGIN_SEARCH_CALL_ID)) {
-        const tool = selectMcpTool(body, 'wework_notifications', PLUGIN_TOOL, {
-          title: 'Local Agent E2E',
-          body: RUN_MARKER,
-        })
-        events = namespacedFunctionCall(
-          PLUGIN_TOOL_CALL_ID,
-          tool.namespace,
-          tool.name,
-          tool.arguments
-        )
-      } else {
-        const directToolName = (body.tools ?? [])
-          .map(tool => tool?.name ?? tool?.function?.name)
-          .find(name => name?.endsWith(`__${PLUGIN_TOOL}`))
-        events = mcpToolRequestEvents(body, {
-          toolName: PLUGIN_TOOL,
-          argumentsValue: {
-            title: 'Local Agent E2E',
-            body: RUN_MARKER,
-          },
-          directToolName,
-          searchCallId: PLUGIN_SEARCH_CALL_ID,
-          toolCallId: PLUGIN_TOOL_CALL_ID,
-        }).events
-      }
+      const pluginSkillFile = join(
+        executorHome,
+        'codex',
+        'plugins',
+        'cache',
+        PLUGIN_MARKETPLACE,
+        PLUGIN_NAME,
+        PLUGIN_VERSION,
+        'skills',
+        PLUGIN_SKILL_NAME,
+        'SKILL.md'
+      )
+      const pluginSkillContent = await readFile(pluginSkillFile, 'utf8')
+      assert.ok(
+        pluginSkillContent.includes(PLUGIN_SKILL_MARKER),
+        'The local Agent plugin entry Skill was not installed with the bundled plugin content'
+      )
+      verifiedRequest = body
       const responseId = `local-agent-capability-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
-        createSse([responseCreated(responseId), ...events, responseCompleted(responseId)])
+        createSse([
+          responseCreated(responseId),
+          assistantMessage(COMPLETION_MARKER),
+          responseCompleted(responseId),
+        ])
       )
       return true
     },
