@@ -48,7 +48,6 @@ def vector_field_dimension(description: Any) -> Optional[int]:
 
 def raise_on_dimension_mismatch(
     *,
-    collection_name: str,
     stored_dim: Optional[int],
     expected_dim: int,
     model: str,

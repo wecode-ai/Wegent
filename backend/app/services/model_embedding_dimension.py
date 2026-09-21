@@ -34,7 +34,9 @@ def validate_embedding_dimension_declaration(
 
     Embedding models must declare a stable positive integer dimension. An
     existing model may only gain a dimension it never declared; a declared
-    dimension is immutable.
+    dimension is immutable, and a declared dimension cannot be dropped by
+    omitting it. A model stored without a dimension therefore keeps working
+    until it is written again, when it must declare one.
     """
     if not _declares_embedding(spec, stored_spec):
         return

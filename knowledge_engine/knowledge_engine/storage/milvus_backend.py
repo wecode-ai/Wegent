@@ -31,13 +31,11 @@ from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_fi
 from pymilvus import AsyncMilvusClient, MilvusClient
 
 from knowledge_engine.embedding.contract import (
+    ensure_declared_dimension,
     is_positive_int,
     resolve_declared_dimension,
 )
-from knowledge_engine.embedding.errors import (
-    EmbeddingDimensionMismatchError,
-    EmbeddingResponseFormatError,
-)
+from knowledge_engine.embedding.errors import EmbeddingResponseFormatError
 from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
@@ -399,27 +397,15 @@ class MilvusBackend(BaseStorageBackend):
         nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
 
         # Resolve the contract before any delete or write happens.
-        declared_dim = resolve_declared_dimension(embed_model)
-        batch_dim = self._embed_first_batch(
+        embed_dim = self._resolve_write_dimension(
             nodes_for_embedding,
             embed_model,
-            declared_dim=declared_dim,
+            collection_name,
         )
-        embed_dim = declared_dim or batch_dim
-        if declared_dim is None and batch_dim:
-            logger.warning(
-                "[Milvus] Compatibility path: embedding model '%s' declares no "
-                "dimension; collection %s is created from the first document batch "
-                "(%s dimensions)",
-                embedding_model_name(embed_model),
-                collection_name,
-                batch_dim,
-            )
         if embed_dim is not None:
             snapshot = self._collection_snapshot(collection_name)
             if snapshot.exists:
                 raise_on_dimension_mismatch(
-                    collection_name=collection_name,
                     stored_dim=snapshot.dimension,
                     expected_dim=embed_dim,
                     model=embedding_model_name(embed_model),
@@ -448,6 +434,30 @@ class MilvusBackend(BaseStorageBackend):
             "index_name": collection_name,
             "status": "success",
         }
+
+    def _resolve_write_dimension(
+        self,
+        nodes: List[BaseNode],
+        embed_model: BaseEmbedding,
+        collection_name: str,
+    ) -> Optional[int]:
+        """Resolve the dimension a write must use, embedding the first batch once."""
+        declared_dim = resolve_declared_dimension(embed_model)
+        batch_dim = self._embed_first_batch(
+            nodes,
+            embed_model,
+            declared_dim=declared_dim,
+        )
+        if declared_dim is None and batch_dim:
+            logger.warning(
+                "[Milvus] Compatibility path: embedding model '%s' declares no "
+                "dimension; collection %s is created from the first document batch "
+                "(%s dimensions)",
+                embedding_model_name(embed_model),
+                collection_name,
+                batch_dim,
+            )
+        return declared_dim or batch_dim
 
     def _embed_first_batch(
         self,
@@ -489,13 +499,12 @@ class MilvusBackend(BaseStorageBackend):
                 f"{len(batch)} texts"
             )
 
+        ensure_declared_dimension(
+            model=model,
+            declared=declared_dim,
+            vectors=vectors,
+        )
         dimension = len(vectors[0])
-        if declared_dim is not None and dimension != declared_dim:
-            raise EmbeddingDimensionMismatchError(
-                model=model,
-                expected=declared_dim,
-                actual=dimension,
-            )
         if any(len(vector) != dimension for vector in vectors):
             raise EmbeddingResponseFormatError(
                 f"Embedding model '{model}' returned vectors of mixed dimensions"
@@ -635,7 +644,6 @@ class MilvusBackend(BaseStorageBackend):
         )
         if declared_dim is not None:
             raise_on_dimension_mismatch(
-                collection_name=collection_name,
                 stored_dim=snapshot.dimension,
                 expected_dim=declared_dim,
                 model=embedding_model_name(embed_model),
@@ -683,7 +691,6 @@ class MilvusBackend(BaseStorageBackend):
             query_dimension = len(query_embedding)
             if is_positive_int(query_dimension):
                 raise_on_dimension_mismatch(
-                    collection_name=collection_name,
                     stored_dim=snapshot.dimension,
                     expected_dim=query_dimension,
                     model=embedding_model_name(embed_model),
