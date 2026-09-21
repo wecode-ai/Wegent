@@ -20,7 +20,7 @@ function session(messageId: string) {
     execution: { type: 'wework', device_id: 'device-1' },
     model_name: 'local-model',
     model: null,
-    api_conversation_supported: false,
+    api_conversation_supported: true,
   }
 }
 
