@@ -226,6 +226,7 @@ export function IssueChatMessage({
   onOpenExecution,
   onStopExecution,
   stopping = false,
+  flash = false,
 }: {
   translate: CollaborationTranslate;
   onOpenUrl(url: string): void;
@@ -245,7 +246,13 @@ export function IssueChatMessage({
   onOpenExecution?: () => void;
   onStopExecution?: () => void;
   stopping?: boolean;
+  /** Momentarily highlight this comment, e.g. after a notification opened it. */
+  flash?: boolean;
 }) {
+  const focusAttributes = {
+    "data-message-id": message.messageId,
+    "data-flash": flash ? "true" : undefined,
+  };
   const text = activityDisplayBody(message.content, "");
   const isAgent = message.sender.type === "agent";
   const isSubagent = message.metadata.kind === "task_ai_subagent";
@@ -276,6 +283,7 @@ export function IssueChatMessage({
   if (eventOnly) {
     return (
       <div
+        {...focusAttributes}
         className="task-detail-run-event"
         data-testid={`task-activity-run-event-${message.messageId}`}
       >
@@ -441,6 +449,7 @@ export function IssueChatMessage({
     if (isAgent && !plain) {
       return (
         <article
+          {...focusAttributes}
           data-testid={
             testId ?? `cloud-task-activity-message-${message.messageId}`
           }
@@ -509,6 +518,7 @@ export function IssueChatMessage({
 
     return (
       <IssueActivityMessage
+        {...focusAttributes}
         author={message.sender.name}
         createdAt={message.createdAt}
         avatar={avatar}
@@ -560,6 +570,7 @@ export function IssueChatMessage({
 
   return (
     <article
+      {...focusAttributes}
       data-testid={testId ?? `cloud-task-activity-message-${message.messageId}`}
       data-side={mine ? "right" : "left"}
       className="overflow-hidden rounded-xl border border-border bg-background shadow-sm"

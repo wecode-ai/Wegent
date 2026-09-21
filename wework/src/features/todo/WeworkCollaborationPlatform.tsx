@@ -137,6 +137,7 @@ export interface WeworkCollaborationPlatformProps {
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
+  focusedCommentId?: string | null
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedProjectSpace | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -960,6 +961,7 @@ export function createWeworkPlatformApi(
 export function WeworkSharedProject({
   api,
   detailServices,
+  focusedCommentId,
   focusedItemId,
   localProjects,
   locale,
@@ -978,6 +980,7 @@ export function WeworkSharedProject({
 }: {
   api: SharedWorkspaceApi
   detailServices?: ProjectSpaceDetailServices
+  focusedCommentId?: string | null
   focusedItemId?: string | null
   localProjects: ProjectWithTasks[]
   locale: 'zh-CN' | 'en'
@@ -1375,6 +1378,7 @@ export function WeworkSharedProject({
                 <TodoEditor
                   key={issue.id}
                   mode="edit"
+                  focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
                   sharedApi={issueApi}
                   presentation="workspace-panel"
                   workspacePanelFill
@@ -1827,6 +1831,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                   project.project_store === 'local' ? 'local' : 'cloud'
                 ]
               }
+              focusedCommentId={props.focusedCommentId}
               focusedItemId={props.focusedItemId}
               localProjects={props.localProjects}
               locale={locale}

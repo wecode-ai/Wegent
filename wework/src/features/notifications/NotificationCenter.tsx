@@ -5,6 +5,7 @@ import {
   createNotificationsApi,
   type WeworkInbox,
   type WeworkNotification,
+  type WeworkNotificationPayload,
 } from '@/api/notifications'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -127,6 +128,38 @@ function ConnectedNotificationCenter({ baseUrl, token }: { baseUrl: string; toke
       }
     })
 
+  /** The board, item key, state and deadline a notification points at. */
+  function summaryParts(payload: WeworkNotificationPayload): string[] {
+    const parts: string[] = []
+    if (payload.projectName) parts.push(payload.projectName)
+    if (payload.itemKey) parts.push(payload.itemKey)
+    if (payload.itemStatus) parts.push(payload.itemStatus)
+    const priority = priorityLabel(payload.itemPriority)
+    if (priority) parts.push(priority)
+    const due = dueLabel(payload.itemDueAt)
+    if (due) parts.push(due)
+    return parts
+  }
+
+  function priorityLabel(priority?: string): string | null {
+    if (!priority || priority === 'none') return null
+    const keys: Record<string, string> = {
+      urgent: 'todo.priority_urgent',
+      high: 'todo.priority_high',
+      medium: 'todo.priority_normal',
+      low: 'todo.priority_low',
+    }
+    const key = keys[priority]
+    return key ? `${t('todo.priority')} ${t(key)}` : `${t('todo.priority')} ${priority}`
+  }
+
+  function dueLabel(dueAt?: string): string | null {
+    if (!dueAt) return null
+    const due = new Date(dueAt)
+    if (Number.isNaN(due.getTime())) return null
+    return `${t('todo.due_date')} ${due.toLocaleDateString()}`
+  }
+
   return (
     <>
       <Tooltip label={t('notifications.title')} side="bottom">
@@ -193,27 +226,45 @@ function ConnectedNotificationCenter({ baseUrl, token }: { baseUrl: string; toke
           {inbox?.items.length === 0 && (
             <p className="p-2 text-sm text-text-secondary">{t('notifications.empty')}</p>
           )}
-          {inbox?.items.map(notification => (
-            <button
-              key={notification.id}
-              data-testid={`wework-notification-${notification.id}`}
-              disabled={busy}
-              className={cn(
-                'block w-full rounded-lg p-2 text-left hover:bg-muted disabled:opacity-50',
-                !notification.read_at && 'bg-muted/50'
-              )}
-              onClick={() => openNotification(notification)}
-            >
-              <span className="block text-sm font-medium">{notification.title}</span>
-              <span className="mt-1 block whitespace-pre-wrap text-sm text-text-primary">
-                {notification.body}
-              </span>
-              <span className="mt-1 block text-xs text-text-secondary">
-                {!notification.read_at && `${t('notifications.unread')} · `}
-                {new Date(notification.created_at).toLocaleString()}
-              </span>
-            </button>
-          ))}
+          {inbox?.items.map(notification => {
+            const summary = summaryParts(notification.payload).join(' · ')
+            return (
+              <button
+                key={notification.id}
+                data-testid={`wework-notification-${notification.id}`}
+                disabled={busy}
+                className={cn(
+                  'block w-full rounded-lg p-2 text-left hover:bg-muted disabled:opacity-50',
+                  !notification.read_at && 'bg-muted/50'
+                )}
+                onClick={() => openNotification(notification)}
+              >
+                <span className="block text-sm font-medium">{notification.title}</span>
+                {summary && (
+                  <span
+                    data-testid={`wework-notification-summary-${notification.id}`}
+                    className="mt-0.5 block text-xs text-text-secondary"
+                  >
+                    {summary}
+                  </span>
+                )}
+                <span className="mt-1 block whitespace-pre-wrap text-sm text-text-primary">
+                  {notification.body}
+                </span>
+                {notification.payload.replyPreview && (
+                  <span className="mt-1 block whitespace-pre-wrap text-xs text-text-secondary">
+                    {t('notifications.in_reply_to', {
+                      preview: notification.payload.replyPreview,
+                    })}
+                  </span>
+                )}
+                <span className="mt-1 block text-xs text-text-secondary">
+                  {!notification.read_at && `${t('notifications.unread')} · `}
+                  {new Date(notification.created_at).toLocaleString()}
+                </span>
+              </button>
+            )
+          })}
           {inbox?.next_offset != null && (
             <button
               data-testid="wework-notifications-more"

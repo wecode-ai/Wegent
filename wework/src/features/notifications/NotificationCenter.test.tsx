@@ -100,4 +100,35 @@ describe('notification center', () => {
     expect(screen.getByTestId('wework-notifications-button')).toBeDisabled()
     expect(api.list).not.toHaveBeenCalled()
   })
+
+  it('renders the board, item key, state and reply context of a notification', async () => {
+    const mention = {
+      ...entry,
+      kind: 'mention',
+      title: 'hajimi 在「修复登录」提到了你',
+      body: '麻烦看下这个改动\n\n看板：test-pro',
+      payload: {
+        projectId: '12',
+        projectName: 'test-pro',
+        itemId: 'WEG-12',
+        itemKey: 'WEG-12',
+        itemTitle: '修复登录',
+        itemStatus: '进行中',
+        itemPriority: 'high',
+        actorName: 'hajimi',
+        commentId: 'c-1',
+        commentPreview: '麻烦看下这个改动',
+        replyPreview: '先合了这条',
+      },
+    }
+    api.list.mockResolvedValue({ items: [mention], unread_count: 1, next_offset: null })
+    render(view())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    const summary = await screen.findByTestId('wework-notification-summary-n1')
+    expect(summary).toHaveTextContent('test-pro')
+    expect(summary).toHaveTextContent('WEG-12')
+    expect(summary).toHaveTextContent('进行中')
+    expect(summary).toHaveTextContent('todo.priority')
+    expect(screen.getByText('notifications.in_reply_to')).toBeVisible()
+  })
 })

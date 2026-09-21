@@ -3673,4 +3673,56 @@ describe('TaskActivityView', () => {
       '状态: 执行失败\n错误: Device went offline before dispatch'
     )
   })
+
+  it('flashes the comment a notification opened', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [userMessage, agentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          focusedCommentId="message-1"
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+            } as never
+          }
+        />
+      )
+
+      const comment = await screen.findByTestId('cloud-task-activity-message-message-1')
+      expect(comment).toHaveAttribute('data-message-id', 'message-1')
+      await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
+      expect(screen.getByTestId('cloud-task-activity-message-message-2')).not.toHaveAttribute(
+        'data-flash'
+      )
+
+      await act(async () => {
+        vi.advanceTimersByTime(2500)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

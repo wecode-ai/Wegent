@@ -4839,6 +4839,7 @@
     "loading": "Loading…",
     "empty": "No notifications yet",
     "unread": "Unread",
+    "in_reply_to": "In reply to: {{preview}}",
     "more": "Load more",
     "ask_title": "Notify the assignee?",
     "ask_body": "When you save this assignment, send an in-app notification and push to their connected IM.",

@@ -99,9 +99,14 @@ interface TaskActivityViewProps {
   /** Project members and robots that the comment composers can mention. */
   members?: CollaborationMember[]
   agents?: CollaborationAgent[]
+  /** Opens the comment list on this comment and flashes it once. */
+  focusedCommentId?: string | null
 }
 
 type TaskCardQueuedReply = RuntimePaneQueuedMessage
+
+/** How long a comment keeps the "you were sent here" highlight. */
+const COMMENT_FLASH_MS = 2000
 
 export function TaskActivityView({
   client,
@@ -122,6 +127,7 @@ export function TaskActivityView({
   onRefreshExecutionArtifacts,
   members = [],
   agents = [],
+  focusedCommentId = null,
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
   const activityTranslate = createCollaborationTranslator(
@@ -312,6 +318,26 @@ export function TaskActivityView({
       cardTestIdPrefix: 'cloud-task-activity-card-',
     }
   )
+
+  // A notification can point at one comment. Land on it once, flash it, and
+  // then leave the list under the reader's control.
+  const [flashedCommentId, setFlashedCommentId] = useState<string | null>(null)
+  const revealedCommentRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!focusedCommentId || revealedCommentRef.current === focusedCommentId) return
+    const target = Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []
+    ).find(node => node.dataset.messageId === focusedCommentId)
+    if (!target) return
+    revealedCommentRef.current = focusedCommentId
+    target.scrollIntoView?.({ block: 'center' })
+    setFlashedCommentId(focusedCommentId)
+  }, [focusedCommentId, listRef, threadMessages])
+  useEffect(() => {
+    if (!flashedCommentId) return
+    const timer = window.setTimeout(() => setFlashedCommentId(null), COMMENT_FLASH_MS)
+    return () => window.clearTimeout(timer)
+  }, [flashedCommentId])
 
   useWorkflowManagerActivity({
     task,
@@ -700,6 +726,7 @@ export function TaskActivityView({
         key={message.messageId}
         message={message}
         executionTurnId={executionBinding.getTurnId(message)}
+        flash={message.messageId === flashedCommentId}
         mine={
           message.sender.type === 'user' &&
           String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
@@ -876,6 +903,7 @@ export function TaskActivityView({
                   key={message.messageId}
                   message={message}
                   executionTurnId={executionBinding.getTurnId(message)}
+                  flash={message.messageId === flashedCommentId}
                   mine={
                     message.sender.type === 'user' &&
                     String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')

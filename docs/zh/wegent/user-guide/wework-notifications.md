@@ -31,6 +31,7 @@ Issue 自己的机器人任务在进入执行、需要人工处理、结束时�
 | `wework://boards`                             | 看板首页（无需绑定项目） |
 | `wework://boards/{projectId}`                 | Backend 看板             |
 | `wework://boards/{projectId}/issues/{itemId}` | 看板 Issue               |
+| `wework://boards/{projectId}/issues/{itemId}/comments/{commentId}` | Issue 内的单条评论（打开并高亮） |
 | `wework://tasks/{deviceId}/{taskId}`          | 指定设备上的任务         |
 
 每个地址段使用 URL 编码。应用内 Markdown 链接、通知入口和 Electron 外部唤起共用相同的目标解析。安装包注册 `wework` 协议；应用未启动时保留地址，待登录及工作台就绪后处理。访问目标仍需正常项目权限，链接不会执行命令、切换服务器或授予访问权限。

@@ -2049,6 +2049,28 @@
   padding: 16px;
 }
 
+/* A notification that lands on one comment flashes it so the reader can find it. */
+[data-flash="true"] {
+  border-radius: 10px;
+  animation: task-detail-comment-flash 2s ease-out 1;
+}
+
+@keyframes task-detail-comment-flash {
+  0% {
+    background: rgb(var(--color-primary) / 16%);
+    box-shadow: 0 0 0 2px rgb(var(--color-primary) / 45%);
+  }
+
+  70% {
+    background: rgb(var(--color-primary) / 8%);
+  }
+
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
 .task-detail-thread-message-header {
   display: flex;
   flex-wrap: wrap;
