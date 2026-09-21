@@ -2429,6 +2429,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "chat_agents.ensure_default" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = task_input::<ChatAgentCreate>(&params, "agent")?;
+            serialize_task_value(
+                runtime
+                    .ensure_default_chat_agent(project_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "chat_agents.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let agent_id = required_task_string(&params, "agent_id")?;

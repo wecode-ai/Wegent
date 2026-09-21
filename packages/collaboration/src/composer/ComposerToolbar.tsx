@@ -119,6 +119,8 @@ export function ComposerToolbar({
   const activeModelLabel = activeModel?.displayName || activeModel?.name
   const selectedModelLabel =
     selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+  const displayedSelectedModel =
+    selectedModel ?? (activeModel?.compatibilityDisabled ? activeModel : null)
   const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
   const primaryBusyLabel =
     followUpBehavior === 'guide'
@@ -195,10 +197,10 @@ export function ComposerToolbar({
             />
             {contextUsageIndicator}
             {modelSelectorOverride ??
-              (isModelSelectionReady ? (
+              (isModelSelectionReady || models.length > 0 ? (
                 renderModelSelector({
                   models: models,
-                  selectedModel: selectedModel,
+                  selectedModel: displayedSelectedModel,
                   selectedModelOptions: selectedModelOptions,
                   nextTurn: isStreaming && modelChangePending,
                   openSignal: modelSelectorOpenSignal,

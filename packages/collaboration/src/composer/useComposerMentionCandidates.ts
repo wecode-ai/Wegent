@@ -1,10 +1,8 @@
 import { useMemo } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@wegent/chat-core/runtime-composer-catalog'
-import type { UnifiedModel } from '@wegent/chat-core/models'
 import {
   appReference,
-  canSelectSkillForModel,
   dedupeLocalSkills,
   displayAppName,
   displaySkillName,
@@ -21,7 +19,6 @@ import { localSkillTestId } from './composerMentions'
 export function useComposerMentionCandidates<Project = unknown, Conversation = unknown>(
   apps: LocalDeviceApp[],
   skills: LocalDeviceSkill[],
-  selectedModel: UnifiedModel | null | undefined,
   query: string,
   cloudCandidates: ComposerCloudMentionCandidate<Project>[] = [],
   conversationCandidates: ComposerConversationMentionCandidate<Conversation>[] = [],
@@ -59,13 +56,13 @@ export function useComposerMentionCandidates<Project = unknown, Conversation = u
           description,
           metaLabel: displaySkillSource(skill, t),
           testId: localSkillTestId(skill.name),
-          enabled: canSelectSkillForModel(skill, selectedModel),
+          enabled: true,
           reference: skillReference(skill),
           searchAliases: [skill.name, skill.plugin_name ?? '', description ?? ''],
           skill,
         }
       }),
-    [selectedModel, skills, t]
+    [skills, t]
   )
   const visibleConversationCandidates = useMemo(() => {
     const filtered = conversationCandidates.filter(candidate =>

@@ -816,6 +816,19 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh-task')
+  control.setScenario('checkpoint_task')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    CHECKPOINT_TASK_PROMPT,
+    'checkpoint_task'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   setPhase('model-catalog-refresh')
   const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
   await control.command('waitFor', modelSelector, {
@@ -841,6 +854,29 @@ async function verifyLocalModelRouting({
     text: selectedModelLabel,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+
+  setPhase('model-catalog-refresh-failure')
+  await control.command('failNextLocalCodexModelList', '')
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const failedRefreshSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.ok(
+    failedRefreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared after the local Codex catalog refresh failed'
+  )
+  assert.ok(
+    !failedRefreshSnapshot.testIds.includes('model-selector-loading'),
+    'The failed local Codex catalog refresh left a blank loading placeholder'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'model-catalog-refresh-failure.png')
 
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
@@ -1142,6 +1178,7 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
+        publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })

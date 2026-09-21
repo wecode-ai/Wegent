@@ -31,6 +31,7 @@ import type {
   CollaborationAgent,
   CollaborationAssignment,
   CollaborationComment,
+  CollaborationDefaultAssistant,
   CollaborationExecution,
   CollaborationIssue,
   CollaborationMember,
@@ -64,6 +65,7 @@ interface IssueDetailProps {
   executions?: CollaborationExecution[]
   members?: CollaborationMember[]
   agents?: CollaborationAgent[]
+  defaultAssistant?: CollaborationDefaultAssistant
   messages: Messages
   translate?: CollaborationTranslate
   onClose(): void
@@ -213,6 +215,7 @@ function BrowserIssueDetail({
   executions = [],
   members = [],
   agents = [],
+  defaultAssistant,
   messages,
   translate,
   onClose,
@@ -294,6 +297,7 @@ function BrowserIssueDetail({
             canAssign={permissions.canAssign}
             currentAssignment={currentAssignment}
             canStartWork={permissions.canStartWork}
+            defaultAssistant={defaultAssistant}
             onCreateTask={onCreateTask}
             translate={editorTranslate}
             extensions={{

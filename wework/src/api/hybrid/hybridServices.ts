@@ -1419,9 +1419,13 @@ export function createHybridWorkbenchServices(
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins(deviceId: string) {
-      const cloudPlugins = await cloudServices.pluginApi?.listPlugins(deviceId).catch(() => [])
-      if (!isLocalDeviceId(deviceId)) return cloudPlugins ?? []
-      const localPlugins = await localServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      const cloudPlugins = (
+        await cloudServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      )?.map(plugin => ({ ...plugin, catalogSource: 'cloud' as const }))
+      if (deviceId && !isLocalDeviceId(deviceId)) return cloudPlugins ?? []
+      const localPlugins = (
+        await localServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      )?.map(plugin => ({ ...plugin, catalogSource: 'local' as const }))
       return mergeProjectPluginCatalogs(localPlugins ?? [], cloudPlugins ?? [])
     },
   }

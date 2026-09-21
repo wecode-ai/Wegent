@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { WeworkSync, portablePreferences, resolveApiBaseUrl } from './index.js'
+import { SyncState, WeworkSync, portablePreferences, resolveApiBaseUrl } from './index.js'
 import { MemorySyncOutbox } from './outbox.js'
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
@@ -23,7 +23,13 @@ function turn(overrides = {}) {
 
 function state() {
   return {
-    value: { version: 4, enabled: true, transcripts: {}, preferencesHash: null },
+    value: {
+      version: 4,
+      optInVersion: 1,
+      enabled: true,
+      transcripts: {},
+      preferencesHash: null,
+    },
     async save() {},
   }
 }
@@ -78,6 +84,95 @@ test('resolves backend API and strips device-local preferences', () => {
       quickPhrases: [{ id: 'x', content: 'x' }],
     }
   )
+})
+
+test('starts new synchronization state disabled without cloud requests', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-state-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const syncState = new SyncState(join(directory, 'state.json'))
+  await syncState.load()
+  const requests = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: {},
+    state: syncState,
+    target: {},
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          requests.push(request)
+        },
+      },
+    },
+  })
+
+  await sync.start()
+
+  assert.equal(sync.enabled, false)
+  assert.equal(syncState.value.optInVersion, 1)
+  assert.deepEqual(requests, [])
+})
+
+test('resets previously enabled synchronization until the user opts in again', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-migration-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'state.json')
+  await writeFile(
+    path,
+    `${JSON.stringify({
+      version: 4,
+      enabled: true,
+      transcripts: {
+        shared: {
+          currentSequence: 2,
+          downloadedThrough: 1,
+          downloadedArchiveIds: [7],
+          turns: [{ id: 'obsolete' }],
+        },
+      },
+      preferencesHash: 'preferences-hash',
+    })}\n`
+  )
+  const migrated = new SyncState(path)
+
+  await migrated.load()
+
+  assert.equal(migrated.value.enabled, false)
+  assert.equal(migrated.value.optInVersion, 1)
+  assert.equal(migrated.value.preferencesHash, 'preferences-hash')
+  assert.deepEqual(migrated.value.transcripts.shared.downloadedArchiveIds, [7])
+  assert.equal(Object.hasOwn(migrated.value.transcripts.shared, 'turns'), false)
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), migrated.value)
+
+  const requests = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: {},
+    state: migrated,
+    target: {},
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          requests.push(request)
+        },
+      },
+    },
+  })
+  await sync.start()
+  assert.equal(sync.enabled, false)
+  assert.deepEqual(requests, [])
+
+  await sync.setEnabled(true)
+  sync.stop()
+  const optedIn = new SyncState(path)
+  await optedIn.load()
+
+  assert.equal(optedIn.value.enabled, true)
+  assert.equal(optedIn.value.optInVersion, 1)
 })
 
 test('prefers the active cloud connection over the environment backend', async () => {

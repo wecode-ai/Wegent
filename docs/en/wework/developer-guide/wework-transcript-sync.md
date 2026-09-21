@@ -9,6 +9,20 @@ Codex rollouts, task workspaces, summaries using the previous schema, and
 portable preferences. Cross-device restore no longer reduces a session to
 user/assistant text or reconstructs history through `thread/inject_items`.
 
+## Availability and explicit opt-in
+
+Cross-device synchronization is experimental and disabled by default. A user
+must first enable Experimental features under General settings, then explicitly
+enable Synchronize conversations and settings across devices under Cloud
+connection. While disabled, Wework keeps local tasks, conversations, and pending
+upload locators, but does not upload, download, or synchronize preferences.
+
+When upgrading to the explicit-consent version, every existing device is reset
+to disabled once even if synchronization was previously enabled. The migrated
+state is persisted before any cloud synchronization request can run. If the user
+opts in again, the new consent version is recorded and later launches preserve
+that choice instead of resetting it again.
+
 ## Storage boundary
 
 The Backend uses three tables:

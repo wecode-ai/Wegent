@@ -76,7 +76,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       removeMember: vi.fn(),
       createCollaborationGroup: vi.fn(),
       updateCollaborationGroup: vi.fn(async () => group),
-      removeCollaborationGroup: vi.fn(),
+      removeCollaborationGroup: vi.fn(async () => undefined),
     };
   });
 
@@ -424,5 +424,27 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         },
       }),
     );
+  });
+
+  it("deletes a collaboration group from its detail page after confirmation", async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[]}
+          agents={[codexAgent, claudeAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      );
+    });
+
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-delete"));
+    expect(commands.removeCollaborationGroup).not.toHaveBeenCalled();
+    await click(byTestId("collaboration-group-detail-delete-confirm"));
+
+    expect(commands.removeCollaborationGroup).toHaveBeenCalledWith(group.id);
   });
 });
