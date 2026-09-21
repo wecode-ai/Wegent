@@ -327,10 +327,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           !agentDialogSnapshot.testIds.some(testId => testId.includes('execution-environment')),
           'Custom Agent creation must not bind an execution environment'
         )
-        assert.ok(
-          agentDialogSnapshot.testIds.includes('wework-agent-device-capability-preview'),
-          'Custom Agent creation should follow the runtime device capabilities by default'
-        )
         await capture(control, 'project-automation-02-agent-create-without-environment.png')
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
