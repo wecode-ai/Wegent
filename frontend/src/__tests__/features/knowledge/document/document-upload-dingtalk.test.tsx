@@ -48,6 +48,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.uploadFile': 'Upload file',
         'document.upload.pasteText': 'Paste text',
         'document.upload.dingtalk.entry': 'DingTalk document',
+        'document.upload.wiki.entry': 'External Wiki',
+        'document.document.detail.fullscreen': 'Fullscreen',
+        'document.document.detail.exitFullscreen': 'Exit fullscreen',
         'document.upload.dingtalk.title': 'Import DingTalk documents',
         'document.upload.dingtalk.hint': 'Pick DingTalk documents to import.',
         'document.upload.dingtalk.help': 'Import details',
@@ -109,10 +112,26 @@ jest.mock('@/features/knowledge/document/components/SplitterSettingsSection', ()
   SplitterSettingsSection: () => <div data-testid="splitter-settings-section" />,
 }))
 
+jest.mock('@/features/knowledge/document/components/WikiDocumentImport', () => ({
+  WikiDocumentImport: () => <div data-testid="wiki-document-import" />,
+}))
+
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children, open }: { children: React.ReactNode; open: boolean }) =>
     open ? <div>{children}</div> : null,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogContent: ({
+    children,
+    className,
+    'data-testid': testId,
+  }: {
+    children: React.ReactNode
+    className?: string
+    'data-testid'?: string
+  }) => (
+    <div className={className} data-testid={testId}>
+      {children}
+    </div>
+  ),
   DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
@@ -222,6 +241,33 @@ async function openDingtalkMode(
 }
 
 describe('DocumentUpload dingtalk source', () => {
+  it('expands and restores the external wiki page picker dialog', async () => {
+    render(
+      <DocumentUpload
+        knowledgeBaseId={42}
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={jest.fn()}
+        onWikiImport={jest.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('document-source-wiki'))
+    const dialog = screen.getByTestId('document-upload-dialog')
+    const expandButton = screen.getByTestId('document-upload-wiki-fullscreen')
+    expect(expandButton).toHaveAccessibleName('Fullscreen')
+
+    fireEvent.click(expandButton)
+
+    expect(dialog).toHaveClass('left-0', 'top-0', 'h-dvh', 'w-screen', 'max-w-none')
+    expect(expandButton).toHaveAccessibleName('Exit fullscreen')
+
+    fireEvent.click(expandButton)
+
+    expect(dialog).toHaveClass('top-[5dvh]', 'h-[680px]', 'sm:max-w-3xl')
+    await act(async () => {})
+  })
+
   it('distinguishes wiki roots from folders while expanding their contents', async () => {
     mockGetWikispaceNodes.mockResolvedValue({
       nodes: [

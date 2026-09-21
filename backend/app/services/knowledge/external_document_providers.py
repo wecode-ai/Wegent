@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral seam for importing external documents.
+"""Provider-neutral seams for fetching and directly importing external documents.
 
-An external document provider resolves one external document — identified by
-the requesting user plus a provider-scoped resource ID — into content that the
-existing attachment / conversion / indexing pipeline can consume. DingTalk is
-the first adapter; a new provider only registers an adapter here and reuses
-the import state machine instead of duplicating it.
+Every provider can fetch a persisted external identity into content that the
+attachment / conversion / indexing pipeline can consume. Providers that also
+resolve caller-supplied resource IDs implement the narrower direct-import
+interface. A new adapter registers here and reuses the import state machine
+instead of duplicating it.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
 from app.models.user import User
 from app.services.dingtalk_document_types import get_import_extension
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.plugin_upstream_fetch import UpstreamFetchError, validate_upstream_url
 from shared.telemetry.decorators import trace_async
 
@@ -55,6 +56,17 @@ class ExternalDocumentImportError(Exception):
 class ExternalDocumentFetchError(RuntimeError):
     """Background fetch of external document content failed."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_import_failed",
+        retryable: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.retryable = retryable
+
 
 class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     """The external source no longer exists or the user lost access to it.
@@ -64,6 +76,14 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     document's source as inaccessible; it is distinct from a transient fetch
     failure and the failed initial import may be retried.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_source_unavailable",
+    ) -> None:
+        super().__init__(message, error_code=error_code, retryable=True)
 
 
 class ExternalImportLostWriteError(RuntimeError):
@@ -151,23 +171,18 @@ class ExternalDocumentContent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PreparedExternalDocumentFetch:
+    """Provider-owned payload detached from the database Session."""
+
+    external_resource_id: str
+    payload: Any = field(repr=False)
+
+
 class ExternalDocumentProvider(ABC):
-    """Contract every external document provider adapter must fulfil."""
+    """Contract for fetching a persisted external document body."""
 
     provider_id: str
-
-    @abstractmethod
-    def resolve_importable(
-        self,
-        db: Session,
-        user: User,
-        external_resource_id: str,
-    ) -> dict[str, Any]:
-        """Validate the external resource and return its display metadata.
-
-        Raises ExternalDocumentImportError when the resource does not exist
-        for this user or cannot be imported.
-        """
 
     @abstractmethod
     async def fetch_content(
@@ -186,6 +201,53 @@ class ExternalDocumentProvider(ABC):
         resource is gone or access was revoked, ExternalDocumentFetchError
         for transient failures.
         """
+
+
+class DirectExternalDocumentImportProvider(ExternalDocumentProvider):
+    """Provider that can synchronously resolve a caller-supplied resource ID."""
+
+    @abstractmethod
+    def resolve_importable(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> dict[str, Any]:
+        """Validate the external resource and return its display metadata.
+
+        Raises ExternalDocumentImportError when the resource does not exist
+        for this user or cannot be imported.
+        """
+
+
+class DetachedExternalDocumentProvider(ExternalDocumentProvider):
+    """Provider whose remote fetch can run after releasing the DB Session."""
+
+    @abstractmethod
+    def prepare_content_fetch(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+        external_metadata: dict[str, Any] | None = None,
+    ) -> PreparedExternalDocumentFetch:
+        """Resolve database-backed metadata into a detached provider payload."""
+
+    @abstractmethod
+    async def fetch_prepared_content(
+        self, prepared: PreparedExternalDocumentFetch
+    ) -> ExternalDocumentContent:
+        """Fetch a prepared document body without a database Session."""
+
+    async def fetch_content(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> ExternalDocumentContent:
+        """Fetch through the detached phases when called via the base contract."""
+        prepared = self.prepare_content_fetch(db, user, external_resource_id, None)
+        return await self.fetch_prepared_content(prepared)
 
 
 def _positive_update_time(value: Any) -> int | None:
@@ -213,7 +275,7 @@ def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
     return update_time
 
 
-class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
+class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
     provider_id = "dingtalk"
@@ -518,14 +580,23 @@ def get_external_document_provider(
     provider_id: str,
 ) -> ExternalDocumentProvider | None:
     """Return the registered adapter for a provider ID, or None."""
-    normalized_id = (provider_id or "").strip().lower()
-    provider = _EXTERNAL_DOCUMENT_PROVIDERS.get(normalized_id)
-    if provider is None and normalized_id == "xiaoxin":
+    normalized = (provider_id or "").strip().lower()
+    if (
+        normalized == WIKI_PROVIDER_ID
+        and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS
+    ):
+        # Import lazily so the provider-neutral base contract remains usable on
+        # its own while the Wiki adapter can implement both provider seams.
+        from app.services.knowledge.external_sync_providers import (  # noqa: PLC0415
+            wiki_external_sync_provider,
+        )
+
+        register_external_document_provider(wiki_external_sync_provider)
+    if normalized == "xiaoxin" and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS:
         from app.services.knowledge.xiaoxin import XiaoxinExternalDocumentProvider
 
-        provider = XiaoxinExternalDocumentProvider()
-        register_external_document_provider(provider)
-    return provider
+        register_external_document_provider(XiaoxinExternalDocumentProvider())
+    return _EXTERNAL_DOCUMENT_PROVIDERS.get(normalized)
 
 
 register_external_document_provider(DingTalkExternalDocumentProvider())

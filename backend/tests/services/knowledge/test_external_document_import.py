@@ -31,13 +31,20 @@ from app.services.knowledge.external_document_import import (
     run_external_document_import,
 )
 from app.services.knowledge.external_document_providers import (
+    DirectExternalDocumentImportProvider,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
     ExternalSourceUnavailableError,
     get_external_document_provider,
 )
+from app.services.knowledge.external_sync_providers import (
+    ExternalSyncLocator,
+    ResolvedExternalDocument,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
+
+from .conftest import provider_with_fetch
 
 
 def _create_kb(test_db: Session, user_id: int, name: str = "external-import-kb") -> int:
@@ -109,12 +116,31 @@ def dispatch_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     return calls
 
 
+@pytest.fixture
+def bypass_wiki_connection_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep identity-focused unit tests independent of connection persistence."""
+    provider = get_external_document_provider("wiki")
+    assert provider is not None
+    monkeypatch.setattr(
+        provider,
+        "preflight_resolved_import",
+        lambda *_args, **_kwargs: None,
+    )
+
+
 class TestProviderRegistry:
     def test_dingtalk_provider_is_registered(self) -> None:
         provider = get_external_document_provider("dingtalk")
 
         assert provider is not None
         assert provider.provider_id == "dingtalk"
+        assert isinstance(provider, DirectExternalDocumentImportProvider)
+
+    def test_wiki_provider_does_not_claim_direct_import(self) -> None:
+        provider = get_external_document_provider("wiki")
+
+        assert provider is not None
+        assert not isinstance(provider, DirectExternalDocumentImportProvider)
 
     def test_unknown_provider_returns_none(self) -> None:
         assert get_external_document_provider("nope") is None
@@ -153,6 +179,282 @@ class TestImportDocument:
         assert (first.kind_id, second.kind_id) == (first_kb_id, second_kb_id)
         assert first.external_resource_id == second.external_resource_id
         assert dispatched == [first.id, second.id]
+
+    def test_wiki_identity_separates_same_page_id_on_different_sites(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-site-identity")
+        resolved = [
+            ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", "conn-a", "42"),
+                title="Site A",
+                source_url="https://a.example.com/docs/page",
+                remote_version="v1",
+                metadata={"site_url": "https://a.example.com", "path": "docs/page"},
+            ),
+            ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", "conn-b", "42"),
+                title="Site B",
+                source_url="https://b.example.com/docs/page",
+                remote_version="v1",
+                metadata={"site_url": "https://b.example.com", "path": "docs/page"},
+            ),
+        ]
+
+        result = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=resolved,
+        )
+
+        assert len(result.created) == 2
+        assert result.duplicates == []
+        assert {document.external_resource_id for document in result.created} == {
+            "v1:conn-a:42",
+            "v1:conn-b:42",
+        }
+        assert len(dispatched) == 2
+
+    def test_wiki_duplicate_page_on_same_site_is_reported_across_connections(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-canonical-identity")
+
+        def resolved(connection_id: str) -> ResolvedExternalDocument:
+            return ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", connection_id, "42"),
+                title="Runbook",
+                source_url="https://wiki.example.com/docs/runbook",
+                remote_version="v1",
+                metadata={
+                    "site_url": "https://wiki.example.com",
+                    "path": "docs/runbook",
+                },
+            )
+
+        first = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved("conn-a")],
+        )
+        duplicate = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved("conn-b")],
+        )
+
+        assert len(first.created) == 1
+        assert duplicate.created == []
+        assert duplicate.duplicates == [first.created[0]]
+        assert len(dispatched) == 1
+
+    def test_gitlab_same_path_in_different_projects_is_not_a_duplicate(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "gitlab-resource-key-identity")
+
+        def resolved(project_path: str) -> ResolvedExternalDocument:
+            resource_key = f'["{project_path}","main","README.md"]'
+            return ResolvedExternalDocument(
+                locator=ExternalSyncLocator(
+                    "wiki",
+                    "conn-gitlab",
+                    resource_key,
+                    resource_kind="file",
+                    identity_version="v2",
+                ),
+                title="README.md",
+                source_url=(
+                    f"https://gitlab.example.com/{project_path}/-/blob/main/README.md"
+                ),
+                remote_version=f"blob-{project_path}",
+                metadata={
+                    "adapter_type": "gitlab_repo",
+                    "site_url": "https://gitlab.example.com",
+                    "resource_kind": "file",
+                    "resource_key": resource_key,
+                    "resource_id": "README.md",
+                    "project_path": project_path,
+                    "branch": "main",
+                    "path": "README.md",
+                },
+            )
+
+        first = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved("group/project-a")],
+        )
+        second = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved("group/project-b")],
+        )
+
+        assert len(first.created) == 1
+        assert len(second.created) == 1
+        assert second.duplicates == []
+        assert (
+            first.created[0].external_resource_id
+            != second.created[0].external_resource_id
+        )
+        assert len(dispatched) == 2
+
+    def test_synchronized_wiki_document_name_cannot_be_edited_locally(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-name-authority")
+        resolved = ResolvedExternalDocument(
+            locator=ExternalSyncLocator("wiki", "conn-a", "42"),
+            title="Remote title",
+            source_url="https://wiki.example.com/docs/runbook",
+            remote_version="v1",
+            metadata={
+                "site_url": "https://wiki.example.com",
+                "path": "docs/runbook",
+            },
+        )
+        result = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved],
+        )
+
+        with pytest.raises(ValueError, match="managed by the source"):
+            KnowledgeService.update_document(
+                test_db,
+                result.created[0].id,
+                test_user.id,
+                KnowledgeDocumentUpdate(name="Local title"),
+            )
+
+    def test_wiki_refresh_preserves_active_copy_and_clears_legacy_timestamp(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-refresh-compatibility")
+        resolved = ResolvedExternalDocument(
+            locator=ExternalSyncLocator("wiki", "conn-a", "42"),
+            title="Remote title",
+            source_url="http://wiki.example.com/docs/runbook",
+            remote_version="v1",
+            metadata={
+                "site_url": "http://wiki.example.com",
+                "path": "docs/runbook",
+            },
+        )
+        result = external_document_import_service.import_resolved_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            resolved_documents=[resolved],
+        )
+        document = result.created[0]
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        document.attachment_id = 1234
+        document.update_external_source_config(source_update_time=1789562644000)
+        test_db.commit()
+        dispatched.clear()
+
+        refresh = external_document_import_service.queue_source_refresh(
+            test_db, document
+        )
+
+        assert refresh.started is True
+        test_db.refresh(document)
+        assert document.is_active is True
+        snapshot = document.source_config["_pending_external_refresh"]
+        assert snapshot["previous_attachment_id"] == 1234
+        assert snapshot["previous_index_status"] == DocumentIndexStatus.SUCCESS.value
+        assert document.index_status == DocumentIndexStatus.QUEUED
+        assert "source_update_time" not in document.external_source_config
+        assert document.external_source_config["url"].startswith("http://")
+        assert dispatched == [document.id]
+
+    def test_resolved_batch_conflict_is_rejected_before_first_create(
+        self,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        bypass_wiki_connection_preflight: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "wiki-resolved-preflight")
+        existing = KnowledgeService.create_external_document(
+            db=test_db,
+            knowledge_base_id=kb_id,
+            user_id=test_user.id,
+            name="Legacy binding",
+            external_provider="wiki",
+            external_resource_id="v1:conn-a:conflict",
+            folder_id=0,
+            external_meta={"provider": "wiki", "title": "Legacy binding"},
+        )
+        resolved = [
+            ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", "conn-a", "new"),
+                title="New page",
+                source_url="https://wiki.example.com/new",
+                remote_version="v1",
+                metadata={"site_url": "https://wiki.example.com", "path": "new"},
+            ),
+            ResolvedExternalDocument(
+                locator=ExternalSyncLocator("wiki", "conn-a", "conflict"),
+                title="Conflict",
+                source_url="https://wiki.example.com/conflict",
+                remote_version="v1",
+                metadata={
+                    "site_url": "https://wiki.example.com",
+                    "path": "conflict",
+                },
+            ),
+        ]
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_resolved_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="wiki",
+                resolved_documents=resolved,
+            )
+
+        assert exc_info.value.status_code == 409
+        assert test_db.query(KnowledgeDocument).count() == 1
+        assert test_db.get(KnowledgeDocument, existing.id) is not None
+        assert dispatched == []
 
     def test_dispatch_failure_marks_placeholder_retryable(
         self,
@@ -627,6 +929,44 @@ class TestImportDocument:
 
 
 class TestImportDocuments:
+    def test_wiki_status_lookup_does_not_require_direct_import_capability(
+        self,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+
+        statuses = external_document_import_service.get_import_statuses(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="wiki",
+            external_resource_ids=["page-1"],
+        )
+
+        assert statuses == {}
+
+    def test_rejects_wiki_through_direct_import_seam(
+        self,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="wiki",
+                external_resource_ids=["page-1"],
+            )
+
+        assert exc_info.value.status_code == 400
+        assert str(exc_info.value) == (
+            "Wiki documents must be imported through the Wiki selector"
+        )
+
     def test_validates_all_settled_updates_before_dispatching_any(
         self,
         test_db: Session,
@@ -909,20 +1249,28 @@ class TestAttachExternalDocumentContent:
         test_db.refresh(document)
         return document
 
+    @pytest.mark.parametrize(
+        ("provider_id", "lifecycle_owner"),
+        [("dingtalk", None), ("wiki", "external_wiki_sync")],
+    )
     def test_uploads_attachment_and_schedules_indexing(
         self,
         test_db: Session,
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
+        provider_id: str,
+        lifecycle_owner: str | None,
     ) -> None:
         from app.services.knowledge.orchestrator import knowledge_orchestrator
 
         document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = provider_id
+        test_db.commit()
         content = ExternalDocumentContent(
             name="Attach Doc",
             file_extension="md",
             content=b"# Attach Doc",
-            metadata={"provider": "dingtalk"},
+            metadata={"provider": provider_id},
         )
         attachment = SimpleNamespace(id=4321)
         upload_attachment = MagicMock(return_value=(attachment, None))
@@ -951,6 +1299,7 @@ class TestAttachExternalDocumentContent:
             filename="Attach Doc.md",
             binary_data=b"# Attach Doc",
             subtask_id=0,
+            lifecycle_owner=lifecycle_owner,
         )
         assert document.attachment_id == 4321
         assert document.file_size == len(b"# Attach Doc")
@@ -1165,6 +1514,79 @@ class TestAttachExternalDocumentContent:
             {"db": test_db, "context_id": 1111, "user_id": test_user.id}
         ]
 
+    def test_synchronized_refresh_keeps_previous_attachment_until_index_success(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.external_refresh_snapshot import (
+            capture_external_refresh_snapshot,
+        )
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.index_generation = 1
+        document.attachment_id = 1111
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "sync": {
+                    "enabled": True,
+                    "content_version": "v1",
+                    "indexed_version": "v1",
+                },
+            }
+        }
+        capture_external_refresh_snapshot(
+            document,
+            generation=1,
+            previous_index_status=DocumentIndexStatus.SUCCESS,
+        )
+        test_db.commit()
+
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=2222), None)),
+        )
+        delete_context = MagicMock()
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context", delete_context
+        )
+        monkeypatch.setattr(
+            knowledge_orchestrator,
+            "_schedule_indexing_celery",
+            lambda **kwargs: {"scheduled": True},
+        )
+
+        knowledge_orchestrator.attach_external_document_content(
+            db=test_db,
+            document=document,
+            user=test_user,
+            content=ExternalDocumentContent(
+                name="Attach Doc",
+                file_extension="md",
+                content=b"# fresh",
+                metadata={
+                    "sync": {
+                        "enabled": True,
+                        "content_version": "v2",
+                    }
+                },
+            ),
+            generation=1,
+        )
+
+        test_db.refresh(document)
+        assert document.attachment_id == 2222
+        assert (
+            document.source_config["_pending_external_refresh"]["staged_attachment_id"]
+            == 2222
+        )
+        delete_context.assert_not_called()
+
     def test_failed_previous_success_refetches_and_replaces_attachment(
         self,
         test_db: Session,
@@ -1180,6 +1602,8 @@ class TestAttachExternalDocumentContent:
         document.is_active = True
         document.status = DocumentStatus.ENABLED
         test_db.commit()
+        document_id = document.id
+        resource_id = document.external_resource_id
 
         fresh_content = ExternalDocumentContent(
             name="Attach Doc",
@@ -1187,7 +1611,8 @@ class TestAttachExternalDocumentContent:
             content=b"# provider fresh body",
             metadata={},
         )
-        provider = SimpleNamespace(fetch_content=AsyncMock(return_value=fresh_content))
+        fetch = AsyncMock(return_value=fresh_content)
+        provider = provider_with_fetch(fetch)
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import."
             "get_external_document_provider",
@@ -1215,10 +1640,9 @@ class TestAttachExternalDocumentContent:
             generation=1,
         )
 
-        provider.fetch_content.assert_awaited_once_with(
-            test_db, test_user, document.external_resource_id
-        )
-        test_db.refresh(document)
+        fetch.assert_awaited_once_with(test_user, resource_id)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         assert document.attachment_id == 2222
         assert document.file_size == len(fresh_content.content)
         assert deleted_ids == [
