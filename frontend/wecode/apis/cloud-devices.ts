@@ -54,10 +54,39 @@ export interface CreateCloudDeviceRequest {
 /**
  * VNC WebSocket connection configuration
  */
-export interface VncConfig {
-  wss_url: string
-  signature: string
-  sandbox_id: string
+export interface VncSession {
+  session_id: string
+  device_id: string
+  type: 'vnc'
+  path: string
+  url: string
+  transport: 'websocket'
+  expires_at?: string
+}
+
+export function validatedVncSessionUrl(session: VncSession): string {
+  let url: URL
+  try {
+    url = new URL(session.url)
+  } catch {
+    throw new Error('Backend returned an invalid VNC session')
+  }
+  const queryKeys = Array.from(url.searchParams.keys())
+  const safeSessionId = /^[A-Za-z0-9_-]+$/.test(session.session_id)
+  if (
+    session.type !== 'vnc' ||
+    session.transport !== 'websocket' ||
+    !safeSessionId ||
+    !['ws:', 'wss:'].includes(url.protocol) ||
+    Boolean(url.username || url.password || url.hash) ||
+    url.pathname !== `/vnc-proxy/sessions/${session.session_id}` ||
+    queryKeys.length !== 1 ||
+    queryKeys[0] !== 'ticket' ||
+    !url.searchParams.get('ticket')
+  ) {
+    throw new Error('Backend returned an invalid VNC session')
+  }
+  return url.toString()
 }
 
 export interface CloudDeviceFileConfig {
@@ -140,17 +169,14 @@ export const cloudDeviceApis = {
     return apiClient.get('/cloud-devices/config')
   },
 
-  /**
-   * Get VNC WebSocket connection configuration for a cloud device.
-   * Returns the upstream WSS URL and authentication signature needed
-   * to proxy VNC connections through server.cjs.
-   *
-   * @param deviceId - Cloud device ID (sandbox ID)
-   */
-  async getVncConfig(deviceId: string, userId?: number): Promise<VncConfig> {
-    return apiClient.get(
-      withOptionalUserId(`/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`, userId)
-    )
+  async startVncSession(deviceId: string, ownerUserId?: number): Promise<VncSession> {
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/vnc`, {
+      owner_user_id: ownerUserId,
+    })
+  },
+
+  async revokeVncSession(sessionId: string): Promise<void> {
+    return apiClient.delete(`/devices/vnc-sessions/${encodeURIComponent(sessionId)}`)
   },
 
   /**

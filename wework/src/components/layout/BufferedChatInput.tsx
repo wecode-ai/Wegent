@@ -95,6 +95,15 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
     if (pane?.dataset.activeWorkbenchPane !== 'true') return false
     if (element?.closest('[hidden], [aria-hidden="true"]')) return false
+    // Navigation and device refresh can finish after a modal has taken focus.
+    const blockingDialog = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')
+    ).some(
+      dialog =>
+        !dialog.contains(element ?? null) &&
+        !dialog.closest('[hidden], [aria-hidden="true"], [inert]')
+    )
+    if (blockingDialog) return false
     composer.focus()
     return true
   }, [])

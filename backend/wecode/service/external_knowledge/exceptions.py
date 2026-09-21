@@ -45,6 +45,17 @@ class ExternalKnowledgeEmployeeRequiredError(ExternalKnowledgeError):
         )
 
 
+class ExternalKnowledgeEmployeeResolutionUnavailableError(ExternalKnowledgeError):
+    """Raised when employee identity resolution is temporarily unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "employee_id resolution is temporarily unavailable",
+            code="employee_id_unavailable",
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        )
+
+
 def map_provider_error(code: str, message: str) -> ExternalKnowledgeError:
     """Map AP provider error codes to HTTP-facing errors."""
     status_by_code = {

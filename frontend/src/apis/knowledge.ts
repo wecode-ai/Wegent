@@ -351,6 +351,10 @@ export async function retryExternalDocumentImport(documentId: number): Promise<K
   )
 }
 
+export async function synchronizeExternalDocument(documentId: number): Promise<KnowledgeDocument> {
+  return apiClient.post<KnowledgeDocument>(`/knowledge-documents/${documentId}/external-sync`)
+}
+
 // ============== Batch Document Operations ==============
 
 /**

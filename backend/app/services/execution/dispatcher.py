@@ -859,6 +859,30 @@ class ExecutionDispatcher:
                 await self._dispatch_inprocess(request, target, wrapped_emitter)
             else:
                 await self._dispatch_http_callback(request, target, wrapped_emitter)
+        except asyncio.CancelledError:
+            # A cancelled SSE owner has already closed its stream. Persist the
+            # terminal state before closing the emitter, including lease loss.
+            # Remote dispatch modes retain their executor-owned lifecycle.
+            if wrapped_emitter is not None and target.mode == CommunicationMode.SSE:
+                logger.info(
+                    "[ExecutionDispatcher] SSE dispatch task cancelled: "
+                    "task_id=%s, subtask_id=%s",
+                    request.task_id,
+                    request.subtask_id,
+                )
+                try:
+                    await wrapped_emitter.emit_cancelled(
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[ExecutionDispatcher] Failed to finalize cancelled SSE "
+                        "dispatch: task_id=%s, subtask_id=%s",
+                        request.task_id,
+                        request.subtask_id,
+                    )
+            raise
         except Exception as e:
             logger.exception(
                 f"[ExecutionDispatcher] Dispatch error: task_id={request.task_id}, "

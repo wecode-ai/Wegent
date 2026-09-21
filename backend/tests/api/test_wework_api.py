@@ -18,6 +18,8 @@ from app.api.dependencies import get_db
 from app.api.endpoints import openapi_responses, wework_api
 from app.models.api_key import APIKey
 from app.schemas.runtime_work import RuntimeTranscriptResponse, RuntimeWorkListResponse
+from app.services.device.runtime_route import RuntimeRouteError
+from app.services.device.runtime_rpc_service import RuntimeRpcError
 from app.services.wework_api import events, models, native, service
 from app.services.wework_api.identity import ResponseIdentity, conversation_id
 
@@ -159,12 +161,30 @@ def api(test_db, test_user, monkeypatch):
             beforeCursor=str(start) if start else None,
         )
 
+    async def rpc(*, user_id, device_id, method, payload):
+        assert method == "runtime.tasks.get"
+        try:
+            await native.runtime_route_resolver.resolve(
+                user_id=user_id, submitted_device_id=device_id
+            )
+        except RuntimeRouteError as exc:
+            raise RuntimeRpcError(str(exc), code=exc.code) from exc
+        task = harness.tasks.get(payload["taskId"])
+        if user_id != test_user.id or device_id != "device-1" or task is None:
+            return {
+                "success": False,
+                "code": "task_not_found",
+                "error": "Task not found",
+            }
+        return {"success": True, "task": task}
+
     harness.create = AsyncMock(side_effect=create)
     monkeypatch.setattr(events, "subscribe", subscribe)
     monkeypatch.setattr(service.runtime, "create_runtime_task", harness.create)
-    monkeypatch.setattr(
-        service.runtime, "send_runtime_message", AsyncMock(side_effect=send)
-    )
+    harness.send = AsyncMock(side_effect=send)
+    harness.rpc = AsyncMock(side_effect=rpc)
+    monkeypatch.setattr(service.runtime, "send_runtime_message", harness.send)
+    monkeypatch.setattr(native.runtime_rpc_service, "call", harness.rpc)
     monkeypatch.setattr(service.runtime, "list_runtime_work", work)
     monkeypatch.setattr(service.runtime, "get_runtime_transcript", transcript)
     monkeypatch.setattr(
@@ -621,6 +641,183 @@ def test_legacy_requests_reach_existing_team_lookup(api, monkeypatch):
     assert result.status_code == 404, result.text
     assert "Team" in result.json()["detail"]
     lookup.assert_not_awaited()
+
+
+@pytest.mark.parametrize("workspace_kind", ["chat", "workspace", "worktree"])
+def test_continue_native_task_uses_one_direct_lookup_and_preserves_binding(
+    api, monkeypatch, workspace_kind
+):
+    task_id = "native-workspace-task"
+    handle = {
+        "wegentTeam": {"id": 42},
+        "modelSelection": {
+            "modelName": "model-1",
+            "modelType": "public",
+            "options": {"permissionMode": "read-only", "reasoningEffort": "high"},
+        },
+    }
+    api.tasks[task_id] = {
+        "taskId": task_id,
+        "workspacePath": "/projects/original",
+        "workspaceKind": workspace_kind,
+        "runtime": "codex",
+        "title": "Existing desktop task",
+        "runtimeHandle": handle,
+        "status": "completed",
+    }
+    api.messages[task_id] = []
+    listing = AsyncMock(side_effect=AssertionError("Continuation must not list tasks"))
+    monkeypatch.setattr(native.runtime, "list_runtime_work", listing)
+    identifier = conversation_id("device-1", task_id)
+
+    result = submit(api, conversation=identifier, execution=None)
+
+    assert result.status_code == 200, result.text
+    api.rpc.assert_awaited_once_with(
+        user_id=api.user.id,
+        device_id="device-1",
+        method="runtime.tasks.get",
+        payload={"taskId": task_id},
+    )
+    request = api.send.await_args.kwargs["request"]
+    assert request.address.local_task_id == task_id
+    assert request.address.workspace_path == "/projects/original"
+    assert request.address.runtime_handle == handle
+    assert request.model_selection.options["permissionMode"] == "read-only"
+    assert request.model_selection.options["reasoningEffort"] == "high"
+    api.create.assert_not_awaited()
+
+    first = result.json()
+    finish(api, first["id"])
+    assert api.client.get(f"{PREFIX}/responses/{first['id']}").status_code == 200
+    detail = api.client.get(f"{PREFIX}/conversations/{identifier}")
+    assert detail.status_code == 200
+    assert detail.json()["latest_response"]["id"] == first["id"]
+    api.rpc.reset_mock()
+    second = submit(api, previous_response_id=first["id"], execution=None)
+    assert second.status_code == 200, second.text
+    api.rpc.assert_awaited_once()
+    finish(api, second.json()["id"], status="streaming")
+    assert (
+        api.client.post(f"{PREFIX}/responses/{second.json()['id']}/cancel").status_code
+        == 200
+    )
+    listing.assert_not_awaited()
+
+
+def test_missing_task_does_not_report_device_offline(api):
+    result = submit(
+        api, conversation=conversation_id("device-1", "missing"), execution=None
+    )
+    assert result.status_code == 404
+    assert result.json()["detail"]["code"] == "task_not_found"
+    api.send.assert_not_awaited()
+
+
+def test_task_lookup_failure_is_not_hidden_as_missing_or_offline(api):
+    api.rpc.side_effect = RuntimeRpcError("RPC timed out", code="runtime_rpc_timeout")
+    result = submit(
+        api, conversation=conversation_id("device-1", "existing"), execution=None
+    )
+    assert result.status_code == 502
+    assert result.json()["detail"]["code"] == "runtime_rpc_timeout"
+    api.send.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"success": False, "code": "unsupported_method", "error": "Unsupported RPC"},
+        {"success": True, "task": {}},
+        {
+            "success": True,
+            "task": {
+                "taskId": "different-task",
+                "workspacePath": "/project",
+                "title": "Wrong task",
+                "runtime": "codex",
+            },
+        },
+    ],
+)
+def test_task_lookup_rejects_invalid_result_without_listing_fallback(
+    api, monkeypatch, result
+):
+    api.rpc.side_effect = None
+    api.rpc.return_value = result
+    listing = AsyncMock(side_effect=AssertionError("Must not fall back to listing"))
+    monkeypatch.setattr(native.runtime, "list_runtime_work", listing)
+
+    response = submit(
+        api, conversation=conversation_id("device-1", "existing"), execution=None
+    )
+
+    assert response.status_code == 502
+    listing.assert_not_awaited()
+    api.send.assert_not_awaited()
+
+
+def test_conversation_listing_includes_project_tasks(api, monkeypatch):
+    work = RuntimeWorkListResponse(
+        totalTasks=1,
+        projects=[
+            {
+                "project": {"key": "project-1", "name": "Project"},
+                "deviceWorkspaces": [
+                    {
+                        "deviceId": "device-1",
+                        "deviceName": "Device",
+                        "deviceStatus": "online",
+                        "workspacePath": "/project",
+                        "mapped": True,
+                        "available": True,
+                        "tasks": [
+                            {
+                                "taskId": "project-task",
+                                "workspacePath": "/project",
+                                "title": "Project task",
+                                "runtime": "codex",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        native.runtime, "list_runtime_work", AsyncMock(return_value=work)
+    )
+
+    response = api.client.get(f"{PREFIX}/conversations")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["data"]] == [
+        conversation_id("device-1", "project-task")
+    ]
+
+
+@pytest.mark.parametrize("response_id", ["123", "resp_123", "resp_invalid"])
+@pytest.mark.parametrize(
+    "stream, background", [(False, False), (True, False), (False, True)]
+)
+def test_legacy_continuation_never_enters_wework(
+    api, monkeypatch, response_id, stream, background
+):
+    create = AsyncMock()
+    monkeypatch.setattr(service, "create_response", create)
+    result = api.client.post(
+        f"{PREFIX}/responses",
+        json={
+            "model": "default#missing-agent",
+            "input": "continue",
+            "previous_response_id": response_id,
+            "stream": stream,
+            "background": background,
+        },
+    )
+    assert result.status_code in {400, 404}
+    create.assert_not_awaited()
+    api.rpc.assert_not_awaited()
 
 
 def test_legacy_response_ids_use_existing_lookup(api, monkeypatch):

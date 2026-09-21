@@ -16,10 +16,10 @@ dependencies and the migration surface are still stabilizing.
 - Do not copy a behavior change into both implementations unless the task
   explicitly requires parity on both runtime paths.
 
-The checked-in `config/routes.toml` is intentionally empty, so the default
-hybrid configuration currently forwards every request to Python. Shared Rust
-modules such as authentication, MySQL, and FastAPI-compatibility helpers do not
-by themselves make an API migrated.
+The checked-in `config/routes.toml` activates only the APIs that have completed
+cutover; every other request is forwarded to Python. Shared Rust modules such as
+authentication, MySQL, and FastAPI-compatibility helpers do not by themselves
+make an API migrated.
 
 ## Finding migrated APIs
 

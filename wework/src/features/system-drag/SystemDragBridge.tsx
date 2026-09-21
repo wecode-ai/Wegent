@@ -329,11 +329,14 @@ export function SystemDragBridge() {
         const wasInConversation = Boolean(latest.current.state.currentRuntimeTask)
         latest.current.startNewChat()
         if (wasInConversation) {
-          window.setTimeout(() => void apply(payload, ''), 0)
+          window.setTimeout(() => void apply(payload, '').catch(reportTransferError), 0)
           return
         }
       }
-      void apply(payload)
+      void apply(payload).catch(reportTransferError)
+    }
+    const reportTransferError = (error: unknown) => {
+      latest.current.setWorkbenchError(error instanceof Error ? error.message : String(error))
     }
     const takePending = () =>
       invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending').then(payloads => {

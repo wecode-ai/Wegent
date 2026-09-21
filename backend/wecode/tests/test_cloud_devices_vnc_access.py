@@ -1,28 +1,108 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import ANY, AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.models.user import User
-from wecode.api import cloud_devices
-from wecode.api.vnc_websocket_middleware import _handle_vnc_ws
-
-
-def _auth_headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+from app.services.device.session_service import DeviceSessionError
+from wecode.api import vnc_websocket_middleware
+from wecode.service import vnc_session_provider
+from wecode.service.vnc_session_service import VncUpstream
 
 
-def test_vnc_upstream_connection_is_direct_and_uncompressed(mocker):
-    mock_connect = mocker.patch.object(cloud_devices.websockets, "connect")
-
-    connection = cloud_devices._connect_vnc_upstream(
-        "wss://nevis.example.com/vnc",
+@pytest.mark.asyncio
+async def test_nevis_provider_keeps_signature_in_backend_upstream_metadata(
+    mocker,
+    monkeypatch,
+):
+    mocker.patch.object(
+        vnc_session_provider.cloud_device_provider,
+        "is_configured",
+        return_value=True,
+    )
+    mocker.patch.object(
+        vnc_session_provider.cloud_device_provider,
+        "get_status",
+        new=AsyncMock(return_value={"cloud_config": {"sandboxId": "sandbox-1"}}),
+    )
+    mocker.patch.object(
+        vnc_session_provider.cloud_device_provider,
+        "get_vm_status",
+        new=AsyncMock(return_value={"status": "running"}),
+    )
+    monkeypatch.setattr(
+        vnc_session_provider.nevis_settings,
+        "NEVIS_BASE_URL",
+        "https://nevis.example.com",
+    )
+    monkeypatch.setattr(
+        vnc_session_provider.nevis_settings,
+        "NEVIS_MANAGER_ID",
+        "manager-1",
+    )
+    monkeypatch.setattr(
+        vnc_session_provider.nevis_settings,
+        "NEVIS_SIGNATURE",
         "signature-1",
     )
+
+    upstream = await vnc_session_provider.NevisVncSessionProvider().prepare(
+        db=object(),
+        user_id=42,
+        device_id="device-1",
+    )
+
+    assert upstream.url == (
+        "wss://nevis.example.com/apis/sandboxes/v1/managers/manager-1/"
+        "sandboxes/sandbox-1/vnc"
+    )
+    assert upstream.headers == {"X-Signature": "signature-1"}
+    assert upstream.provider_instance_id == "sandbox-1"
+    vnc_session_provider.cloud_device_provider.get_status.assert_awaited_once_with(
+        db=ANY,
+        user_id=42,
+        device_id="device-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_nevis_provider_rejects_a_stopped_sandbox(mocker):
+    mocker.patch.object(
+        vnc_session_provider.cloud_device_provider,
+        "is_configured",
+        return_value=True,
+    )
+    mocker.patch.object(
+        vnc_session_provider.cloud_device_provider,
+        "get_status",
+        new=AsyncMock(return_value={"cloud_config": {"sandboxId": "sandbox-1"}}),
+    )
+    mocker.patch.object(
+        vnc_session_provider.cloud_device_provider,
+        "get_vm_status",
+        new=AsyncMock(return_value={"status": "stopped"}),
+    )
+
+    with pytest.raises(DeviceSessionError, match="not running"):
+        await vnc_session_provider.NevisVncSessionProvider().prepare(
+            db=object(),
+            user_id=42,
+            device_id="device-1",
+        )
+
+
+def test_vnc_upstream_connection_is_binary_uncompressed_and_bounded(mocker):
+    mock_connect = mocker.patch.object(vnc_websocket_middleware.websockets, "connect")
+    upstream = VncUpstream(
+        url="wss://nevis.example.com/vnc",
+        headers={"X-Signature": "signature-1"},
+        provider="nevis",
+        provider_instance_id="sandbox-1",
+    )
+
+    connection = vnc_websocket_middleware._connect_vnc_upstream(upstream)
 
     assert connection is mock_connect.return_value
     mock_connect.assert_called_once_with(
@@ -30,7 +110,7 @@ def test_vnc_upstream_connection_is_direct_and_uncompressed(mocker):
         additional_headers={"X-Signature": "signature-1"},
         compression=None,
         proxy=None,
-        max_size=None,
+        max_size=64 * 1024 * 1024,
         ping_interval=20,
         ping_timeout=20,
         close_timeout=5,
@@ -38,188 +118,10 @@ def test_vnc_upstream_connection_is_direct_and_uncompressed(mocker):
 
 
 @pytest.mark.asyncio
-async def test_vnc_websocket_proxy_closes_cleanly_when_upstream_fails(
-    test_user: User,
-    mocker,
-    monkeypatch,
-):
-    class FailingUpstreamConnection:
-        async def __aenter__(self):
-            raise RuntimeError("upstream unavailable")
-
-        async def __aexit__(self, _exception_type, _exception, _traceback):
-            return False
-
-    websocket = mocker.MagicMock()
-    websocket.accept = AsyncMock()
-    websocket.close = AsyncMock()
-    db = mocker.MagicMock()
-    mocker.patch(
-        "app.core.security.get_current_user_from_token", return_value=test_user
-    )
-    mocker.patch("app.db.session.SessionLocal", return_value=db)
-    mocker.patch.object(
-        cloud_devices.cloud_device_provider,
-        "get_status",
-        new=AsyncMock(return_value={"cloud_config": {"sandboxId": "sandbox-1"}}),
-    )
-    mocker.patch.object(
-        cloud_devices,
-        "_connect_vnc_upstream",
-        return_value=FailingUpstreamConnection(),
-    )
-    monkeypatch.setattr(
-        cloud_devices.nevis_settings, "NEVIS_BASE_URL", "https://nevis.example.com"
-    )
-    monkeypatch.setattr(cloud_devices.nevis_settings, "NEVIS_MANAGER_ID", "manager-1")
-    monkeypatch.setattr(cloud_devices.nevis_settings, "NEVIS_SIGNATURE", "signature-1")
-
-    await cloud_devices.vnc_websocket_proxy(
-        websocket,
-        "device-1",
-        token="test-token",
-    )
-
-    websocket.accept.assert_awaited_once()
-    websocket.close.assert_awaited_once_with(
-        code=1011,
-        reason="VNC upstream connection failed",
-    )
-    db.close.assert_called_once()
-
-
-def test_admin_can_access_other_users_vnc_config(
-    test_client: TestClient,
-    test_user: User,
-    test_admin_token: str,
-    mocker,
-    monkeypatch,
-):
-    mocker.patch.object(
-        cloud_devices.cloud_device_provider, "is_configured", return_value=True
-    )
-    mock_get_status = mocker.patch.object(
-        cloud_devices.cloud_device_provider,
-        "get_status",
-        new=AsyncMock(
-            return_value={
-                "cloud_config": {
-                    "sandboxId": "sandbox-1",
-                }
-            }
-        ),
-    )
-    monkeypatch.setattr(
-        cloud_devices.nevis_settings, "NEVIS_BASE_URL", "https://nevis.example.com"
-    )
-    monkeypatch.setattr(cloud_devices.nevis_settings, "NEVIS_MANAGER_ID", "manager-1")
-    monkeypatch.setattr(cloud_devices.nevis_settings, "NEVIS_SIGNATURE", "signature-1")
-
-    response = test_client.get(
-        f"/api/cloud-devices/device-1/vnc-config?user_id={test_user.id}",
-        headers=_auth_headers(test_admin_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "wss_url": "wss://nevis.example.com/apis/sandboxes/v1/managers/manager-1/sandboxes/sandbox-1/vnc",
-        "signature": "signature-1",
-        "sandbox_id": "sandbox-1",
-    }
-    mock_get_status.assert_awaited_once_with(
-        db=ANY,
-        user_id=test_user.id,
-        device_id="device-1",
-    )
-
-
-def test_non_admin_cannot_access_other_users_vnc_config(
-    test_client: TestClient,
-    test_admin_user: User,
-    test_token: str,
-    mocker,
-):
-    mocker.patch.object(
-        cloud_devices.cloud_device_provider, "is_configured", return_value=True
-    )
-    mock_get_status = mocker.patch.object(
-        cloud_devices.cloud_device_provider,
-        "get_status",
-        new=AsyncMock(),
-    )
-
-    response = test_client.get(
-        f"/api/cloud-devices/device-1/vnc-config?user_id={test_admin_user.id}",
-        headers=_auth_headers(test_token),
-    )
-
-    assert response.status_code == 403
-    assert (
-        response.json()["detail"]
-        == "Only admins can access another user's cloud device"
-    )
-    mock_get_status.assert_not_called()
-
-
-def test_admin_can_access_other_users_file_config(
-    test_client: TestClient,
-    test_user: User,
-    test_admin_token: str,
-    mocker,
-):
-    mocker.patch.object(
-        cloud_devices.cloud_device_provider, "is_configured", return_value=True
-    )
-    mock_get_status = mocker.patch.object(
-        cloud_devices.cloud_device_provider,
-        "get_status",
-        new=AsyncMock(
-            return_value={
-                "cloud_config": {
-                    "sandboxId": "sandbox-2",
-                }
-            }
-        ),
-    )
-    mocker.patch.object(
-        cloud_devices.cloud_device_provider,
-        "get_vm_status",
-        new=AsyncMock(
-            return_value={
-                "sandbox_id": "sandbox-2",
-                "ip_address": "10.0.0.9",
-            }
-        ),
-    )
-    mocker.patch.object(
-        cloud_devices,
-        "_is_files_service_available",
-        new=AsyncMock(return_value=True),
-    )
-
-    response = test_client.get(
-        f"/api/cloud-devices/device-2/file-config?user_id={test_user.id}",
-        headers=_auth_headers(test_admin_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "sandbox_id": "sandbox-2",
-        "ip_address": "10.0.0.9",
-        "files_url": "http://10.0.0.9:8080/files/",
-        "available": True,
-    }
-    mock_get_status.assert_awaited_once_with(
-        db=ANY,
-        user_id=test_user.id,
-        device_id="device-2",
-    )
-
-
-@pytest.mark.asyncio
-async def test_vnc_websocket_middleware_handles_vnc_proxy_path(mocker):
-    mock_proxy = mocker.patch(
-        "wecode.api.cloud_devices.vnc_websocket_proxy",
+async def test_vnc_websocket_middleware_accepts_only_session_ticket_path(mocker):
+    mock_proxy = mocker.patch.object(
+        vnc_websocket_middleware,
+        "vnc_websocket_proxy",
         new=AsyncMock(),
     )
 
@@ -229,15 +131,108 @@ async def test_vnc_websocket_middleware_handles_vnc_proxy_path(mocker):
     async def send(_message):
         return None
 
-    await _handle_vnc_ws(
+    await vnc_websocket_middleware._handle_vnc_ws(
         {
             "type": "websocket",
-            "path": "/vnc-proxy/device-3",
-            "query_string": b"token=test-token&user_id=42",
-            "headers": [],
+            "path": "/vnc-proxy/sessions/vnc-session-1",
+            "query_string": b"ticket=single-use",
+            "headers": [(b"origin", b"https://wework.example.com")],
         },
         receive,
         send,
     )
 
-    mock_proxy.assert_awaited_once_with(ANY, "device-3", "test-token", 42)
+    mock_proxy.assert_awaited_once_with(
+        ANY,
+        "vnc-session-1",
+        "single-use",
+        "https://wework.example.com",
+    )
+
+
+@pytest.mark.asyncio
+async def test_vnc_websocket_middleware_rejects_extra_or_repeated_query_values(mocker):
+    mock_proxy = mocker.patch.object(
+        vnc_websocket_middleware,
+        "vnc_websocket_proxy",
+        new=AsyncMock(),
+    )
+
+    async def receive():
+        return {"type": "websocket.disconnect"}
+
+    async def send(_message):
+        return None
+
+    for query in (
+        b"ticket=single-use&token=long-lived-jwt",
+        b"ticket=first&ticket=second",
+        b"token=long-lived-jwt",
+    ):
+        await vnc_websocket_middleware._handle_vnc_ws(
+            {
+                "type": "websocket",
+                "path": "/vnc-proxy/sessions/vnc-session-1",
+                "query_string": query,
+                "headers": [(b"origin", b"https://wework.example.com")],
+            },
+            receive,
+            send,
+        )
+
+    assert mock_proxy.await_count == 3
+    assert all(call.args[2] == "" for call in mock_proxy.await_args_list)
+
+
+def test_vnc_origin_allowlist_is_exact(monkeypatch):
+    monkeypatch.setattr(
+        vnc_websocket_middleware.vnc_settings,
+        "VNC_ALLOWED_ORIGINS",
+        ["https://wework.example.com"],
+    )
+    monkeypatch.setattr(
+        vnc_websocket_middleware.settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
+        "https://backend.example.com",
+    )
+
+    assert vnc_websocket_middleware._origin_allowed("https://wework.example.com")
+    assert vnc_websocket_middleware._origin_allowed("https://backend.example.com")
+    assert not vnc_websocket_middleware._origin_allowed(
+        "https://wework.example.com.evil.test"
+    )
+    assert not vnc_websocket_middleware._origin_allowed(
+        "https://attacker@wework.example.com"
+    )
+    assert not vnc_websocket_middleware._origin_allowed(
+        "https://wework.example.com/attacker"
+    )
+    assert not vnc_websocket_middleware._origin_allowed(
+        "https://wework.example.com?attacker=1"
+    )
+
+
+def test_vnc_origin_allowlist_supports_only_explicit_loopback_port_wildcards(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        vnc_websocket_middleware.vnc_settings,
+        "VNC_ALLOWED_ORIGINS",
+        ["http://127.0.0.1:*"],
+    )
+    monkeypatch.setattr(
+        vnc_websocket_middleware.settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
+        "https://backend.example.com",
+    )
+    monkeypatch.setattr(
+        vnc_websocket_middleware.settings,
+        "ENVIRONMENT",
+        "production",
+    )
+
+    assert vnc_websocket_middleware._origin_allowed("http://127.0.0.1:43127")
+    assert not vnc_websocket_middleware._origin_allowed("http://127.0.0.2:43127")
+    assert not vnc_websocket_middleware._origin_allowed(
+        "https://wework.example.com:43127"
+    )

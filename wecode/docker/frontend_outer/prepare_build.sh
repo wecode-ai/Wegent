@@ -4,13 +4,15 @@
 
 set -eu
 
-rm -rf frontend packages patches shared package.json pnpm-lock.yaml pnpm-workspace.yaml
+rm -rf frontend packages patches shared wework package.json pnpm-lock.yaml pnpm-workspace.yaml
 
 cp -R ../../../frontend ./frontend
 mkdir -p ./packages
 cp -R ../../../packages/chat-core ./packages/chat-core
 cp -R ../../../packages/collaboration ./packages/collaboration
 cp -R ../../../patches ./patches
+mkdir -p ./wework/wecode
+cp -R ../../../wework/wecode/patches ./wework/wecode/patches
 mkdir -p ./shared
 cp -R ../../../shared/assets ./shared/assets
 cp ../../../package.json ../../../pnpm-lock.yaml ../../../pnpm-workspace.yaml ./

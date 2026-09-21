@@ -15,11 +15,15 @@ from wecode.schemas.external_knowledge import (
     ExternalPreviewResponse,
     ExternalSearchResult,
 )
-from wecode.service.erp_entity_resolver import ErpEntityResolver
+from wecode.service.erp_entity_resolver import (
+    EmployeeIdResolutionStatus,
+    ErpEntityResolver,
+)
 from wecode.service.external_knowledge import registry
 from wecode.service.external_knowledge.base import ExternalKnowledgeProvider
 from wecode.service.external_knowledge.exceptions import (
     ExternalKnowledgeEmployeeRequiredError,
+    ExternalKnowledgeEmployeeResolutionUnavailableError,
     ExternalKnowledgeError,
     ExternalKnowledgeNotConfiguredError,
 )
@@ -142,10 +146,15 @@ class ExternalKnowledgeService:
         return preview
 
     def _get_employee_id(self, db: Session, user: User) -> str:
-        employee_id = self._erp_resolver.resolve_employee_id(db, user.id)
-        if not employee_id:
-            raise ExternalKnowledgeEmployeeRequiredError()
-        return employee_id
+        result = self._erp_resolver.resolve_employee_id_result(db, user.id)
+        if result.employee_id:
+            return result.employee_id
+        if result.status in {
+            EmployeeIdResolutionStatus.IN_PROGRESS,
+            EmployeeIdResolutionStatus.UNAVAILABLE,
+        }:
+            raise ExternalKnowledgeEmployeeResolutionUnavailableError()
+        raise ExternalKnowledgeEmployeeRequiredError()
 
     def _get_ready_provider(self, provider_name: str) -> ExternalKnowledgeProvider:
         provider = registry.get(provider_name)

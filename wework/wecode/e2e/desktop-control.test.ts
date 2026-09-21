@@ -9,18 +9,12 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   relabelEmbeddedBrowser: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
 }))
-const cloudDesktopMocks = vi.hoisted(() => ({
-  openCloudDesktop: vi.fn(),
-}))
-
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
-vi.mock('@wecode/features/vnc/openCloudDesktop', () => cloudDesktopMocks)
 
 describe('desktopControlExtension', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue({ connected: true })
-    cloudDesktopMocks.openCloudDesktop.mockResolvedValue(true)
   })
 
   test('closes the embedded browser selected by label', async () => {
@@ -75,34 +69,6 @@ describe('desktopControlExtension', () => {
       false,
       'workspace-browser-regression-owner'
     )
-  })
-
-  test('opens the cloud desktop in the embedded browser for desktop E2E', async () => {
-    await expect(
-      desktopControlExtension.execute({
-        action: 'openEmbeddedCloudDesktop',
-        id: 'command-4',
-        selector: '',
-        value: JSON.stringify({
-          apiBaseUrl: 'http://127.0.0.1:43123/api',
-          deviceId: 'cloud-device-1',
-          socketBaseUrl: 'http://127.0.0.1:43123',
-          token: 'cloud-token',
-        }),
-      })
-    ).resolves.toEqual({ handled: true, value: '' })
-
-    expect(cloudDesktopMocks.openCloudDesktop).toHaveBeenCalledWith({
-      connection: {
-        apiBaseUrl: 'http://127.0.0.1:43123/api',
-        isConnected: true,
-        socketBaseUrl: 'http://127.0.0.1:43123',
-        token: 'cloud-token',
-      },
-      deviceId: 'cloud-device-1',
-      isCurrent: expect.any(Function),
-      target: 'embedded',
-    })
   })
 
   test('does not claim a shared desktop control command', async () => {

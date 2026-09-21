@@ -79,7 +79,8 @@ const workbenchServices = {
   modelApi: { listModels },
 }
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
   useWorkbenchPaneContext: () => ({
     state: {
       runtimeWork: runtimeWorkMock.value,

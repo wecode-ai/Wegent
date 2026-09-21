@@ -3,44 +3,24 @@ import test from 'node:test'
 
 import { applyWithDependencies, name, TELEMETRY_SINK_PROTOCOL } from './index.js'
 
-const HMAC_KEY = '0123456789abcdef0123456789abcdef'
-
-test('registers a disabled host without creating network resources', async () => {
+test('uses the fixed internal PostHog target without loading external configuration', async () => {
   const runtime = createHostRuntime()
-  const warnings = []
-  let createdClient = false
-  let createdQueue = false
+  const calls = {}
 
   await applyWithDependencies(runtime.context, {
     createBatchQueue() {
-      createdQueue = true
+      return fakeQueue([])
     },
-    createPostHogClient() {
-      createdClient = true
+    createPostHogClient(options) {
+      calls.client = options
+      return { sendBatch: async () => ({ status: 'accepted' }) }
     },
-    loadConfig: async () => disabledConfig('missing_posthog_host'),
-    logger: { warn: (message, metadata) => warnings.push({ message, metadata }) },
+    platform: 'darwin',
   })
 
-  const methods = runtime.registration.methods
-  assert.deepEqual(await methods.ready(), {
-    enabled: false,
-    protocol: TELEMETRY_SINK_PROTOCOL,
-    catalogVersion: 1,
-    error: 'missing_posthog_host',
-  })
-  assert.deepEqual(await methods.accept({ envelope: smartAppEnvelope() }), {
-    accepted: false,
-    reason: 'disabled',
-  })
-  assert.equal(createdClient, false)
-  assert.equal(createdQueue, false)
-  assert.deepEqual(warnings, [
-    {
-      message: '[wework-internal-telemetry] disabled',
-      metadata: { code: 'missing_posthog_host' },
-    },
-  ])
+  assert.equal(calls.client.host, 'https://posthog.intra.weibo.com')
+  assert.match(calls.client.projectKey, /^phc_[A-Za-z0-9]+$/)
+  assert.equal(calls.client.timeoutMs, 5000)
 })
 
 test('composes enabled runtime dependencies and queues a projected event without waiting for network', async () => {
@@ -58,7 +38,6 @@ test('composes enabled runtime dependencies and queues a projected event without
       calls.client = options
       return { sendBatch: async () => ({ status: 'accepted' }) }
     },
-    loadConfig: async () => enabledConfig(),
     platform: 'darwin',
   })
 
@@ -69,8 +48,8 @@ test('composes enabled runtime dependencies and queues a projected event without
     catalogVersion: 1,
     error: null,
   })
-  assert.equal(calls.client.host, 'https://telemetry.example.test')
-  assert.equal(calls.client.projectKey, 'phc_example')
+  assert.equal(calls.client.host, 'https://posthog.intra.weibo.com')
+  assert.match(calls.client.projectKey, /^phc_[A-Za-z0-9]+$/)
   assert.equal(calls.client.timeoutMs, 5000)
   assert.equal(calls.queue.batchSize, 20)
   assert.equal(calls.queue.flushIntervalMs, 5000)
@@ -85,13 +64,14 @@ test('composes enabled runtime dependencies and queues a projected event without
     uuid: '110ec58a-a0f2-4ac4-8393-c866d813b8d1',
     timestamp: '2026-09-10T08:00:00.000Z',
     properties: {
-      distinct_id: 'wework:a651a6e29b5939094128b5d77ac45e8d1be01b2cf18b4a23a497893666230921',
+      distinct_id: 'cloud-user',
       $geoip_disable: true,
       domain: 'smart_app',
       event_schema_version: 1,
+      telemetry_source: 'internal_plugin',
       app_version: '2.0.0',
       platform: 'mac',
-      release_channel: 'stable',
+      release_channel: 'development',
       smart_app_key: 'example',
       smart_app_name: 'Example',
       smart_app_version: '1.0.0',
@@ -113,7 +93,6 @@ test('uses the host cloud email prefix when the event has only a local user', as
   await applyWithDependencies(runtime.context, {
     createBatchQueue: () => fakeQueue(queuedEvents),
     createPostHogClient: () => ({ sendBatch: async () => ({ status: 'accepted' }) }),
-    loadConfig: async () => enabledConfig({ identityHmacKey: null }),
     platform: 'linux',
   })
 
@@ -137,6 +116,45 @@ test('uses the host cloud email prefix when the event has only a local user', as
   assert.equal(queuedEvents[0].properties.distinct_id, 'cloud-user')
 })
 
+test('enriches a directly captured smart app opening from the local installation registry', async () => {
+  const runtime = createHostRuntime()
+  const queuedEvents = []
+  let requestedInstallationId = null
+
+  await applyWithDependencies(runtime.context, {
+    createBatchQueue: () => fakeQueue(queuedEvents),
+    createPostHogClient: () => ({ sendBatch: async () => ({ status: 'accepted' }) }),
+    createSmartAppRegistry() {
+      return {
+        async find(installationId) {
+          requestedInstallationId = installationId
+          return {
+            key: 'research-desk',
+            name: 'Research Desk',
+            version: '1.2.3',
+            source: 'managed',
+          }
+        },
+      }
+    },
+    platform: 'darwin',
+  })
+
+  assert.deepEqual(
+    await runtime.registration.methods.accept({
+      envelope: smartAppEnvelope({ context: undefined }),
+      identity: { id: 42 },
+      smartAppInstallationId: 'research-desk',
+    }),
+    { accepted: true }
+  )
+  assert.equal(requestedInstallationId, 'research-desk')
+  assert.equal(queuedEvents[0].properties.smart_app_key, 'research-desk')
+  assert.equal(queuedEvents[0].properties.smart_app_name, 'Research Desk')
+  assert.equal(queuedEvents[0].properties.smart_app_version, '1.2.3')
+  assert.equal(queuedEvents[0].properties.smart_app_source, 'managed')
+})
+
 test('rejects invalid envelopes and only returns privacy-safe aggregate status', async () => {
   const runtime = createHostRuntime()
   const queue = fakeQueue([])
@@ -144,7 +162,6 @@ test('rejects invalid envelopes and only returns privacy-safe aggregate status',
   await applyWithDependencies(runtime.context, {
     createBatchQueue: () => queue,
     createPostHogClient: () => ({ sendBatch: async () => ({ status: 'accepted' }) }),
-    loadConfig: async () => enabledConfig(),
     platform: 'linux',
   })
   const methods = runtime.registration.methods
@@ -160,14 +177,7 @@ test('rejects invalid envelopes and only returns privacy-safe aggregate status',
   )
 
   const serialized = JSON.stringify(await methods.status())
-  for (const value of [
-    'private@example.com',
-    'private-user',
-    'Example',
-    'phc_example',
-    HMAC_KEY,
-    '/Users/private',
-  ]) {
+  for (const value of ['private@example.com', 'private-user', 'Example', '/Users/private']) {
     assert.equal(serialized.includes(value), false)
   }
   assert.match(serialized, /"received":2/)
@@ -182,7 +192,6 @@ test('disposes queue with a one-second budget and disables further accepts', asy
   await applyWithDependencies(runtime.context, {
     createBatchQueue: () => queue,
     createPostHogClient: () => ({ sendBatch: async () => ({ status: 'accepted' }) }),
-    loadConfig: async () => enabledConfig(),
     platform: 'win32',
   })
   const methods = runtime.registration.methods
@@ -197,7 +206,14 @@ test('disposes queue with a one-second budget and disables further accepts', asy
   })
 })
 
-function createHostRuntime({ version = '2.0.0', preferences = {} } = {}) {
+function createHostRuntime({
+  version = '2.0.0',
+  preferences = {
+    cloudConnection: {
+      user: { email: 'cloud-user@example.com' },
+    },
+  },
+} = {}) {
   const cleanups = []
   const runtime = {
     registration: null,
@@ -258,45 +274,6 @@ function fakeQueue(events) {
     dispose(options) {
       this.disposeOptions = options
       return new Promise(() => {})
-    },
-  }
-}
-
-function disabledConfig(error) {
-  return {
-    public: {
-      enabled: false,
-      error,
-      releaseChannel: 'development',
-      batchSize: 20,
-      flushIntervalMs: 5000,
-      maxQueueSize: 500,
-      requestTimeoutMs: 5000,
-    },
-    private: {
-      posthogHost: null,
-      posthogProjectKey: null,
-      identityHmacKey: null,
-    },
-  }
-}
-
-function enabledConfig(privateOverrides = {}) {
-  return {
-    public: {
-      enabled: true,
-      error: null,
-      releaseChannel: 'stable',
-      batchSize: 20,
-      flushIntervalMs: 5000,
-      maxQueueSize: 500,
-      requestTimeoutMs: 5000,
-    },
-    private: {
-      posthogHost: 'https://telemetry.example.test',
-      posthogProjectKey: 'phc_example',
-      identityHmacKey: HMAC_KEY,
-      ...privateOverrides,
     },
   }
 }

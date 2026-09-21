@@ -4,6 +4,11 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require('path')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const fs = require('fs')
+const extensionsDir = fs.existsSync(path.resolve(__dirname, 'wecode/extensions'))
+  ? path.resolve(__dirname, 'wecode/extensions')
+  : path.resolve(__dirname, 'src/extensions')
 
 // Check if running with Turbopack (development mode with --turbopack flag)
 const isTurbopack = process.env.TURBOPACK === '1'
@@ -35,10 +40,6 @@ const nextConfig = {
     'katex',
     '@wegent/chat-core',
     '@wegent/collaboration',
-    // Note: @novnc/novnc is NOT included here. It ships CJS with top-level await
-    // which is incompatible with webpack's module system. Instead, noVNC is
-    // pre-built into public/novnc/rfb.min.js and loaded at runtime via <script> tag.
-    // See scripts/build-novnc.js and rfb-loader.ts for details.
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
@@ -54,6 +55,7 @@ const nextConfig = {
           config.resolve.alias = {
             ...config.resolve.alias,
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+            '@extensions': extensionsDir,
           }
 
           // Keep Next.js route-aware chunk splitting. A single global vendors

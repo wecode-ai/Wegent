@@ -773,6 +773,17 @@ class SubtaskStore(Protocol):
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
 
+    def get_user_by_task_source_message(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        channel_type: str,
+        channel_id: int,
+        message_id: str,
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]: ...
+
     def get_first_user_before_message_id(
         self,
         db: Session,

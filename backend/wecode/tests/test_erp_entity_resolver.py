@@ -5,9 +5,18 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import orjson
 import pytest
 
-from wecode.service.erp_entity_resolver import ErpEntityResolver
+from wecode.cache.base import NULL_MARKER
+from wecode.service.erp_client import (
+    EmployeeSearchOutcome,
+    EmployeeSearchResult,
+)
+from wecode.service.erp_entity_resolver import (
+    EmployeeIdResolutionStatus,
+    ErpEntityResolver,
+)
 
 
 class _MemRedis:
@@ -19,8 +28,9 @@ class _MemRedis:
     def get(self, key: str):
         return self.store.get(key)
 
-    def set(self, key: str, value, ex: int | None = None) -> None:
+    def set(self, key: str, value, ex: int | None = None) -> bool:
         self.store[key] = value
+        return True
 
 
 @pytest.fixture
@@ -100,6 +110,47 @@ class TestErpEntityResolver:
             assert cached == {"d1": True, "d2": False}
             assert "d_old" not in cached
 
+    def test_cache_miss_incomplete_check_returns_empty_without_caching(
+        self, resolver_with_mem_redis
+    ):
+        """A failed membership check must not be cached as "not a member"."""
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.batch_check_membership",
+            return_value=None,
+        ) as mock_check:
+            result = resolver_with_mem_redis._get_membership_with_cache(
+                1, "ssn", ["d1", "d2"]
+            )
+
+        assert result == {"d1": False, "d2": False}
+        mock_check.assert_called_once_with("ssn", ["d1", "d2"])
+        assert resolver_with_mem_redis._cache_get("erp:membership:1:ssn") is None
+
+    def test_cache_partial_hit_incomplete_check_keeps_known_membership(
+        self, resolver_with_mem_redis
+    ):
+        """On a failed refresh, cached True memberships must not be lost."""
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.batch_check_membership",
+            return_value={"d1": True, "d_old": True},
+        ):
+            resolver_with_mem_redis._get_membership_with_cache(
+                1, "ssn", ["d1", "d_old"]
+            )
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.batch_check_membership",
+            return_value=None,
+        ):
+            result = resolver_with_mem_redis._get_membership_with_cache(
+                1, "ssn", ["d1", "d2"]
+            )
+
+        assert result == {"d1": True, "d2": False}
+        # The cache still holds the last complete answer, untouched.
+        cached = resolver_with_mem_redis._cache_get("erp:membership:1:ssn")
+        assert cached == {"d1": True, "d_old": True}
+
     def test_resolve_matched_departments_wrong_entity_type(self):
         resolver = ErpEntityResolver()
         db = MagicMock()
@@ -115,14 +166,16 @@ class TestErpEntityResolver:
     def test_match_entity_bindings_no_ssn(self):
         resolver = ErpEntityResolver()
         db = MagicMock()
-        with patch.object(resolver, "_get_user_ssn", return_value=None):
+        with patch.object(resolver, "resolve_employee_id", return_value=None):
             result = resolver.match_entity_bindings(db, 1, "org_department", ["d1"])
             assert result == []
 
     def test_match_entity_bindings_filters_to_member_depts(self, resolver_no_redis):
         db = MagicMock()
         with (
-            patch.object(resolver_no_redis, "_get_user_ssn", return_value="12345678"),
+            patch.object(
+                resolver_no_redis, "resolve_employee_id", return_value="12345678"
+            ),
             patch(
                 "wecode.service.erp_entity_resolver.erp_client.batch_check_membership"
             ) as mock_check,
@@ -169,13 +222,16 @@ class TestErpEntityResolver:
         db.query.side_effect = [profile_query, user_query, profile_query]
 
         with (
+            patch.object(resolver, "_cache_get", return_value=None),
             patch(
                 "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
                 return_value=lock,
             ),
             patch(
-                "wecode.service.erp_entity_resolver.erp_client.search_employee",
-                return_value=erp_employee,
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(
+                    EmployeeSearchOutcome.FOUND, erp_employee
+                ),
             ) as mock_search,
             patch("app.db.session.SessionLocal", return_value=independent_db),
             patch(
@@ -196,23 +252,145 @@ class TestErpEntityResolver:
         )
         independent_db.close.assert_called_once()
 
-    def test_resolve_employee_id_for_user_manages_session(self):
+    def test_lock_busy_returns_without_sleep_or_erp_request(self, caplog):
         resolver = ErpEntityResolver()
         db = MagicMock()
+        user = SimpleNamespace(email="user@example.com")
+        db.query.return_value.filter.return_value.first.return_value = user
+        lock = MagicMock()
+        lock.__enter__.return_value = False
+        lock.__exit__.return_value = None
 
         with (
-            patch("app.db.session.SessionLocal", return_value=db),
-            patch.object(
-                resolver,
-                "resolve_employee_id",
-                return_value="230473",
-            ) as mock_resolve,
+            patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch.object(resolver, "_cache_get", return_value=None),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result"
+            ) as search,
+            caplog.at_level("INFO", logger="wecode.service.erp_entity_resolver"),
         ):
-            result = resolver.resolve_employee_id_for_user(1)
+            result = resolver.resolve_employee_id(db, 1)
 
-        assert result == "230473"
-        mock_resolve.assert_called_once_with(db, 1, None)
-        db.close.assert_called_once()
+        assert result is None
+        search.assert_not_called()
+        assert "outcome=lock_busy" in caplog.text
+
+    def test_lock_busy_is_reported_as_in_progress(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            email="user@example.com"
+        )
+        lock = MagicMock()
+        lock.__enter__.return_value = False
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch.object(resolver, "_cache_get", return_value=None),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+        ):
+            result = resolver.resolve_employee_id_result(db, 1)
+
+        assert result.status is EmployeeIdResolutionStatus.IN_PROGRESS
+        assert result.employee_id is None
+
+    def test_not_found_does_not_open_a_second_database_session(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            email="missing@example.com"
+        )
+
+        with (
+            patch.object(resolver, "_read_profile_employee_id", return_value=None),
+            patch.object(resolver, "_cache_get", return_value=None),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=_acquired_lock(),
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND),
+            ),
+            patch("app.db.session.SessionLocal", side_effect=TimeoutError),
+        ):
+            result = resolver.resolve_employee_id_result(db, 1)
+
+        assert result.status is EmployeeIdResolutionStatus.NOT_FOUND
+
+    def test_not_found_is_negatively_cached(self, resolver_with_mem_redis):
+        db = MagicMock()
+        user = SimpleNamespace(email="missing@example.com")
+        db.query.return_value.filter.return_value.first.return_value = user
+        lock = MagicMock()
+        lock.__enter__.return_value = True
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(
+                resolver_with_mem_redis,
+                "_read_profile_employee_id",
+                return_value=None,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND),
+            ) as search,
+        ):
+            assert resolver_with_mem_redis.resolve_employee_id(db, 7) is None
+            assert resolver_with_mem_redis.resolve_employee_id(db, 7) is None
+
+        search.assert_called_once_with("missing@example.com")
+        assert (
+            resolver_with_mem_redis._cache_get(
+                resolver_with_mem_redis._no_profile_cache_key(7)
+            )
+            == NULL_MARKER
+        )
+
+    def test_request_failure_is_not_negatively_cached(self, resolver_with_mem_redis):
+        db = MagicMock()
+        user = SimpleNamespace(email="user@example.com")
+        db.query.return_value.filter.return_value.first.return_value = user
+        lock = MagicMock()
+        lock.__enter__.return_value = True
+        lock.__exit__.return_value = None
+
+        with (
+            patch.object(
+                resolver_with_mem_redis,
+                "_read_profile_employee_id",
+                return_value=None,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.REQUEST_FAILED),
+            ),
+        ):
+            assert resolver_with_mem_redis.resolve_employee_id(db, 8) is None
+
+        assert (
+            resolver_with_mem_redis._cache_get(
+                resolver_with_mem_redis._no_profile_cache_key(8)
+            )
+            is None
+        )
 
     def test_redis_lazy_load(self):
         """Constructor must not eagerly call get_redis_client.
@@ -231,3 +409,124 @@ class TestErpEntityResolver:
 
             _ = resolver._redis_client  # cached: no re-fetch
             assert mock_get.call_count == 1
+
+
+def _lazy_sync_db(user_email: str = "ghost@example.com"):
+    """Build a session mock that returns no profile and one user row."""
+    profile_query = MagicMock()
+    user_query = MagicMock()
+    profile_query.filter.return_value.first.return_value = None
+    user_query.filter.return_value.first.return_value = SimpleNamespace(
+        email=user_email
+    )
+
+    db = MagicMock()
+    # profile read, user read, profile re-read under the lock
+    db.query.side_effect = [profile_query, user_query, profile_query, profile_query]
+    return db
+
+
+def _acquired_lock() -> MagicMock:
+    lock = MagicMock()
+    lock.__enter__.return_value = True
+    lock.__exit__.return_value = None
+    return lock
+
+
+class TestNoProfileNegativeCache:
+    """A user the directory does not know must not be re-queried every request."""
+
+    def test_miss_is_cached_with_long_ttl(self):
+        client = MagicMock()
+        db = _lazy_sync_db()
+
+        with (
+            patch(
+                "wecode.service.erp_entity_resolver.get_redis_client",
+                return_value=client,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=_acquired_lock(),
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                return_value=EmployeeSearchResult(EmployeeSearchOutcome.NOT_FOUND),
+            ) as mock_search,
+        ):
+            resolver = ErpEntityResolver()
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        mock_search.assert_called_once_with("ghost@example.com")
+        client.set.assert_called_once_with(
+            "erp:no_profile:1",
+            orjson.dumps(NULL_MARKER),
+            ex=ErpEntityResolver._NO_PROFILE_CACHE_TTL,
+        )
+        assert ErpEntityResolver._NO_PROFILE_CACHE_TTL > ErpEntityResolver._CACHE_TTL
+
+    def test_cached_miss_skips_upstream_search(self, resolver_with_mem_redis):
+        resolver = resolver_with_mem_redis
+        resolver._cache_set(
+            resolver._no_profile_cache_key(1),
+            NULL_MARKER,
+            ttl=resolver._NO_PROFILE_CACHE_TTL,
+        )
+        db = MagicMock()
+        profile_query = MagicMock()
+        profile_query.filter.return_value.first.return_value = None
+        db.query.side_effect = [profile_query]
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.search_employee_result"
+        ) as mock_search:
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        mock_search.assert_not_called()
+        # Short-circuits before the email lookup, so only the profile read ran.
+        assert db.query.call_count == 1
+
+    def test_profile_row_wins_over_cached_miss(self, resolver_with_mem_redis):
+        """A profile written later (CAS/OIDC login) must resolve immediately."""
+        resolver = resolver_with_mem_redis
+        resolver._cache_set(
+            resolver._no_profile_cache_key(1),
+            NULL_MARKER,
+            ttl=resolver._NO_PROFILE_CACHE_TTL,
+        )
+        db = MagicMock()
+        profile_query = MagicMock()
+        profile_query.filter.return_value.first.return_value = SimpleNamespace(
+            employee_id="230473"
+        )
+        db.query.side_effect = [profile_query]
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.search_employee_result"
+        ) as mock_search:
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result == "230473"
+        mock_search.assert_not_called()
+
+    def test_transient_error_is_not_cached(self, resolver_with_mem_redis):
+        """A directory outage must be retried, not pinned for the long TTL."""
+        resolver = resolver_with_mem_redis
+        db = _lazy_sync_db()
+
+        with (
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=_acquired_lock(),
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee_result",
+                side_effect=RuntimeError("directory unavailable"),
+            ),
+        ):
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result is None
+        assert resolver._cache_get(resolver._no_profile_cache_key(1)) is None

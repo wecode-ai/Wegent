@@ -11,6 +11,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from anyio import fail_after
+
 from app.core.cache import cache_manager
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.services.channels.dingtalk.card_adapter import create_card_adapter
@@ -43,6 +45,8 @@ _EMPTY_FINAL_CONTENT = "本轮已结束，未生成最终回复。"
 class StreamingResponseEmitter(ResultEmitter):
     """Render compact progress and the final answer into one DingTalk AI Card."""
 
+    WRITE_TIMEOUT_SECONDS = 45
+    WRITER_LOCK_SECONDS = 60
     MIN_UPDATE_INTERVAL = 0.5
     MAX_FINAL_CONTENT_LENGTH = 4000
     MAX_ERROR_CONTENT_LENGTH = 300
@@ -83,7 +87,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._closed = False
         self._flush_task: Optional[asyncio.Task[None]] = None
         self._flush_error: Optional[Exception] = None
-        self._lease_renewal: Optional[asyncio.Task[None]] = None
+        self._write_deadline: Optional[float] = None
         self._flush_now = asyncio.Event()
         self._pending_progress: list[Callable[[CompactProgressState], None]] = []
 
@@ -379,22 +383,11 @@ class StreamingResponseEmitter(ResultEmitter):
 
     @trace_async(span_name="dingtalk.card_request", tracer_name=__name__)
     async def _call_card(self, method: str, *args: Any, **kwargs: Any) -> None:
-        """Preserve adapter write order, including threaded SDK calls on cancellation."""
-        self._check_writer_lease()
+        """Cancel the actual HTTP request before releasing the writer lock."""
+        self._check_write_deadline()
         started = time.monotonic()
-        call = asyncio.create_task(getattr(self._card, method)(*args, **kwargs))
-        cancelled = False
         try:
-            while not call.done():
-                try:
-                    await asyncio.shield(call)
-                except asyncio.CancelledError:
-                    # Repeated cancellation still cannot stop the SDK thread.
-                    # Keep the lock until the actual network request has exited.
-                    cancelled = True
-            call.result()
-            if cancelled:
-                raise asyncio.CancelledError
+            await getattr(self._card, method)(*args, **kwargs)
         finally:
             logger.info(
                 "[StreamingEmitter] card_request method=%s card=%s duration_ms=%.2f",
@@ -408,49 +401,45 @@ class StreamingResponseEmitter(ResultEmitter):
         # A task may have multiple turns; scope terminal state to the actual card.
         return f"{self._answer_key}:terminal"
 
-    def _check_writer_lease(self) -> None:
-        if self._lease_renewal is not None and self._lease_renewal.done():
-            self._lease_renewal.result()
+    def _check_write_deadline(self) -> None:
+        if (
+            self._write_deadline is not None
+            and time.monotonic() >= self._write_deadline
+        ):
+            raise TimeoutError("DingTalk card write deadline exceeded")
 
     @asynccontextmanager
     async def _shared_write(self) -> AsyncIterator[None]:
-        """Serialize reconstructed workers and reject updates after completion."""
+        """Serialize bounded writes and reject updates after completion."""
         if not self._shared_content_key:
             yield
             return
         client = await cache_manager._get_client()
         try:
+            started = time.monotonic()
             lock = client.lock(
-                f"{self._terminal_key}:writer", timeout=60, blocking_timeout=60
+                f"{self._terminal_key}:writer",
+                timeout=self.WRITER_LOCK_SECONDS,
+                blocking_timeout=self.WRITE_TIMEOUT_SECONDS,
             )
             async with lock:
-                renewal = asyncio.create_task(self._renew_writer_lock(lock))
-                self._lease_renewal = renewal
+                # Include acquisition latency so the deadline precedes lease expiry.
+                self._write_deadline = started + self.WRITE_TIMEOUT_SECONDS
                 try:
-                    if await client.get(self._terminal_key):
-                        self._finished = True
-                        self._dirty = False
-                    yield
-                    self._check_writer_lease()
+                    with fail_after(max(0, self._write_deadline - time.monotonic())):
+                        self._check_write_deadline()
+                        if await client.get(self._terminal_key):
+                            self._finished = True
+                            self._dirty = False
+                        yield
+                        self._check_write_deadline()
                 finally:
-                    renewal.cancel()
-                    await asyncio.gather(renewal, return_exceptions=True)
-                    self._lease_renewal = None
+                    self._write_deadline = None
         finally:
             await client.aclose()
 
-    async def _renew_writer_lock(self, lock: Any) -> None:
-        """Keep the lease while a synchronous SDK request is still in flight."""
-        try:
-            while True:
-                await asyncio.sleep(20)
-                await lock.extend(60, replace_ttl=True)
-        except Exception:
-            logger.exception("[StreamingEmitter] Failed to renew card writer lease")
-            raise
-
     async def _mark_finished(self) -> None:
-        self._check_writer_lease()
+        self._check_write_deadline()
         if self._shared_content_key:
             from app.services.channels.callback import CHANNEL_TASK_CALLBACK_TTL
 
@@ -459,7 +448,7 @@ class StreamingResponseEmitter(ResultEmitter):
             )
             if not saved:
                 raise RuntimeError("Failed to persist card terminal marker")
-        self._check_writer_lease()
+        self._check_write_deadline()
         self._finished = True
 
     def _truncate_final(self, content: str, *, max_length: Optional[int] = None) -> str:
@@ -703,7 +692,6 @@ class StreamingResponseEmitter(ResultEmitter):
         if failed:
             await self._call_card("fail", content)
         else:
-            await asyncio.sleep(0.1)
             await self._call_card("finish", content)
         await self._mark_finished()
         self._progress.mode = "answer"

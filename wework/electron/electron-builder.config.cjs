@@ -69,7 +69,6 @@ module.exports = {
     { from: 'resources/bundled-hooks', to: 'bundled-hooks' },
     { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
-    { from: 'resources/vnc', to: 'vnc' },
     { from: '../../LICENSE', to: 'LICENSE' },
   ],
   publish: {

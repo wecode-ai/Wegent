@@ -1,0 +1,8 @@
+[
+  {
+    "name": "@wegent/dsh-ui-device-desktop",
+    "source": "ui-device-desktop",
+    "directory": "wework-ui-device-desktop",
+    "bundle": "@wegent/dsh-ui-device-desktop"
+  }
+]

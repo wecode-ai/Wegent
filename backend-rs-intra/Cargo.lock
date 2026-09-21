@@ -245,23 +245,25 @@ dependencies = [
 
 [[package]]
 name = "brz-http"
-version = "0.0.5"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b18ae4961285ba185f5b0becd75846b236fe685316202aa984bca264a2508eda"
+checksum = "f68a1770f2d651f41ddf20a727151d34c315705d850448679bbd42835382da5e"
 dependencies = [
  "brz-metrics",
  "bytes",
  "http",
  "reqwest",
  "serde",
+ "tracing",
 ]
 
 [[package]]
 name = "brz-http-gateway"
-version = "0.1.0"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d021d4fa9fcb97ab5e9d53cdc87eef57a58d07c18bf133359a4ad9d1a9ed1798"
+checksum = "e0ac1833247b31d67892f3acb1b298102b9dfb682322526d1e9e33259b53e35a"
 dependencies = [
+ "brz-http-router",
  "bytes",
  "http",
  "http-body-util",
@@ -275,10 +277,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "brz-http-server"
-version = "0.0.13"
+name = "brz-http-router"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef63788232bb8095489e0f8ab5c2ce9d8a675b0a1fc227042603377ab07df166"
+checksum = "6e40c111e79750c5484ab78d01c1f4d07c196e19a4a4d083e1e5c6d9bc77a3e7"
+dependencies = [
+ "http",
+ "thiserror",
+]
+
+[[package]]
+name = "brz-http-server"
+version = "0.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50cfe4c33a994a1dad6dc76ab0c678ed6724f30c880d297a9654d041256c9383"
 dependencies = [
  "brz-ds",
  "brz-http-server-macros",
@@ -304,9 +316,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-server-macros"
-version = "0.0.13"
+version = "0.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a4304a683ac9bedeee169223f717901bcd51bc5bfcbccca4e1117066cb64477"
+checksum = "818e0c9bf766005c2c833072aa1431d1201323c83996e3e20b4e687928d3802e"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -338,9 +350,9 @@ dependencies = [
 
 [[package]]
 name = "brz-logs"
-version = "0.0.6"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5409c80b351b87016b6778a2141d560d8a810ba0e093689461df56a8439742af"
+checksum = "d1d1b9e7d00d3066f1d19b598cd3364ee9d6573db5629c6d1511343cab8752ac"
 dependencies = [
  "brz-ds",
  "brz-metrics",
@@ -352,9 +364,9 @@ dependencies = [
 
 [[package]]
 name = "brz-metrics"
-version = "0.0.5"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1788265288ecfe57cfd485aedb2349c12b8d8b9a555f6da7c8b8051cc0539b7c"
+checksum = "1eeb1162949f8ed979de2918bc9be7365794b07be556f3d27e3c194833f35a3a"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -364,9 +376,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql"
-version = "0.0.10"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51cada576ba90c8e4c9b4d6a5318d5db51545806cc70e75cba20f6a0b6c4a956"
+checksum = "b673f825c1c3ed8bd91cc1c6bf910fc69aaa7772937b030155b78b309ad41860"
 dependencies = [
  "async-stream",
  "brz-metrics",
@@ -380,13 +392,14 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "brz-mysql-derive"
-version = "0.0.10"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a204e99ad50fc514bc6b6cfad8aea2d0820a420b46355907ce0941f5fdb4293"
+checksum = "a925acdb730ee911c0a7fc3738f254b38db21c6fc87e8334a175ade931d9313d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -411,9 +424,9 @@ dependencies = [
 
 [[package]]
 name = "brz-redis"
-version = "0.0.8"
+version = "0.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd53677393fe1fdd9b1b90d4d3e2beeb943388723ceb6084f4ceda7dc7bd02fe"
+checksum = "2a1405a8cfd95c5fde429ebd1975544a71bd1432469538673ba1b3cee1c3ef4d"
 dependencies = [
  "arc-swap",
  "brz-metrics",
@@ -752,7 +765,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1841,7 +1854,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

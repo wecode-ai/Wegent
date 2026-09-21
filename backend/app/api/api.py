@@ -79,7 +79,9 @@ from app.api.endpoints import (
     workspaces,
     xiaoxin_knowledge_sync,
 )
+from app.api.endpoints.admin.device_ip import router as admin_device_ip_router
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
+from app.api.endpoints.external_wiki import router as external_wiki_router
 from app.core.config import settings
 
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
@@ -175,6 +177,11 @@ api_router.include_router(
     admin_notification.router,
     prefix="/admin/notifications",
     tags=["admin-notifications"],
+)
+api_router.include_router(
+    admin_device_ip_router,
+    prefix="/internal/admin/devices",
+    tags=["internal-admin"],
 )
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(grey.router, prefix="/grey", tags=["grey"])
@@ -434,6 +441,9 @@ api_router.include_router(
 # RAG internal router is conditionally registered based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:
     api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
+
+# External Wiki management and synchronized import are independent of MCP.
+api_router.include_router(external_wiki_router, tags=["external-wiki"])
 
 api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]

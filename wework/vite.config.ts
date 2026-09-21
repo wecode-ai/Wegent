@@ -49,13 +49,16 @@ if (internalVitePluginsUrl) {
     String(fs.statSync(internalVitePluginsPath).mtimeMs)
   )
 }
-const internalVitePlugins = internalVitePluginsUrl
-  ? await (
-      (await import(internalVitePluginsUrl.href)) as {
-        createWecodeVitePlugins: () => Promise<Plugin[]>
-      }
-    ).createWecodeVitePlugins()
+const internalViteModule = internalVitePluginsUrl
+  ? ((await import(internalVitePluginsUrl.href)) as {
+      createWecodeVitePlugins: () => Promise<Plugin[]>
+      createWecodeViteEntries?: () => Record<string, string>
+    })
+  : null
+const internalVitePlugins = internalViteModule
+  ? await internalViteModule.createWecodeVitePlugins()
   : []
+const internalViteEntries = internalViteModule?.createWecodeViteEntries?.() ?? {}
 const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
@@ -109,6 +112,7 @@ export default defineConfig({
   customLogger: logger,
   plugins: [
     react(),
+    ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
       preset: 'auto',
@@ -116,7 +120,6 @@ export default defineConfig({
       copyAssets: process.env.VITEST !== 'true',
       chunkStrategy: 'renderer',
     }),
-    ...internalVitePlugins,
   ],
   define: {
     __WEWORK_APP_VERSION__: JSON.stringify(releaseVersion),
@@ -180,6 +183,7 @@ export default defineConfig({
           __dirname,
           'dsh/ui-outputs/src/conversation-summary.tsx'
         ),
+        ...internalViteEntries,
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
           'dsh/ui-plugin-center/src/catalog-route.tsx'
@@ -250,10 +254,15 @@ export default defineConfig({
       'dsh/**/*.test.mjs',
       'e2e/**',
       'electron/**',
+      'scripts/account-auth-command.test.mjs',
+      'scripts/check-telemetry-boundary.test.mjs',
       'scripts/electron-e2e-launch-arguments.test.mjs',
+      'scripts/generate-telemetry-catalog.test.mjs',
       'scripts/harness-runtime-metadata.test.mjs',
       'electron/release/**',
       'electron/resources/**',
+      'scripts/local-plugin-object-storage.test.mjs',
+      'scripts/sync-posthog-event-definitions.test.mjs',
       'test-results/**',
     ],
     coverage: {

@@ -21,7 +21,8 @@ import {
   type ProjectSpaceApi,
   type ProjectSpaceOption,
 } from '@/features/todo/projectSpaceSelection'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import {
@@ -188,7 +189,9 @@ function LocalProjectEditDialogContent({
     projectWork.project.stateDeviceId?.trim() ||
     projectWork.deviceWorkspaces[0]?.deviceId.trim() ||
     ''
-  useEscapeKey(onClose, !submitting)
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
+    if (!submitting) onClose()
+  })
 
   useEffect(() => {
     if (projectSpaceApis.length === 0) return
@@ -313,7 +316,8 @@ function LocalProjectEditDialogContent({
 
   const save = async () => {
     const trimmedName = name.trim()
-    if (!trimmedName || roots.length === 0 || !deviceId || submitting) return
+    if (!trimmedName || roots.length === 0 || !deviceId || submitting || projectSpacesLoading)
+      return
     setSubmitting(true)
     setError(null)
     try {
@@ -351,8 +355,13 @@ function LocalProjectEditDialogContent({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-      <div
+      <DialogForm
         role="dialog"
+        ref={dialogRef}
+        onSubmit={event => {
+          event.preventDefault()
+          void save()
+        }}
         aria-modal="true"
         aria-labelledby="local-project-edit-title"
         data-testid="local-project-edit-dialog"
@@ -445,7 +454,6 @@ function LocalProjectEditDialogContent({
                 data-testid="local-project-name-input"
                 aria-label={t('workbench.project_name', '项目名称')}
                 value={name}
-                autoFocus
                 disabled={submitting}
                 onChange={event => setName(event.target.value)}
                 className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none"
@@ -808,19 +816,18 @@ function LocalProjectEditDialogContent({
             {t('workbench.cancel', '取消')}
           </button>
           <button
-            type="button"
+            type="submit"
             data-testid="save-local-project-button"
             disabled={
               submitting || projectSpacesLoading || !name.trim() || roots.length === 0 || !deviceId
             }
-            onClick={() => void save()}
             className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.save', '保存')}
           </button>
         </div>
-      </div>
+      </DialogForm>
     </div>,
     document.body
   )

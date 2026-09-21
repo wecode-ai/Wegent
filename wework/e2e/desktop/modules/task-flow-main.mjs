@@ -1013,9 +1013,14 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true }),
   ])
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
+    writeFile(
+      join(electronUserDataDirectory, 'app-preferences.json'),
+      `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`
+    ),
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
     writeFile(
       join(workspacePath, FILE_PANEL_LINK_NAME),
@@ -1882,6 +1887,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
@@ -2168,6 +2174,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'remote-project-dialog'
       await control.command('click', '[data-testid="projects-create-button"]')
+      await control.command('waitFor', '[data-testid="projects-create-button-menu"]', {
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'project-create-local-option',
+        'Opening project creation did not move focus into the dialog'
+      )
+      await control.command('nativePress', '[data-testid="project-create-local-option"]', {
+        key: 'Escape',
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('projects-create-button-menu'),
+        'Escape did not close the project source dialog'
+      )
+      await control.command('click', '[data-testid="projects-create-button"]')
       await control.command('click', '[data-testid="project-create-remote-option"]')
       await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2211,6 +2234,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
     }
 
@@ -4219,7 +4243,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPastedWorkspacePaths({ composerSelector, control, workspacePath })
 
       phase = 'dropped-workspace-paths'
-      await verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath })
+      await verifyDroppedWorkspacePaths({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('workspace-attachments')) {
         console.log(
           `Wework desktop workspace-attachments checkpoint passed. Evidence: ${resultDir}`

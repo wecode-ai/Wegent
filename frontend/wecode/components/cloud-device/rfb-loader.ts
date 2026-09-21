@@ -10,7 +10,7 @@
  * with top-level await — a combination incompatible with webpack's module system.
  *
  * The bundle exposes `window.noVNC` as the RFB constructor.
- * Built by: scripts/build-novnc.js
+ * Built by: wecode/scripts/build-novnc.cjs
  */
 
 'use client'

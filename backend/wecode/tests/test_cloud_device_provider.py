@@ -26,6 +26,37 @@ class _FakeNevisClient:
         return {"id": "sandbox-1"}
 
 
+def test_cloud_runtime_features_advertise_conservative_vnc_clipboard():
+    provider = CloudDeviceProvider(client=_FakeNevisClient())
+
+    features = provider._project_runtime_features(
+        {"cloudConfig": {"sandboxId": "sandbox-1"}},
+        {"runtime_features": {"schemaVersion": 3}},
+    )
+
+    assert features == {
+        "schemaVersion": 4,
+        "desktop": {
+            "version": 1,
+            "available": True,
+            "protocol": "rfb",
+            "transport": "websocket",
+            "clipboard": "text",
+        },
+    }
+
+
+def test_cloud_runtime_features_do_not_advertise_vnc_while_offline():
+    provider = CloudDeviceProvider(client=_FakeNevisClient())
+
+    features = provider._project_runtime_features(
+        {"cloudConfig": {"sandboxId": "sandbox-1"}},
+        None,
+    )
+
+    assert features == {"schemaVersion": 4}
+
+
 @pytest.mark.asyncio
 async def test_slot_usage_preserves_unbounded_cloud_device_semantics(
     test_db, monkeypatch

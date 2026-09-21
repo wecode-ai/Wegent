@@ -14,4 +14,3 @@ export { useAsyncData } from './useAsyncData'
  */
 
 export { useDeviceVncState } from './useDeviceVncState'
-export { useAdminDeviceMonitorVncExtension } from './useAdminDeviceMonitorVncExtension'

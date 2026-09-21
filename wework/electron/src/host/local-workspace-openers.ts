@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -286,6 +286,23 @@ export async function openLocalWorkspace(
   }
 
   throw new Error(`Workspace opener ${openerId} is not supported on ${process.platform}`)
+}
+
+export async function openFileInWorkspaceApp(
+  opener: string,
+  path: string,
+  services: {
+    open: (opener: string, path: string) => Promise<void>
+    reveal: (path: string) => void
+  }
+): Promise<void> {
+  if (!(await stat(path)).isFile()) throw new Error('File path is not a regular file')
+  if (opener === 'file-manager') {
+    services.reveal(path)
+    return
+  }
+  const terminal = ['terminal', 'iterm2', 'ghostty', 'warp', 'cmd', 'powershell'].includes(opener)
+  await services.open(opener, terminal ? dirname(path) : path)
 }
 
 export async function saveCustomWorkspaceOpener(

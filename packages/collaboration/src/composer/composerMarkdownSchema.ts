@@ -27,8 +27,26 @@ export const composerMarkdownNodes: Record<string, NodeSpec> = {
     group: "block",
     code: true,
     defining: true,
-    toDOM: () => ["pre", ["code", 0]],
-    parseDOM: [{ tag: "pre", preserveWhitespace: "full" }],
+    toDOM: (node) => [
+      "pre",
+      [
+        "code",
+        node.attrs.language ? { class: `language-${node.attrs.language}` } : {},
+        0,
+      ],
+    ],
+    parseDOM: [
+      {
+        tag: "pre",
+        preserveWhitespace: "full",
+        getAttrs: (element) => ({
+          language:
+            element
+              .querySelector("code")
+              ?.className.match(/(?:^|\s)language-([^\s]+)/)?.[1] ?? "",
+        }),
+      },
+    ],
   },
   bullet_list: {
     content: "list_item+",
@@ -61,7 +79,18 @@ export const composerMarkdownNodes: Record<string, NodeSpec> = {
         : { "data-checked": String(node.attrs.checked) },
       0,
     ],
-    parseDOM: [{ tag: "li" }],
+    parseDOM: [
+      {
+        tag: "li",
+        getAttrs: (element) => {
+          const checked = element.getAttribute("data-checked");
+          return {
+            checked:
+              checked === "true" ? true : checked === "false" ? false : null,
+          };
+        },
+      },
+    ],
   },
   horizontal_rule: {
     group: "block",
@@ -86,10 +115,31 @@ export const composerMarkdownNodes: Record<string, NodeSpec> = {
 export const composerMarkdownMarks: Record<string, MarkSpec> = {
   strong: {
     toDOM: () => ["strong", 0],
-    parseDOM: [{ tag: "strong" }, { tag: "b" }],
+    parseDOM: [
+      { tag: "strong" },
+      { tag: "b" },
+      {
+        style: "font-weight",
+        getAttrs: (value) =>
+          value === "bold" || Number(value) >= 600 ? null : false,
+      },
+    ],
   },
-  em: { toDOM: () => ["em", 0], parseDOM: [{ tag: "em" }, { tag: "i" }] },
-  strike: { toDOM: () => ["s", 0], parseDOM: [{ tag: "s" }, { tag: "del" }] },
+  em: {
+    toDOM: () => ["em", 0],
+    parseDOM: [{ tag: "em" }, { tag: "i" }, { style: "font-style=italic" }],
+  },
+  strike: {
+    toDOM: () => ["s", 0],
+    parseDOM: [
+      { tag: "s" },
+      { tag: "del" },
+      {
+        style: "text-decoration",
+        getAttrs: (value) => (value.includes("line-through") ? null : false),
+      },
+    ],
+  },
   link: {
     attrs: { href: {}, title: { default: null }, autolink: { default: false } },
     inclusive: false,

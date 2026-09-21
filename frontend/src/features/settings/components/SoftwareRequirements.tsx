@@ -15,7 +15,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 export interface SoftwareRequirement {
   name: string // Software name (e.g., node, python, claude-code)
   command: string // Check command (e.g., node --version)
-  minVersion: string // Minimum version requirement (e.g., 20.0.0)
+  minVersion?: string // Minimum version requirement, when specified
   versionRegex?: string // Version extraction regex (optional)
   required: boolean // Whether it's required
   description?: string // Software description (optional)
@@ -25,25 +25,9 @@ export interface SoftwareRequirement {
 const shellRequirements: Record<string, SoftwareRequirement[]> = {
   Codex: [
     {
-      name: 'Node.js',
-      command: 'node --version',
-      minVersion: '20.0.0',
+      name: 'Codex CLI',
+      command: 'codex app-server --help >/dev/null && codex --version',
       required: true,
-      description: 'JavaScript runtime for Codex CLI',
-    },
-    {
-      name: 'Python',
-      command: 'python --version',
-      minVersion: '3.12.0',
-      required: true,
-      description: 'Python interpreter for agent execution',
-    },
-    {
-      name: 'codex',
-      command: 'codex --version',
-      minVersion: '0.1.0',
-      required: true,
-      description: 'OpenAI Codex CLI',
     },
   ],
   ClaudeCode: [
@@ -142,7 +126,9 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
                 )}
                 <span className="font-medium text-text-primary truncate">{req.name}</span>
               </div>
-              <span className="text-text-muted text-xs shrink-0 ml-2">≥ {req.minVersion}</span>
+              {req.minVersion && (
+                <span className="text-text-muted text-xs shrink-0 ml-2">≥ {req.minVersion}</span>
+              )}
             </div>
             {req.description && <p className="text-xs text-text-muted mb-2">{req.description}</p>}
             <div className="flex items-center gap-2">

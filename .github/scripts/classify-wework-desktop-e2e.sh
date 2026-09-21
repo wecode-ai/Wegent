@@ -6,6 +6,7 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
+  collaboration-settings-matrix
   collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
@@ -110,10 +111,26 @@ cloud_segments=(
   plugin-account-auth
   plugin-workspace-publication
 )
+
+# The cloud-device-vnc checkpoint is internal-only, so its E2E scenario module
+# lives under wecode/, which the open-source checkout does not contain. Add it
+# only where it is registered; the plan is validated against the same catalog.
+vnc_desktop_checkpoint=""
+classify_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+classify_repository_root="$(cd "${classify_script_dir}/../.." && pwd)"
+if [[ -d "${classify_repository_root}/wework/wecode/e2e/desktop" ]]; then
+  vnc_desktop_checkpoint="cloud-device-vnc"
+  cloud_segments+=("${vnc_desktop_checkpoint}")
+fi
+
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
 # below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
 # 17 Core shards and Plugins job fit the observed 33-runner Linux capacity.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
+cloud_device_shard="plugin-account-auth,cloud-device-lifecycle"
+if [[ -n "${vnc_desktop_checkpoint}" ]]; then
+  cloud_device_shard="${cloud_device_shard},${vnc_desktop_checkpoint}"
+fi
 cloud_shards=(
   core-task-flow
   embedded-browser,cloud-project-creation
@@ -127,7 +144,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-account-auth,cloud-device-lifecycle
+  "${cloud_device_shard}"
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -140,7 +157,7 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
+  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
@@ -446,6 +463,27 @@ classify_wework_path() {
       return
       ;;
 
+    # The cloud suite covers VNC-related desktop changes.
+    wework/src/components/vnc/* | \
+      wework/src/pages/DeviceDesktopPage* | \
+      wework/src/pages/deviceDesktopRoute.ts)
+      select_target "cloud:all"
+      return
+      ;;
+
+    # Cloud execution has a separate backend/executor-backed desktop suite.
+    wework/src/components/vnc/* | \
+      wework/src/pages/DeviceDesktopPage* | \
+      wework/src/pages/deviceDesktopRoute.ts | \
+      wework/wecode/e2e/desktop/*)
+      if [[ -n "${vnc_desktop_checkpoint}" ]]; then
+        select_target "cloud:cloud-device-vnc"
+      else
+        select_target "cloud:all"
+      fi
+      return
+      ;;
+
     # Cloud execution has a separate backend/executor-backed desktop suite.
     wework/src/api/cloud/* | \
       wework/src/features/cloud-connection/* | \
@@ -507,6 +545,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
       select_target "core:collaboration-shared-core"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-settings-matrix.scenario.mjs)
+      select_target "core:collaboration-settings-matrix"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
@@ -923,11 +965,13 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)

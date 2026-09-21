@@ -272,7 +272,6 @@ process.stdout.write(JSON.stringify({
     { from: 'resources/bundled-hooks', to: 'bundled-hooks' },
     { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
-    { from: 'resources/vnc', to: 'vnc' },
     { from: '../../LICENSE', to: 'LICENSE' },
   ])
   expect(config.macTarget).toEqual(['zip'])
@@ -316,7 +315,6 @@ process.stdout.write(JSON.stringify(config.extraResources.map(resource => resour
     'bundled-hooks',
     'licenses',
     'icons',
-    'vnc',
     'LICENSE',
   ])
 })

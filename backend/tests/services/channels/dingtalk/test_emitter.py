@@ -29,17 +29,20 @@ class FakeCard:
     def set_order(self, order):
         self.order = order
 
-    def ai_start(self):
+    async def close(self):
+        pass
+
+    async def ai_start(self):
         self.card_instance_id = "card-1"
 
-    def ai_streaming(self, content, append=False):
+    async def ai_streaming(self, content, append=False):
         assert append is False
         self.updates.append(content)
 
-    def ai_finish(self, content):
+    async def ai_finish(self, content):
         self.finished.append(content)
 
-    def ai_fail(self):
+    async def ai_fail(self):
         self.failed = True
 
 

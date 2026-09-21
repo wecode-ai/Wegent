@@ -17,6 +17,7 @@ from app.services.execution.skill_generation import (
 
 SYSTEM_RESOURCE_USER_ID = 0
 AIGC_VIDEO_SKILL_NAMES = {
+    "material-to-video-multi-style",
     "material-to-video-unified-async",
     "prompts-to-movie-stepped",
 }

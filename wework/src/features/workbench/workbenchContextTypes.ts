@@ -233,6 +233,14 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
+    continueInNewConversation?: (
+      model: UnifiedModel,
+      options?: ModelOptions,
+      source?: {
+        address?: RuntimeTaskAddress
+        draft?: string
+      }
+    ) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
@@ -322,7 +330,7 @@ export interface WorkbenchContextValue {
   ) => Promise<ArchiveRuntimeConversationsResult>
   forkCurrentRuntimeTask: (
     target: RuntimeTaskForkTarget,
-    options?: { lastTurnId?: string; title?: string }
+    options?: { source?: RuntimeTaskAddress; lastTurnId?: string; title?: string }
   ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>

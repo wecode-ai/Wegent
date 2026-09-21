@@ -7,6 +7,7 @@ import {
   createWeworkSyncDownloadTimeout,
   createWeworkSyncFetchInit,
   createWeworkSyncRequestSignal,
+  describeWeworkSyncRequestFailure,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
   readWeworkSyncResponse,
@@ -62,6 +63,16 @@ describe('Wework sync request normalization', () => {
       signal.addEventListener('abort', () => resolve(), { once: true })
     })
     expect(signal.aborted).toBe(true)
+  })
+
+  test('reports the concrete network failure without exposing request URLs', () => {
+    const failure = new TypeError('fetch failed for https://cloud.example.com/private', {
+      cause: new Error('connect timeout'),
+    })
+
+    expect(describeWeworkSyncRequestFailure(failure)).toBe(
+      'Wework cloud request failed: fetch failed for [URL removed]: connect timeout'
+    )
   })
 
   test('renews and clears the download inactivity timeout', () => {

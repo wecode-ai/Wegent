@@ -26,6 +26,7 @@
 
 .collaboration-platform-sidebar {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
@@ -46,6 +47,9 @@
 }
 
 .collaboration-platform-sidebar-footer {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin-top: auto;
   padding-top: 12px;
 }
@@ -224,11 +228,15 @@
 
 .collaboration-workspace-tree {
   display: flex;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
   flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
   padding: 0 6px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -236,6 +244,9 @@
 
 .collaboration-workspace-group {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   flex: none;
   flex-direction: column;
   gap: 2px;
@@ -245,8 +256,10 @@
   position: relative;
   display: flex;
   width: 100%;
+  min-width: 0;
   height: 30px;
   min-height: 30px;
+  box-sizing: border-box;
   align-items: center;
   border-radius: 6px;
   color: rgb(var(--color-text-primary));
@@ -448,7 +461,10 @@
 
 .collaboration-platform-sidebar .collaboration-workspace-project-list {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
   gap: 2px;
 }
 
@@ -509,6 +525,9 @@
 
 .collaboration-workspace-project-row {
   position: relative;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .collaboration-project-row-actions {
@@ -741,6 +760,35 @@
   color: rgb(var(--color-text-muted));
   font-size: 13px;
   line-height: 1.5;
+}
+
+.collaboration-first-project-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.collaboration-first-project-actions > button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font: inherit;
+  cursor: pointer;
+}
+
+.collaboration-first-project-actions > button:hover {
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-first-project-actions > button > svg {
+  width: 16px;
+  height: 16px;
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-home-section {
@@ -1073,7 +1121,11 @@
 }
 
 .collaboration-resource-catalog-page {
+  display: flex;
   width: min(1180px, 100%);
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .collaboration-resource-collection-header {
@@ -1290,10 +1342,27 @@
 }
 
 .collaboration-resource-catalog-list {
-  overflow: hidden;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid rgb(var(--color-border));
   border-radius: 10px;
   background: rgb(var(--color-bg-base));
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.collaboration-resource-catalog-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.collaboration-resource-catalog-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgb(var(--color-text-muted) / 0.4);
+  background-clip: padding-box;
 }
 
 .collaboration-resource-catalog-list-header,
@@ -1326,6 +1395,9 @@
 }
 
 .collaboration-resource-catalog-list-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   min-height: 36px;
   border-bottom: 1px solid rgb(var(--color-border));
   color: rgb(var(--color-text-muted));
@@ -4134,9 +4206,19 @@
     padding: 18px;
   }
 
-  .collaboration-first-project-starter > button {
+  .collaboration-first-project-starter > button,
+  .collaboration-first-project-actions {
     grid-column: 1 / -1;
+  }
+
+  .collaboration-first-project-starter > button,
+  .collaboration-first-project-actions > button {
     min-height: 44px;
+  }
+
+  .collaboration-first-project-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .collaboration-home-attention-list > button {

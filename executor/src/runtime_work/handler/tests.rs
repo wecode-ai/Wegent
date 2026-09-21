@@ -13,6 +13,9 @@ mod local_history_tests;
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+#[path = "task_lookup_tests.rs"]
+mod task_lookup_tests;
+
 /// Restores one environment variable when a test finishes.
 struct ScalarEnv {
     key: &'static str,
@@ -3232,6 +3235,54 @@ fn cached_user_message_preserves_attachment_only_messages() {
 }
 
 #[test]
+fn user_message_presentation_matches_shared_reference_fixtures() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for fixture in fixtures {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "shared-reference",
+            "message": fixture["reference"],
+        }))
+        .unwrap();
+        let expected = match fixture["kind"].as_str() {
+            Some("skill") => json!([{
+                "token": format!("${}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            Some("plugin") => json!([{
+                "token": format!("@{}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            _ => json!([]),
+        };
+        assert_eq!(presentation["content"], fixture["reference"]);
+        assert_eq!(presentation["references"], expected, "{fixture}");
+    }
+}
+
+#[test]
+fn user_message_presentation_preserves_home_relative_skill_references() {
+    let content = "Use [$test-skill](~/.agents/skills/test-skill/SKILL.md)";
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "home-relative-skill",
+        "message": content,
+    }))
+    .expect("home-relative skills should produce presentation metadata");
+
+    assert_eq!(presentation["content"], content);
+    assert_eq!(
+        presentation["references"],
+        json!([{
+            "token": "$test-skill",
+            "href": "~/.agents/skills/test-skill/SKILL.md",
+        }])
+    );
+}
+
+#[test]
 fn user_message_presentation_preserves_visible_content_and_references() {
     let presentation = user_message_presentation(&json!({
         "clientUserMessageId": "runtime-local-pane-1",
@@ -3915,6 +3966,7 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
             after_cursor: None,
         },
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
     });
@@ -3924,6 +3976,53 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
     assert_eq!(response["turnNavigation"].as_array().unwrap().len(), 2);
     assert_eq!(response["turnNavigation"][0]["promptPreview"], "old prompt");
     assert_eq!(response["turnNavigation"][1]["promptPreview"], "new prompt");
+}
+
+#[test]
+fn conversation_context_transcript_omits_process_payloads() {
+    let messages = vec![
+        json!({
+            "id": "user-1",
+            "turnId": "turn-1",
+            "role": "user",
+            "content": "Investigate",
+            "attachments": [{"localPath": "/tmp/secret"}],
+        }),
+        json!({
+            "id": "assistant-1",
+            "turnId": "turn-1",
+            "role": "assistant",
+            "content": "Fixed",
+            "status": "done",
+            "blocks": [{"type": "tool", "toolOutput": "x".repeat(1_000_000)}],
+            "runtimeItems": [{"type": "command_execution", "output": "large"}],
+        }),
+    ];
+
+    let response = transcript_response(TranscriptResponseInput {
+        local_task_id: "task-1".to_owned(),
+        workspace_path: "/tmp/project".to_owned(),
+        runtime: "codex".to_owned(),
+        messages,
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: true,
+        conversation_context_only: true,
+        turn_item_source: TranscriptTurnItemSource::CodexItems,
+        turn_navigation: Vec::new(),
+    });
+
+    assert_eq!(response["messages"][0]["content"], "Investigate");
+    assert!(response["messages"][0].get("attachments").is_none());
+    assert_eq!(response["messages"][1]["content"], "Fixed");
+    assert!(response["messages"][1].get("blocks").is_none());
+    assert!(response["messages"][1].get("runtimeItems").is_none());
+    assert_eq!(response["turns"][0]["items"][1]["type"], "assistant_text");
+    assert_eq!(response["turns"][0]["items"][1]["content"], "Fixed");
 }
 
 #[test]
@@ -4888,6 +4987,11 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 #[tokio::test]
 async fn cached_task_list_uses_the_existing_runtime_work_store() {
     let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    let project_index = CodexGlobalProjectIndex::from_test_payload(
+        json!({ "electron-saved-workspace-roots": ["/tmp/cached-project"] })
+            .as_object()
+            .unwrap(),
+    );
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "local-task-1".to_owned(),
         runtime: "claude".to_owned(),
@@ -4898,7 +5002,11 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     });
 
     let response = handler
-        .list_tasks(&json!({ "preferCached": true }))
+        .list_tasks_with_project_index(
+            &json!({ "preferCached": true }),
+            &project_index,
+            Instant::now(),
+        )
         .await
         .expect("cached task list should be available");
     let tasks = response["workspaces"]
@@ -5976,4 +6084,31 @@ fn run_test_git(path: &Path, args: &[&str]) {
         args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn local_project_execution_never_inherits_backend_credentials() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".into(),
+            socket_url: String::new(),
+            auth_token: "cloud-token".into(),
+            runtime_auth_token: "runtime-token".into(),
+        }))),
+    );
+    let mut request = ExecutionRequest {
+        backend_url: Some("https://stale-backend.example.com".into()),
+        auth_token: Some("stale-token".into()),
+        runtime_auth_token: Some("stale-runtime-token".into()),
+        skill_identity_token: Some("stale-skill-token".into()),
+        ..Default::default()
+    };
+    request
+        .extra
+        .insert("origin".into(), json!({"projectStore":"local"}));
+    handler.apply_backend_connection(&mut request);
+    assert!(request.backend_url.is_none());
+    assert!(request.auth_token.is_none());
+    assert!(request.runtime_auth_token.is_none());
+    assert!(request.skill_identity_token.is_none());
 }

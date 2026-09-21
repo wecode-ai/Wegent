@@ -103,6 +103,7 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
+  origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
   historyUnavailable?: boolean;
   taskId?: string;
   workspacePath: string;
@@ -165,6 +166,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   afterCursor?: string | null;
   refresh?: boolean;
   includeFullContent?: boolean;
+  conversationContextOnly?: boolean;
   navigationOnly?: boolean;
 }
 
@@ -293,7 +295,7 @@ export interface Attachment {
   image_height?: number;
   ui_group_id?: string;
   ui_group_role?: "primary" | "companion";
-  ui_kind?: "appshot";
+  ui_kind?: "appshot" | "pasted-text";
 }
 
 export interface RequestUserInputResponseAnswer {

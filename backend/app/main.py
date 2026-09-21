@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
+from app.api.endpoints.health import probe_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -653,6 +654,11 @@ def create_app():
         lifespan=lifespan,
     )
 
+    # Keep frequent probes ahead of business routes. With an empty API prefix,
+    # the existing database-aware /health route must retain precedence.
+    if settings.API_PREFIX:
+        app.include_router(probe_router)
+
     logger = _logger
 
     # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
@@ -916,6 +922,8 @@ def create_app():
     # Include API routes
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
+    if not settings.API_PREFIX:
+        app.include_router(probe_router)
 
     # Mount MCP Server endpoints
     # These provide system-level tools (silent_exit) and knowledge base tools
@@ -943,13 +951,7 @@ def create_socketio_asgi_app():
     Create combined ASGI app with Socket.IO mounted.
 
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
-    and everything else to FastAPI.
-
-    Note: We use a custom ASGI router instead of socketio.ASGIApp because
-    socketio.ASGIApp does not properly forward non-Socket.IO WebSocket
-    connections to the other_asgi_app, returning 403 instead.
-    VNC WebSocket connections are handled directly in this router to bypass
-    FastAPI middleware issues with WebSocket upgrade in uvicorn.
+    and everything else through registered distribution wrappers to FastAPI.
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
@@ -976,45 +978,20 @@ def create_socketio_asgi_app():
     register_wework_runtime_namespace(sio)
     _logger.info("Wework runtime namespace registered during ASGI app creation")
 
-    # Create VNC interceptor wrapper for FastAPI
-    # This intercepts VNC WebSocket connections before they reach FastAPI
-    from wecode.api.vnc_websocket_middleware import create_vnc_interceptor_app
+    # Distribution-specific WebSocket handlers wrap FastAPI before Socket.IO.
+    # The Wecode distribution registers its VNC interceptor through
+    # ``register_asgi_wrapper`` while ``wecode.api`` is imported.
+    from app.core.asgi_extensions import wrap_asgi_app
 
-    vnc_interceptor_app = create_vnc_interceptor_app(_fastapi_app)
+    wrapped_app = wrap_asgi_app(_fastapi_app)
 
-    # Create Socket.IO ASGI app with the VNC interceptor as other_asgi_app
-    # This ensures Socket.IO handles /socket.io/* and everything else goes to vnc_interceptor_app
+    # Create combined ASGI app
     return socketio.ASGIApp(
         sio,
-        other_asgi_app=vnc_interceptor_app,
+        other_asgi_app=wrapped_app,
         socketio_path="/socket.io",
     )
 
 
 # Combined ASGI app (Socket.IO + FastAPI)
 app = create_socketio_asgi_app()
-
-
-# Root path (registered on FastAPI app)
-@_fastapi_app.get("/")
-async def root():
-    """
-    Root path, returns API information
-    """
-    return {
-        "name": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "api_prefix": settings.API_PREFIX,
-        "docs_url": f"{settings.API_PREFIX}/docs",
-        "socketio_path": "/socket.io",
-    }
-
-
-# Health check endpoint (registered on FastAPI app)
-@_fastapi_app.get("/health")
-async def health():
-    """
-    Health check endpoint for container orchestration and load balancers.
-    Returns a simple status indicating the service is running.
-    """
-    return {"status": "healthy"}

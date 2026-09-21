@@ -31,6 +31,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
+  findRuntimeTaskProjectWork,
   findRuntimeTaskWorkspace,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
@@ -190,13 +191,7 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options?: { fallbackProject?: ProjectWithTasks | null }
     ) => {
-      const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
-        item.deviceWorkspaces.some(
-          workspace =>
-            workspace.deviceId === address.deviceId &&
-            workspace.tasks.some(task => task.taskId === address.taskId)
-        )
-      )
+      const runtimeProjectWork = findRuntimeTaskProjectWork(state.runtimeWork, address)
       const project = runtimeProjectWork
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
@@ -351,12 +346,11 @@ export function useWorkbenchRuntimeTasks({
     async (address: RuntimeTaskAddress, title: string) => {
       const response = await executorClient.runtime.renameRuntimeTask({ address, title })
       if (!response.accepted) {
-        dispatch({ type: 'error_set', error: response.error || 'Failed to rename runtime task' })
-        return
+        throw new Error(response.error || 'Failed to rename runtime task')
       }
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists]
+    [executorClient, refreshWorkLists]
   )
 
   const archiveProjectConversations = useCallback(
@@ -441,23 +435,22 @@ export function useWorkbenchRuntimeTasks({
   const forkCurrentRuntimeTask = useCallback(
     async (
       target: RuntimeTaskForkTarget,
-      options: { lastTurnId?: string; title?: string } = {}
+      options: { source?: RuntimeTaskAddress; lastTurnId?: string; title?: string } = {}
     ) => {
-      if (!state.currentRuntimeTask) {
+      const source = options.source ?? state.currentRuntimeTask
+      if (!source) {
         dispatch({ type: 'error_set', error: 'No runtime task is selected' })
         return
       }
 
       try {
-        const sourceTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
-        const sourceWorkspace = findRuntimeTaskWorkspace(
-          state.runtimeWork,
-          state.currentRuntimeTask
-        )
+        const sourceTask = findRuntimeTask(state.runtimeWork, source)
+        const sourceWorkspace = findRuntimeTaskWorkspace(state.runtimeWork, source)
         const response = await executorClient.runtime.forkRuntimeTask({
-          source: state.currentRuntimeTask,
+          source,
           target,
-          ...options,
+          lastTurnId: options.lastTurnId,
+          title: options.title,
         })
         if (!response.accepted) {
           dispatch({ type: 'error_set', error: response.error || 'Failed to fork runtime task' })
@@ -479,8 +472,7 @@ export function useWorkbenchRuntimeTasks({
             response.target.workspacePath ||
             getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
           const modelSelection =
-            sourceTask.modelSelection ??
-            modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle)
+            sourceTask.modelSelection ?? modelSelectionFromRuntimeHandle(source.runtimeHandle)
           dispatch({
             type: 'runtime_task_optimistic_upserted',
             project: state.currentProject,
@@ -662,6 +654,7 @@ function runtimeTranscriptRequestKey(
     afterCursor: options.afterCursor ?? null,
     refresh: options.refresh ?? null,
     includeFullContent: options.includeFullContent ?? null,
+    conversationContextOnly: options.conversationContextOnly ?? null,
     navigationOnly: options.navigationOnly ?? null,
   })
 }

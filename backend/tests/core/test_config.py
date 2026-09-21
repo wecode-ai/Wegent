@@ -120,6 +120,20 @@ class TestSettings:
 
         assert build_settings_from_env().SCHEDULED_TASKS_ENABLED is False
 
+    def test_external_document_sync_defaults_to_disabled_and_reads_environment(
+        self, monkeypatch
+    ):
+        assert build_settings().EXTERNAL_DOC_SYNC_ENABLED is False
+
+        monkeypatch.setenv("EXTERNAL_DOC_SYNC_ENABLED", "true")
+
+        assert build_settings_from_env().EXTERNAL_DOC_SYNC_ENABLED is True
+
+    @pytest.mark.parametrize("invalid_value", [0, -1])
+    def test_wiki_tree_page_limit_must_be_positive(self, invalid_value):
+        with pytest.raises(ValidationError):
+            build_settings(WIKI_TREE_MAX_PAGES=invalid_value)
+
     def test_plugin_publication_active_request_limit_must_be_positive(self):
         """Prevent capacity configuration from disabling publication globally."""
         with pytest.raises(

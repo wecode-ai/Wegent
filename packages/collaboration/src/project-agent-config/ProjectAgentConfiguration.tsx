@@ -55,7 +55,9 @@ export function ProjectAgentConfiguration({
   translate: CollaborationTranslate;
 }) {
   const workspaceId = project.workspace_id;
-  const supportsAgentCreation = Boolean(host?.renderAgentCreator);
+  const supportsAgentCreation = Boolean(
+    host?.renderAgentCreator || host?.renderProjectAgentForm,
+  );
   const supportsExistingAgentSelection =
     host?.supportsExistingAgentSelection ?? true;
   const defaultMode: ProjectAgentMode = supportsExistingAgentSelection
@@ -257,12 +259,12 @@ export function ProjectAgentConfiguration({
     if (!agent) return;
     setError(null);
     try {
-      // Project rows keep their own copy of the resource name; workspace rows
-      // derive it from the resource, so a reload is enough there.
-      if (scope === "project" && saved.name && saved.name !== agent.name) {
+      // Project rows refresh their materialized Agent configuration after the
+      // backing resource changes; workspace rows derive it on read.
+      if (scope === "project") {
         await api.agents.update(project.id, agent.id, {
           version: agent.version,
-          name: saved.name,
+          ...(saved.name ? { name: saved.name } : {}),
         });
       }
       const nextAgents = await api.agents.list(project.id);
@@ -283,6 +285,18 @@ export function ProjectAgentConfiguration({
       onError();
       throw cause;
     }
+  }
+
+  async function refreshProjectAgents() {
+    const nextAgents = await api.agents.list(project.id);
+    setAgents(
+      nextAgents
+        .map(normalizeProjectAgent)
+        .filter((agent) => agent.status !== "archived"),
+    );
+    setComposerOpen(false);
+    setEditingAgentId(null);
+    onAgentsChange?.();
   }
 
   const dialogTitle = translate("todo.add_project_agent", "添加智能体");
@@ -521,7 +535,8 @@ export function ProjectAgentConfiguration({
                   </div>
                   {canManage ? (
                     <div className={styles.agentActions}>
-                      {canEditAgentResource && agent.wegentTeamId !== null ? (
+                      {host?.renderProjectAgentForm ||
+                      (canEditAgentResource && agent.wegentTeamId !== null) ? (
                         <button
                           className={styles.archiveButton}
                           data-testid={`project-agent-edit-${agent.id}`}
@@ -567,140 +582,158 @@ export function ProjectAgentConfiguration({
           )}
 
           {composerOpen
-            ? mode === "create" && host?.renderAgentCreator
-              ? host.renderAgentCreator({
+            ? host?.renderProjectAgentForm
+              ? host.renderProjectAgentForm({
+                  agentId: null,
+                  onClose: () => setComposerOpen(false),
+                  onSaved: refreshProjectAgents,
+                })
+              : mode === "create" && host?.renderAgentCreator
+                ? host.renderAgentCreator({
+                    namespace: creatorContext.namespace,
+                    onClose: () => {
+                      setMode(defaultMode);
+                      setComposerOpen(false);
+                    },
+                    onCreated: createAndAddAgent,
+                    workspaceName: creatorContext.name,
+                  })
+                : renderDialog(
+                    <div
+                      className={`${styles.composer} ${
+                        host ? styles.hostComposer : ""
+                      }`}
+                    >
+                      {host
+                        ? host.renderModePicker({
+                            onChange: setMode,
+                            options: [
+                              {
+                                description: translate(
+                                  "todo.choose_existing_agent_description",
+                                  "从我的智能体或空间共享智能体中选择",
+                                ),
+                                label: translate(
+                                  "todo.choose_existing_agent",
+                                  "已有智能体",
+                                ),
+                                testId: "project-agent-mode-existing",
+                                value: "existing",
+                              },
+                              ...(supportsAgentCreation
+                                ? [
+                                    {
+                                      description: translate(
+                                        "todo.create_agent_description",
+                                        "使用资源库智能体表单",
+                                      ),
+                                      label: translate(
+                                        "todo.create_agent",
+                                        "新建智能体",
+                                      ),
+                                      testId: "project-agent-mode-create",
+                                      value: "create" as const,
+                                    },
+                                  ]
+                                : []),
+                            ],
+                            value: mode,
+                          })
+                        : null}
+
+                      {workspaceAgents.length ? (
+                        <div className={styles.form}>
+                          <label className={styles.field}>
+                            {translate("todo.workspace_wegent_agent", "智能体")}
+                            {renderSelectControl({
+                              ariaLabel: translate(
+                                "todo.workspace_wegent_agent",
+                                "智能体",
+                              ),
+                              onChange: setSelectedTeamId,
+                              options: workspaceAgents.map((agent) => ({
+                                label: agent.name,
+                                value: String(agent.team_id),
+                              })),
+                              placeholder: translate(
+                                "todo.select_workspace_agent",
+                                "选择智能体",
+                              ),
+                              testId: "project-agent-wegent-team",
+                              value: selectedTeamId,
+                            })}
+                          </label>
+                          <div className={styles.formFooter}>
+                            <p className={styles.hint}>
+                              {translate(
+                                "todo.wegent_managed_environment_hint",
+                                "Wegent 托管执行使用智能体自带的 chat_shell，无需选择执行环境。",
+                              )}
+                            </p>
+                            {renderPrimaryAction({
+                              children: busy
+                                ? translate("common.creating", "创建中…")
+                                : scope === "workspace"
+                                  ? translate(
+                                      "todo.add_to_workspace",
+                                      "加入空间",
+                                    )
+                                  : translate(
+                                      "todo.add_to_project",
+                                      "加入项目",
+                                    ),
+                              disabled: !selectedTeam || busy,
+                              onClick: () => void addExistingAgent(),
+                              testId: "project-agent-wegent-create",
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <p
+                          className={styles.composerEmpty}
+                          data-testid="project-agent-wegent-empty"
+                        >
+                          <Info aria-hidden="true" />
+                          <span>
+                            {translate(
+                              "todo.no_workspace_wegent_agents",
+                              supportsAgentCreation
+                                ? "当前没有可添加的智能体，可以新建一个。"
+                                : "当前没有智能体。请先在资源库创建，或让空间管理员共享智能体。",
+                            )}
+                          </span>
+                        </p>
+                      )}
+                      {error ? (
+                        <p
+                          role="alert"
+                          className={styles.error}
+                          data-testid="project-agent-dialog-error"
+                        >
+                          {error}
+                        </p>
+                      ) : null}
+                    </div>,
+                  )
+            : null}
+
+          {editingAgent && host?.renderProjectAgentForm
+            ? host.renderProjectAgentForm({
+                agentId: editingAgent.id,
+                onClose: () => setEditingAgentId(null),
+                onSaved: refreshProjectAgents,
+              })
+            : editingAgent &&
+                editingAgent.wegentTeamId !== null &&
+                host?.renderAgentEditor
+              ? host.renderAgentEditor({
+                  agent: { teamId: editingAgent.wegentTeamId },
                   namespace: creatorContext.namespace,
-                  onClose: () => {
-                    setMode(defaultMode);
-                    setComposerOpen(false);
-                  },
-                  onCreated: createAndAddAgent,
+                  onClose: () => setEditingAgentId(null),
+                  onSaved: saveEditedAgent,
                   workspaceName: creatorContext.name,
                 })
-              : renderDialog(
-                  <div
-                    className={`${styles.composer} ${
-                      host ? styles.hostComposer : ""
-                    }`}
-                  >
-                    {host
-                      ? host.renderModePicker({
-                          onChange: setMode,
-                          options: [
-                            {
-                              description: translate(
-                                "todo.choose_existing_agent_description",
-                                "从我的智能体或空间共享智能体中选择",
-                              ),
-                              label: translate(
-                                "todo.choose_existing_agent",
-                                "已有智能体",
-                              ),
-                              testId: "project-agent-mode-existing",
-                              value: "existing",
-                            },
-                            ...(supportsAgentCreation
-                              ? [
-                                  {
-                                    description: translate(
-                                      "todo.create_agent_description",
-                                      "使用资源库智能体表单",
-                                    ),
-                                    label: translate(
-                                      "todo.create_agent",
-                                      "新建智能体",
-                                    ),
-                                    testId: "project-agent-mode-create",
-                                    value: "create" as const,
-                                  },
-                                ]
-                              : []),
-                          ],
-                          value: mode,
-                        })
-                      : null}
-
-                    {workspaceAgents.length ? (
-                      <div className={styles.form}>
-                        <label className={styles.field}>
-                          {translate("todo.workspace_wegent_agent", "智能体")}
-                          {renderSelectControl({
-                            ariaLabel: translate(
-                              "todo.workspace_wegent_agent",
-                              "智能体",
-                            ),
-                            onChange: setSelectedTeamId,
-                            options: workspaceAgents.map((agent) => ({
-                              label: agent.name,
-                              value: String(agent.team_id),
-                            })),
-                            placeholder: translate(
-                              "todo.select_workspace_agent",
-                              "选择智能体",
-                            ),
-                            testId: "project-agent-wegent-team",
-                            value: selectedTeamId,
-                          })}
-                        </label>
-                        <div className={styles.formFooter}>
-                          <p className={styles.hint}>
-                            {translate(
-                              "todo.wegent_managed_environment_hint",
-                              "Wegent 托管执行使用智能体自带的 chat_shell，无需选择执行环境。",
-                            )}
-                          </p>
-                          {renderPrimaryAction({
-                            children: busy
-                              ? translate("common.creating", "创建中…")
-                              : scope === "workspace"
-                                ? translate("todo.add_to_workspace", "加入空间")
-                                : translate("todo.add_to_project", "加入项目"),
-                            disabled: !selectedTeam || busy,
-                            onClick: () => void addExistingAgent(),
-                            testId: "project-agent-wegent-create",
-                          })}
-                        </div>
-                      </div>
-                    ) : (
-                      <p
-                        className={styles.composerEmpty}
-                        data-testid="project-agent-wegent-empty"
-                      >
-                        <Info aria-hidden="true" />
-                        <span>
-                          {translate(
-                            "todo.no_workspace_wegent_agents",
-                            supportsAgentCreation
-                              ? "当前没有可添加的智能体，可以新建一个。"
-                              : "当前没有智能体。请先在资源库创建，或让空间管理员共享智能体。",
-                          )}
-                        </span>
-                      </p>
-                    )}
-                    {error ? (
-                      <p
-                        role="alert"
-                        className={styles.error}
-                        data-testid="project-agent-dialog-error"
-                      >
-                        {error}
-                      </p>
-                    ) : null}
-                  </div>,
-                )
-            : null}
-
-          {editingAgent &&
-          editingAgent.wegentTeamId !== null &&
-          host?.renderAgentEditor
-            ? host.renderAgentEditor({
-                agent: { teamId: editingAgent.wegentTeamId },
-                namespace: creatorContext.namespace,
-                onClose: () => setEditingAgentId(null),
-                onSaved: saveEditedAgent,
-                workspaceName: creatorContext.name,
-              })
-            : null}
+              : null}
         </>
       )}
       {error && !composerOpen ? (

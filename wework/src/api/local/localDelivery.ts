@@ -458,7 +458,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         name: string
         runtime: 'codex' | 'claude_code'
-        wegentTeamId?: number | null
         model?: string | null
         capabilityDescription?: string
         systemPrompt?: string
@@ -503,7 +502,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         version: number
         runtime?: 'codex' | 'claude_code'
-        wegentTeamId?: number | null
         name?: string
         model?: string | null
         capabilityDescription?: string
@@ -1037,6 +1035,33 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         task_id: itemId,
         todo,
+      })
+      taskProjects.set(record.id, projectId)
+      return localTask(record)
+    },
+    async assignLoopItem(
+      projectId: CloudProjectId,
+      itemId: string,
+      data: {
+        version: number
+        assigneeType: 'user' | 'agent' | 'team'
+        assigneeId: string
+        notifyAssignee?: boolean
+      }
+    ) {
+      const assignment =
+        data.assigneeType === 'user'
+          ? { assignee_user_id: Number(data.assigneeId) }
+          : data.assigneeType === 'agent'
+            ? { assignee_agent_id: data.assigneeId }
+            : { assignee_group_id: data.assigneeId }
+      const record = await request<LocalLoopItemRecord>('todos.update', {
+        project_id: projectId,
+        task_id: itemId,
+        todo: {
+          version: data.version,
+          ...assignment,
+        },
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)

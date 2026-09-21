@@ -18,6 +18,7 @@ import {
   webContents,
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
+  type Session,
   type WebContents,
 } from 'electron'
 import electronUpdater from 'electron-updater'
@@ -87,7 +88,6 @@ import {
 } from './host/image-context-actions.js'
 import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
-import { VncSessionManager } from './host/vnc-session-manager.js'
 import {
   prepareDesktopComponents,
   shouldStageDesktopComponentUpdates,
@@ -104,6 +104,10 @@ import {
 } from './runtime/brand-runtime-environment.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
+import {
+  isTrustedIsolatedSurfaceAttachment,
+  loadTrustedIsolatedSurfacePolicies,
+} from './host/isolated-surface-security.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
@@ -128,6 +132,7 @@ import { isEffectivePackagedApplication } from './host/application-packaging-mod
 import {
   createWeworkSyncDownloadTimeout,
   createWeworkSyncFetchInit,
+  describeWeworkSyncRequestFailure,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
   readWeworkSyncResponse,
@@ -141,6 +146,10 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
+const isolatedSurfacePreloadPath = resolve(packageRoot, 'dist/isolated-surface-preload.cjs')
+const isolatedSurfacePolicies = loadTrustedIsolatedSurfacePolicies(
+  resolve(packageRoot, 'dist/isolated-surfaces.json')
+)
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
@@ -203,7 +212,6 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
-let vncSessions: VncSessionManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -277,7 +285,10 @@ const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspa
   : []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
-  Array<{ label: string; partition: string }>
+  Array<
+    | { kind: 'browser'; label: string; partition: string }
+    | { kind: 'isolated-surface'; partition: Session }
+  >
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
@@ -410,15 +421,21 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     void shell.openExternal(url)
   })
   contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const isolatedSurface = isTrustedIsolatedSurfaceAttachment(
+      params as Record<string, unknown>,
+      dshUrl,
+      isolatedSurfacePolicies
+    )
     const route = embeddedBrowserRouteFromParams(params as Record<string, unknown>)
-    console.log('[embedded-browser] webview attachment requested', {
+    console.log('[webview] attachment requested', {
       ownerId: contents.id,
       partition: params.partition ?? null,
       routeLabel: route?.label ?? null,
       src: params.src ?? null,
+      type: isolatedSurface ? 'isolated-surface' : 'browser',
     })
-    if (!route) {
-      console.warn('[embedded-browser] rejected unknown webview attachment', {
+    if (!route && !isolatedSurface) {
+      console.warn('[webview] rejected unknown attachment', {
         ownerId: contents.id,
         partition: params.partition ?? null,
         src: params.src ?? null,
@@ -427,11 +444,22 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       return
     }
     const queue = pendingEmbeddedBrowserAttachments.get(contents.id) ?? []
-    queue.push({ label: route.label, partition: route.routePartition })
+    queue.push(
+      isolatedSurface
+        ? { kind: 'isolated-surface', partition: contents.session }
+        : { kind: 'browser', label: route!.label, partition: route!.routePartition }
+    )
     pendingEmbeddedBrowserAttachments.set(contents.id, queue)
-    params.partition = EMBEDDED_BROWSER_PARTITION
-    webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    webPreferences.preload = browserAnnotationPreloadPath
+    if (isolatedSurface) {
+      delete params.partition
+      webPreferences.session = contents.session
+      webPreferences.preload = isolatedSurfacePreloadPath
+      webPreferences.backgroundThrottling = false
+    } else {
+      params.partition = EMBEDDED_BROWSER_PARTITION
+      webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+      webPreferences.preload = browserAnnotationPreloadPath
+    }
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -449,6 +477,22 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     const queue = pendingEmbeddedBrowserAttachments.get(contents.id)
     const pending = queue?.shift()
     if (queue?.length === 0) pendingEmbeddedBrowserAttachments.delete(contents.id)
+    if (pending?.kind === 'isolated-surface') {
+      if (guestContents.session !== pending.partition) {
+        console.warn('[isolated-surface] rejected attached webview with an unexpected session', {
+          guestId: guestContents.id,
+          ownerId: contents.id,
+        })
+        guestContents.close()
+        return
+      }
+      console.log('[isolated-surface] isolated Chromium renderer attached', {
+        guestId: guestContents.id,
+        ownerId: contents.id,
+      })
+      secureDshContents(guestContents, dshUrl)
+      return
+    }
     if (
       !pending ||
       !embeddedBrowser ||
@@ -458,7 +502,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
         guestId: guestContents.id,
         hasBrowserManager: Boolean(embeddedBrowser),
         ownerId: contents.id,
-        pendingLabel: pending?.label ?? null,
+        pendingLabel: pending?.kind === 'browser' ? pending.label : null,
         sessionMatches: guestContents.session === session.fromPartition(EMBEDDED_BROWSER_PARTITION),
       })
       guestContents.close()
@@ -1272,8 +1316,6 @@ async function shutdown(): Promise<void> {
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
-  const vnc = vncSessions
-  vncSessions = null
   const controlBridge = desktopControlBridge
   desktopControlBridge = null
   const computerUseService = computerUse
@@ -1284,7 +1326,6 @@ async function shutdown(): Promise<void> {
     browserBridge?.stop(),
     controlBridge?.stop(),
     computerUseService?.stop(),
-    vnc?.stop(),
     development?.stop(),
     desktopRuntime?.stop(),
   ])
@@ -1361,11 +1402,6 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory,
     logDirectories: runtimeLogDirectories,
   })
-  const vncAssets = app.isPackaged
-    ? join(process.resourcesPath, 'vnc')
-    : resolve(packageRoot, '..', 'wecode', 'features', 'vnc', 'assets')
-  vncSessions = new VncSessionManager(vncAssets)
-  await vncSessions.start()
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
@@ -1483,7 +1519,6 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
-          vnc: vncSessions,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
@@ -1495,14 +1530,22 @@ async function configureDesktopRuntime(): Promise<void> {
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
             const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
             try {
-              const response = await fetch(
-                `${apiBaseUrl}${path}`,
-                await createWeworkSyncFetchInit(
-                  request,
-                  `${credential.tokenType} ${credential.accessToken}`,
-                  downloadTimeout?.signal
+              let response: Response
+              try {
+                response = await fetch(
+                  `${apiBaseUrl}${path}`,
+                  await createWeworkSyncFetchInit(
+                    request,
+                    `${credential.tokenType} ${credential.accessToken}`,
+                    downloadTimeout?.signal
+                  )
                 )
-              )
+              } catch (error) {
+                throw new CloudCredentialError(
+                  'request_failed',
+                  describeWeworkSyncRequestFailure(error)
+                )
+              }
               const body = await readWeworkSyncResponse(
                 response,
                 request.downloadPath,

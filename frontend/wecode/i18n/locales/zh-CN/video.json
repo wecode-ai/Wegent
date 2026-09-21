@@ -1,4 +1,12 @@
 {
+  "multiStyle": {
+    "title": "AI剪辑Vlog · 多风格视频",
+    "variant": "风格 {{index}}",
+    "planning": "正在规划三种风格…",
+    "processing": "生成中…",
+    "failed": "生成失败，其他已完成的视频仍可查看",
+    "renderRequest": "请使用 rerender_style_video，sub_task_id 为 {{subTaskId}}，按该风格已保存的最新时间线重新渲染，不重新生成其他风格。"
+  },
   "entity_regenerate_success": "图片重新生成成功",
   "entity_regenerate_failed": "重新生成失败，请重试",
   "image_generate_success": "图片生成成功",

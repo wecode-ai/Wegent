@@ -30,10 +30,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.user import User
 from app.services.knowledge.external_document_providers import (
+    DirectExternalDocumentImportProvider,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
-    ExternalDocumentProvider,
 )
 from shared.telemetry.decorators import set_span_attribute, trace_async
 
@@ -423,7 +423,7 @@ def _render_qa_block(row: ProjectedFAQ) -> list[str]:
     ]
 
 
-class XiaoxinExternalDocumentProvider(ExternalDocumentProvider):
+class XiaoxinExternalDocumentProvider(DirectExternalDocumentImportProvider):
     """External-document adapter for the fixed Xiaoxin HR snapshot."""
 
     provider_id = XIAOXIN_PROVIDER_ID

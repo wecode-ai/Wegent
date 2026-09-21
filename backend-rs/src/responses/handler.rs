@@ -126,8 +126,8 @@ async fn get_response(
     ]);
     let current_user = match get_current_user_flexible(
         &state.auth,
+        state.user_reader.as_ref(),
         &state.mysql,
-        state.redis.as_ref(),
         &headers.view(),
     )
     .await
@@ -211,9 +211,14 @@ async fn load_response(
     let _team = repo::resolve_team(mysql, &task, user_id)
         .await
         .map_err(internal)?;
-    let _ = super::auth::cached_user_by_id(state.redis.as_ref(), mysql, i64::from(task.user_id))
+    let _ = super::auth::cached_user_by_id(state.user_reader.as_ref(), i64::from(task.user_id))
         .await
-        .map_err(internal)?;
+        .map_err(|error| {
+            tracing::error!(?error, "responses user reader dependency failure");
+            internal(brz_mysql::MysqlError::InvalidQuery {
+                reason: "user reader dependency failure".to_owned(),
+            })
+        })?;
 
     // `subtask_store.list_by_task_for_user_ordered`.
     let subtasks = repo::list_subtasks_for_user_ordered(mysql, task_id, user_id)

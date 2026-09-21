@@ -30,6 +30,14 @@ from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
 
+# Internal WeCode models share Base; register them here so every worker creates
+# their tables in the first create_all, independent of test import ordering.
+# Open-source trees ship without the wecode package.
+try:
+    import wecode.models  # noqa: F401
+except ImportError:  # pragma: no cover - open-source builds without wecode
+    pass
+
 
 @pytest.fixture(scope="session", autouse=True)
 def use_fast_test_password_hashing() -> Generator[None, None, None]:
