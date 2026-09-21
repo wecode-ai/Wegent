@@ -1290,6 +1290,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
             "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
+            "turns": [],
             "messages": [
                 {
                     "id": "m1",
@@ -1357,6 +1358,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
             "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
+            "turns": [],
             "messages": [
                 {
                     "id": "assistant-1",
@@ -1524,6 +1526,7 @@ async def test_runtime_transcript_dispatches_full_content_payload(
             "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
+            "turns": [],
             "messages": [],
             "fullContent": True,
         }

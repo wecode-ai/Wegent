@@ -889,7 +889,9 @@ export function createHybridWorkbenchServices(
     async getRuntimeTranscript(data: RuntimeTranscriptRequest) {
       const route = isLocalDeviceId(data.deviceId) ? 'local' : 'cloud'
       try {
-        const response = await routeByAddress(data).getRuntimeTranscript(data)
+        const response = await (
+          data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+        ).getRuntimeTranscript(data)
         const snapshot = runtimeExecutionSnapshot(data, response)
         if (
           snapshot &&

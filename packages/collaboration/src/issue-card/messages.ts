@@ -19,6 +19,7 @@ export const boardCardMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'board.group.choose': '选择分组字段',
     'board.group.empty': '没有匹配字段',
     'board.card.assignee': '负责人',
+    'board.card.created_at': '创建时间',
     'board.card.unassigned': '未指定',
     'board.card.priority.none': '普通',
     'board.card.priority.low': '低',
@@ -44,6 +45,7 @@ export const boardCardMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'board.group.choose': 'Choose grouping field',
     'board.group.empty': 'No matching fields',
     'board.card.assignee': 'Assignee',
+    'board.card.created_at': 'Created',
     'board.card.unassigned': 'Unassigned',
     'board.card.priority.none': 'Normal',
     'board.card.priority.low': 'Low',
@@ -57,6 +59,7 @@ export function createIssueBoardCardLabels(
 ): CollaborationIssueCardLabels {
   return {
     assignee: t('board.card.assignee'),
+    createdAt: t('board.card.created_at'),
     unassigned: t('board.card.unassigned'),
     priority: {
       none: t('board.card.priority.none'),

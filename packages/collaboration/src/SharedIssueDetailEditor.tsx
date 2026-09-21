@@ -1,4 +1,7 @@
 import {
+  collaborationIssueCardPriorityClasses as priorityBadgeClasses,
+} from './issue-card/priorityBadgeClasses'
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -212,13 +215,6 @@ const columnDotClasses: Record<string, string> = {
   in_progress: "bg-amber-500",
   in_review: "bg-violet-500",
   completed: "bg-emerald-500",
-};
-const priorityBadgeClasses: Record<CollaborationPriority, string> = {
-  none: "bg-muted text-text-secondary",
-  low: "bg-muted text-text-secondary",
-  medium: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  high: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  urgent: "bg-red-500/10 text-red-600 dark:text-red-400",
 };
 const memberAvatarClasses = [
   "bg-gradient-to-br from-indigo-400 to-indigo-500",

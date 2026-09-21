@@ -16,7 +16,7 @@ import { collaborationTestIds } from './testIds'
 import { CollaborationSettings } from './CollaborationSettings'
 import { IssueCreate, IssueDetail } from './IssueDetail'
 import { IssueDeleteDialog } from './issue-delete'
-import { CollaborationProjectViewShell } from './project-shell'
+import { CollaborationProjectViewShell, ProjectLoadingSkeleton } from './project-shell'
 import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
 import { MyWorkAdapter } from './web-adapter/MyWorkAdapter'
 import {
@@ -63,6 +63,7 @@ export interface CollaborationIssueDetailRenderContext {
 interface CollaborationAppProps {
   api: SharedWorkspaceApi
   host: CollaborationHostAdapter
+  initialProject?: CollaborationProject
   locale?: CollaborationLocale
   pollIntervalMs?: number
   createProjectRequestKey?: number
@@ -113,6 +114,7 @@ function projectStatuses(
 export function CollaborationApp({
   api,
   host,
+  initialProject,
   locale = 'zh-CN',
   pollIntervalMs = 15_000,
   createProjectRequestKey = 0,
@@ -136,6 +138,7 @@ export function CollaborationApp({
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
+    initialProject,
     messages,
     myWorkEnabled: host.capabilities.myWork === true,
     pollIntervalMs,
@@ -161,7 +164,7 @@ export function CollaborationApp({
   const { assignmentsByIssueId, replaceIssueAssignments } = useIssueAssignmentsByIssueId({
     assignmentsApi: api.assignments,
     issues,
-    enabled: project !== null,
+    enabled: project !== null && host.location.view === 'table',
   })
   useEffect(() => {
     host.onProjectsChange?.(projects)
@@ -221,9 +224,11 @@ export function CollaborationApp({
 
   if (loading) {
     return (
-      <div className="collaboration-loading" data-testid={collaborationTestIds.root}>
-        {messages.loading}
-      </div>
+      <ProjectLoadingSkeleton
+        testId={collaborationTestIds.root}
+        label={messages.loading}
+        layout={host.location.projectId && host.location.view === 'board' ? 'board' : 'list'}
+      />
     )
   }
 

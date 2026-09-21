@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { CollaborationApp } from "../CollaborationApp";
+import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
 import { canAccessCollaborationProjectView } from "../permissions";
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
@@ -253,6 +254,8 @@ const platformMessages = {
     ownerHint: "决定空间内新建智能体和其他资源的默认归属。",
     workspaceSettingsHint: "管理空间基本信息、成员和协作资源。",
     loadFailed: "加载协作空间失败",
+    navigationLoadFailed: "部分空间或项目加载失败，列表可能不完整。",
+    retryNavigation: "重试",
     searchSpaces: "搜索空间",
     firstUseProgress: "开始协作",
     firstProjectTitle: "创建第一个项目",
@@ -472,6 +475,9 @@ const platformMessages = {
     workspaceSettingsHint:
       "Manage the workspace profile, members, and collaboration resources.",
     loadFailed: "Failed to load collaboration spaces",
+    navigationLoadFailed:
+      "Some spaces or projects could not load. The list may be incomplete.",
+    retryNavigation: "Retry",
     searchSpaces: "Search spaces",
     firstUseProgress: "Getting started",
     firstProjectTitle: "Create your first project",
@@ -588,6 +594,8 @@ function CollaborationPlatformNavigation({
   workspaces,
   workspaceNavigationContext,
   projects,
+  navigationIncomplete,
+  onRetryNavigation,
   onCreateWorkspace,
   onNewConversation,
   onArchiveProject,
@@ -598,6 +606,8 @@ function CollaborationPlatformNavigation({
   workspaces: CollaborationWorkspace[];
   workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
   projects: CollaborationProject[];
+  navigationIncomplete: boolean;
+  onRetryNavigation(): Promise<void>;
   onCreateWorkspace(): void;
   onNewConversation(projectId: string): void;
   onArchiveProject(project: CollaborationProject): void;
@@ -623,6 +633,7 @@ function CollaborationPlatformNavigation({
       ),
   );
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
+  const [retryingNavigation, setRetryingNavigation] = useState(false);
   const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
@@ -839,6 +850,31 @@ function CollaborationPlatformNavigation({
           </button>
         </div>
       </div>
+      {navigationIncomplete ? (
+        <div
+          className="collaboration-navigation-error"
+          role="alert"
+          data-testid="collaboration-navigation-error"
+        >
+          <span>{messages.navigationLoadFailed}</span>
+          <button
+            type="button"
+            className="collaboration-link-button"
+            data-testid="collaboration-navigation-retry"
+            disabled={retryingNavigation}
+            onClick={async () => {
+              setRetryingNavigation(true);
+              try {
+                await onRetryNavigation();
+              } finally {
+                setRetryingNavigation(false);
+              }
+            }}
+          >
+            {messages.retryNavigation}
+          </button>
+        </div>
+      ) : null}
       {fullSidebar || workspacesExpanded ? (
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
@@ -3305,9 +3341,14 @@ export function CollaborationPlatformApp({
   let content: React.ReactNode;
   if (state.loading) {
     content = (
-      <div className="collaboration-loading">
-        {translate("common.loading", "正在加载…")}
-      </div>
+      <ProjectLoadingSkeleton
+        label={translate("common.loading", "正在加载…")}
+        layout={
+          host.location.projectId && host.location.projectView === "board"
+            ? "board"
+            : "list"
+        }
+      />
     );
   } else if (state.error) {
     content = (
@@ -3331,6 +3372,7 @@ export function CollaborationPlatformApp({
       ) : (
         <CollaborationApp
           api={scopedApi}
+          initialProject={selectedProject ?? undefined}
           locale={locale}
           showProjectBack={false}
           host={{
@@ -3790,6 +3832,8 @@ export function CollaborationPlatformApp({
       workspaces={state.workspaces}
       workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
+      navigationIncomplete={state.navigationIncomplete}
+      onRetryNavigation={commands.reload}
       onCreateWorkspace={() => {
         setCreateProjectAfterWorkspace(false);
         setWorkspaceDialogOpen(true);

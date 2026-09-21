@@ -541,6 +541,7 @@ export function WeworkSharedProject({
       <div className="min-w-0 flex-1">
         <CollaborationApp
           api={scopedApi}
+          initialProject={project}
           host={projectHost}
           locale={locale}
           showProjectBack={false}

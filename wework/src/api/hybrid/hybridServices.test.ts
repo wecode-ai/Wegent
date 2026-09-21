@@ -157,6 +157,7 @@ const mocks = vi.hoisted(() => {
     deviceApi: cloudDeviceApi,
     runtimeWorkApi: {
       materializeRuntimeTask: cloudMaterializeRuntimeTask,
+      getRuntimeTranscript: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
@@ -491,6 +492,15 @@ describe('execution status write-back on history reads', () => {
     })
     await createServices().runtimeWorkApi!.getRuntimeTranscript(address)
     expect(sync).not.toHaveBeenCalled()
+  })
+
+  it('routes a bound project transcript through project authorization even for a local device alias', async () => {
+    const request = { ...address, projectSession: { projectId: 'project-1', issueId: 'issue-1' } }
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockClear()
+    await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
   })
 
   it('reports a completed local turn to durable cloud storage after reading history', async () => {

@@ -139,7 +139,7 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
     act(() => root.unmount())
     container.remove()
   })
-  async function mount(show = true) {
+  async function mount(show = true, status = run.status) {
     await act(async () =>
       root.render(
         <BrowserTaskDrafts runtime={runtime}>
@@ -152,7 +152,7 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
                 project={project}
                 issue={issue}
                 agents={[{ id: 'agent-1', name: 'AI', runtime: 'codex', status: 'active' }]}
-                messages={[user, run]}
+                messages={[user, { ...run, status }]}
                 onMessages={() => {}}
                 canComment
                 translate={translate}
@@ -185,6 +185,24 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
       ).click()
     )
   }
+  it('dispatches through the project service without subscribing to another users personal device', async () => {
+    client.executeTaskComment = vi.fn().mockResolvedValue([run])
+    vi.mocked(runtime.work.listRuntimeWork).mockRejectedValue(
+      new Error('Personal catalog unavailable')
+    )
+    vi.mocked(runtime.subscribe).mockRejectedValue(new Error('Device access denied'))
+    await mount(true, 'completed')
+    await send('Continue this card')
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: project.id,
+      taskId: issue.id,
+      triggerMessageId: 'reply',
+      attachmentIds: [],
+    })
+    expect(runtime.subscribe).not.toHaveBeenCalled()
+    expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
+  })
+
   it('keeps the PC queue while busy and continues exactly its original session when live runtime settles', async () => {
     await mount()
     await send('Continue this card')

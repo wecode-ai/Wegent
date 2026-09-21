@@ -649,7 +649,10 @@ describe('AiChatModal', () => {
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-send-ephemeral', 'no')
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      ...address,
+      projectSession: { projectId: String(project.id), issueId: task.id },
+    })
   })
 
   it('separates returning to the Issue from closing the unified sidebar', async () => {

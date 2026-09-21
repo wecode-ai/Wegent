@@ -254,6 +254,7 @@ function BrowserIssueDetail({
         conversation={
           selectedConversation && api.runtime ? (
             <IssueTaskConversation
+              projectStore={project.project_store}
               key={selectedConversation.id}
               binding={selectedConversation}
               issueId={issue.id}
@@ -345,7 +346,20 @@ function BrowserIssueDetail({
       </IssueConversationDrawers>
       {selectedExecution && api.runtime ? (
         <IssueExecutionDetails
-          target={selectedExecution}
+          target={
+            project.project_store === 'backend'
+              ? {
+                  ...selectedExecution,
+                  address: {
+                    ...selectedExecution.address,
+                    projectSession: {
+                      projectId: String(project.id),
+                      issueId: issue.id,
+                    },
+                  },
+                }
+              : selectedExecution
+          }
           runtime={api.runtime}
           translate={editorTranslate}
           onClose={closeExecution}

@@ -1,6 +1,10 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import enCommon from '@/i18n/locales/en/common.json'
+import zhCommon from '@/i18n/locales/zh-CN/common.json'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -376,7 +380,7 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
     action: { type: string; message?: unknown }
   ) => (action.type === 'user_added' && action.message ? [action.message] : []),
   beginRuntimeConversationHydration: vi.fn(),
-  completeRuntimeConversationHydration: vi.fn(),
+  completeRuntimeConversationHydration: () => mocks.conversationMessages,
   getRuntimeConversationMessages: () => mocks.conversationMessages,
   getRuntimeConversationTurns: () => [],
   removeRuntimeConversationTurn: () => [],
@@ -511,6 +515,93 @@ describe('TemporaryChatPanel', () => {
     )
     expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
   })
+
+  it('shows a history error instead of an empty conversation and retries the bound address', async () => {
+    const address = {
+      deviceId: 'admin-cloud',
+      taskId: 'bound-session',
+      projectSession: { projectId: 'p', issueId: 'i' },
+    }
+    mocks.loadRuntimeTranscriptForPane.mockRejectedValueOnce(new Error('Original executor offline'))
+    mocks.loadRuntimeTranscriptForPane.mockResolvedValue({
+      messages: [],
+      turns: [],
+      running: false,
+    })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="failed-history"
+        sendEphemeral={false}
+        emptyStateText="Actually empty"
+      />
+    )
+    expect(screen.getByTestId('temporary-conversation-loading')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Original executor offline')
+    )
+    expect(screen.queryByText('Actually empty')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('temporary-conversation-retry'))
+    await waitFor(() => expect(screen.getByText('Actually empty')).toBeInTheDocument())
+    expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(address)
+  })
+
+  it.each([
+    {
+      locale: 'zh-CN',
+      title: '暂时无法加载会话',
+      detail: '执行设备已离线，请恢复设备连接后重试。',
+      retry: '重试',
+      latest: '最近一条',
+    },
+    {
+      locale: 'en',
+      title: 'Conversation is temporarily unavailable',
+      detail: 'The execution device is offline. Reconnect the device and try again.',
+      retry: 'Retry',
+      latest: 'Latest turn',
+    },
+  ])(
+    'localizes the offline conversation and recovery controls in $locale',
+    async ({ locale, title, detail, retry, latest }) => {
+      const i18n = createInstance()
+      await i18n.init({
+        lng: locale,
+        resources: { en: { common: enCommon }, 'zh-CN': { common: zhCommon } },
+        defaultNS: 'common',
+        interpolation: { escapeValue: false },
+      })
+      const offlineError = "device_offline: Device 'app-record-148' is offline"
+      mocks.loadRuntimeTranscriptForPane.mockRejectedValueOnce(new Error(offlineError))
+      const restore = vi.fn()
+      render(
+        <I18nextProvider i18n={i18n}>
+          <TemporaryChatPanel
+            currentProject={null}
+            source={address}
+            initialAddress={address}
+            instanceId={`offline-${locale}`}
+            sendEphemeral={false}
+            expanded
+            onRestoreConversation={restore}
+          />
+        </I18nextProvider>
+      )
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent(title)
+      expect(alert).toHaveTextContent(detail)
+      expect(alert).not.toHaveTextContent('activity.')
+      expect(alert).not.toHaveTextContent(offlineError)
+      expect(screen.getByTestId('temporary-conversation-retry')).toHaveTextContent(retry)
+      await userEvent.click(screen.getByRole('button', { name: latest }))
+      expect(restore).toHaveBeenCalledOnce()
+      await userEvent.click(screen.getByRole('button', { name: retry }))
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+      expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(address)
+    }
+  )
 
   it('owns its plugin guide independently from the main workbench', async () => {
     const address = { deviceId: 'device-1', taskId: 'side-trial-task' }

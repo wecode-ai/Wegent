@@ -2,7 +2,7 @@ import { useIssueBoardCardDrag } from './useIssueBoardCardDrag'
 import { useCollaborationPortalTheme } from '../theme'
 import * as Popover from '@radix-ui/react-popover'
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Archive, Ellipsis, ListTodo, X } from 'lucide-react'
+import { Archive, Ellipsis, ListTodo, MessagesSquare, X } from 'lucide-react'
 import { CollaborationIssueCard, type CollaborationIssueCardProps } from './CollaborationIssueCard'
 import { IssueCardGoalSummary } from './IssueCardTaskSummary'
 import { IssueBoardWorkflowStage, IssueExecutionConfigurationBadge } from './IssueBoardCardContent'
@@ -22,6 +22,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   | 'menu'
   | 'titleTrailing'
   | 'afterContent'
+  | 'summary'
   | 'detailFlushBottom'
   | 'renderAssigneeTooltip'
   | 'item'
@@ -107,12 +108,9 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   const showWorkflowRow = Boolean(
     workflowNode || (needsExecutionConfiguration && onConfigureExecution)
   )
-  const previewAvailable =
-    !previewDisabled &&
-    !drag.boardDragging &&
-    !dragging &&
-    progressTaskBindings.length > 0 &&
-    Boolean(renderTaskSummary)
+  const hasProgress =
+    item.can_view_detail !== false && progressTaskBindings.length > 0 && Boolean(renderTaskSummary)
+  const previewAvailable = hasProgress && !previewDisabled && !drag.boardDragging && !dragging
   const previewOpen = previewAvailable && requestedPreviewOpen
   if (!previewAvailable && localPreviewOpen) setLocalPreviewOpen(false)
   useEffect(() => {
@@ -134,7 +132,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       labels={labels}
       agentNames={agentNames}
       renderAssigneeTooltip={(label, child) => (
-        <Tooltip label={label} align="end" className="ml-auto min-w-0 shrink">
+        <Tooltip label={label} align="start" className="min-w-0 max-w-full">
           {child}
         </Tooltip>
       )}
@@ -152,6 +150,15 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       afterContent={
         needsExecutionConfiguration ? (
           <IssueExecutionConfigurationBadge itemId={item.id} translate={t} />
+        ) : null
+      }
+      summary={
+        hasProgress ? (
+          <div data-testid={`cloud-todo-card-tasks-${item.id}`} className="min-w-0">
+            {progressTaskBindings.map(binding => (
+              <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
+            ))}
+          </div>
         ) : null
       }
       cardRef={drag.setNodeRef}
@@ -172,7 +179,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                   event.stopPropagation()
                   setMenuOpen(current => !current)
                 }}
-                className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-muted hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
                 aria-label={t('todo.project_actions', '项目操作')}
                 aria-expanded={menuOpen}
               >
@@ -236,26 +243,24 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
               />
             </span>
           ) : null}
-          {progressTaskBindings.length > 0 ? (
-            <div data-testid={`cloud-todo-card-tasks-${item.id}`} className="w-full px-3.5 pb-3">
-              {progressTaskBindings.map(binding => (
-                <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
-              ))}
-              {previewAvailable ? (
-                <Popover.Trigger asChild>
-                  <button
-                    type="button"
-                    data-testid={`cloud-todo-card-progress-trigger-${item.id}`}
-                    aria-label={t('todo.view_task_progress_named', '查看进展：{{title}}', {
-                      title: item.title,
-                    })}
-                    className="mt-1 inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 max-md:min-h-11"
-                  >
-                    <ListTodo className="h-4 w-4" aria-hidden="true" />
+          {previewAvailable ? (
+            <div className="px-3.5 pb-3">
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  data-testid={`cloud-todo-card-progress-trigger-${item.id}`}
+                  aria-label={t('todo.view_task_progress_named', '查看进展：{{title}}', {
+                    title: item.title,
+                  })}
+                  className="flex min-h-7 w-full items-center justify-between gap-2 border-t border-border pt-2 text-xs text-text-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 max-md:min-h-11"
+                >
+                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                    <ListTodo className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     {t('todo.view_task_progress', '查看进展')}
-                  </button>
-                </Popover.Trigger>
-              ) : null}
+                  </span>
+                  <MessagesSquare className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                </button>
+              </Popover.Trigger>
             </div>
           ) : null}
         </>

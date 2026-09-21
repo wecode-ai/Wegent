@@ -238,6 +238,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const cardSelector = `${ACTIVE_BOARD} [data-testid="${itemTestId}"]`
       const progressTrigger = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-progress-trigger-${itemId}"]`
 
+      await control.command('waitFor', progressTrigger, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+
       await control.command('click', cardSelector)
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
         timeoutMs: uiTimeoutMs,
@@ -365,7 +370,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const compactProcessClass = await control.command('getAttribute', processSelector, {
         value: 'class',
       })
-      assert.ok(compactProcessClass.includes('line-clamp-3'))
+      assert.ok(compactProcessClass.includes('line-clamp-2'))
       const commandText = await control.command('getText', toolSelector)
       assert.ok(commandText.includes("'正在验证运行中卡片'"))
       assert.ok(

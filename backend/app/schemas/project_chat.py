@@ -406,6 +406,15 @@ class ProjectChatAutomationManagerContinuation(ProjectChatSchema):
     manager_message_id: str = Field(min_length=1, max_length=64)
 
 
+class ProjectChatCommentExecution(ProjectChatSchema):
+    """Execute a saved comment using its project assignment or thread binding."""
+
+    project_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    trigger_message_id: str = Field(min_length=1, max_length=64)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=64)
+
+
 class ProjectChatWegentContinuation(ProjectChatSchema):
     """Continue the native Wegent Task behind one board comment thread."""
 

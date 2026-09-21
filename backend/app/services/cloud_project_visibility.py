@@ -3,7 +3,7 @@
 
 """Shared, set-based read visibility and effective roles for Cloud Projects."""
 
-from sqlalchemy import String, case, cast, func, literal, select, union_all
+from sqlalchemy import BigInteger, String, case, cast, func, literal, select, union_all
 from sqlalchemy.orm import Query, Session
 from sqlalchemy.sql import Select
 
@@ -62,7 +62,8 @@ def _inherited_project_grants(user_id: int) -> Select:
         )
         .join(
             workspaces,
-            ResourceMember.entity_id == cast(workspaces.c.resource_id, String(100)),
+            # Workspace IDs are integers; CHAR casts inherit connection collation.
+            cast(ResourceMember.entity_id, BigInteger) == workspaces.c.resource_id,
         )
         .where(
             ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
