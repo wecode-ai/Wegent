@@ -1,29 +1,22 @@
 import type { HttpClient } from './http'
 import type { ModelType, UnifiedModel, UnifiedModelListResponse, UnifiedSkill } from '@/types/api'
+import type {
+  UnifiedAgentCapabilityMode,
+  UnifiedAgentDefinition,
+  UnifiedAgentPluginRef,
+  UnifiedAgentRuntime,
+  UnifiedAgentSkillRef,
+} from './agentDefinition'
+import { parseAgentCapabilityMode } from '@wegent/collaboration'
 
-export type UnifiedAgentRuntime = 'Codex' | 'ClaudeCode'
-
-export interface UnifiedAgentSkillRef {
-  skillId: number
-  name: string
-  namespace: string
-  isPublic: boolean
-}
-
-export interface UnifiedAgentSpec {
-  name: string
-  displayName: string
-  namespace: string
-  runtime: UnifiedAgentRuntime
-  model: {
-    name: string
-    type?: ModelType
-    namespace?: string
-  }
-  systemPrompt: string
-  skills: UnifiedAgentSkillRef[]
-  mcpServers: Record<string, unknown>
-}
+export type {
+  UnifiedAgentCapabilityMode,
+  UnifiedAgentDefinition,
+  UnifiedAgentPluginRef,
+  UnifiedAgentRuntime,
+  UnifiedAgentSkillRef,
+} from './agentDefinition'
+export type UnifiedAgentSpec = UnifiedAgentDefinition
 
 interface CreatedBot {
   id: number
@@ -53,7 +46,9 @@ export interface AgentResourceDetail {
   }
   systemPrompt: string
   skills: UnifiedAgentSkillRef[]
+  plugins: UnifiedAgentPluginRef[]
   mcpServers: Record<string, unknown>
+  capabilityMode: UnifiedAgentCapabilityMode
 }
 
 interface BotSkillRef {
@@ -70,6 +65,8 @@ interface TeamDetailBot {
   agent_config?: Record<string, unknown> | null
   system_prompt?: string | null
   mcp_servers?: Record<string, unknown> | null
+  plugins?: UnifiedAgentPluginRef[] | null
+  capability_mode?: string | null
   skills?: string[] | null
   skill_refs?: Record<string, BotSkillRef> | null
 }
@@ -122,9 +119,11 @@ function botSkillRefs(spec: UnifiedAgentSpec): Record<string, unknown> {
 function botCapabilityPayload(spec: UnifiedAgentSpec): Record<string, unknown> {
   return {
     shell_name: spec.runtime,
+    capability_mode: spec.capabilityMode,
     agent_config: agentConfig(spec),
     system_prompt: spec.systemPrompt.trim(),
     mcp_servers: spec.mcpServers,
+    plugins: spec.plugins,
     skills: spec.skills.map(skill => skill.name),
     skill_refs: botSkillRefs(spec),
   }
@@ -161,6 +160,17 @@ function detailSkills(bot: TeamDetailBot): UnifiedAgentSkillRef[] {
       isPublic: Boolean(ref?.is_public),
     }
   })
+}
+
+function detailCapabilityMode(bot: TeamDetailBot): UnifiedAgentCapabilityMode {
+  if (bot.capability_mode === 'follow_device' || bot.capability_mode === 'manual') {
+    return parseAgentCapabilityMode(bot.capability_mode)
+  }
+  const hasManualCapabilities =
+    Boolean(bot.plugins?.length) ||
+    Boolean(bot.skills?.length) ||
+    Boolean(Object.keys(bot.mcp_servers ?? {}).length)
+  return hasManualCapabilities ? 'manual' : 'follow_device'
 }
 
 export function createAgentResourceApi(client: HttpClient) {
@@ -248,7 +258,9 @@ export function createAgentResourceApi(client: HttpClient) {
         },
         systemPrompt: bot.system_prompt ?? '',
         skills: detailSkills(bot),
+        plugins: bot.plugins ?? [],
         mcpServers: bot.mcp_servers ?? {},
+        capabilityMode: detailCapabilityMode(bot),
       }
     },
     /**

@@ -1579,6 +1579,7 @@ describe('createLocalAppServices', () => {
         skill_names: ['planner'],
         preload_skills: [{ name: 'planner', namespace: 'default' }],
         user_selected_skills: [{ name: 'planner', namespace: 'default' }],
+        additional_skills: [{ name: 'planner', namespace: 'default' }],
         attachments: [
           {
             id: -45,

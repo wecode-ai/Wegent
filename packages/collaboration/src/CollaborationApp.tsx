@@ -53,6 +53,7 @@ export interface CollaborationIssueDetailRenderContext {
   allIssues: CollaborationIssue[]
   assignments: CollaborationAssignment[]
   taskBindings: WorkspaceTaskBinding[]
+  defaultAssistant?: CollaborationHostAdapter['defaultAssistant']
   onClose(): void
   onChange(issue: CollaborationIssue): void
   onCreateTask?(workflowStep?: string): void
@@ -416,8 +417,14 @@ export function CollaborationApp({
                             {[
                               [messages.emptyProjectStepIssue, messages.emptyProjectStepIssueHint],
                               [
-                                messages.emptyProjectStepAssign,
-                                messages.emptyProjectStepAssignHint,
+                                host.defaultAssistant
+                                  ? locale === 'zh-CN'
+                                    ? `交给${host.defaultAssistant.name}`
+                                    : `Hand off to ${host.defaultAssistant.name}`
+                                  : messages.emptyProjectStepAssign,
+                                host.defaultAssistant
+                                  ? host.defaultAssistant.description
+                                  : messages.emptyProjectStepAssignHint,
                               ],
                               [
                                 messages.emptyProjectStepDeliver,
@@ -766,6 +773,7 @@ export function CollaborationApp({
                 allIssues: issues,
                 assignments,
                 taskBindings: taskBindings.filter(binding => binding.issueId === selectedIssue.id),
+                defaultAssistant: host.defaultAssistant,
                 onClose: () => {
                   commands.clearSelectedIssue()
                   host.navigate({
@@ -794,6 +802,7 @@ export function CollaborationApp({
                 executions={executions}
                 members={members}
                 agents={agents}
+                defaultAssistant={host.defaultAssistant}
                 messages={messages}
                 translate={translate}
                 onClose={() => {

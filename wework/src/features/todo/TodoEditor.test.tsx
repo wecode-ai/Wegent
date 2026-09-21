@@ -194,6 +194,36 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).toHaveBeenCalledWith()
   })
 
+  it('presents the current-device execution entry as the default assistant', async () => {
+    const onCreateTask = vi.fn()
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={{ ...baseItem, project_store: 'local' }}
+        project={{ ...project, project_store: 'local' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        defaultAssistant={{
+          name: '本机助手',
+          description: '在“我的 Mac”上运行，使用设备当前可用能力',
+          capabilitySummary: '2 个插件 · 3 个 Skill · 本地文件与桌面操作',
+        }}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-todo-default-assistant')).toHaveTextContent('本机助手')
+    expect(screen.getByTestId('cloud-todo-default-assistant')).toHaveTextContent('我的 Mac')
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-start-default-assistant'))
+    expect(onCreateTask).toHaveBeenCalledWith()
+  })
+
   it('keeps trusted local Issue editing enabled through an explicit local marker', async () => {
     const user = userEvent.setup()
     const localItem = {

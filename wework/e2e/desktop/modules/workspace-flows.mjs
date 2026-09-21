@@ -97,7 +97,7 @@ async function enterLocalCollaborationWorkspace(control, contentSelector) {
   )
 }
 
-async function createLocalCollaborationProject(control, contentSelector, projectName) {
+export async function createLocalCollaborationProject(control, contentSelector, projectName) {
   await enterLocalCollaborationWorkspace(control, contentSelector)
   await control.command(
     'click',

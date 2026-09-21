@@ -615,6 +615,15 @@ impl TaskRuntime {
         self.local_store.create_chat_agent(project_id, input)
     }
 
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        self.local_store
+            .ensure_default_chat_agent(project_id, input)
+    }
+
     pub fn update_chat_agent(
         &self,
         project_id: &str,

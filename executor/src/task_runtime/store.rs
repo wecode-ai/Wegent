@@ -787,52 +787,36 @@ impl LocalTaskStore {
         project_id: &str,
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
-        validate_name(&input.name, "robot name")?;
-        validate_chat_agent_runtime(&input.runtime)?;
-        if !(1..=20).contains(&input.max_concurrent_executions) {
-            return Err(TaskRuntimeError::Invalid(
-                "Robot max concurrent executions must be between 1 and 20".to_owned(),
-            ));
-        }
-        validate_workspace_policy(&input.workspace_policy)?;
-        validate_mcp_servers(&input.mcp_servers)?;
         let connection = self.connection()?;
-        let id = format!("LA-{}", Uuid::new_v4().simple());
-        let now = now();
-        let mut metadata = json!({
-            "runtime": input.runtime,
-            "model": input.model,
-            "capability_description": input.capability_description.unwrap_or_default(),
-            "system_prompt": input.system_prompt.unwrap_or_default(),
-            "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
-            "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
-            "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
-            "max_concurrent_executions": input.max_concurrent_executions,
-            "workspace_policy": input.workspace_policy,
-            "plugins": input.plugins,
-            "additional_skills": input.additional_skills,
-            "mcp_servers": input.mcp_servers,
-        });
-        metadata["execution_device_id"] = json!(input.execution_device_id);
-        metadata["local_project_id"] = json!(input.local_project_id);
-        connection.execute(
-            "INSERT INTO loop_items (
-                id, resource_type, project_space, cloud_project_id, name, title,
-                description, status, metadata, version, created_at, updated_at,
-                created_by_user_id
-             ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1,
-                       ?5, ?5, ?6)",
-            params![
-                id,
-                project_id,
-                input.name,
-                metadata.to_string(),
-                now,
-                input.created_by_user_id.unwrap_or(0),
-            ],
-        )?;
+        let id = insert_chat_agent(&connection, project_id, input)?;
         drop(connection);
         self.get_chat_agent(project_id, &id)
+    }
+
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let initialized = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM loop_items
+                WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
+                  AND deleted_at IS NULL
+             )",
+            [project_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if initialized {
+            transaction.commit()?;
+            return Ok(None);
+        }
+        let id = insert_chat_agent(&transaction, project_id, input)?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_chat_agent(project_id, &id).map(Some)
     }
 
     pub fn update_chat_agent(
@@ -856,6 +840,12 @@ impl LocalTaskStore {
         if let Some(name) = input.name.as_ref() {
             validate_name(name, "robot name")?;
         }
+        if let Some(display_name) = input.display_name.as_ref() {
+            metadata["display_name"] = json!(display_name);
+        }
+        if let Some(namespace) = input.namespace.as_ref() {
+            metadata["namespace"] = json!(namespace);
+        }
         if let Some(runtime) = input.runtime.as_ref() {
             validate_chat_agent_runtime(runtime)?;
             metadata["runtime"] = json!(runtime);
@@ -863,8 +853,17 @@ impl LocalTaskStore {
         if let Some(model) = input.model.as_ref() {
             metadata["model"] = json!(model);
         }
+        if let Some(model_type) = input.model_type.as_ref() {
+            metadata["model_type"] = json!(model_type);
+        }
+        if let Some(model_namespace) = input.model_namespace.as_ref() {
+            metadata["model_namespace"] = json!(model_namespace);
+        }
         if let Some(description) = input.capability_description.as_ref() {
             metadata["capability_description"] = json!(description);
+        }
+        if let Some(capability_mode) = input.capability_mode.as_ref() {
+            metadata["capability_mode"] = json!(capability_mode);
         }
         if let Some(prompt) = input.system_prompt.as_ref() {
             metadata["system_prompt"] = json!(prompt);
@@ -2674,6 +2673,75 @@ impl LocalTaskStore {
     }
 }
 
+fn insert_chat_agent(
+    connection: &Connection,
+    project_id: &str,
+    input: ChatAgentCreate,
+) -> Result<String, TaskRuntimeError> {
+    validate_name(&input.name, "robot name")?;
+    validate_chat_agent_runtime(&input.runtime)?;
+    if !(1..=20).contains(&input.max_concurrent_executions) {
+        return Err(TaskRuntimeError::Invalid(
+            "Robot max concurrent executions must be between 1 and 20".to_owned(),
+        ));
+    }
+    validate_workspace_policy(&input.workspace_policy)?;
+    validate_mcp_servers(&input.mcp_servers)?;
+    let capability_mode = input.capability_mode.unwrap_or_else(|| {
+        if !input.plugins.is_empty()
+            || !input.additional_skills.is_empty()
+            || input
+                .mcp_servers
+                .as_object()
+                .is_some_and(|servers| !servers.is_empty())
+        {
+            "manual".to_owned()
+        } else {
+            "follow_device".to_owned()
+        }
+    });
+    let id = format!("LA-{}", Uuid::new_v4().simple());
+    let timestamp = now();
+    let mut metadata = json!({
+        "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
+        "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
+        "runtime": input.runtime,
+        "model": input.model,
+        "model_type": input.model_type,
+        "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
+        "capability_description": input.capability_description.unwrap_or_default(),
+        "capability_mode": capability_mode,
+        "system_prompt": input.system_prompt.unwrap_or_default(),
+        "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
+        "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
+        "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
+        "max_concurrent_executions": input.max_concurrent_executions,
+        "workspace_policy": input.workspace_policy,
+        "plugins": input.plugins,
+        "additional_skills": input.additional_skills,
+        "mcp_servers": input.mcp_servers,
+    });
+    metadata["execution_device_id"] = json!(input.execution_device_id);
+    metadata["local_project_id"] = json!(input.local_project_id);
+    connection.execute(
+        "INSERT INTO loop_items (
+            id, resource_type, project_space, cloud_project_id, name, title,
+            description, status, metadata, version, created_at, updated_at,
+            created_by_user_id
+         ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1,
+                   ?5, ?5, ?6)",
+        params![
+            id,
+            project_id,
+            input.name,
+            metadata.to_string(),
+            timestamp,
+            input.created_by_user_id.unwrap_or(0),
+        ],
+    )?;
+    Ok(id)
+}
+
 fn get_effective_binding(
     connection: &Connection,
     device_id: &str,
@@ -3916,6 +3984,7 @@ pub(crate) fn numeric_id() -> String {
 
 fn map_chat_agent(row: LoopItem) -> ChatAgent {
     let metadata = row.metadata;
+    let name = row.title.or(row.name).unwrap_or_else(|| "AI".to_owned());
     let text = |key: &str, default: &str| {
         metadata
             .get(key)
@@ -3926,13 +3995,43 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
     ChatAgent {
         id: row.id.clone(),
         project_id: row.cloud_project_id.clone().unwrap_or_default(),
-        name: row.title.or(row.name).unwrap_or_else(|| "AI".to_owned()),
+        display_name: text("display_name", &name),
+        namespace: text("namespace", "default"),
+        name,
         runtime: text("runtime", "codex"),
         model: metadata
             .get("model")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        model_type: metadata
+            .get("model_type")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        model_namespace: text("model_namespace", "default"),
         capability_description: text("capability_description", ""),
+        capability_mode: metadata
+            .get("capability_mode")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| {
+                let has_manual_capabilities = metadata
+                    .get("plugins")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| !items.is_empty())
+                    || metadata
+                        .get("additional_skills")
+                        .and_then(Value::as_array)
+                        .is_some_and(|items| !items.is_empty())
+                    || metadata
+                        .get("mcp_servers")
+                        .and_then(Value::as_object)
+                        .is_some_and(|items| !items.is_empty());
+                if has_manual_capabilities {
+                    "manual".to_owned()
+                } else {
+                    "follow_device".to_owned()
+                }
+            }),
         system_prompt: text("system_prompt", ""),
         status: row.status.unwrap_or_else(|| "active".to_owned()),
         visibility: text("visibility", "creator_admin"),
@@ -4724,9 +4823,14 @@ mod tests {
                 project_id,
                 ChatAgentCreate {
                     name: "Local Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Be careful.".to_owned()),
                     visibility: Some("creator_admin".to_owned()),
                     execution_environment: Some("local".to_owned()),
@@ -4742,6 +4846,32 @@ mod tests {
                 },
             )
             .unwrap()
+    }
+
+    fn default_chat_agent_input() -> ChatAgentCreate {
+        ChatAgentCreate {
+            name: "current-device-assistant".to_owned(),
+            display_name: Some("Current device assistant".to_owned()),
+            namespace: Some("default".to_owned()),
+            runtime: "codex".to_owned(),
+            model: Some("gpt-5".to_owned()),
+            model_type: Some("public".to_owned()),
+            model_namespace: Some("default".to_owned()),
+            capability_description: None,
+            capability_mode: Some("follow_device".to_owned()),
+            system_prompt: Some(String::new()),
+            visibility: Some("creator_admin".to_owned()),
+            execution_environment: Some("local".to_owned()),
+            execution_mode: Some("auto".to_owned()),
+            execution_device_id: None,
+            max_concurrent_executions: 1,
+            workspace_policy: "project".to_owned(),
+            local_project_id: None,
+            created_by_user_id: Some(7),
+            plugins: Vec::new(),
+            additional_skills: Vec::new(),
+            mcp_servers: json!({}),
+        }
     }
 
     fn accept_and_start(store: &LocalTaskStore, claimed: &LocalExecution) -> LocalExecution {
@@ -4832,6 +4962,70 @@ mod tests {
         assert_eq!(
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
+        );
+    }
+
+    #[test]
+    fn default_chat_agent_is_created_once_and_stays_deleted() {
+        let (_directory, store, project) = chat_agent_store();
+        let input = default_chat_agent_input();
+
+        let created = store
+            .ensure_default_chat_agent(&project.id, input.clone())
+            .unwrap()
+            .expect("the first initialization should create an agent");
+        assert!(store
+            .ensure_default_chat_agent(&project.id, input.clone())
+            .unwrap()
+            .is_none());
+
+        store
+            .archive_chat_agent(&project.id, &created.id, created.version)
+            .unwrap();
+        assert!(store.list_chat_agents(&project.id).unwrap().is_empty());
+        assert!(store
+            .ensure_default_chat_agent(&project.id, input)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn default_chat_agent_initialization_is_atomic_across_store_connections() {
+        let (_directory, store, project) = chat_agent_store();
+        let db_path = store.path.clone();
+        drop(store);
+        let barrier = Arc::new(Barrier::new(2));
+        let initializers = (0..2)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let db_path = db_path.clone();
+                let project_id = project.id.clone();
+                std::thread::spawn(move || {
+                    let store = LocalTaskStore::open(db_path).unwrap();
+                    barrier.wait();
+                    store
+                        .ensure_default_chat_agent(&project_id, default_chat_agent_input())
+                        .unwrap()
+                        .is_some()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            initializers
+                .into_iter()
+                .map(|initializer| initializer.join().unwrap())
+                .filter(|created| *created)
+                .count(),
+            1
+        );
+        assert_eq!(
+            LocalTaskStore::open(db_path)
+                .unwrap()
+                .list_chat_agents(&project.id)
+                .unwrap()
+                .len(),
+            1
         );
     }
 
@@ -5553,9 +5747,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Creator Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("manual".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5589,8 +5788,12 @@ mod tests {
         let _ = directory;
         let create: ChatAgentCreate = serde_json::from_value(json!({
             "name": "Claude implementer",
+            "display_name": "Claude Implementer",
+            "namespace": "default",
             "runtime": "claude_code",
             "model": "claude-sonnet-4-5",
+            "model_type": "public",
+            "model_namespace": "default",
             "capability_description": "Implements and reviews code",
             "system_prompt": "Use the configured capabilities.",
             "execution_environment": "local",
@@ -5613,11 +5816,17 @@ mod tests {
         .unwrap();
         let agent = store.create_chat_agent(&project.id, create).unwrap();
 
+        assert_eq!(agent.display_name, "Claude Implementer");
+        assert_eq!(agent.namespace, "default");
         assert_eq!(agent.runtime, "claude_code");
+        assert_eq!(agent.model_type.as_deref(), Some("public"));
+        assert_eq!(agent.model_namespace, "default");
+        assert_eq!(agent.capability_mode, "manual");
         assert_eq!(agent.additional_skills[0]["name"], "architecture-review");
         assert_eq!(agent.mcp_servers["github"]["command"], "github-mcp-server");
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed[0].runtime, "claude_code");
+        assert_eq!(listed[0].display_name, "Claude Implementer");
         assert_eq!(listed[0].additional_skills, agent.additional_skills);
         assert_eq!(listed[0].mcp_servers, agent.mcp_servers);
 
@@ -5703,9 +5912,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bound Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5732,9 +5946,14 @@ mod tests {
                 ChatAgentUpdate {
                     version: agent.version,
                     name: None,
+                    display_name: None,
+                    namespace: None,
                     runtime: None,
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5759,9 +5978,14 @@ mod tests {
                 ChatAgentUpdate {
                     version: updated.version,
                     name: None,
+                    display_name: None,
+                    namespace: None,
                     runtime: None,
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5789,9 +6013,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bot A".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5812,9 +6041,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bot B".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5913,9 +6147,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Parallel Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5990,9 +6229,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Unbound Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6125,9 +6369,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Manual Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6190,9 +6439,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Status Filter Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6751,9 +7005,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Migrated Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),

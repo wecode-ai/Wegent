@@ -282,12 +282,48 @@ describe('local delivery API', () => {
     const api = createLocalProjectChatAgentApi(request, 7)
     await api.create('project-1', {
       name: 'Local Bot',
+      displayName: 'Local Display',
+      namespace: 'default',
       runtime: 'codex',
+      model: 'gpt-5',
+      modelType: 'public',
+      modelNamespace: 'default',
       executionDeviceId: 'local-device',
     })
     expect(request).toHaveBeenCalledWith('chat_agents.create', {
       project_id: 'project-1',
-      agent: expect.objectContaining({ created_by_user_id: 7 }),
+      agent: expect.objectContaining({
+        created_by_user_id: 7,
+        display_name: 'Local Display',
+        namespace: 'default',
+        model: 'gpt-5',
+        model_type: 'public',
+        model_namespace: 'default',
+      }),
+    })
+  })
+
+  test('ensures the initial local agent through the dedicated bootstrap command', async () => {
+    const request = vi.fn(async () => null)
+    const api = createLocalProjectChatAgentApi(request, 7)
+
+    await api.ensureDefault('default-work-items', {
+      name: 'current-device-assistant',
+      displayName: '当前设备助手',
+      runtime: 'codex',
+      model: 'gpt-5',
+      capabilityMode: 'follow_device',
+    })
+
+    expect(request).toHaveBeenCalledWith('chat_agents.ensure_default', {
+      project_id: 'default-work-items',
+      agent: expect.objectContaining({
+        name: 'current-device-assistant',
+        display_name: '当前设备助手',
+        model: 'gpt-5',
+        capability_mode: 'follow_device',
+        created_by_user_id: 7,
+      }),
     })
   })
 

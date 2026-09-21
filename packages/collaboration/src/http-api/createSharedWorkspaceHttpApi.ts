@@ -369,6 +369,18 @@ export function createSharedWorkspaceHttpApi(
           await transport.get("/v1/resources"),
         );
       },
+      async removeAgent(agent) {
+        if (agent.team_id == null) {
+          throw new Error("Cloud agent is missing its team id");
+        }
+        const query = new URLSearchParams({
+          force: "true",
+          confirm_name: agent.name,
+        });
+        await transport.delete(
+          `/teams/${encoded(agent.team_id)}?${query.toString()}`,
+        );
+      },
     },
     gitRepositories: {
       async list() {

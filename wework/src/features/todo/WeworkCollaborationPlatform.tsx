@@ -19,6 +19,7 @@ import {
   IssueConversationDrawers,
   toSharedIssueDetailTaskBinding,
   type CollaborationHostAdapter,
+  type CollaborationDefaultAssistant,
   type CollaborationIssue,
   type CollaborationPlatformLocation,
   type CollaborationProjectRendererWorkspaceContext,
@@ -42,9 +43,8 @@ import {
   type DesktopSidebarAccountSettingsOptions,
 } from '@/components/layout/DesktopSidebarAccount'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { LocalProjectAgentForm } from '@/features/collaboration/LocalProjectAgentForm'
-import { weworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
@@ -145,6 +145,7 @@ export interface WeworkCollaborationPlatformProps {
 export function WeworkSharedProject({
   api,
   detailServices,
+  defaultAssistant,
   focusedItemId,
   localProjects,
   locale,
@@ -163,6 +164,7 @@ export function WeworkSharedProject({
 }: {
   api: SharedWorkspaceApi
   detailServices?: ProjectSpaceDetailServices
+  defaultAssistant?: CollaborationDefaultAssistant
   focusedItemId?: string | null
   localProjects: ProjectWithTasks[]
   locale: 'zh-CN' | 'en'
@@ -252,6 +254,7 @@ export function WeworkSharedProject({
         dingtalkAitable: true,
         projectLocation: project.project_store === 'local' ? 'local' : 'cloud',
       },
+      defaultAssistant,
       location: {
         projectId: String(project.id),
         issueId: location.issueId,
@@ -270,38 +273,27 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
-      projectAgentConfiguration:
-        project.project_store === 'local'
-          ? {
-              ...weworkProjectAgentConfigurationHost,
-              supportsExistingAgentSelection: false,
-              renderProjectAgentForm:
-                services.localProjectChatAgentApi && detailServices
-                  ? form => (
-                      <LocalProjectAgentForm
-                        key={form.agentId ?? 'new'}
-                        {...form}
-                        api={services.localProjectChatAgentApi!}
-                        catalog={detailServices}
-                        projectId={String(project.id)}
-                        projects={localProjects}
-                      />
-                    )
-                  : undefined,
-            }
-          : createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
+      projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
+        project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
+        services.deviceApi
+      ),
     }),
     [
       focusedItemId,
+      detailServices?.modelApi,
+      defaultAssistant,
       location.issueId,
       location.projectView,
       onFocusedItemHandled,
       project.id,
       project.project_store,
       services.agentResourceApi,
+      services.deviceApi,
       services.localProjectChatAgentApi,
-      detailServices,
-      localProjects,
+      services.pluginApi,
       setLocation,
       workspace.id,
     ]
@@ -561,6 +553,7 @@ export function WeworkSharedProject({
             allIssues,
             assignments,
             taskBindings,
+            defaultAssistant,
             onChange,
             onClose,
             onCreateTask,
@@ -612,6 +605,7 @@ export function WeworkSharedProject({
                     !issue.workflow?.nodes?.length
                   }
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
+                  defaultAssistant={defaultAssistant}
                   aitableApi={
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined
                   }
@@ -730,6 +724,23 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         : 'Local user'
       : props.user.user_name
   const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
+  const currentAgentDevice = useCurrentAgentDevice(
+    props.services.deviceApi,
+    props.services.pluginApi
+  )
+  const defaultAssistant = useMemo(
+    () => ({
+      name: locale === 'zh-CN' ? '本机助手' : 'Device assistant',
+      description:
+        locale === 'zh-CN'
+          ? `在“${currentAgentDevice.currentDevice?.name ?? '当前设备'}”上运行，使用设备当前可用能力`
+          : `Runs on “${currentAgentDevice.currentDevice?.name ?? 'this device'}” with its available capabilities`,
+      ...(currentAgentDevice.capabilitySummary
+        ? { capabilitySummary: currentAgentDevice.capabilitySummary }
+        : {}),
+    }),
+    [currentAgentDevice.capabilitySummary, currentAgentDevice.currentDevice?.name, locale]
+  )
   const [ownerGroups, setOwnerGroups] = useState<Array<{ label: string; namespace: string }>>([])
   const workspaceOwnerOptions = useMemo(
     () => [{ label: personalOwnerLabel, namespace: 'default' }, ...ownerGroups],
@@ -741,12 +752,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         props.services.agentResourceApi,
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
-        props.services.projectSpaceDetailServices?.local?.pluginApi
+        props.services.pluginApi,
+        props.services.deviceApi
       ),
     [
       props.services.agentResourceApi,
+      props.services.deviceApi,
       props.services.projectSpaceDetailServices?.local?.modelApi,
-      props.services.projectSpaceDetailServices?.local?.pluginApi,
+      props.services.pluginApi,
       props.services.localProjectChatAgentApi,
     ]
   )
@@ -908,6 +921,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             requestLogin: () => setCloudLoginOpen(true),
           },
           renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
+          defaultAssistant,
           location,
           capabilities: {
             automation: true,
@@ -1032,6 +1046,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                   project.project_store === 'local' ? 'local' : 'cloud'
                 ]
               }
+              defaultAssistant={defaultAssistant}
               focusedItemId={props.focusedItemId}
               localProjects={props.localProjects}
               locale={locale}

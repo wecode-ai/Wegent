@@ -1392,6 +1392,7 @@ async function buildLocalRuntimeExecutionRequest(
     skill_names: deployedSkillNames,
     preload_skills: preloadSkills,
     user_selected_skills: preloadSkills,
+    additional_skills: input.additionalSkills ?? [],
     ...(workspaceProject
       ? {
           workspace: {
@@ -3322,9 +3323,22 @@ function summarizeLocalModelOptions(
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
   const localPluginApi = createLocalCodexPluginApi()
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
-    async listPlugins() {
-      const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
-      return buildProjectPluginCatalog(installed.items)
+    async listPlugins(deviceId: string) {
+      if (deviceId) {
+        const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
+        return buildProjectPluginCatalog(installed.items).map(plugin => ({
+          ...plugin,
+          catalogSource: 'local' as const,
+        }))
+      }
+      const [apps, installed] = await Promise.all([
+        localPluginApi.listApps(),
+        localPluginApi.listInstalledPlugins({ requireComplete: true }).then(result => result.items),
+      ])
+      return buildProjectPluginCatalog(installed, apps).map(plugin => ({
+        ...plugin,
+        catalogSource: 'local' as const,
+      }))
     },
   }
   const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
@@ -3731,6 +3745,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         deliveryApi,
         projectChatClient: localProjectChatClient,
         projectChatAgentApi: localProjectChatAgentApi,
+        localProjectChatAgentApi,
         loopItemExecutionApi: localLoopItemExecutionApi,
         localProjectAutomationApi: createLocalProjectAutomationApi(request, runtimeWorkApi),
         deviceApi,
