@@ -12154,6 +12154,40 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeLocalTerminalMock).not.toHaveBeenCalled()
   })
 
+  test('preserves the active task terminal while visiting the local task board', async () => {
+    const { localDevice, propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
+    localPathExistsMock.mockResolvedValue(true)
+    startLocalTerminalMock.mockResolvedValue('local-terminal-a')
+
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+        'data-session-id',
+        'local-terminal-a'
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    expect(await screen.findByTestId('task-view-board-transition')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('task-view-board-transition')).not.toBeInTheDocument()
+      expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+        'data-session-id',
+        'local-terminal-a'
+      )
+    })
+    expect(startLocalTerminalMock).toHaveBeenCalledTimes(1)
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
+  })
+
   test('preserves the right workspace browser state when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const activePane = () => within(screen.getByTestId('desktop-workbench-main'))

@@ -1270,20 +1270,25 @@ export function DesktopWorkbenchLayout({
                 {t('workbench.cloud_board_loading', '正在加载云端看板…')}
               </div>
             ))}
-          {!workItemSurfaceOpen ? (
-            <DesktopWorkbenchMain
-              visible={routeActive && !settingsOpen}
-              sidebarCollapsed={effectiveSidebarCollapsed}
-              sidebarResizing={sidebarResizing}
-              onSidebarCollapsedChange={updateSidebarCollapsed}
-              activePane={activePane}
-              splitGroups={splitGroups}
-              localHarnessSessions={localHarnessSessions}
-              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
-              onLocalHarnessSessionStarted={registerLocalHarnessSession}
-              onLocalHarnessSessionClose={closeLocalHarnessSession}
-              onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
-            />
+          {!routeWorkItemsOpen ? (
+            <div
+              style={{ display: taskBoardOpen ? 'none' : 'contents' }}
+              aria-hidden={taskBoardOpen}
+            >
+              <DesktopWorkbenchMain
+                visible={routeActive && !settingsOpen && !taskBoardOpen}
+                sidebarCollapsed={effectiveSidebarCollapsed}
+                sidebarResizing={sidebarResizing}
+                onSidebarCollapsedChange={updateSidebarCollapsed}
+                activePane={activePane}
+                splitGroups={splitGroups}
+                localHarnessSessions={localHarnessSessions}
+                activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+                onLocalHarnessSessionStarted={registerLocalHarnessSession}
+                onLocalHarnessSessionClose={closeLocalHarnessSession}
+                onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
+              />
+            </div>
           ) : null}
         </div>
       </div>
