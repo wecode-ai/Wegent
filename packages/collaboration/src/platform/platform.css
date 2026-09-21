@@ -1907,6 +1907,14 @@
   height: 16px;
 }
 
+.collaboration-delete-agent-dialog > .collaboration-resource-form-error {
+  margin: 16px 20px 0;
+}
+
+.collaboration-delete-agent-actions {
+  padding: 16px 20px 20px;
+}
+
 .collaboration-resource-create-options,
 .collaboration-resource-space-options {
   display: grid;

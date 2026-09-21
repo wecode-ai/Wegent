@@ -391,6 +391,12 @@ function createApi({
     },
     resources: {
       list: vi.fn(async () => personalResources),
+      removeAgent: vi.fn(async (target: CollaborationOwnedAgent) => {
+        const index = personalResources.agents.findIndex(
+          (candidate) => candidate.id === target.id,
+        );
+        if (index >= 0) personalResources.agents.splice(index, 1);
+      }),
     },
     projects: {
       list: vi.fn(async (workspaceId?: string) =>
@@ -918,6 +924,23 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(manageResource).toHaveBeenCalledOnce();
     },
   );
+  it("deletes an agent resource after confirmation", async () => {
+    const { api } = createApi();
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-primary-agents"));
+    await click(byTestId(`collaboration-agents-delete-${agent.id}`));
+    expect(byTestId("collaboration-delete-agent-dialog").textContent).toContain(
+      agent.name,
+    );
+    await click(byTestId("collaboration-delete-agent-confirm"));
+
+    expect(api.resources?.removeAgent).toHaveBeenCalledWith(agent);
+    expect(
+      container.querySelector(
+        `[data-testid="collaboration-agents-row-${agent.id}"]`,
+      ),
+    ).toBeNull();
+  });
   it.each(["zh-CN", "en"] as const)(
     "does not present Runtime as an agent attribute in %s",
     async (locale) => {

@@ -3710,6 +3710,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         deliveryApi,
         projectChatClient: localProjectChatClient,
         projectChatAgentApi: localProjectChatAgentApi,
+        localProjectChatAgentApi,
         loopItemExecutionApi: localLoopItemExecutionApi,
         localProjectAutomationApi: createLocalProjectAutomationApi(request, runtimeWorkApi),
         deviceApi,

@@ -787,70 +787,33 @@ impl LocalTaskStore {
         project_id: &str,
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
-        validate_name(&input.name, "robot name")?;
-        validate_chat_agent_runtime(&input.runtime)?;
-        if !(1..=20).contains(&input.max_concurrent_executions) {
-            return Err(TaskRuntimeError::Invalid(
-                "Robot max concurrent executions must be between 1 and 20".to_owned(),
-            ));
-        }
-        validate_workspace_policy(&input.workspace_policy)?;
-        validate_mcp_servers(&input.mcp_servers)?;
-        let capability_mode = input.capability_mode.unwrap_or_else(|| {
-            if !input.plugins.is_empty()
-                || !input.additional_skills.is_empty()
-                || input
-                    .mcp_servers
-                    .as_object()
-                    .is_some_and(|servers| !servers.is_empty())
-            {
-                "manual".to_owned()
-            } else {
-                "follow_device".to_owned()
-            }
-        });
         let connection = self.connection()?;
-        let id = format!("LA-{}", Uuid::new_v4().simple());
-        let now = now();
-        let mut metadata = json!({
-            "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
-            "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
-            "runtime": input.runtime,
-            "model": input.model,
-            "model_type": input.model_type,
-            "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
-            "capability_description": input.capability_description.unwrap_or_default(),
-            "capability_mode": capability_mode,
-            "system_prompt": input.system_prompt.unwrap_or_default(),
-            "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
-            "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
-            "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
-            "max_concurrent_executions": input.max_concurrent_executions,
-            "workspace_policy": input.workspace_policy,
-            "plugins": input.plugins,
-            "additional_skills": input.additional_skills,
-            "mcp_servers": input.mcp_servers,
-        });
-        metadata["execution_device_id"] = json!(input.execution_device_id);
-        metadata["local_project_id"] = json!(input.local_project_id);
-        connection.execute(
-            "INSERT INTO loop_items (
-                id, resource_type, project_space, cloud_project_id, name, title,
-                description, status, metadata, version, created_at, updated_at,
-                created_by_user_id
-             ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1,
-                       ?5, ?5, ?6)",
-            params![
-                id,
-                project_id,
-                input.name,
-                metadata.to_string(),
-                now,
-                input.created_by_user_id.unwrap_or(0),
-            ],
-        )?;
+        let id = insert_chat_agent(&connection, project_id, input)?;
         drop(connection);
         self.get_chat_agent(project_id, &id)
+    }
+
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let initialized = connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM loop_items
+                WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
+                  AND deleted_at IS NULL
+             )",
+            [project_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if initialized {
+            return Ok(None);
+        }
+        let id = insert_chat_agent(&connection, project_id, input)?;
+        drop(connection);
+        self.get_chat_agent(project_id, &id).map(Some)
     }
 
     pub fn update_chat_agent(
@@ -2705,6 +2668,75 @@ impl LocalTaskStore {
             .lock()
             .map_err(|_| TaskRuntimeError::LockPoisoned)
     }
+}
+
+fn insert_chat_agent(
+    connection: &Connection,
+    project_id: &str,
+    input: ChatAgentCreate,
+) -> Result<String, TaskRuntimeError> {
+    validate_name(&input.name, "robot name")?;
+    validate_chat_agent_runtime(&input.runtime)?;
+    if !(1..=20).contains(&input.max_concurrent_executions) {
+        return Err(TaskRuntimeError::Invalid(
+            "Robot max concurrent executions must be between 1 and 20".to_owned(),
+        ));
+    }
+    validate_workspace_policy(&input.workspace_policy)?;
+    validate_mcp_servers(&input.mcp_servers)?;
+    let capability_mode = input.capability_mode.unwrap_or_else(|| {
+        if !input.plugins.is_empty()
+            || !input.additional_skills.is_empty()
+            || input
+                .mcp_servers
+                .as_object()
+                .is_some_and(|servers| !servers.is_empty())
+        {
+            "manual".to_owned()
+        } else {
+            "follow_device".to_owned()
+        }
+    });
+    let id = format!("LA-{}", Uuid::new_v4().simple());
+    let timestamp = now();
+    let mut metadata = json!({
+        "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
+        "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
+        "runtime": input.runtime,
+        "model": input.model,
+        "model_type": input.model_type,
+        "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
+        "capability_description": input.capability_description.unwrap_or_default(),
+        "capability_mode": capability_mode,
+        "system_prompt": input.system_prompt.unwrap_or_default(),
+        "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
+        "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
+        "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
+        "max_concurrent_executions": input.max_concurrent_executions,
+        "workspace_policy": input.workspace_policy,
+        "plugins": input.plugins,
+        "additional_skills": input.additional_skills,
+        "mcp_servers": input.mcp_servers,
+    });
+    metadata["execution_device_id"] = json!(input.execution_device_id);
+    metadata["local_project_id"] = json!(input.local_project_id);
+    connection.execute(
+        "INSERT INTO loop_items (
+            id, resource_type, project_space, cloud_project_id, name, title,
+            description, status, metadata, version, created_at, updated_at,
+            created_by_user_id
+         ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1,
+                   ?5, ?5, ?6)",
+        params![
+            id,
+            project_id,
+            input.name,
+            metadata.to_string(),
+            timestamp,
+            input.created_by_user_id.unwrap_or(0),
+        ],
+    )?;
+    Ok(id)
 }
 
 fn get_effective_binding(
@@ -4902,6 +4934,52 @@ mod tests {
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
         );
+    }
+
+    #[test]
+    fn default_chat_agent_is_created_once_and_stays_deleted() {
+        let (_directory, store, project) = chat_agent_store();
+        let input = ChatAgentCreate {
+            name: "current-device-assistant".to_owned(),
+            display_name: Some("Current device assistant".to_owned()),
+            namespace: Some("default".to_owned()),
+            runtime: "codex".to_owned(),
+            model: Some("gpt-5".to_owned()),
+            model_type: Some("public".to_owned()),
+            model_namespace: Some("default".to_owned()),
+            capability_description: None,
+            capability_mode: Some("follow_device".to_owned()),
+            system_prompt: Some(String::new()),
+            visibility: Some("creator_admin".to_owned()),
+            execution_environment: Some("local".to_owned()),
+            execution_mode: Some("auto".to_owned()),
+            execution_device_id: None,
+            max_concurrent_executions: 1,
+            workspace_policy: "project".to_owned(),
+            local_project_id: None,
+            created_by_user_id: Some(7),
+            plugins: Vec::new(),
+            additional_skills: Vec::new(),
+            mcp_servers: json!({}),
+        };
+
+        let created = store
+            .ensure_default_chat_agent(&project.id, input.clone())
+            .unwrap()
+            .expect("the first initialization should create an agent");
+        assert!(store
+            .ensure_default_chat_agent(&project.id, input.clone())
+            .unwrap()
+            .is_none());
+
+        store
+            .archive_chat_agent(&project.id, &created.id, created.version)
+            .unwrap();
+        assert!(store.list_chat_agents(&project.id).unwrap().is_empty());
+        assert!(store
+            .ensure_default_chat_agent(&project.id, input)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

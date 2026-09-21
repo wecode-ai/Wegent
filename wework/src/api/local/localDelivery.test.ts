@@ -303,6 +303,30 @@ describe('local delivery API', () => {
     })
   })
 
+  test('ensures the initial local agent through the dedicated bootstrap command', async () => {
+    const request = vi.fn(async () => null)
+    const api = createLocalProjectChatAgentApi(request, 7)
+
+    await api.ensureDefault('default-work-items', {
+      name: 'current-device-assistant',
+      displayName: '当前设备助手',
+      runtime: 'codex',
+      model: 'gpt-5',
+      capabilityMode: 'follow_device',
+    })
+
+    expect(request).toHaveBeenCalledWith('chat_agents.ensure_default', {
+      project_id: 'default-work-items',
+      agent: expect.objectContaining({
+        name: 'current-device-assistant',
+        display_name: '当前设备助手',
+        model: 'gpt-5',
+        capability_mode: 'follow_device',
+        created_by_user_id: 7,
+      }),
+    })
+  })
+
   test('queries a backend project provider without creating a local project', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'external_projects.configure') return projectRecord

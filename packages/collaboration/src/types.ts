@@ -213,6 +213,7 @@ export interface CollaborationExecutionEnvironment {
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
   location?: 'local' | 'cloud'
+  version?: number
   owner_type: 'user' | 'workspace'
   owner_id: string
   owner_name: string

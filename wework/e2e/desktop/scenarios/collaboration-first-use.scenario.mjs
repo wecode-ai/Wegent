@@ -17,6 +17,7 @@ const PROJECT_NAME = `首次协作验收-${process.pid}`
 const ISSUE_NAME = `整理首用闭环-${process.pid}`
 const RUN_MARKER = 'COLLABORATION_FIRST_USE_ASSISTANT'
 const COMPLETION_MARKER = 'COLLABORATION_FIRST_USE_COMPLETED'
+const DEFAULT_AGENT_NAME = '当前设备助手'
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -45,6 +46,7 @@ export function createDesktopScenario({
 }) {
   let active = false
   let verifiedRequest = null
+  let defaultAgentId = null
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
 
@@ -82,6 +84,22 @@ export function createDesktopScenario({
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid^="collaboration-agents-row-"]'), {
+        text: DEFAULT_AGENT_NAME,
+        timeoutMs: uiTimeoutMs,
+      })
+      const agentSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+      const defaultAgentRowTestId = agentSnapshot.testIds.find(testId =>
+        testId.startsWith('collaboration-agents-row-')
+      )
+      assert.ok(defaultAgentRowTestId, 'The first-use default Agent was not created')
+      defaultAgentId = defaultAgentRowTestId.slice('collaboration-agents-row-'.length)
+      await capture(control, 'collaboration-first-use-00-default-agent.png')
+
       await control.command('click', sidebarScoped('[data-testid="collaboration-primary-home"]'))
       await control.command(
         'waitFor',
@@ -189,11 +207,35 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await capture(control, 'collaboration-first-use-08-issue-result.png')
+
+      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
+      await control.command(
+        'click',
+        scoped(`[data-testid="collaboration-agents-delete-${defaultAgentId}"]`)
+      )
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-delete-agent-dialog"]'),
+        { text: DEFAULT_AGENT_NAME, timeoutMs: uiTimeoutMs }
+      )
+      await capture(control, 'collaboration-first-use-09-delete-agent-confirmation.png')
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="collaboration-delete-agent-confirm"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="collaboration-agents-row-${defaultAgentId}"]`),
+        { visible: false, timeoutMs: uiTimeoutMs }
+      )
+      await capture(control, 'collaboration-first-use-10-agent-deleted.png')
     },
 
     diagnostics() {
       return {
         active,
+        defaultAgentId,
         requestVerified: Boolean(verifiedRequest),
       }
     },

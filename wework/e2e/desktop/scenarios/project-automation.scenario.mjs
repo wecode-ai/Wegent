@@ -7,6 +7,7 @@ const WORKSPACE_NAME = '协作组验收空间'
 const PROJECT_NAME = '协作组验收项目'
 const WORKSPACE_GROUP_NAME = '空间交付协作组'
 const PROJECT_GROUP_NAME = '项目响应协作组'
+const DELETABLE_GROUP_NAME = '待删除协作小组'
 const PROJECT_AGENT_NAME = '项目 Codex 负责人'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
@@ -459,6 +460,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped(`[data-testid="collaboration-group-available-${workspaceGroup.id}"]`)
         )
         await capture(control, 'project-automation-05-project-groups-removed.png')
+
+        await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await createAgentGroup(control, {
+          name: DELETABLE_GROUP_NAME,
+          agentResourceId: String(projectAgent.wegentTeamId),
+        })
+        const deletableGroup = await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
+          response =>
+            response.items?.find(candidate => candidate.name === DELETABLE_GROUP_NAME) ?? null,
+          'Creating the deletable collaboration group did not persist',
+          uiTimeoutMs
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="collaboration-group-detail-${deletableGroup.id}"]`),
+          { text: DELETABLE_GROUP_NAME, timeoutMs: uiTimeoutMs }
+        )
+        await control.command('click', scoped('[data-testid="collaboration-group-detail-delete"]'))
+        await capture(control, 'project-automation-06-group-delete-confirmation.png')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-detail-delete-confirm"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
+          response => !response.items?.some(candidate => candidate.id === deletableGroup.id),
+          'Deleting the collaboration group from its detail view did not persist',
+          uiTimeoutMs
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="collaboration-group-${deletableGroup.id}"]`),
+          { visible: false, timeoutMs: uiTimeoutMs }
+        )
+        await capture(control, 'project-automation-07-group-deleted.png')
       } finally {
         try {
           await archiveFixture()

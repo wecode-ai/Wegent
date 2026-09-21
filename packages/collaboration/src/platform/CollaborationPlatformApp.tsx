@@ -20,6 +20,7 @@ import {
   Plus,
   Search,
   Settings,
+  Trash2,
   UserRound,
   UsersRound,
   X,
@@ -131,6 +132,10 @@ const platformMessages = {
     localResourcesHint: "保存在当前设备，可离线使用。",
     cloudResourcesHint: "保存在云端，可跨设备和空间复用。",
     resourceSettings: "设置",
+    deleteAgent: "删除智能体",
+    deleteAgentConfirm: "删除后无法恢复，也会从引用它的空间中移除。",
+    deleting: "删除中…",
+    deleteFailed: "删除失败，请稍后重试。",
     createAgent: "新建智能体",
     createTeam: "新建协作小组",
     addDevice: "添加设备",
@@ -334,6 +339,11 @@ const platformMessages = {
     cloudResourcesHint:
       "Stored in the cloud for reuse across devices and spaces.",
     resourceSettings: "Settings",
+    deleteAgent: "Delete agent",
+    deleteAgentConfirm:
+      "This cannot be undone. The agent will also be removed from spaces that reference it.",
+    deleting: "Deleting…",
+    deleteFailed: "Could not delete the agent. Please try again.",
     createAgent: "New agent",
     createTeam: "New team",
     addDevice: "Add device",
@@ -1162,6 +1172,7 @@ function ResourceCatalogPage({
   onCreateDevice,
   onCreateLocalAgent,
   onCreateTeam,
+  onDeleteAgent,
   onManageResource,
 }: {
   api: SharedWorkspaceApi;
@@ -1185,6 +1196,7 @@ function ResourceCatalogPage({
   onCreateDevice(source: ResourceSource, workspaceId?: string): void;
   onCreateLocalAgent(): void;
   onCreateTeam(workspaceId: string): void;
+  onDeleteAgent(agent: CollaborationOwnedAgent): Promise<void>;
   onManageResource(
     kind: ResourceCatalogKind,
     resourceId?: string,
@@ -1248,6 +1260,10 @@ function ResourceCatalogPage({
   const [bindingWorkspaceId, setBindingWorkspaceId] = useState<string | null>(
     null,
   );
+  const [deletingAgent, setDeletingAgent] =
+    useState<CollaborationOwnedAgent | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const workspaceLocations = useMemo(
     () =>
       new Map(
@@ -1393,6 +1409,8 @@ function ResourceCatalogPage({
     setCreateOpen(false);
     setBindingResourceId(null);
     setBindingWorkspaceId(null);
+    setDeletingAgent(null);
+    setDeleteError(null);
   }, [defaultSource, kind]);
   const pageCopy = {
     agents: {
@@ -1834,6 +1852,23 @@ function ResourceCatalogPage({
                     <Settings aria-hidden="true" />
                   </button>
                 }
+                {kind === "agents" ? (
+                  <button
+                    type="button"
+                    className="collaboration-resource-settings-button"
+                    aria-label={messages.deleteAgent}
+                    title={messages.deleteAgent}
+                    data-testid={`collaboration-agents-delete-${row.id}`}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeletingAgent(
+                        agents.find((agent) => agent.id === row.id) ?? null,
+                      );
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                ) : null}
               </span>
             </article>
           ))
@@ -1926,6 +1961,77 @@ function ResourceCatalogPage({
               ) : (
                 <p>{messages.noAvailableSpaces}</p>
               )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {deletingAgent ? (
+        <div
+          className="collaboration-resource-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deleteBusy) {
+              setDeletingAgent(null);
+              setDeleteError(null);
+            }
+          }}
+        >
+          <section
+            className="collaboration-resource-dialog collaboration-delete-agent-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="collaboration-delete-agent-title"
+            data-testid="collaboration-delete-agent-dialog"
+          >
+            <header>
+              <div>
+                <h2 id="collaboration-delete-agent-title">
+                  {messages.deleteAgent}
+                </h2>
+                <p>
+                  <strong>{deletingAgent.name}</strong>
+                  <br />
+                  {messages.deleteAgentConfirm}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="collaboration-resource-dialog-close"
+                aria-label={messages.cancel}
+                disabled={deleteBusy}
+                onClick={() => setDeletingAgent(null)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </header>
+            {deleteError ? (
+              <p className="collaboration-resource-form-error">{deleteError}</p>
+            ) : null}
+            <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
+              <button
+                type="button"
+                className="collaboration-secondary-button"
+                disabled={deleteBusy}
+                onClick={() => setDeletingAgent(null)}
+              >
+                {messages.cancel}
+              </button>
+              <button
+                type="button"
+                className="collaboration-primary-button"
+                data-testid="collaboration-delete-agent-confirm"
+                disabled={deleteBusy}
+                onClick={() => {
+                  setDeleteBusy(true);
+                  setDeleteError(null);
+                  void onDeleteAgent(deletingAgent)
+                    .then(() => setDeletingAgent(null))
+                    .catch(() => setDeleteError(messages.deleteFailed))
+                    .finally(() => setDeleteBusy(false));
+                }}
+              >
+                {deleteBusy ? messages.deleting : messages.deleteAgent}
+              </button>
             </div>
           </section>
         </div>
@@ -2800,8 +2906,10 @@ function RootTeamEditor({
         await onCreated();
         return updated;
       },
-      removeCollaborationGroup: (groupId) =>
-        api.workspaces!.removeCollaborationGroup(workspace.id, groupId),
+      async removeCollaborationGroup(groupId) {
+        await api.workspaces!.removeCollaborationGroup(workspace.id, groupId);
+        await onCreated();
+      },
     };
   }, [api.members, api.workspaces, onCreated, workspace.id]);
 
@@ -3403,6 +3511,13 @@ export function CollaborationPlatformApp({
           onCreateTeam={(workspaceId) => {
             setRootTeamEditingId(undefined);
             setRootTeamCreationWorkspaceId(workspaceId);
+          }}
+          onDeleteAgent={async (agent) => {
+            if (!api.resources?.removeAgent) {
+              throw new Error(messages.deleteFailed);
+            }
+            await api.resources.removeAgent(agent);
+            await commands.reload();
           }}
           onManageResource={manageRootResource}
         />
