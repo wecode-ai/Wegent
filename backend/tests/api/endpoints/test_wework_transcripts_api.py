@@ -124,6 +124,49 @@ def test_commits_native_object_metadata_and_structured_summary(
     assert turns.json()["turns"][0]["payload"]["taskId"] == "task-1"
 
 
+def test_persists_the_most_recent_writer_after_lease_release(
+    test_client, test_token, test_db
+):
+    lease = _lease(test_client, test_token, client_id="electron-origin")
+    released = test_client.post(
+        "/api/wework-transcripts/transcript-1/lease/release",
+        headers=_headers(test_token),
+        json={
+            "clientId": "electron-origin",
+            "fencingToken": lease["fencingToken"],
+        },
+    )
+    assert released.status_code == 200
+    first_listing = test_client.get(
+        "/api/wework-transcripts?includeArchived=false",
+        headers=_headers(test_token),
+    )
+    assert first_listing.status_code == 200
+    assert first_listing.json()["items"][0]["writerClientId"] == "electron-origin"
+
+    other_lease = _lease(test_client, test_token, client_id="electron-other")
+    other_released = test_client.post(
+        "/api/wework-transcripts/transcript-1/lease/release",
+        headers=_headers(test_token),
+        json={
+            "clientId": "electron-other",
+            "fencingToken": other_lease["fencingToken"],
+        },
+    )
+    assert other_released.status_code == 200
+
+    listing = test_client.get(
+        "/api/wework-transcripts?includeArchived=false",
+        headers=_headers(test_token),
+    )
+
+    assert listing.status_code == 200
+    assert listing.json()["items"][0]["writerClientId"] == "electron-other"
+    transcript = test_db.query(WeworkTranscript).one()
+    assert transcript.writer_client_id == "electron-other"
+    assert transcript.writer_lease_expires_at.year == 1970
+
+
 def test_rejects_uploaded_segment_with_mismatched_digest(
     test_client, test_token, test_db, monkeypatch
 ):
