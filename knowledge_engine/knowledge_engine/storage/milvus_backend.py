@@ -19,7 +19,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.base.embeddings.base import BaseEmbedding
-from llama_index.core.schema import BaseNode
+from llama_index.core.schema import BaseNode, MetadataMode
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
 from llama_index.core.vector_stores.types import (
     FilterOperator,
@@ -30,6 +30,11 @@ from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_filter
 from pymilvus import AsyncMilvusClient, MilvusClient
 
+from knowledge_engine.embedding.contract import (
+    is_positive_int,
+    resolve_declared_dimension,
+)
+from knowledge_engine.embedding.errors import CollectionDimensionMismatchError
 from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
@@ -363,14 +368,15 @@ class MilvusBackend(BaseStorageBackend):
         Note: Metadata is already applied to nodes by the indexer layer via
         chunk_metadata.apply_to_nodes() before calling this method.
 
-        This method automatically uses the embedding dimension from the embed_model
-        if available (via _dimension attribute set from Model CRD's embeddingConfig).
-        This ensures the Milvus collection schema matches the actual embedding vectors.
+        The embedding dimension contract is resolved before anything is written,
+        so the Milvus collection always matches the embedding vectors. Models
+        that never declared a dimension keep working: their first real batch of
+        document vectors decides the dimension and is reused by the write.
 
         Args:
             nodes: List of nodes to index (metadata already applied)
             chunk_metadata: ChunkMetadata instance containing document metadata
-            embed_model: Embedding model (may have _dimension attribute from Model CRD)
+            embed_model: Embedding model (may declare a dimension from Model CRD)
             **kwargs: Additional parameters (e.g., user_id for per_user strategy)
 
         Returns:
@@ -379,19 +385,32 @@ class MilvusBackend(BaseStorageBackend):
         # Get collection name
         collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
-        # Get embedding dimension from embed_model if available
-        # CustomEmbedding stores dimension in _dimension attribute (set from Model CRD)
-        embed_dim = getattr(embed_model, "_dimension", None)
-        if embed_dim:
-            logger.info(f"[Milvus] Using embedding dimension from model: {embed_dim}")
+        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
 
-        # Create vector store with detected dimension (or fall back to configured dim)
+        # Resolve the contract before any delete or write happens.
+        embed_dim = resolve_declared_dimension(embed_model)
+        if embed_dim is None:
+            derived_dim = self._embed_first_batch(nodes_for_embedding, embed_model)
+            if derived_dim:
+                embed_dim = derived_dim
+        if embed_dim is not None:
+            self._require_collection_dimension(
+                collection_name=collection_name,
+                expected_dim=embed_dim,
+                embed_model=embed_model,
+            )
+
+        logger.info(
+            f"[Milvus] index_with_metadata: collection={collection_name}, "
+            f"dimension={embed_dim}"
+        )
+
+        # Create vector store with the resolved dimension
         vector_store = self.create_vector_store(collection_name, dim=embed_dim)
 
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
         VectorStoreIndex(
             nodes_for_embedding,
             storage_context=storage_context,
@@ -404,6 +423,117 @@ class MilvusBackend(BaseStorageBackend):
             "index_name": collection_name,
             "status": "success",
         }
+
+    def _embed_first_batch(
+        self,
+        nodes: List[BaseNode],
+        embed_model,
+    ) -> Optional[int]:
+        """
+        Embed the first real document batch and reuse it for the write.
+
+        Args:
+            nodes: Prepared nodes that are about to be indexed
+            embed_model: Embedding model that produces the document vectors
+
+        Returns:
+            Dimension carried by the first batch, or None when there is nothing
+            to embed. The vectors are attached to the nodes so the write reuses
+            them instead of asking the provider twice.
+        """
+        batch = nodes[: self._first_batch_size(nodes, embed_model)]
+        if not batch:
+            return None
+
+        vectors = embed_model.get_text_embedding_batch(
+            [node.get_content(metadata_mode=MetadataMode.EMBED) for node in batch]
+        )
+        for node, vector in zip(batch, vectors):
+            node.embedding = vector
+
+        if not vectors or not vectors[0]:
+            return None
+        return len(vectors[0])
+
+    @staticmethod
+    def _first_batch_size(nodes: List[BaseNode], embed_model) -> int:
+        """Return how many nodes belong to the first provider batch."""
+        batch_size = getattr(embed_model, "embed_batch_size", None)
+        if is_positive_int(batch_size):
+            return batch_size
+        return len(nodes)
+
+    def _require_collection_dimension(
+        self,
+        *,
+        collection_name: str,
+        expected_dim: int,
+        embed_model,
+    ) -> None:
+        """
+        Fail before any delete or write when a collection stores another dimension.
+
+        Raises:
+            CollectionDimensionMismatchError: When the vector field of an
+                existing collection does not match the expected dimension.
+        """
+        exists, stored_dim = self._read_collection_dimension(collection_name)
+        if not exists or stored_dim == expected_dim:
+            return
+
+        model = self._embedding_model_name(embed_model)
+        if stored_dim is None:
+            raise CollectionDimensionMismatchError.missing_vector_dimension(
+                model=model,
+                expected=expected_dim,
+            )
+        raise CollectionDimensionMismatchError(
+            model=model,
+            expected=expected_dim,
+            actual=stored_dim,
+        )
+
+    def _read_collection_dimension(
+        self,
+        collection_name: str,
+    ) -> tuple[bool, Optional[int]]:
+        """
+        Read whether a collection exists and which dimension its vector field stores.
+
+        Returns:
+            A ``(exists, dimension)`` pair. The dimension is None when the
+            collection is absent or stores no readable dense vector field.
+        """
+        client = self._get_client()
+        try:
+            if not client.has_collection(collection_name):
+                return False, None
+            description = client.describe_collection(collection_name=collection_name)
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+        return True, self._stored_vector_field_dimension(description)
+
+    @staticmethod
+    def _stored_vector_field_dimension(description: Any) -> Optional[int]:
+        """Return the dimension declared by a collection description, if any."""
+        fields = description.get("fields") if isinstance(description, dict) else None
+        for field in fields or []:
+            params = field.get("params") or {}
+            dimension = params.get("dim")
+            if is_positive_int(dimension):
+                return dimension
+        return None
+
+    @staticmethod
+    def _embedding_model_name(embed_model) -> str:
+        name = getattr(embed_model, "model_name", None)
+        if isinstance(name, str) and name:
+            return name
+        return type(embed_model).__name__
 
     @staticmethod
     def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:
@@ -497,6 +627,20 @@ class MilvusBackend(BaseStorageBackend):
                 f"Supported modes: {self.SUPPORTED_RETRIEVAL_METHODS}."
             )
 
+        # Vector and hybrid queries need vectors matching the stored dimension.
+        # Keyword queries never touch the vector field, so they stay available.
+        declared_dim = (
+            None
+            if retrieval_mode == "keyword"
+            else resolve_declared_dimension(embed_model)
+        )
+        if declared_dim is not None:
+            self._require_collection_dimension(
+                collection_name=collection_name,
+                expected_dim=declared_dim,
+                embed_model=embed_model,
+            )
+
         # Create vector store
         vector_store = self.create_vector_store(
             collection_name,
@@ -532,6 +676,17 @@ class MilvusBackend(BaseStorageBackend):
                 resolved_queries.dense_query
             )
             query_str = resolved_queries.dense_query
+
+        if declared_dim is None and query_embedding is not None:
+            # A model that never declared a dimension still has to match what the
+            # collection stores, so the real query vector is compared before the query.
+            query_dimension = len(query_embedding)
+            if is_positive_int(query_dimension):
+                self._require_collection_dimension(
+                    collection_name=collection_name,
+                    expected_dim=query_dimension,
+                    embed_model=embed_model,
+                )
 
         # Create VectorStoreQuery
         vs_query = VectorStoreQuery(

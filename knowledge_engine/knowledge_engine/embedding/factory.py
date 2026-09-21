@@ -66,10 +66,12 @@ def _create_embedding_model_from_resolved_values(
                 additional_input_modalities=normalized_additional_input_modalities,
             )
 
-        from llama_index.embeddings.openai import OpenAIEmbedding
+        from knowledge_engine.embedding.openai_embedding import (
+            DimensionCheckedOpenAIEmbedding,
+        )
 
         return _attach_runtime_capabilities(
-            OpenAIEmbedding(
+            DimensionCheckedOpenAIEmbedding(
                 model=model_id or model_name or "text-embedding-3-small",
                 api_key=api_key,
                 api_base=base_url,

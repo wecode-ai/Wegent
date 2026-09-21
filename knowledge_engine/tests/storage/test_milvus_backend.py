@@ -6,15 +6,66 @@
 Unit tests for MilvusBackend storage backend implementation.
 """
 
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
 from llama_index.core.schema import TextNode
 
+from knowledge_engine.embedding.errors import (
+    CollectionDimensionMismatchError,
+    EmbeddingDimensionMismatchError,
+)
 from knowledge_engine.retrieval.filters import parse_metadata_filters
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 from shared.models import RetrievalScope
+
+
+class _StubEmbeddingModel:
+    """Embedding model with an explicit declared-dimension contract."""
+
+    model_name = "stub-embedding-model"
+
+    def __init__(
+        self,
+        *,
+        declared_dimension: Optional[int],
+        vector_dimension: int,
+        embed_batch_size: int = 10,
+    ) -> None:
+        self.embed_batch_size = embed_batch_size
+        self.text_batches: List[List[str]] = []
+        self.query_requests: List[str] = []
+        self._vector_dimension = vector_dimension
+        if declared_dimension is not None:
+            self._configured_dimension = declared_dimension
+
+    def get_text_embedding_batch(self, texts: List[str], **_: Any) -> List[List[float]]:
+        self.text_batches.append(list(texts))
+        return [[0.5] * self._vector_dimension for _ in texts]
+
+    def get_query_embedding(self, query: str) -> List[float]:
+        self.query_requests.append(query)
+        return [0.5] * self._vector_dimension
+
+
+def _collection_description(dimension: int) -> Dict[str, Any]:
+    return {
+        "fields": [
+            {"name": "pk", "params": {}},
+            {"name": "embedding", "params": {"dim": dimension}},
+            {"name": "sparse_embedding", "params": {}},
+        ]
+    }
+
+
+def _patch_absent_collection() -> Any:
+    """Patch the collection lookup the dimension contract reads before queries."""
+    return patch(
+        "knowledge_engine.storage.milvus_backend.MilvusClient",
+        **{"return_value.has_collection.return_value": False},
+    )
 
 
 class TestMilvusBackendInit:
@@ -267,7 +318,8 @@ class TestRetrieve:
         assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_vector_mode(self, mock_milvus_vs):
+    @_patch_absent_collection()
+    def test_retrieve_vector_mode(self, mock_client_cls, mock_milvus_vs):
         """Test retrieval in vector mode."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -306,7 +358,10 @@ class TestRetrieve:
         assert result["records"][0]["score"] == 0.9
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_vector_mode_adds_native_document_scope_expr(self, mock_milvus_vs):
+    @_patch_absent_collection()
+    def test_retrieve_vector_mode_adds_native_document_scope_expr(
+        self, mock_client_cls, mock_milvus_vs
+    ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
         mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
@@ -340,8 +395,9 @@ class TestRetrieve:
         assert vs_query.filters is None
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @_patch_absent_collection()
     def test_retrieve_preserves_metadata_filter_expr_with_document_scope(
-        self, mock_milvus_vs
+        self, mock_client_cls, mock_milvus_vs
     ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -490,7 +546,8 @@ class TestRetrieve:
         mock_embed_model.get_query_embedding.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_hybrid_mode(self, mock_milvus_vs):
+    @_patch_absent_collection()
+    def test_retrieve_hybrid_mode(self, mock_client_cls, mock_milvus_vs):
         """Test retrieval in hybrid mode."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -536,7 +593,10 @@ class TestRetrieve:
         assert vs_query.query_str == "test query test"
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_hybrid_mode_threads_ranker_weights(self, mock_milvus_vs):
+    @_patch_absent_collection()
+    def test_retrieve_hybrid_mode_threads_ranker_weights(
+        self, mock_client_cls, mock_milvus_vs
+    ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
@@ -630,7 +690,8 @@ class TestRetrieve:
             )
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_retrieve_score_threshold_filtering(self, mock_milvus_vs):
+    @_patch_absent_collection()
+    def test_retrieve_score_threshold_filtering(self, mock_client_cls, mock_milvus_vs):
         """Test that results below score threshold are filtered out."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -1199,3 +1260,369 @@ class TestIndexNameGeneration:
         assert backend.get_index_name("1") == "milvus_collection_0"
         assert backend.get_index_name("100") == "milvus_collection_0"
         assert backend.get_index_name("101") == "milvus_collection_100"
+
+
+class TestEmbeddingDimensionContract:
+    """Tests for the embedding dimension contract on the Milvus main path."""
+
+    @staticmethod
+    def _backend() -> MilvusBackend:
+        return MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "username": "milvus-user",
+                "password": "milvus-secret-token",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+    @staticmethod
+    def _chunk_metadata() -> ChunkMetadata:
+        return ChunkMetadata(
+            knowledge_id="kb_1",
+            doc_ref="doc_1",
+            source_file="test.txt",
+            created_at="2026-01-01T00:00:00",
+        )
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_fails_before_writing_when_the_stored_dimension_differs(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(5)
+
+        embed_model = _StubEmbeddingModel(declared_dimension=3, vector_dimension=3)
+
+        with pytest.raises(CollectionDimensionMismatchError) as exc_info:
+            self._backend().index_with_metadata(
+                nodes=[TextNode(text="chunk one")],
+                chunk_metadata=self._chunk_metadata(),
+                embed_model=embed_model,
+            )
+
+        error = exc_info.value
+        assert (error.model, error.expected, error.actual) == (
+            "stub-embedding-model",
+            3,
+            5,
+        )
+        assert error.code == "embedding_dimension_mismatch"
+        assert error.retryable is False
+        assert "http://localhost:19530" not in str(error)
+        assert "milvus-secret-token" not in str(error)
+
+        client.delete.assert_not_called()
+        client.create_collection.assert_not_called()
+        mock_milvus_vs.assert_not_called()
+        mock_vs_index.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_keeps_stored_vectors_when_the_dimension_differs(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(4)
+
+        backend = self._backend()
+
+        with pytest.raises(EmbeddingDimensionMismatchError):
+            backend.index_with_metadata(
+                nodes=[TextNode(text="chunk one")],
+                chunk_metadata=self._chunk_metadata(),
+                embed_model=_StubEmbeddingModel(
+                    declared_dimension=8,
+                    vector_dimension=8,
+                ),
+            )
+
+        client.insert.assert_not_called()
+        client.upsert.assert_not_called()
+        client.delete.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_accepts_a_collection_with_the_declared_dimension(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(1536)
+
+        result = self._backend().index_with_metadata(
+            nodes=[TextNode(text="chunk one")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=_StubEmbeddingModel(
+                declared_dimension=1536,
+                vector_dimension=1536,
+            ),
+        )
+
+        assert result["status"] == "success"
+        assert mock_milvus_vs.call_args.kwargs["dim"] == 1536
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_first_real_batch_decides_the_dimension_of_a_new_collection(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = False
+
+        embed_model = _StubEmbeddingModel(
+            declared_dimension=None,
+            vector_dimension=8,
+        )
+
+        self._backend().index_with_metadata(
+            nodes=[TextNode(text="chunk one"), TextNode(text="chunk two")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=embed_model,
+        )
+
+        assert mock_milvus_vs.call_args.kwargs["dim"] == 8
+        assert embed_model.text_batches == [["chunk one", "chunk two"]]
+
+        written_nodes = mock_vs_index.call_args.args[0]
+        assert [node.embedding for node in written_nodes] == [
+            [0.5] * 8,
+            [0.5] * 8,
+        ]
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_compatibility_path_does_not_probe_or_persist_the_dimension(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = False
+
+        embed_model = _StubEmbeddingModel(
+            declared_dimension=None,
+            vector_dimension=8,
+        )
+
+        self._backend().index_with_metadata(
+            nodes=[TextNode(text="chunk one")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=embed_model,
+        )
+
+        assert embed_model.query_requests == []
+        assert len(embed_model.text_batches) == 1
+        assert not hasattr(embed_model, "_dimension")
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_compatibility_path_fails_on_a_mismatched_existing_collection(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(8)
+
+        with pytest.raises(CollectionDimensionMismatchError):
+            self._backend().index_with_metadata(
+                nodes=[TextNode(text="chunk one")],
+                chunk_metadata=self._chunk_metadata(),
+                embed_model=_StubEmbeddingModel(
+                    declared_dimension=None,
+                    vector_dimension=4,
+                ),
+            )
+
+        mock_milvus_vs.assert_not_called()
+
+    @pytest.mark.parametrize("retrieval_mode", ["vector", "hybrid"])
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_vector_queries_fail_when_the_stored_dimension_differs(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        retrieval_mode: str,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(5)
+
+        embed_model = _StubEmbeddingModel(declared_dimension=3, vector_dimension=3)
+
+        with pytest.raises(CollectionDimensionMismatchError):
+            self._backend().retrieve(
+                knowledge_id="kb_1",
+                query="test query",
+                embed_model=embed_model,
+                retrieval_setting={"top_k": 10, "retrieval_mode": retrieval_mode},
+            )
+
+        assert embed_model.query_requests == []
+        mock_milvus_vs.assert_not_called()
+
+    @pytest.mark.parametrize("retrieval_mode", ["vector", "hybrid"])
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_queries_of_a_model_without_declared_dimension_compare_the_real_vector(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        retrieval_mode: str,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(5)
+
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        embed_model = _StubEmbeddingModel(
+            declared_dimension=None,
+            vector_dimension=3,
+        )
+
+        with pytest.raises(CollectionDimensionMismatchError) as exc_info:
+            self._backend().retrieve(
+                knowledge_id="kb_1",
+                query="test query",
+                embed_model=embed_model,
+                retrieval_setting={"top_k": 10, "retrieval_mode": retrieval_mode},
+            )
+
+        assert (exc_info.value.expected, exc_info.value.actual) == (3, 5)
+        assert embed_model.query_requests == ["test query"]
+        mock_store.query.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_existing_collection_without_a_vector_dimension_fails_closed(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = {
+            "fields": [{"name": "pk", "params": {}}]
+        }
+
+        with pytest.raises(CollectionDimensionMismatchError) as exc_info:
+            self._backend().index_with_metadata(
+                nodes=[TextNode(text="chunk one")],
+                chunk_metadata=self._chunk_metadata(),
+                embed_model=_StubEmbeddingModel(
+                    declared_dimension=1024,
+                    vector_dimension=1024,
+                ),
+            )
+
+        assert exc_info.value.actual == 0
+        assert "dense vector" in str(exc_info.value)
+        mock_milvus_vs.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_keyword_queries_ignore_the_stored_dimension(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(5)
+
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        node = MagicMock()
+        node.text = "keyword result"
+        node.metadata = {"source_file": "doc.txt", "knowledge_id": "kb_1"}
+        mock_store.query.return_value = MagicMock(nodes=[node], similarities=[0.8])
+
+        embed_model = _StubEmbeddingModel(declared_dimension=3, vector_dimension=3)
+
+        result = self._backend().retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=embed_model,
+            retrieval_setting={"top_k": 10, "retrieval_mode": "keyword"},
+        )
+
+        assert result["records"][0]["content"] == "keyword result"
+        assert embed_model.query_requests == []
+        client.describe_collection.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_delete_document_still_runs_when_the_stored_dimension_differs(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = _collection_description(5)
+
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.get_nodes.return_value = [MagicMock(), MagicMock()]
+
+        result = self._backend().delete_document(
+            knowledge_id="kb_1",
+            doc_ref="doc_1",
+        )
+
+        assert result["deleted_chunks"] == 2
+        mock_store.delete_nodes.assert_called_once()

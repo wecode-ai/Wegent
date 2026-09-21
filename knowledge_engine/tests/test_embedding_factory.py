@@ -268,3 +268,74 @@ def test_custom_embedding_rejects_unexpected_response_dimensions(
     assert exc_info.value.expected == 3
     assert exc_info.value.actual == 4
     assert post.call_count == 1
+
+
+def test_custom_embedding_rejects_unexpected_query_dimensions(
+    mocker: MockerFixture,
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {
+        "data": [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
+    }
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="custom-embedding-model",
+        dimensions=3,
+    )
+
+    with pytest.raises(EmbeddingDimensionMismatchError) as exc_info:
+        embedding.get_query_embedding("release plan")
+
+    assert exc_info.value.expected == 3
+    assert exc_info.value.actual == 4
+
+
+def test_openai_embedding_rejects_undeclared_document_dimensions(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "llama_index.embeddings.openai.base.get_embeddings",
+        return_value=[[0.1, 0.2, 0.3, 0.4]],
+    )
+    embedding = create_embedding_model_from_runtime_config(
+        RuntimeEmbeddingModelConfig(
+            model_name="text-embedding-3-small",
+            resolved_config={
+                "protocol": "openai",
+                "api_key": "sk-test",
+                "dimensions": 3,
+            },
+        )
+    )
+
+    with pytest.raises(EmbeddingDimensionMismatchError) as exc_info:
+        embedding.get_text_embedding_batch(["release plan"])
+
+    assert exc_info.value.model == "text-embedding-3-small"
+    assert exc_info.value.expected == 3
+    assert exc_info.value.actual == 4
+
+
+def test_openai_embedding_rejects_undeclared_query_dimensions(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "llama_index.embeddings.openai.base.get_embedding",
+        return_value=[0.1, 0.2, 0.3, 0.4],
+    )
+    embedding = create_embedding_model_from_runtime_config(
+        RuntimeEmbeddingModelConfig(
+            model_name="text-embedding-3-small",
+            resolved_config={
+                "protocol": "openai",
+                "api_key": "sk-test",
+                "dimensions": 3,
+            },
+        )
+    )
+
+    with pytest.raises(EmbeddingDimensionMismatchError) as exc_info:
+        embedding.get_query_embedding("release plan")
+
+    assert exc_info.value.expected == 3
+    assert exc_info.value.actual == 4

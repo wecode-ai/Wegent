@@ -18,8 +18,18 @@ class EmbeddingDimensionMismatchError(RuntimeError):
 
     code = "embedding_dimension_mismatch"
     retryable = False
+    _message_template = (
+        "Embedding model '{model}' returned {actual} dimensions; expected {expected}."
+    )
 
-    def __init__(self, *, model: str, expected: int, actual: int) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        expected: int,
+        actual: int,
+        message: str | None = None,
+    ) -> None:
         self.model = model
         self.expected = expected
         self.actual = actual
@@ -29,6 +39,39 @@ class EmbeddingDimensionMismatchError(RuntimeError):
             "actual_dimensions": actual,
         }
         super().__init__(
-            f"Embedding model '{model}' returned {actual} dimensions; "
-            f"expected {expected}."
+            message
+            or self._message_template.format(
+                model=model, expected=expected, actual=actual
+            )
+        )
+
+
+class CollectionDimensionMismatchError(EmbeddingDimensionMismatchError):
+    """Raised when a collection does not hold the declared vector dimension.
+
+    The reported ``actual`` dimension is ``0`` when the collection exists but
+    does not declare a readable dense vector field.
+    """
+
+    _message_template = (
+        "Embedding model '{model}' declares {expected} dimensions, but the existing "
+        "collection stores {actual} dimensions; rebuild the index to match."
+    )
+
+    @classmethod
+    def missing_vector_dimension(
+        cls,
+        *,
+        model: str,
+        expected: int,
+    ) -> "CollectionDimensionMismatchError":
+        """Build the error for a collection without a dense vector dimension."""
+        return cls(
+            model=model,
+            expected=expected,
+            actual=0,
+            message=(
+                f"Embedding model '{model}' declares {expected} dimensions, but the "
+                "existing collection does not declare a dense vector dimension."
+            ),
         )
