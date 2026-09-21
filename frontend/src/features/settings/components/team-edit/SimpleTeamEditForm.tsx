@@ -93,6 +93,8 @@ interface SimpleTeamEditFormProps {
   mcpAgentType?: McpAgentType
   prompt: string
   onPromptChange: (value: string) => void
+  inheritBaseCapabilities: boolean
+  onInheritBaseCapabilitiesChange: (value: boolean) => void
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
@@ -150,6 +152,8 @@ export default function SimpleTeamEditForm({
   mcpAgentType,
   prompt,
   onPromptChange,
+  inheritBaseCapabilities,
+  onInheritBaseCapabilitiesChange,
   toast,
   scope,
   groupName,
@@ -457,6 +461,24 @@ export default function SimpleTeamEditForm({
         testId="simple-section-capability"
       >
         <SimpleConfigGroup>
+          <SimpleConfigRow
+            label={t('settings:team.simple.capability.base_title')}
+            description={t('settings:team.simple.capability.base_description')}
+          >
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-xs text-text-muted">
+                {inheritBaseCapabilities
+                  ? t('settings:team.simple.capability.enabled')
+                  : t('settings:team.simple.capability.disabled')}
+              </span>
+              <Switch
+                checked={inheritBaseCapabilities}
+                onCheckedChange={onInheritBaseCapabilitiesChange}
+                data-testid="inherit-base-capabilities-switch"
+              />
+            </div>
+          </SimpleConfigRow>
+
           <SimpleConfigRow
             label={t('common:skills.skills_section')}
             description={t('settings:team.simple.core.skills_description')}
