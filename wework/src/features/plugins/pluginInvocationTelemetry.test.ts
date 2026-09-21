@@ -129,7 +129,7 @@ describe('plugin invocation telemetry', () => {
     unsubscribe()
   })
 
-  test('reports a successful shell command executed from an installed plugin Skill', () => {
+  test('reports a successful shell command when the plugin Skill path is relative', () => {
     const events: Array<{ name: string; properties: unknown; context?: unknown }> = []
     const unsubscribe = subscribeBusinessEvents(value => events.push(value))
     publishPluginInvocationCatalog(
@@ -141,7 +141,7 @@ describe('plugin invocation telemetry', () => {
               {
                 name: 'private-plugin',
                 description: '',
-                path: '/Users/test/.wework/codex/plugins/cache/wegent/private-plugin/1.0.0/skills/private-plugin/SKILL.md',
+                path: 'private-plugin',
               },
             ],
             commands: [],

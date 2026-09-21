@@ -101,6 +101,18 @@ function pluginRootFromSkillPath(value: string): string | null {
   return skillsIndex > 0 ? path.slice(0, skillsIndex) : null
 }
 
+function pluginCacheRoot(marketplace: string, pluginKey: string, version: string): string | null {
+  const segments = [marketplace, pluginKey, version].map(segment => normalizedPath(segment))
+  if (
+    segments.some(
+      segment => !segment || segment === '.' || segment === '..' || segment.includes('/')
+    )
+  ) {
+    return null
+  }
+  return `/plugins/cache/${segments.join('/')}`
+}
+
 function rememberOwner(
   owners: Map<string, PluginOwner | null>,
   rawKey: unknown,
@@ -157,6 +169,8 @@ export function publishPluginInvocationCatalog(
     rememberOwner(pluginOwners, payload.remotePluginId, owner)
     rememberOwner(pluginOwners, manifest.id, owner)
     rememberOwner(pluginOwners, `${pluginKey}@${marketplace}`, owner)
+    const cacheRoot = pluginCacheRoot(marketplace, pluginKey, owner.version)
+    if (cacheRoot) rememberOwner(pluginRootOwners, cacheRoot, owner)
     for (const skill of plugin.spec.components.skills ?? []) {
       const pluginRoot = pluginRootFromSkillPath(skill.path)
       if (pluginRoot) rememberOwner(pluginRootOwners, pluginRoot, owner)
