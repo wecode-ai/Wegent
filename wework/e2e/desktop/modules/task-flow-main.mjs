@@ -125,6 +125,7 @@ import {
 import {
   verifyFollowUpSendRejectionNotice,
   verifyModelServiceConnectionError,
+  verifyModelProxyRestartRecovery,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -3445,6 +3446,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'model-service-connection-error'
       await verifyModelServiceConnectionError({ composerSelector, control })
+
+      phase = 'model-proxy-restart-recovery'
+      await verifyModelProxyRestartRecovery({
+        composerSelector,
+        control,
+        executorLogPath,
+        restartDesktopApp,
+      })
 
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })

@@ -18,8 +18,8 @@ resource changes.
 | **GitLab Repo** | Supported files in GitLab repositories | Repository, branch, and files | GitLab AppKey / Access Token |
 | **GitLab Wiki** | GitLab project Wiki pages              | Repository and Wiki pages     | GitLab AppKey / Access Token |
 
-Wiki.js currently supports **2.x starting at version 2.5.300**. Wiki.js 3.x and
-versions older than 2.5.300 are outside the current compatibility range.
+Wiki.js currently supports **2.x starting at version 2.5.0**. Wiki.js 3.x and
+versions older than 2.5.0 are outside the current compatibility range.
 
 GitLab Repo supports these file extensions:
 
@@ -64,7 +64,7 @@ pipeline. Wiki.js and GitLab do not require a dedicated retrieval Skill.
 
 ### Wiki.js
 
-- Wiki.js 2.x at version 2.5.300 or later.
+- Wiki.js 2.x at version 2.5.0 or later.
 - An API key created under **Admin → API** whose permission group includes:
   - `read:pages`
   - `read:source`

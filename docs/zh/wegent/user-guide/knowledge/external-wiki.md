@@ -16,7 +16,7 @@ Wiki 页面绑定到知识库。绑定后的内容会转换为普通知识文档
 | **GitLab Repo** | GitLab 仓库中的支持文件 | 仓库、分支和文件 | GitLab AppKey / Access Token |
 | **GitLab Wiki** | GitLab 项目的 Wiki 页面 | 仓库和 Wiki 页面 | GitLab AppKey / Access Token |
 
-Wiki.js 当前支持 **2.x，最低版本 2.5.300**。Wiki.js 3.x 及 2.5.300
+Wiki.js 当前支持 **2.x，最低版本 2.5.0**。Wiki.js 3.x 及 2.5.0
 之前的版本不在当前兼容范围内。
 
 GitLab Repo 支持以下文件扩展名：
@@ -59,7 +59,7 @@ pdf, doc, docx, ppt, pptx, xls, xlsx, csv, txt, md, markdown
 
 ### Wiki.js
 
-- Wiki.js 版本为 2.5.300 或更高的 2.x。
+- Wiki.js 版本为 2.5.0 或更高的 2.x。
 - 在 **Admin → API** 创建 API Key，其权限组包含：
   - `read:pages`
   - `read:source`

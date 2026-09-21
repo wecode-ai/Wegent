@@ -1562,7 +1562,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
     assert!(launch_config.local_proxy_registration.is_some());
     assert!(launch_config.config_overrides.iter().any(|value| {
         value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.contains("/v1/codex-router/task-")
+            && value.ends_with("/v1/codex-router\"")
     }));
     for params in [
         thread_start_params(&request, &launch_config),
@@ -1791,12 +1791,63 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     );
     assert!(launch_config.config_overrides.iter().any(|override_value| {
         override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.contains("/v1/codex-router/task-")
+            && override_value.ends_with("/v1/codex-router\"")
     }));
     assert!(!launch_config
         .config_overrides
         .iter()
         .any(|override_value| override_value.contains("experimental_bearer_token")));
+}
+
+#[test]
+fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("fork-router");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let mut request = ExecutionRequest {
+        task_id: "fork-router-source-task".to_owned(),
+        model_config: json!({
+            "model_id": "source-model",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    let cold_fork = build_codex_launch_config_for_fork(&request, "fork-router-source-thread")
+        .expect("fork must not require an in-memory source route");
+    let source = build_codex_launch_config(&request).expect("source route should register");
+    bind_local_proxy_thread(&source, "fork-router-source-thread")
+        .expect("source thread should bind");
+    request.model_config["model_id"] = json!("selected-model");
+    let warm_fork = build_codex_launch_config_for_fork(&request, "fork-router-source-thread")
+        .expect("fork must accept the current model independently of the source route");
+    let token = |config: &CodexLaunchConfig| {
+        config
+            .local_proxy_registration
+            .as_ref()
+            .expect("proxy route")
+            .0
+            .clone()
+    };
+    assert_ne!(token(&cold_fork), token(&source));
+    assert_ne!(token(&warm_fork), token(&source));
+    assert_ne!(token(&warm_fork), token(&cold_fork));
+    assert!(warm_fork
+        .config_overrides
+        .contains(&"model=selected-model".to_owned()));
+
+    local_model_proxy::bind_fork_thread(&token(&warm_fork), "fork-router-new-thread")
+        .expect("new thread should own the fork route");
+    request.task_id = "fork-router-new-thread".to_owned();
+    let resumed = build_codex_launch_config(&request).expect("fork follow-up should register");
+    assert_eq!(token(&resumed), token(&warm_fork));
+    assert_ne!(token(&resumed), token(&source));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -3028,6 +3079,12 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 
 #[test]
 fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("restored-fork-router");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
     let request = ExecutionRequest {
         task_id: "restored-task".to_owned(),
         model_config: json!({
@@ -3046,9 +3103,13 @@ fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() 
         launch_config.model_provider.as_deref(),
         Some(codex_model_catalog::PROVIDER_ID)
     );
-    let retained = local_model_proxy::retain_for_thread("restored-thread", Some("gpt-5.6-luna"))
-        .expect("restored thread should be bound to the recreated route");
-    local_model_proxy::unregister(&retained);
+    let registration = launch_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("restored fork should have an independent route");
+    local_model_proxy::bind_fork_thread(&registration.0, "restored-fork-thread")
+        .expect("the new thread should own the route");
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
