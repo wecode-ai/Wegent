@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Personal API key access to Wework independent conversations."""
+"""Personal API key access to Wework Runtime conversations."""
 
 from typing import Literal
 

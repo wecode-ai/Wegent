@@ -757,7 +757,7 @@ pub(crate) fn search_result_item(
     })
 }
 
-fn local_task_json(link: RuntimeTaskLink) -> Value {
+pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
     let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
     task.insert("taskId".to_owned(), Value::String(link.local_task_id));
