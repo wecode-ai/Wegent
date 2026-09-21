@@ -121,6 +121,33 @@ def test_is_member_accepts_new_shard_owner_and_resource_member(test_db):
     assert store.is_member(test_db, task_id=task_id_value, user_id=24) is False
 
 
+def test_runtime_state_reads_new_shard_task_for_owner_and_member(test_db):
+    store = ShardedTaskAccessStore()
+    task_id_value = new_task_id(user_id=29, sequence=6)
+    add_shard_task(
+        test_db,
+        task_id_value=task_id_value,
+        user_id=29,
+        payload={
+            "status": {
+                "status": "RUNNING",
+                "updatedAt": "2026-09-18T11:50:00",
+            }
+        },
+    )
+    add_resource_member(test_db, task_id_value=task_id_value, user_id=30)
+
+    owner_state = store.get_runtime_state(test_db, task_id=task_id_value, user_id=29)
+    member_state = store.get_runtime_state(test_db, task_id=task_id_value, user_id=30)
+
+    assert owner_state is not None
+    assert owner_state.status == "RUNNING"
+    assert owner_state.updated_at == "2026-09-18T11:50:00"
+    assert member_state is not None
+    assert member_state.status == "RUNNING"
+    assert store.get_runtime_state(test_db, task_id=task_id_value, user_id=31) is None
+
+
 def test_is_group_chat_reads_field_and_json_spec_for_new_shard_task(test_db):
     store = ShardedTaskAccessStore()
     field_task_id = new_task_id(user_id=25, sequence=3)
