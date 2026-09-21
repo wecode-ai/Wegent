@@ -20,6 +20,7 @@ AIGC_VIDEO_SKILL_NAMES = {
     "material-to-video-multi-style",
     "material-to-video-unified-async",
     "prompts-to-movie-stepped",
+    "video-quiz",
 }
 LOCAL_IMAGE_URL_EXPIRES = timedelta(days=7)
 
