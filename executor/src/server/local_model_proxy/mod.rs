@@ -450,75 +450,17 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn retain_for_thread(
-    thread_id: &str,
-    expected_routing_model_id: Option<&str>,
-) -> Result<String, String> {
+pub(crate) fn bind_fork_thread(token: &str, thread_id: &str) -> Result<(), String> {
+    bind_thread(token, thread_id)?;
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
-    prune_registry(&mut registry);
-    let mut matching_tokens = registry
-        .routes
-        .iter()
-        .filter(|(_, registered)| registered.thread_ids.contains(thread_id))
-        .map(|(token, _)| token.clone())
-        .collect::<Vec<_>>();
-    matching_tokens.sort();
-    let token = match matching_tokens.as_slice() {
-        [token] => token.clone(),
-        [] => {
-            return Err(format!(
-                "local model proxy route for Codex thread {thread_id} is not registered"
-            ));
-        }
-        _ => {
-            return Err(format!(
-                "multiple local model proxy routes are bound to Codex thread {thread_id}"
-            ));
-        }
-    };
-    let registered = registry
-        .routes
-        .get_mut(&token)
-        .expect("matched local model proxy route should exist");
-    if let (Some(expected), Some(actual)) = (
-        expected_routing_model_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-        registered.upstream.routing_model_id.as_deref(),
-    ) {
-        if expected != actual {
-            return Err(format!(
-                "local model proxy route for Codex thread {thread_id} uses model {actual}, expected {expected}"
-            ));
-        }
-    }
-    registered.active_references += 1;
-    registered.last_used = Instant::now();
-    log_executor_event(
-        "local model proxy retained for task thread",
-        &[
-            ("thread_id", thread_id.to_owned()),
-            (
-                "routing_model_id",
-                registered
-                    .upstream
-                    .routing_model_id
-                    .clone()
-                    .unwrap_or_default(),
-            ),
-            (
-                "auth_present",
-                (!registered.upstream.api_key.is_empty()).to_string(),
-            ),
-            (
-                "active_references",
-                registered.active_references.to_string(),
-            ),
-        ],
-    );
-    Ok(token)
+    // Subsequent sends use the new thread ID as task ID and must reuse this route.
+    registry.tokens_by_scope.retain(|_, value| value != token);
+    registry
+        .tokens_by_scope
+        .insert(thread_id.to_owned(), token.to_owned());
+    Ok(())
 }
 
 pub(crate) fn unregister(token: &str) {
@@ -3661,9 +3603,9 @@ mod tests {
     }
 
     #[test]
-    fn retaining_a_bound_thread_preserves_its_authenticated_upstream() {
+    fn fork_thread_route_is_reused_by_subsequent_sends() {
         let token = register(
-            "retained-thread-task-route",
+            "temporary-fork-task-route",
             LocalModelProxyUpstream {
                 base_url: "https://example.com".to_owned(),
                 request_url: None,
@@ -3679,20 +3621,25 @@ mod tests {
                 max_output_tokens: None,
             },
         );
-        bind_thread(&token, "retained-thread").expect("source thread should bind");
-
-        let retained = retain_for_thread("retained-thread", Some("routing-model"))
-            .expect("bound route should be retained");
-
-        assert_eq!(retained, token);
+        bind_fork_thread(&token, "forked-thread").expect("forked thread should bind");
         let entries = registry().lock().expect("registry lock");
-        let route = entries.routes.get(&token).expect("retained route");
+        assert!(!entries
+            .tokens_by_scope
+            .contains_key("temporary-fork-task-route"));
+        let route = entries.routes.get(&token).expect("forked route");
         assert_eq!(route.upstream.api_key, "secret");
-        assert_eq!(route.active_references, 2);
+        let upstream = route.upstream.clone();
         drop(entries);
 
-        unregister(&retained);
         unregister(&token);
+        let resumed = register("forked-thread", upstream);
+        assert_eq!(resumed, token);
+        assert_eq!(
+            bound_thread_token(br#"{"client_metadata":{"thread_id":"forked-thread"}}"#)
+                .expect("forked thread should have exactly one route"),
+            token
+        );
+        unregister(&resumed);
     }
 
     #[test]

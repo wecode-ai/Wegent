@@ -252,6 +252,7 @@ import type {
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
+  RuntimeTaskForkRequest,
 } from '@/types/api'
 import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
@@ -309,6 +310,24 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
+
+function runtimeTaskForkModelOptions(
+  projectChat: ProjectChatControls
+): Pick<RuntimeTaskForkRequest, 'modelSelection'> {
+  const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
+  const selectedModelOptions =
+    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const executionModel = selectedModelExecutionFields(selectedModel ?? null, selectedModelOptions)
+  if (!executionModel.modelId) return {}
+  return {
+    modelSelection: {
+      modelName: executionModel.modelId,
+      modelType: executionModel.modelType ?? null,
+      options: executionModel.modelOptions ?? {},
+    },
+  }
+}
+
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
@@ -5351,21 +5370,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onEditLastUserMessage={paneSession.editLastUserMessage}
                     canEditLastUserMessage={canEditLastUserMessage}
                     onForkMessage={
-                      currentRuntimeUsesCodex
-                        ? message => {
+                      currentRuntimeUsesCodex &&
+                      currentRuntimeTask &&
+                      (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
+                        ? async message => {
                             const workspacePath =
                               currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
                             if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                            return forkCurrentRuntimeTask(
-                              {
-                                deviceId: currentRuntimeTask.deviceId,
-                                workspacePath,
-                              },
-                              {
-                                source: currentRuntimeConversationSource ?? currentRuntimeTask,
-                                lastTurnId: message.turnId,
-                              }
-                            )
+                            paneSession.clearError()
+                            try {
+                              await forkCurrentRuntimeTask(
+                                {
+                                  deviceId: currentRuntimeTask.deviceId,
+                                  workspacePath,
+                                },
+                                {
+                                  source: currentRuntimeConversationSource ?? currentRuntimeTask,
+                                  lastTurnId: message.turnId,
+                                  ...runtimeTaskForkModelOptions(projectChat),
+                                }
+                              )
+                            } catch (error) {
+                              paneSession.setError(
+                                getErrorMessage(error, t('workbench.task_fork_failed'))
+                              )
+                            }
                           }
                         : undefined
                     }
@@ -5770,7 +5799,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onFork={async target => {
-            await forkCurrentRuntimeTask(target)
+            await forkCurrentRuntimeTask(target, {
+              source: currentRuntimeTask ?? undefined,
+            })
           }}
         />
         <ContinueInImDialog

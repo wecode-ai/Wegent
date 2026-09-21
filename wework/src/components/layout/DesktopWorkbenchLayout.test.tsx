@@ -1602,6 +1602,8 @@ describe('DesktopWorkbenchLayout', () => {
       codeCommentContexts: props.codeCommentContexts ?? [],
       input: String(state.input ?? ''),
       setInput: props.onInputChange ?? baseProps.onInputChange,
+      setError: vi.fn(),
+      clearError: vi.fn(),
       sending: Boolean(state.isSending),
       waitingForAssistant: Boolean(props.isAwaitingAssistantStart),
       status: createPaneStatus({
@@ -3510,64 +3512,93 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(deliveryApiMock.listCloudProjects).toHaveBeenCalledTimes(2))
   })
 
-  test('forks an earlier completed turn without stopping the running follow-up', async () => {
-    const currentRuntimeTask = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/project-alpha',
-      taskId: 'runtime-1',
-    }
-    const onCancelRuntimePaneTask = vi.fn().mockResolvedValue(true)
-    const onForkCurrentRuntimeTask = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask,
-        }}
-        lifecycleTaskRunning
-        messages={[
-          {
-            id: 'assistant-turn-1',
-            role: 'assistant',
-            content: 'First turn complete',
-            status: 'done',
-            turnId: 'turn-1',
-            createdAt: '2026-07-25T12:00:00.000Z',
-          },
-          {
-            id: 'assistant-turn-2',
-            role: 'assistant',
-            content: 'Follow-up is streaming',
-            status: 'streaming',
-            turnId: 'turn-2',
-            createdAt: '2026-07-25T12:01:00.000Z',
-          },
-        ]}
-        onCancelRuntimePaneTask={onCancelRuntimePaneTask}
-        onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('fork-message-button'))
-
-    expect(onCancelRuntimePaneTask).not.toHaveBeenCalled()
-    expect(onForkCurrentRuntimeTask).toHaveBeenCalledWith(
-      {
+  test.each([
+    { forkError: null, selectedModel: harnessTestModel },
+    { forkError: 'Fork service unavailable', selectedModel: harnessTestModel },
+    { forkError: null, selectedModel: null },
+  ])(
+    'forks an earlier completed turn without stopping the running follow-up (%j)',
+    async ({ forkError, selectedModel }) => {
+      const currentRuntimeTask = {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
-      },
-      {
-        source: {
+        taskId: 'runtime-1',
+      }
+      const onCancelRuntimePaneTask = vi.fn().mockResolvedValue(true)
+      const onForkCurrentRuntimeTask = forkError
+        ? vi.fn().mockRejectedValue(new Error(forkError))
+        : vi.fn().mockResolvedValue(undefined)
+
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{
+            ...baseProps.state,
+            currentRuntimeTask,
+          }}
+          lifecycleTaskRunning
+          messages={[
+            {
+              id: 'assistant-turn-1',
+              role: 'assistant',
+              content: 'First turn complete',
+              status: 'done',
+              turnId: 'turn-1',
+              createdAt: '2026-07-25T12:00:00.000Z',
+            },
+            {
+              id: 'assistant-turn-2',
+              role: 'assistant',
+              content: 'Follow-up is streaming',
+              status: 'streaming',
+              turnId: 'turn-2',
+              createdAt: '2026-07-25T12:01:00.000Z',
+            },
+          ]}
+          projectChat={{
+            ...baseProps.projectChat,
+            models: [harnessTestModel],
+            selectedModel,
+            selectedModelOptions: { reasoning_effort: 'high' },
+          }}
+          onCancelRuntimePaneTask={onCancelRuntimePaneTask}
+          onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
+        />
+      )
+
+      await userEvent.click(screen.getByTestId('fork-message-button'))
+
+      expect(onCancelRuntimePaneTask).not.toHaveBeenCalled()
+      expect(onForkCurrentRuntimeTask).toHaveBeenCalledWith(
+        {
           deviceId: 'device-1',
-          taskId: 'runtime-1',
           workspacePath: '/workspace/project-alpha',
         },
-        lastTurnId: 'turn-1',
+        {
+          source: currentRuntimeTask,
+          lastTurnId: 'turn-1',
+          ...(selectedModel
+            ? {
+                modelSelection: {
+                  modelName: 'local-model:test',
+                  modelType: 'runtime',
+                  options: {
+                    collaborationMode: 'default',
+                    reasoning_effort: 'high',
+                  },
+                },
+              }
+            : {}),
+        }
+      )
+      const paneSession = paneSessionMockRef.current as { setError: ReturnType<typeof vi.fn> }
+      if (forkError) {
+        await waitFor(() => expect(paneSession.setError).toHaveBeenCalledWith(forkError))
+      } else {
+        expect(paneSession.setError).not.toHaveBeenCalled()
       }
-    )
-  })
+    }
+  )
 
   test('keeps continue-in-im action with workspace panel actions on web', () => {
     render(

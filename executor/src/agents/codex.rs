@@ -691,7 +691,9 @@ impl CodexAppServerClient {
             &response,
             launch_config.model_provider.as_deref(),
         )?;
-        bind_local_proxy_thread(&launch_config, &forked_thread_id)?;
+        if let Some(registration) = launch_config.local_proxy_registration.as_deref() {
+            local_model_proxy::bind_fork_thread(&registration.0, &forked_thread_id)?;
+        }
         Ok(response)
     }
 
@@ -3364,19 +3366,21 @@ struct CodexLocalImage {
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
-    build_codex_launch_config_with_bound_thread(request, None)
+    build_codex_launch_config_with_route_scope(request, &request.task_id)
 }
 
 fn build_codex_launch_config_for_fork(
     request: &ExecutionRequest,
     source_thread_id: &str,
 ) -> Result<CodexLaunchConfig, String> {
-    build_codex_launch_config_with_bound_thread(request, Some(source_thread_id))
+    // A fork owns its route even when the source is running or was opened after a restart.
+    let route_scope = format!("fork:{source_thread_id}:{}", uuid::Uuid::new_v4());
+    build_codex_launch_config_with_route_scope(request, &route_scope)
 }
 
-fn build_codex_launch_config_with_bound_thread(
+fn build_codex_launch_config_with_route_scope(
     request: &ExecutionRequest,
-    bound_thread_id: Option<&str>,
+    route_scope: &str,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let configured_base_url = non_empty_config(&request.model_config, "base_url")
@@ -3443,15 +3447,14 @@ fn build_codex_launch_config_with_bound_thread(
                     ("payload_auth_present", configured_auth_present.to_string()),
                 ],
             );
-            configure_or_retain_codex_router(
+            configure_codex_router(
                 &mut launch_config,
-                &request.task_id,
-                bound_thread_id,
+                route_scope,
                 upstream,
                 model.clone(),
                 request_model_switched(request),
                 vision_sidecar_upstream(&request.model_config)?,
-            )?;
+            );
         } else {
             log_executor_event(
                 "codex model route selected",
@@ -3491,15 +3494,14 @@ fn build_codex_launch_config_with_bound_thread(
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        configure_or_retain_codex_router(
+        configure_codex_router(
             &mut launch_config,
-            &request.task_id,
-            bound_thread_id,
+            route_scope,
             upstream,
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
-        )?;
+        );
     } else {
         let inference_provider = inference_model_provider(&request.model_config);
         log_executor_event(
@@ -3595,49 +3597,6 @@ fn configure_codex_router(
         local_model_proxy::mark_model_switch(&local_token);
     }
     configure_codex_router_registration(launch_config, local_token);
-}
-
-fn configure_or_retain_codex_router(
-    launch_config: &mut CodexLaunchConfig,
-    task_id: &str,
-    bound_thread_id: Option<&str>,
-    upstream: LocalModelProxyUpstream,
-    routing_model_id: Option<String>,
-    model_switched: bool,
-    vision_sidecar: Option<VisionSidecarUpstream>,
-) -> Result<(), String> {
-    if let Some(thread_id) = bound_thread_id {
-        match local_model_proxy::retain_for_thread(thread_id, routing_model_id.as_deref()) {
-            Ok(local_token) => configure_codex_router_registration(launch_config, local_token),
-            Err(error)
-                if error
-                    == format!(
-                        "local model proxy route for Codex thread {thread_id} is not registered"
-                    ) =>
-            {
-                configure_codex_router(
-                    launch_config,
-                    task_id,
-                    upstream,
-                    routing_model_id,
-                    model_switched,
-                    vision_sidecar,
-                );
-                bind_local_proxy_thread(launch_config, thread_id)?;
-            }
-            Err(error) => return Err(error),
-        }
-    } else {
-        configure_codex_router(
-            launch_config,
-            task_id,
-            upstream,
-            routing_model_id,
-            model_switched,
-            vision_sidecar,
-        );
-    }
-    Ok(())
 }
 
 fn configure_codex_router_registration(launch_config: &mut CodexLaunchConfig, local_token: String) {

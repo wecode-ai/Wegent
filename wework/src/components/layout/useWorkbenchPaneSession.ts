@@ -3135,6 +3135,7 @@ export function useWorkbenchPaneSession({
     input,
     setInput,
     error,
+    setError,
     clearError,
     status: paneStatus,
     sending: paneStatus.isSubmitting,
