@@ -34,6 +34,7 @@ function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
   const senderType: ProjectChatMessage['sender']['type'] =
     record.sender_type === 'user' || record.sender_type === 'agent' ? record.sender_type : 'system'
   const status: ProjectChatMessage['status'] =
+    record.status === 'pending' ||
     record.status === 'streaming' ||
     record.status === 'completed' ||
     record.status === 'failed' ||
@@ -112,8 +113,6 @@ export function createLocalProjectChatClient(
             onMessage(message)
           }
         }
-      } catch {
-        // Transient IPC errors are retried on the next poll.
       } finally {
         inFlight = false
       }
@@ -123,7 +122,15 @@ export function createLocalProjectChatClient(
     const snapshotMessages = [...knownMessages.values()].sort(
       (left, right) => left.sequenceNumber - right.sequenceNumber
     )
-    const timer = window.setInterval(() => void refresh(), LOCAL_COMMENT_POLL_INTERVAL_MS)
+    const timer = window.setInterval(() => {
+      void refresh().catch(error =>
+        console.error('[local-project-chat] refresh failed', {
+          projectId,
+          taskId,
+          error,
+        })
+      )
+    }, LOCAL_COMMENT_POLL_INTERVAL_MS)
     const unsubscribe = () => {
       stopped = true
       window.clearInterval(timer)
@@ -175,35 +182,27 @@ export function createLocalProjectChatClient(
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {
-    return {
-      sequenceNumber: 0,
-      messageId: input.triggerMessageId ?? `agent-${input.agentId}`,
-      projectId: input.projectId,
-      taskId: input.taskId ?? null,
-      sender: { type: 'agent', id: input.agentId, name: 'AI' },
-      type: 'agent_status',
-      content: '',
-      metadata: {},
-      status: 'streaming',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    const created = await request<LocalCommentRecord>('todos.comment.agent.start', {
+      project_id: input.projectId,
+      task_id: input.taskId ?? '',
+      agent_id: input.agentId,
+      trigger_message_id: input.triggerMessageId ?? '',
+      runtime_device_id: input.runtimeDeviceId,
+      runtime_task_id: input.runtimeTaskId,
+      prompt: input.prompt ?? null,
+      model: input.model ?? null,
+    })
+    return commentToMessage(created)
   }
 
   const failAgentResponse: ProjectChatClient['failAgentResponse'] = async input => {
-    return {
-      sequenceNumber: 0,
-      messageId: input.messageId,
-      projectId: input.projectId,
-      taskId: input.taskId ?? null,
-      sender: { type: 'agent', id: 'agent', name: 'AI' },
-      type: 'agent_status',
-      content: '',
-      metadata: { error: input.error ?? '执行失败' },
-      status: 'failed',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    const failed = await request<LocalCommentRecord>('todos.comment.agent.fail', {
+      project_id: input.projectId,
+      task_id: input.taskId ?? '',
+      message_id: input.messageId,
+      error: input.error ?? '执行失败',
+    })
+    return commentToMessage(failed)
   }
 
   return {

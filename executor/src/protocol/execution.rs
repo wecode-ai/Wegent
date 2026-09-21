@@ -128,6 +128,21 @@ impl Default for ExecutionRequest {
 }
 
 impl ExecutionRequest {
+    pub fn is_local_project(&self) -> bool {
+        self.extra
+            .get("origin")
+            .and_then(|origin| origin.get("projectStore"))
+            .and_then(Value::as_str)
+            == Some("local")
+    }
+
+    pub fn clear_backend_credentials(&mut self) {
+        self.backend_url = None;
+        self.auth_token = None;
+        self.runtime_auth_token = None;
+        self.skill_identity_token = None;
+    }
+
     pub fn resolved_shell_type(&self) -> Option<String> {
         if self
             .task_type

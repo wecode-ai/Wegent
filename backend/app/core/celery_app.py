@@ -98,6 +98,16 @@ def build_beat_schedule() -> dict:
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes
         },
+        "cleanup-knowledge-attachment-orphans": {
+            "task": "app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans",
+            "schedule": float(
+                settings.KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS
+            ),
+        },
+        "sync-external-documents": {
+            "task": "app.tasks.external_document_sync_tasks.sync_external_documents",
+            "schedule": crontab.from_string(settings.EXTERNAL_DOC_SYNC_CRON),
+        },
         "sync-plugin-upstreams": {
             "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",
             "schedule": 6 * 60 * 60,
@@ -122,6 +132,7 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
+        "app.tasks.external_document_sync_tasks",
         "app.tasks.dingtalk_auto_sync_tasks",
         "app.tasks.robot_queue_tasks",
         "app.tasks.project_automation_tasks",

@@ -311,6 +311,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="project-agent-mode-create-card"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           timeoutMs: uiTimeoutMs,
         })

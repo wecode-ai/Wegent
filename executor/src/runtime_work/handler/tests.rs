@@ -13,6 +13,9 @@ mod local_history_tests;
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+#[path = "task_lookup_tests.rs"]
+mod task_lookup_tests;
+
 /// Restores one environment variable when a test finishes.
 struct ScalarEnv {
     key: &'static str,
@@ -6081,4 +6084,31 @@ fn run_test_git(path: &Path, args: &[&str]) {
         args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn local_project_execution_never_inherits_backend_credentials() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".into(),
+            socket_url: String::new(),
+            auth_token: "cloud-token".into(),
+            runtime_auth_token: "runtime-token".into(),
+        }))),
+    );
+    let mut request = ExecutionRequest {
+        backend_url: Some("https://stale-backend.example.com".into()),
+        auth_token: Some("stale-token".into()),
+        runtime_auth_token: Some("stale-runtime-token".into()),
+        skill_identity_token: Some("stale-skill-token".into()),
+        ..Default::default()
+    };
+    request
+        .extra
+        .insert("origin".into(), json!({"projectStore":"local"}));
+    handler.apply_backend_connection(&mut request);
+    assert!(request.backend_url.is_none());
+    assert!(request.auth_token.is_none());
+    assert!(request.runtime_auth_token.is_none());
+    assert!(request.skill_identity_token.is_none());
 }
