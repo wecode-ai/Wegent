@@ -13,6 +13,7 @@ import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
+  RuntimeProjectWork,
   RuntimeTaskAddress,
   RuntimeTaskPinRequest,
   RuntimeWorkListResponse,
@@ -28,6 +29,23 @@ export {
   truncateRuntimeTaskTitle,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
 } from '@wegent/chat-core/runtime-task-title'
+
+export function findRuntimeTaskProjectWork(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeProjectWork | null {
+  if (!address) return null
+  return (
+    runtimeWork?.projects.find(project =>
+      project.deviceWorkspaces.some(
+        workspace =>
+          (workspace.deviceId === address.deviceId ||
+            workspace.remoteHostId === address.deviceId) &&
+          workspace.tasks.some(task => task.taskId === address.taskId)
+      )
+    ) ?? null
+  )
+}
 
 export async function createConversationWorkspace(
   deviceApi: {

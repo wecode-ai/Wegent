@@ -388,6 +388,16 @@ impl RuntimeWorkStore {
         self.index.lock().ok()?.tasks.get(local_task_id).cloned()
     }
 
+    pub fn get_task_summary(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
+        self.refresh_index_from_disk_if_changed();
+        self.index
+            .lock()
+            .ok()?
+            .tasks
+            .get(local_task_id)
+            .map(RuntimeTaskLink::list_summary)
+    }
+
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
         self.refresh_index_from_disk_if_changed();
         self.index
