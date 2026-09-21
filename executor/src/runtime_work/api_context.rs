@@ -36,7 +36,7 @@ pub(super) fn inject_current_session(
         .get("modelSelection")
         .or_else(|| request.extra.get("model_selection"));
     let context = json!({
-        "api_conversation_supported": request.cwd().is_some_and(|cwd| super::util::infer_workspace_kind(cwd) == "chat"),
+        "api_conversation_supported": true,
         "base_url": request_backend_url(request).and_then(|url| api_base_url(&url)),
         "conversation_id": handle("conv_", &[device_id, local_task_id]),
         "response_id": handle("resp_", &[device_id, local_task_id, &message_id]),
@@ -208,7 +208,7 @@ mod tests {
         );
         inject_current_session(&mut request, "设备", "task-1");
         let value = context(&request);
-        assert_eq!(value["api_conversation_supported"], false);
+        assert_eq!(value["api_conversation_supported"], true);
         let message_id = request.extra["client_user_message_id"].as_str().unwrap();
         assert!(uuid::Uuid::parse_str(message_id).is_ok());
         let parts: Value = serde_json::from_slice(

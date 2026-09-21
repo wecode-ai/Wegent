@@ -1026,6 +1026,7 @@ impl RuntimeWorkRpcHandler {
         }
         let result = match method {
             "runtime.tasks.list" => self.list_tasks(&payload).await,
+            "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
@@ -1197,6 +1198,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.tasks.get"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"
