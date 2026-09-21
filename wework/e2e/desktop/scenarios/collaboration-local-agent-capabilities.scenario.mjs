@@ -23,10 +23,12 @@ const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
 const SKILL_NAME = `local-agent-skill-${process.pid}`
 const SKILL_ID = 91001
 const SKILL_MARKER = 'LOCAL_AGENT_REAL_SKILL'
-const PLUGIN_NAME = 'wework-space'
+const PLUGIN_NAME = 'smart-app-builder'
 const PLUGIN_MARKETPLACE = 'wework-personal'
 const PLUGIN_ID = `${PLUGIN_NAME}@${PLUGIN_MARKETPLACE}`
-const PLUGIN_TOOL = 'send_notification'
+const PLUGIN_VERSION = '0.1.0'
+const PLUGIN_SKILL_NAME = 'create-smart-app'
+const PLUGIN_SKILL_MARKER = 'inspect → contract → doctor → verify → preview → pack'
 const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function scoped(selector) {
@@ -179,11 +181,26 @@ export async function createDesktopScenario({
         'The staged local Skill did not contain the selected Skill content'
       )
       assert.ok(serialized.includes(PLUGIN_NAME), 'The local Agent did not receive its plugin')
-      const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
       assert.ok(
-        executorLog.includes(`[wework-space-mcp] stage=tools_list`) &&
-          executorLog.includes(`tools=${PLUGIN_TOOL}`),
-        'The local Agent plugin did not start and expose its MCP tool'
+        serialized.includes(`${PLUGIN_NAME}:${PLUGIN_SKILL_NAME}`),
+        'The local Agent plugin entry Skill was not attached to the model request'
+      )
+      const pluginSkillFile = join(
+        executorHome,
+        'codex',
+        'plugins',
+        'cache',
+        PLUGIN_MARKETPLACE,
+        PLUGIN_NAME,
+        PLUGIN_VERSION,
+        'skills',
+        PLUGIN_SKILL_NAME,
+        'SKILL.md'
+      )
+      const pluginSkillContent = await readFile(pluginSkillFile, 'utf8')
+      assert.ok(
+        pluginSkillContent.includes(PLUGIN_SKILL_MARKER),
+        'The local Agent plugin entry Skill was not installed with the bundled plugin content'
       )
       verifiedRequest = body
       const responseId = `local-agent-capability-${Date.now()}`
@@ -218,7 +235,9 @@ export async function createDesktopScenario({
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('[data-testid="project-agent-mode-create"]'))
+      await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         timeoutMs: uiTimeoutMs,
       })

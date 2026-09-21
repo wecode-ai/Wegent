@@ -161,7 +161,8 @@ pub fn build_skill_deployment_plan(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
-        .map(ToOwned::to_owned)?;
+        .map(ToOwned::to_owned)
+        .unwrap_or_default();
     let team_namespace = request
         .team_namespace
         .clone()
@@ -397,5 +398,27 @@ mod tests {
         let plan = deployment_plan(&request);
 
         assert_eq!(plan.task_id, None);
+    }
+
+    #[test]
+    fn builds_local_skill_plan_without_backend_authentication() {
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([
+                ("preload_skills".to_owned(), json!(["local-skill"])),
+                (
+                    "additional_skills".to_owned(),
+                    json!([{"name": "local-skill", "namespace": "codex"}]),
+                ),
+            ]),
+            ..ExecutionRequest::default()
+        };
+
+        let plan = deployment_plan(&request);
+
+        assert!(plan.auth_token.is_empty());
+        assert_eq!(
+            plan.skill_namespaces.get("local-skill").map(String::as_str),
+            Some("codex")
+        );
     }
 }

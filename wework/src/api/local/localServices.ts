@@ -1391,6 +1391,7 @@ async function buildLocalRuntimeExecutionRequest(
     skill_names: deployedSkillNames,
     preload_skills: preloadSkills,
     user_selected_skills: preloadSkills,
+    additional_skills: input.additionalSkills ?? [],
     ...(workspaceProject
       ? {
           workspace: {
