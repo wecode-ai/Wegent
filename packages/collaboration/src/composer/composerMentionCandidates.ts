@@ -1,7 +1,5 @@
 import type { LocalDeviceApp, LocalDeviceSkill } from '@wegent/chat-core/runtime-composer-catalog'
-import type { UnifiedModel } from '@wegent/chat-core/models'
 import type { CollaborationTranslate } from '../i18n'
-import { getModelCompatibilityFamily, inferModelFamily } from '../controls/model-ui'
 import { displaySkillNameFromName, localSkillTestId } from './composerMentions'
 export type ComposerMentionCandidate<Project = unknown, Conversation = unknown> =
   | {
@@ -113,74 +111,6 @@ export function displaySkillSource(skill: LocalDeviceSkill, t: CollaborationTran
     return t('workbench.skill_scope_personal', 'Personal')
   }
   return skill.source
-}
-
-export function canSelectSkillForModel(
-  skill: LocalDeviceSkill,
-  selectedModel?: UnifiedModel | null
-): boolean {
-  if (!selectedModel) return true
-
-  const runtime = inferSkillRuntime(selectedModel)
-  if (runtime === 'claude') return isClaudeSkill(skill)
-  if (runtime === 'codex') return isCodexSkill(skill)
-  return skill.source === 'agents' || !isCodexSkill(skill)
-}
-
-function inferSkillRuntime(model: UnifiedModel): 'claude' | 'codex' | null {
-  const provider = getModelConfigProvider(model)
-  const runtimeFamily = getModelCompatibilityFamily(model)
-  const runtimeProtocol = runtimeFamily?.split('.').filter(Boolean).at(-1) ?? ''
-  const protocol = normalizeRuntimeSignal(model.config?.protocol)
-  const apiFormat = normalizeRuntimeSignal(model.config?.apiFormat ?? model.config?.api_format)
-
-  if (provider === 'claude' || runtimeProtocol === 'claude' || protocol === 'claude') {
-    return 'claude'
-  }
-  if (
-    provider === 'openai' ||
-    runtimeProtocol === 'openai-responses' ||
-    protocol === 'openai-responses' ||
-    apiFormat === 'responses'
-  ) {
-    return 'codex'
-  }
-
-  const family = inferModelFamily(model)
-  if (family === 'claude') return 'claude'
-  if (family === 'gpt') return 'codex'
-  return null
-}
-
-function getModelConfigProvider(model: UnifiedModel): string {
-  const config = objectRecord(model.config)
-  const directEnv = objectRecord(config?.env)
-  const nestedModelConfig = objectRecord(config?.modelConfig)
-  const nestedEnv = objectRecord(nestedModelConfig?.env)
-  return (
-    normalizeRuntimeSignal(model.runtime?.provider) ||
-    normalizeRuntimeSignal(directEnv?.model) ||
-    normalizeRuntimeSignal(nestedEnv?.model) ||
-    normalizeRuntimeSignal(model.provider)
-  )
-}
-
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
-}
-
-function normalizeRuntimeSignal(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : ''
-}
-
-function isClaudeSkill(skill: LocalDeviceSkill): boolean {
-  return skill.source === 'agents' || skill.source === 'claude' || skill.source === 'claude-plugin'
-}
-
-function isCodexSkill(skill: LocalDeviceSkill): boolean {
-  return skill.source === 'agents' || skill.source === 'codex' || skill.source === 'codex-plugin'
 }
 
 export function slashSkillTestId(name: string): string {
