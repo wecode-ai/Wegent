@@ -115,11 +115,12 @@ vi.mock('./desktop-device-id.js', async importOriginal => {
 })
 
 const created: FakeCoreDsh[] = []
+const createdOptions: DshRuntimeOptions[] = []
 const hostPipe = new HostPipeServer(new HostCapabilityRouter())
 let nextStartHang: Deferred<void> | null = null
 
 function createCoreDsh(options: DshRuntimeOptions): CoreDshHandle {
-  void options
+  createdOptions.push(options)
   const fake = new FakeCoreDsh()
   fake.startHang = nextStartHang
   created.push(fake)
@@ -149,6 +150,7 @@ async function flush(): Promise<void> {
 describe('DesktopRuntime lifecycle generation', () => {
   beforeEach(() => {
     created.length = 0
+    createdOptions.length = 0
     prepareState.prepareCalls = 0
     prepareState.resolveLaunch = null
     deviceIdentityState.pending = false
@@ -199,6 +201,18 @@ describe('DesktopRuntime lifecycle generation', () => {
 
     expect(created).toHaveLength(1)
     expect(runtime.state().ready).toBe(true)
+  })
+
+  test('passes the stable desktop device identity to Core DSH', async () => {
+    const runtime = createRuntime({
+      ...EXTERNAL_DSH,
+      WEGENT_APP_IPC_DEVICE_ID: 'stable-desktop-device',
+    })
+
+    await runtime.start()
+
+    expect(createdOptions).toHaveLength(1)
+    expect(createdOptions[0].env?.WEGENT_APP_IPC_DEVICE_ID).toBe('stable-desktop-device')
   })
 
   test('an old-generation start cannot clear a new-generation start', async () => {
