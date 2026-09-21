@@ -1002,6 +1002,39 @@ async function dragDesktopControlElement(command: DesktopControlCommand): Promis
   return endDesktopControlDrag(command)
 }
 
+async function dragDesktopControlElementBy(command: DesktopControlCommand): Promise<string> {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const delta = JSON.parse(command.value ?? '{}') as { x?: number; y?: number }
+  const deltaX = Number(delta.x ?? 0)
+  const deltaY = Number(delta.y ?? 0)
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+    throw new Error('dragBy requires finite x and y deltas')
+  }
+
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && activeElement !== element) {
+    activeElement.blur()
+    await waitForDesktopControlTick()
+  }
+
+  const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
+  const endOptions = {
+    ...startOptions,
+    clientX: Math.max(0, Math.floor(Number(startOptions.clientX ?? 0) + deltaX)),
+    clientY: Math.max(0, Math.floor(Number(startOptions.clientY ?? 0) + deltaY)),
+  }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+  dispatchDesktopControlPointerEvent(element, 'pointerup', { ...endOptions, buttons: 0 })
+  await waitForDesktopControlTick()
+  return element.textContent?.trim() ?? ''
+}
+
 let activeDesktopControlDataTransfer: {
   source: HTMLElement
   transfer: DataTransfer
@@ -1943,6 +1976,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dragBy':
+      return dragDesktopControlElementBy(command)
     case 'dragDataTransfer':
       return dragDesktopControlDataTransfer(command)
     case 'dragDataTransferStart':
