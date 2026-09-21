@@ -61,6 +61,7 @@ function projectAgent(
 
 function createApi(options?: {
   agents?: WorkspaceProjectAgent[];
+  resourceAgents?: CollaborationOwnedAgent[];
   workspaceAgents?: CollaborationOwnedAgent[];
 }) {
   const rows = [...(options?.agents ?? [projectAgent()])];
@@ -84,7 +85,7 @@ function createApi(options?: {
     projects: {},
     resources: {
       list: vi.fn(async () => ({
-        agents: [],
+        agents: options?.resourceAgents ?? [],
         execution_environments: [],
       })),
     },
@@ -354,6 +355,35 @@ describe("ProjectAgentConfiguration", () => {
       ),
     ).toBeNull();
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("excludes cloud Agent resources from local projects", async () => {
+    const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
+    const { api } = createApi({
+      resourceAgents: [cloudAgent],
+      workspaceAgents: [],
+    });
+    const localProject = { ...project, project_store: "local" as const };
+    const host = {
+      ...hostedCreationHost,
+      supportsExistingAgentSelection: true,
+    };
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={host}
+          project={localProject}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+
+    await click("project-agent-add");
+    expect(
+      container.querySelector('[data-testid="project-agent-wegent-team"]'),
+    ).toBeNull();
   });
 
   it("creates a project Agent through the resource-library host and binds it to the project", async () => {

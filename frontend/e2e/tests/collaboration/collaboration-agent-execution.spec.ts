@@ -866,11 +866,11 @@ test.describe('Collaboration agent execution', () => {
     await page.getByTestId('project-agent-add').click()
     await page.getByTestId('project-agent-mode-create').click()
     await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
-    await page.getByTestId('web-agent-resource-name').fill(`${TEST_PREFIX}-codex-agent`)
     await page.getByTestId('web-agent-display-name').fill(displayName)
     await page.getByTestId('web-agent-model').selectOption({
       label: resources.modelName,
     })
+    await page.getByTestId('web-agent-resource-creator-advanced-toggle').click()
     await page.getByTestId('web-agent-capability-mode-manual').click()
     await page.getByTestId('web-agent-skills-add').click()
     await page.getByTestId(`web-agent-skill-${skillRef.skill_id}`).click()
@@ -885,7 +885,6 @@ test.describe('Collaboration agent execution', () => {
           'Use the configured Skill and plugin before completing the Issue.',
         ].join(' ')
       )
-    await page.getByTestId('web-agent-resource-creator-advanced-toggle').click()
     await page
       .getByTestId('web-agent-mcp')
       .fill(JSON.stringify({ [MCP_SERVER_NAME]: providerNativeMcpServer() }))

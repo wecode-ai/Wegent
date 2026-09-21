@@ -8,7 +8,6 @@ const PROJECT_NAME = '协作组验收项目'
 const WORKSPACE_GROUP_NAME = '空间交付协作组'
 const PROJECT_GROUP_NAME = '项目响应协作组'
 const PROJECT_AGENT_NAME = '项目 Codex 负责人'
-const PROJECT_AGENT_RESOURCE_NAME = 'project-codex-owner'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -311,6 +310,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="project-agent-mode-create-card"]',
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
         await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           timeoutMs: uiTimeoutMs,
         })
@@ -322,14 +328,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Custom Agent creation must not bind an execution environment'
         )
         await capture(control, 'project-automation-02-agent-create-without-environment.png')
-        await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-          value: `${PROJECT_AGENT_RESOURCE_NAME}-${process.pid}`,
-        })
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
-        })
-        await control.command('select', '[data-testid="wework-agent-runtime"]', {
-          value: 'Codex',
         })
         const modelCatalog = await request(
           '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
@@ -347,11 +347,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
-        await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
         await control.command(
           'click',
           '[data-testid="wework-agent-resource-creator-advanced-toggle"]'
         )
+        await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
         await control.command('fill', '[data-testid="wework-agent-mcp"]', { value: '{}' })
         await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
           timeoutMs: uiTimeoutMs,

@@ -717,20 +717,17 @@ export async function createDesktopScenario({
     await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
       timeoutMs: uiTimeoutMs,
     })
-    const technicalName = `${nativeRuntime}-collaboration-${process.pid}`
-    await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-      value: technicalName,
-    })
     await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
-    await control.command('select', '[data-testid="wework-agent-runtime"]', {
-      value: shellRuntime,
-    })
     await control.command('select', '[data-testid="wework-agent-model"]', {
       value: String(publicModelIndex),
     })
+    await control.command('click', '[data-testid="wework-agent-resource-creator-advanced-toggle"]')
     await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
     await control.command('click', '[data-testid="wework-agent-skills-add"]')
     await control.command('click', `[data-testid="wework-agent-skill-${skill.id}"]`)
@@ -753,7 +750,6 @@ export async function createDesktopScenario({
       `Creating ${name} did not render its system prompt`,
       uiTimeoutMs
     )
-    await control.command('click', '[data-testid="wework-agent-resource-creator-advanced-toggle"]')
     await control.command('fill', '[data-testid="wework-agent-mcp"]', {
       value: '{}',
     })
@@ -769,6 +765,7 @@ export async function createDesktopScenario({
     assert.equal(agent.runtime, 'wegent')
     assert.ok(agent.wegentTeamId, `${name} did not persist its Team reference`)
     const team = await request(`/api/teams/${agent.wegentTeamId}`)
+    const technicalName = team.name
     assert.equal(team.displayName, name)
     assert.equal(team.bots.length, 1)
     const bot = await request(`/api/bots/${team.bots[0].bot.id}`)
@@ -834,11 +831,6 @@ export async function createDesktopScenario({
       name,
       `Editing ${name} did not load its persisted display name`
     )
-    assert.equal(
-      await control.command('getValue', '[data-testid="wework-agent-runtime"]'),
-      shellRuntime,
-      `Editing ${name} did not load its persisted runtime`
-    )
     await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -883,7 +875,7 @@ export async function createDesktopScenario({
     claudeAgent = await createProjectAgentThroughUi(control, {
       name: CLAUDE_AGENT_NAME,
       nativeRuntime: 'claude_code',
-      shellRuntime: 'ClaudeCode',
+      shellRuntime: 'Codex',
       systemMarker: CLAUDE_SYSTEM_MARKER,
     })
     assert.notEqual(codexAgent.id, claudeAgent.id)

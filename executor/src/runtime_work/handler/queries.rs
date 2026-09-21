@@ -239,6 +239,17 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let task_id = runtime_task_id(&payload);
+        let mut response = self.read_transcript(payload).await?;
+        if let Some(link) = task_id.as_deref().and_then(|id| self.local_task_link(id)) {
+            if let Some(origin) = link.runtime_handle.get("origin") {
+                response["origin"] = origin.clone();
+            }
+        }
+        Ok(response)
+    }
+
+    async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;

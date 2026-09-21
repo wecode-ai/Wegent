@@ -486,7 +486,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         displayName?: string
         namespace?: string
         runtime: 'codex' | 'claude_code'
-        wegentTeamId?: number | null
         model?: string | null
         modelType?: ModelType | null
         modelNamespace?: string
@@ -539,7 +538,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         version: number
         runtime?: 'codex' | 'claude_code'
-        wegentTeamId?: number | null
         name?: string
         displayName?: string
         namespace?: string

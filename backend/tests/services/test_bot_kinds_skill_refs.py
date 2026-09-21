@@ -13,6 +13,42 @@ from app.schemas.kind import SkillRefMeta
 from app.services.adapters.bot_kinds import BotKindsService
 
 
+def bot_create(**overrides):
+    return BotCreate(
+        name="test-bot",
+        shell_name="Codex",
+        agent_config={},
+        **overrides,
+    )
+
+
+def test_create_capability_mode_defaults_to_follow_device_without_capabilities():
+    assert (
+        BotKindsService._resolve_create_capability_mode(bot_create()) == "follow_device"
+    )
+
+
+def test_create_capability_mode_preserves_legacy_explicit_capabilities():
+    assert (
+        BotKindsService._resolve_create_capability_mode(
+            bot_create(skills=["interactive"])
+        )
+        == "manual"
+    )
+
+
+def test_create_capability_mode_respects_explicit_follow_device():
+    assert (
+        BotKindsService._resolve_create_capability_mode(
+            bot_create(
+                capability_mode="follow_device",
+                skills=["interactive"],
+            )
+        )
+        == "follow_device"
+    )
+
+
 def test_get_skill_refs_handles_duplicate_group_skill_names_without_crash(mocker):
     service = BotKindsService(Kind)
 

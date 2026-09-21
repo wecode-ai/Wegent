@@ -5,7 +5,9 @@ import {
   AgentFormDialog,
   AgentPromptEditor,
   agentPluginBinding,
+  createAgentResourceName,
   resolveAgentPromptCapabilityReferences,
+  type ProjectAgentOwnerOption,
   type UnifiedAgentCapabilityMode,
 } from '@wegent/collaboration'
 
@@ -34,6 +36,7 @@ interface WeworkAgentResourceFormProps {
   namespace: string
   onClose(): void
   onSaved(agent: { name: string; teamId: number }): Promise<void>
+  ownerOptions?: ProjectAgentOwnerOption[]
   pluginApi?: ProjectPluginCatalogApi
   workspaceName: string
 }
@@ -64,12 +67,14 @@ export function WeworkAgentResourceForm({
   namespace,
   onClose,
   onSaved,
+  ownerOptions,
   pluginApi,
   workspaceName,
 }: WeworkAgentResourceFormProps) {
   const { t } = useTranslation()
   const editing = editingTeamId != null
-  const [name, setName] = useState('')
+  const [selectedNamespace, setSelectedNamespace] = useState(namespace)
+  const [name, setName] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
   const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
   const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
@@ -228,11 +233,7 @@ export function WeworkAgentResourceForm({
     selectedModelIndex === '' ? null : (models[Number(selectedModelIndex)] ?? null)
 
   const saveAgent = async () => {
-    const technicalName = name.trim()
-    if (!technicalName) {
-      setError(t('workbench.agent_creator_name_required', '请输入资源名称'))
-      return
-    }
+    const technicalName = name
     if (!selectedModel) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
@@ -251,7 +252,7 @@ export function WeworkAgentResourceForm({
     const spec: UnifiedAgentSpec = {
       name: technicalName,
       displayName,
-      namespace: detail?.namespace ?? namespace,
+      namespace: detail?.namespace ?? selectedNamespace,
       capabilityMode,
       runtime,
       model: {
@@ -337,6 +338,22 @@ export function WeworkAgentResourceForm({
           ) : null}
         </>
       }
+      advancedSummary={{
+        description:
+          capabilityMode === 'follow_device'
+            ? t(
+                'workbench.agent_creator_follow_device_description',
+                '运行时自动使用执行设备上当前用户已有的插件、Skill、MCP 和本地操作能力。'
+              )
+            : t(
+                'workbench.agent_creator_manual_description',
+                '将所选插件、Skill 和 MCP 保存到智能体，运行前自动同步到执行设备。'
+              ),
+        title:
+          capabilityMode === 'follow_device'
+            ? t('workbench.agent_creator_follow_device_summary', '能力：跟随运行设备')
+            : t('workbench.agent_creator_manual_summary', '能力：固定到智能体'),
+      }}
       busy={busy}
       capabilities={
         capabilityMode === 'manual' ? (
@@ -397,10 +414,13 @@ export function WeworkAgentResourceForm({
               'workbench.agent_editor_description',
               '修改智能体资源的执行器、模型、Skill、插件和 MCP，保存后立即对项目生效。'
             )
-          : t('workbench.agent_creator_description', '创建后可在当前空间和项目中复用。')
+          : t(
+              'workbench.agent_creator_description',
+              '设置名称、模型和提示词即可创建，其他能力默认跟随运行设备。'
+            )
       }
       displayName={{
-        label: t('workbench.agent_creator_display_name', '显示名称'),
+        label: t('workbench.agent_creator_display_name', '智能体名称'),
         onChange: setDisplayName,
         placeholder: t('workbench.agent_creator_display_name_placeholder', '代码评审'),
         testId: 'wework-agent-display-name',
@@ -425,7 +445,7 @@ export function WeworkAgentResourceForm({
             ),
             followDescription: t(
               'workbench.agent_creator_follow_device_description',
-              '任务在哪台设备运行，就使用该设备上当前用户可用的插件、Skill、MCP 和本地能力。'
+              '运行时自动使用执行设备上当前用户已有的插件、Skill、MCP 和本地操作能力。'
             ),
             followTitle: t('workbench.agent_creator_follow_device_title', '跟随运行设备（推荐）'),
             loadingCapabilities: t(
@@ -434,13 +454,13 @@ export function WeworkAgentResourceForm({
             ),
             manualDescription: t(
               'workbench.agent_creator_manual_description',
-              '能力随智能体保存，系统会在运行前将所选插件、Skill 和 MCP 同步到执行设备。'
+              '将所选插件、Skill 和 MCP 保存到智能体，运行前自动同步到执行设备。'
             ),
             manualReady: t(
               'workbench.agent_creator_manual_ready',
               '系统会确保执行设备具备以下能力后再开始任务。'
             ),
-            manualTitle: t('workbench.agent_creator_manual_title', '手动选择能力'),
+            manualTitle: t('workbench.agent_creator_manual_title', '固定智能体能力'),
             title: t('workbench.agent_creator_capability_source', '能力来源'),
           }}
           loadingCapabilities={deviceState.loading}
@@ -453,9 +473,12 @@ export function WeworkAgentResourceForm({
         capabilityMode === 'follow_device'
           ? t(
               'workbench.agent_creator_follow_device_footer',
-              '实际能力以任务运行设备为准，换设备后可能不同。'
+              '默认使用 Codex，并从任务运行设备获取能力。'
             )
-          : t('workbench.agent_creator_manual_footer', '所选能力将随智能体同步到执行设备。')
+          : t(
+              'workbench.agent_creator_manual_footer',
+              '默认使用 Codex；所选能力会随智能体同步到执行设备。'
+            )
       }
       labels={{
         advanced: t('workbench.agent_creator_advanced', '高级设置'),
@@ -466,7 +489,7 @@ export function WeworkAgentResourceForm({
         capabilitiesSection: t('workbench.agent_creator_capabilities', '运行配置'),
         cancel: t('workbench.cancel', '取消'),
         close: t('workbench.close', '关闭'),
-        owner: t('workbench.agent_creator_owner', '资源归属'),
+        owner: t('workbench.agent_creator_owner', '保存位置'),
       }}
       loading={loadingDetail}
       loadingLabel={t('workbench.agent_editor_loading', '正在加载智能体配置…')}
@@ -493,20 +516,28 @@ export function WeworkAgentResourceForm({
         testId: 'wework-agent-model',
         value: selectedModelIndex,
       }}
-      name={{
-        disabled: editing,
-        label: t('workbench.agent_creator_resource_name', '资源名称'),
-        onChange: setName,
-        placeholder: 'code-review-agent',
-        testId: 'wework-agent-resource-name',
-        value: name,
-      }}
-      namespace={detail?.namespace ?? namespace}
+      namespace={detail?.namespace ?? selectedNamespace}
       onClose={onClose}
       onSave={() => void saveAgent()}
-      ownerLabel={workspaceName}
+      owner={
+        !editing && ownerOptions?.length
+          ? {
+              label: t('workbench.agent_creator_owner', '保存位置'),
+              onChange: setSelectedNamespace,
+              options: ownerOptions.map(option => ({
+                label: option.label,
+                value: option.namespace,
+              })),
+              testId: 'wework-agent-owner',
+              value: selectedNamespace,
+            }
+          : undefined
+      }
+      ownerLabel={
+        ownerOptions?.find(option => option.namespace === selectedNamespace)?.label ?? workspaceName
+      }
       prompt={{
-        label: t('workbench.agent_creator_prompt', '系统提示词'),
+        label: t('workbench.agent_creator_prompt', '提示词'),
         onChange: value => {
           setSystemPrompt(value)
           const references = resolveAgentPromptCapabilityReferences(
@@ -527,7 +558,7 @@ export function WeworkAgentResourceForm({
         <AgentPromptEditor
           busy={busy}
           field={{
-            label: t('workbench.agent_creator_prompt', '系统提示词'),
+            label: t('workbench.agent_creator_prompt', '提示词'),
             onChange: value => {
               setSystemPrompt(value)
               const references = resolveAgentPromptCapabilityReferences(
@@ -551,16 +582,6 @@ export function WeworkAgentResourceForm({
           }
         />
       }
-      runtime={{
-        label: t('workbench.agent_creator_runtime', '执行器'),
-        onChange: value => setRuntime(value as UnifiedAgentRuntime),
-        options: [
-          { label: 'Codex', value: 'Codex' },
-          { label: 'Claude Code', value: 'ClaudeCode' },
-        ],
-        testId: 'wework-agent-runtime',
-        value: runtime,
-      }}
       saveDisabled={loadingModels || unsupportedRuntime || !selectedModel || (editing && !detail)}
       saveLabel={
         editing

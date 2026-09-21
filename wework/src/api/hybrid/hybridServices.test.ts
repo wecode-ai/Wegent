@@ -121,6 +121,16 @@ const mocks = vi.hoisted(() => {
     recoverRuntimeConnections: localRecoverRuntimeConnections,
   }
 
+  const localOnlyServices = {
+    ...localServices,
+    runtimeWorkApi: {
+      ...localServices.runtimeWorkApi,
+      createRuntimeTask: vi.fn().mockResolvedValue({ taskId: 'local-project-task' }),
+      sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
+      interruptAndSendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
+    },
+  }
+
   const cloudDeviceApi = {
     listDevices: cloudListDevices,
     getHomeDirectory: vi.fn(),
@@ -223,6 +233,7 @@ const mocks = vi.hoisted(() => {
     cloudArchiveProjectConversations,
     cloudWorkspaceSessionApi,
     localServices,
+    localOnlyServices,
     cloudServices,
   }
 })
@@ -230,7 +241,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: (options: unknown) => {
     mocks.captureLocalAppOptions(options)
-    return mocks.localServices
+    return options === undefined ? mocks.localOnlyServices : mocks.localServices
   },
   createAutomationApiFromIpc: (
     request: (
@@ -419,6 +430,46 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+describe('local project execution ownership', () => {
+  it('uses a backend-free service for creation and continuation after reopening', async () => {
+    const services = createServices()
+    mocks.cloudCreateRuntimeTask.mockClear()
+    mocks.cloudMaterializeRuntimeTask.mockClear()
+    mocks.localCreateRuntimeTask.mockClear()
+    const origin = {
+      type: 'project_automation' as const,
+      projectStore: 'local' as const,
+      cloudProjectId: 'project',
+      loopItemId: 'issue',
+    }
+    await services.runtimeWorkApi!.createRuntimeTask({
+      deviceId: 'local-device',
+      taskId: 'local-project-task',
+      runtime: 'codex',
+      message: 'start',
+      origin,
+    })
+    const followup = {
+      address: {
+        deviceId: 'local-device',
+        taskId: 'local-project-task',
+        runtimeHandle: { origin },
+      },
+      message: 'continue',
+    }
+    await services.runtimeWorkApi!.sendRuntimeMessage(followup)
+    await services.runtimeWorkApi!.interruptAndSendRuntimeMessage(followup)
+    expect(mocks.localOnlyServices.runtimeWorkApi.createRuntimeTask).toHaveBeenCalled()
+    expect(mocks.localOnlyServices.runtimeWorkApi.sendRuntimeMessage).toHaveBeenCalledWith(followup)
+    expect(
+      mocks.localOnlyServices.runtimeWorkApi.interruptAndSendRuntimeMessage
+    ).toHaveBeenCalledWith(followup)
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.cloudMaterializeRuntimeTask).not.toHaveBeenCalled()
+  })
+})
+
 describe('execution status write-back on history reads', () => {
   const address = { deviceId: 'local-device', taskId: 'runtime-1' }
   const response = {
@@ -430,6 +481,17 @@ describe('execution status write-back on history reads', () => {
     rangeStart: 0,
     turns: [{ id: 'turn-1', status: 'done', items: [], completedAt: 1789572084984 }],
   }
+
+  it('does not send locally owned execution state to the backend', async () => {
+    const sync = mocks.cloudServices.projectChatClient.reconcileExecutionSnapshot
+    sync.mockClear()
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue({
+      ...response,
+      origin: { projectStore: 'local' },
+    })
+    await createServices().runtimeWorkApi!.getRuntimeTranscript(address)
+    expect(sync).not.toHaveBeenCalled()
+  })
 
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
     mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)

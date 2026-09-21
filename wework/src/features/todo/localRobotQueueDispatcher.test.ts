@@ -267,6 +267,30 @@ describe('startLocalRobotQueueDispatcher', () => {
     vi.useRealTimers()
   })
 
+  it('dispatches local Claude work while the cloud queue is indefinitely unavailable', async () => {
+    const fixture = services({
+      cloudClaimNext: vi.fn(() => new Promise(() => {})),
+      claimNext: vi.fn(async () =>
+        execution({ runtime_payload: runtimePayload({ runtime: 'claude_code' }) })
+      ),
+    })
+    const createLocal = vi.fn(async () => ({ taskId: 'codex-queue-1' }))
+    fixture.services.localExecutionServices = {
+      deviceApi: fixture.services.deviceApi,
+      runtimeWorkApi: {
+        ...fixture.services.runtimeWorkApi,
+        createRuntimeTask: createLocal,
+      } as WorkbenchServices['runtimeWorkApi'],
+    }
+    const stop = startLocalRobotQueueDispatcher(fixture.services)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    expect(createLocal).toHaveBeenCalledWith(expect.objectContaining({ runtime: 'claude_code' }))
+    expect(fixture.mocks.createRuntimeTask).not.toHaveBeenCalled()
+    expect(fixture.mocks.runtimeStart).toHaveBeenCalledOnce()
+    stop()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('claims from every local-capable device', async () => {
     const claimNext = vi
       .fn()

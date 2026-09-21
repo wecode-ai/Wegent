@@ -19,7 +19,6 @@ import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = `本地智能体能力验收-${process.pid}`
 const AGENT_NAME = `本地能力智能体-${process.pid}`
-const AGENT_RESOURCE_NAME = `local-capability-agent-${process.pid}`
 const ISSUE_NAME = `本地智能体执行验收-${process.pid}`
 const RUN_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_RUN'
 const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
@@ -217,15 +216,16 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="cloud-project-chat-agent-name"]', {
-        value: AGENT_RESOURCE_NAME,
-      })
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: AGENT_NAME,
       })
       await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
         value: MODEL_NAME,
       })
+      await control.command(
+        'click',
+        '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]'
+      )
       await control.command(
         'click',
         '[data-testid="cloud-project-chat-agent-capability-mode-manual"]'

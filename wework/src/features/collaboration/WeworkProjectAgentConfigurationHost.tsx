@@ -140,9 +140,8 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
 }
 
 /**
- * Wework manages Agents only through the resource library, so `添加智能体`
- * opens the resource-library form directly and configured rows can edit the
- * Agent resource they point at.
+ * Wework manages Agents through the resource library. Existing resources can
+ * be selected, while the same dialog can create or edit the backing resource.
  */
 export function createWeworkProjectAgentConfigurationHost(
   agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
@@ -155,8 +154,9 @@ export function createWeworkProjectAgentConfigurationHost(
     ...weworkProjectAgentConfigurationHost,
     ...(agentResourceApi
       ? {
-          supportsExistingAgentSelection: false,
-          renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
+          supportsExistingAgentSelection: true,
+          supportsCrossLocationAgentSelection: true,
+          renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
@@ -164,6 +164,7 @@ export function createWeworkProjectAgentConfigurationHost(
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onCreated}
+                ownerOptions={ownerOptions}
                 pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />

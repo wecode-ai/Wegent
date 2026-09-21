@@ -82,14 +82,14 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('removes existing-Agent selection once the resource library is reachable', () => {
+  it('keeps existing resources selectable alongside the resource-library form', () => {
     const api = {
       listModels: vi.fn(async () => []),
       listSkills: vi.fn(async () => []),
     } as unknown as ReturnType<typeof createAgentResourceApi>
     const host = createWeworkProjectAgentConfigurationHost(api)
 
-    expect(host.supportsExistingAgentSelection).toBe(false)
+    expect(host.supportsExistingAgentSelection).toBe(true)
     expect(host.renderAgentCreator).toBeTypeOf('function')
     expect(host.renderAgentEditor).toBeTypeOf('function')
   })
@@ -156,16 +156,29 @@ describe('weworkProjectAgentConfigurationHost', () => {
         namespace: 'workspace-alpha',
         onClose: vi.fn(),
         onCreated,
+        ownerOptions: [
+          { namespace: 'default', label: '个人空间' },
+          { namespace: 'workspace-alpha', label: 'Alpha Space' },
+          { namespace: 'engineering', label: 'Engineering' },
+        ],
         workspaceName: 'Alpha Space',
       })
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('wework-agent-capability-mode-follow')).toBeChecked()
-    )
     expect(screen.getByTestId('wework-agent-resource-creator')).toHaveAttribute(
       'data-agent-form',
       'shared'
+    )
+    expect(screen.queryByTestId('wework-agent-resource-name')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('wework-agent-runtime')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-owner')).toHaveValue('workspace-alpha')
+    fireEvent.change(screen.getByTestId('wework-agent-owner'), {
+      target: { value: 'engineering' },
+    })
+    expect(screen.getByText('能力：跟随运行设备')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
+    await waitFor(() =>
+      expect(screen.getByTestId('wework-agent-capability-mode-follow')).toBeChecked()
     )
     fireEvent.click(screen.getByTestId('wework-agent-capability-mode-manual'))
     fireEvent.click(screen.getByTestId('wework-agent-skills-add'))
@@ -180,17 +193,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.click(screen.getByTestId('wework-agent-plugins-add'))
     expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
 
-    fireEvent.change(screen.getByTestId('wework-agent-runtime'), {
-      target: { value: 'ClaudeCode' },
-    })
-    expect(screen.getByText('插件目前仅支持 Codex 执行器')).toBeInTheDocument()
-    fireEvent.change(screen.getByTestId('wework-agent-runtime'), {
-      target: { value: 'Codex' },
-    })
-
-    fireEvent.change(screen.getByTestId('wework-agent-resource-name'), {
-      target: { value: 'review-agent' },
-    })
     fireEvent.change(screen.getByTestId('wework-agent-display-name'), {
       target: { value: 'Review Agent' },
     })
@@ -202,7 +204,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.click(screen.getByTestId('wework-agent-skill-7'))
     fireEvent.click(screen.getByTestId(`wework-agent-plugin-${plugin.id}`))
     setRichInputValue('wework-agent-system-prompt', 'Review the implementation.')
-    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
     fireEvent.change(screen.getByTestId('wework-agent-mcp'), {
       target: {
         value: '{"browser":{"command":"node","args":["browser.mjs"]}}',
@@ -212,9 +213,9 @@ describe('weworkProjectAgentConfigurationHost', () => {
 
     await waitFor(() =>
       expect(createAgent).toHaveBeenCalledWith({
-        name: 'review-agent',
+        name: expect.stringMatching(/^agent-[a-z0-9]+-[a-z0-9]{6}$/),
         displayName: 'Review Agent',
-        namespace: 'workspace-alpha',
+        namespace: 'engineering',
         capabilityMode: 'manual',
         runtime: 'Codex',
         model: {
@@ -278,11 +279,9 @@ describe('weworkProjectAgentConfigurationHost', () => {
       })
     )
 
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
     fireEvent.click(screen.getByTestId('wework-agent-capability-mode-manual'))
     await waitFor(() => expect(screen.getByText('Skill catalog unavailable')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('wework-agent-resource-name'), {
-      target: { value: 'offline-agent' },
-    })
     fireEvent.change(screen.getByTestId('wework-agent-model'), {
       target: { value: '0' },
     })
@@ -293,7 +292,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     await waitFor(() =>
       expect(createAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: 'offline-agent',
+          name: expect.stringMatching(/^agent-[a-z0-9]+-[a-z0-9]{6}$/),
           model: {
             name: 'desktop-e2e-public-model',
             type: 'public',
@@ -396,12 +395,12 @@ describe('weworkProjectAgentConfigurationHost', () => {
         'Review the implementation.'
       )
     )
-    expect(screen.getByTestId('wework-agent-resource-name')).toBeDisabled()
-    expect(screen.getByTestId('wework-agent-resource-name')).toHaveValue('review-agent')
-    expect(screen.getByTestId('wework-agent-runtime')).toHaveValue('ClaudeCode')
+    expect(screen.queryByTestId('wework-agent-resource-name')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('wework-agent-runtime')).not.toBeInTheDocument()
     // The model and Skill catalogs load independently of the Agent detail, so
     // their prefill lands in a later commit than the system prompt.
     await waitFor(() => expect(screen.getByTestId('wework-agent-model')).toHaveValue('0'))
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-advanced-toggle'))
     fireEvent.click(screen.getByTestId('wework-agent-skills-add'))
     await waitFor(() => expect(screen.getByTestId('wework-agent-skill-8')).toBeChecked())
     expect(screen.getByTestId('wework-agent-skill-7')).not.toBeChecked()
@@ -502,46 +501,45 @@ describe('weworkProjectAgentConfigurationHost', () => {
       })
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-project-chat-agent-capability-mode-follow')).toBeChecked()
-    )
     expect(screen.getByTestId('cloud-project-chat-agent-editor')).toHaveAttribute(
       'data-agent-form',
       'shared'
     )
     expect(agentResourceApi.listSkills).toHaveBeenCalledOnce()
     expect(pluginApi.listPlugins).toHaveBeenCalledWith('')
-    const runtime = screen.getByTestId('cloud-project-chat-agent-environment')
-    expect(runtime).toHaveTextContent('Codex')
-    expect(runtime.tagName).toBe('SELECT')
-    expect(runtime).toHaveTextContent('Claude Code')
+    expect(screen.queryByTestId('cloud-project-chat-agent-environment')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-chat-agent-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
     expect(screen.queryByText('仅展示当前在线的设备')).not.toBeInTheDocument()
     expect(screen.queryByText('我的本地')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-chat-agent-device-capability-preview')).toBeVisible()
-    expect(screen.getByText('My Mac')).toBeInTheDocument()
-
-    fireEvent.change(screen.getByTestId('cloud-project-chat-agent-name'), {
-      target: { value: '本地评审智能体' },
-    })
     fireEvent.change(screen.getByTestId('cloud-project-chat-agent-display-name'), {
       target: { value: '本地评审' },
     })
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-model')).not.toBeDisabled()
+    )
     fireEvent.change(screen.getByTestId('cloud-project-chat-agent-model'), {
       target: { value: 'gpt-5' },
     })
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-editor-advanced-toggle'))
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-capability-mode-follow')).toBeChecked()
+    )
+    expect(screen.getByTestId('cloud-project-chat-agent-device-capability-preview')).toBeVisible()
+    expect(screen.getByText('My Mac')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-capability-mode-manual'))
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-skills-add'))
     fireEvent.click(screen.getByTestId(`cloud-project-chat-agent-skill-${skill.id}`))
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-plugins-add'))
     fireEvent.click(screen.getByTestId(`cloud-project-chat-agent-plugin-${plugin.id}`))
+    expect(screen.getByTestId('cloud-project-chat-agent-save')).toBeEnabled()
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith(
         DEFAULT_WORK_ITEM_PROJECT_ID,
         expect.objectContaining({
-          name: '本地评审智能体',
+          name: expect.stringMatching(/^agent-[a-z0-9]+-[a-z0-9]{6}$/),
           displayName: '本地评审',
           runtime: 'codex',
           model: 'gpt-5',
@@ -595,8 +593,11 @@ describe('weworkProjectAgentConfigurationHost', () => {
     const onSaved = vi.fn(async () => undefined)
     render(host.renderLocalAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
     await waitFor(() =>
-      expect(screen.getByTestId('cloud-project-chat-agent-name')).toHaveValue(agent.name)
+      expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(
+        agent.displayName
+      )
     )
+    expect(screen.queryByTestId('cloud-project-chat-agent-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-chat-agent-mode')).not.toBeInTheDocument()
     expect(screen.queryByText('手动批准')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))

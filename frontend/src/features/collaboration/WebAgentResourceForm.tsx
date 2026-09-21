@@ -13,10 +13,11 @@ import {
   AgentPromptEditor,
   agentPluginBinding,
   buildInstalledPluginProjectCatalog,
+  createAgentResourceName,
   parseAgentMcpServers,
   resolveAgentPromptCapabilityReferences,
+  type ProjectAgentOwnerOption,
   type UnifiedAgentCapabilityMode,
-  type UnifiedAgentRuntime,
 } from '@wegent/collaboration'
 
 import { apiClient } from '@/apis/client'
@@ -35,19 +36,22 @@ export function WebAgentResourceForm({
   namespace,
   onClose,
   onCreated,
+  ownerOptions,
   workspaceName,
 }: {
   namespace: string
   onClose(): void
   onCreated(agent: { name: string; teamId: number }): Promise<void>
+  ownerOptions?: ProjectAgentOwnerOption[]
   workspaceName: string
 }) {
   const { t } = useTranslation('common')
-  const scope = namespace === 'default' ? 'personal' : 'group'
-  const groupName = namespace === 'default' ? undefined : namespace
-  const [name, setName] = useState('')
+  const [selectedNamespace, setSelectedNamespace] = useState(namespace)
+  const scope = selectedNamespace === 'default' ? 'personal' : 'group'
+  const groupName = selectedNamespace === 'default' ? undefined : selectedNamespace
+  const [name] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
-  const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
+  const runtime = 'Codex'
   const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [selectedModelKey, setSelectedModelKey] = useState('')
@@ -157,10 +161,6 @@ export function WebAgentResourceForm({
   )
 
   const save = async () => {
-    if (!name.trim()) {
-      setError(t('agent_form.resource_name_required'))
-      return
-    }
     if (!selectedModel) {
       setError(t('agent_form.model_required'))
       return
@@ -184,7 +184,7 @@ export function WebAgentResourceForm({
       )
       const savedBot = await botApis.createBot({
         name: `${name.trim()}-bot`,
-        namespace,
+        namespace: selectedNamespace,
         shell_name: runtime,
         capability_mode: capabilityMode,
         agent_config: {
@@ -219,7 +219,7 @@ export function WebAgentResourceForm({
         name: name.trim(),
         displayName: displayName.trim() || undefined,
         description: '',
-        namespace,
+        namespace: selectedNamespace,
         workflow: { mode: 'solo', leader_bot_id: savedBot.id },
         bind_mode: ['chat', 'code', 'task'],
         bots: [{ bot_id: savedBot.id, bot_prompt: '', role: 'leader' }],
@@ -238,6 +238,16 @@ export function WebAgentResourceForm({
 
   return (
     <AgentFormDialog
+      advancedSummary={{
+        description:
+          capabilityMode === 'follow_device'
+            ? t('agent_form.follow_device_description')
+            : t('agent_form.manual_description'),
+        title:
+          capabilityMode === 'follow_device'
+            ? t('agent_form.follow_device_summary')
+            : t('agent_form.manual_summary'),
+      }}
       busy={saving}
       capabilities={
         capabilityMode === 'manual' ? (
@@ -333,6 +343,20 @@ export function WebAgentResourceForm({
         close: t('actions.close'),
         owner: t('agent_form.owner'),
       }}
+      owner={
+        ownerOptions?.length
+          ? {
+              label: t('agent_form.owner'),
+              onChange: setSelectedNamespace,
+              options: ownerOptions.map(option => ({
+                label: option.label,
+                value: option.namespace,
+              })),
+              testId: 'web-agent-owner',
+              value: selectedNamespace,
+            }
+          : undefined
+      }
       mcp={
         capabilityMode === 'manual'
           ? {
@@ -356,17 +380,12 @@ export function WebAgentResourceForm({
         testId: 'web-agent-model',
         value: selectedModelKey,
       }}
-      name={{
-        label: t('agent_form.resource_name'),
-        onChange: setName,
-        placeholder: t('agent_form.resource_name_placeholder'),
-        testId: 'web-agent-resource-name',
-        value: name,
-      }}
-      namespace={namespace}
+      namespace={selectedNamespace}
       onClose={onClose}
       onSave={() => void save()}
-      ownerLabel={workspaceName}
+      ownerLabel={
+        ownerOptions?.find(option => option.namespace === selectedNamespace)?.label ?? workspaceName
+      }
       prompt={{
         label: t('agent_form.prompt'),
         onChange: value => {
@@ -400,17 +419,7 @@ export function WebAgentResourceForm({
           }
         />
       }
-      runtime={{
-        label: t('agent_form.runtime'),
-        onChange: value => setRuntime(value as UnifiedAgentRuntime),
-        options: [
-          { label: 'Codex', value: 'Codex' },
-          { label: 'Claude Code', value: 'ClaudeCode' },
-        ],
-        testId: 'web-agent-runtime',
-        value: runtime,
-      }}
-      saveDisabled={loadingModels || !selectedModel || !name.trim()}
+      saveDisabled={loadingModels || !selectedModel}
       saveLabel={t('agent_form.title')}
       savingLabel={t('actions.creating')}
       testIds={{

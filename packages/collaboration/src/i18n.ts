@@ -680,6 +680,10 @@ const sharedMessages: Record<
     "todo.shared_agent": "共享智能体",
     "todo.shared_agent_execution_hint":
       "所选智能体保留自身执行器与能力配置，具体运行环境在任务开始时解析。",
+    "todo.local_agent_resource_unavailable":
+      "无法读取智能体资源配置，请重新登录后重试",
+    "todo.local_agent_runtime_unsupported":
+      "本地项目仅支持使用 Codex 或 Claude Code 执行器的智能体",
     "todo.project_owned_agent": "项目智能体",
     "todo.edit_project_agent": "编辑",
     "todo.update_project_agent_failed": "更新项目智能体失败",
@@ -1136,6 +1140,10 @@ const sharedMessages: Record<
     "todo.shared_agent": "Shared agent",
     "todo.shared_agent_execution_hint":
       "The selected agent keeps its own executor and capabilities. The execution environment is resolved when the task starts.",
+    "todo.local_agent_resource_unavailable":
+      "The Agent resource configuration is unavailable. Sign in and try again.",
+    "todo.local_agent_runtime_unsupported":
+      "Local projects support only Agents that use the Codex or Claude Code runtime.",
     "todo.project_owned_agent": "Project agent",
     "todo.edit_project_agent": "Edit",
     "todo.update_project_agent_failed": "Failed to update the project agent",
