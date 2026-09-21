@@ -2290,16 +2290,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let runtime_task_id = required_task_string(&params, "runtime_task_id")?;
             serialize_task_value(
                 runtime
-                    .start_runtime_comment(
+                    .start_runtime_comment(&crate::task_runtime::LocalRuntimeCommentStart {
                         project_id,
                         task_id,
                         agent_id,
                         trigger_message_id,
                         runtime_device_id,
                         runtime_task_id,
-                        params.get("prompt").and_then(Value::as_str),
-                        params.get("model").and_then(Value::as_str),
-                    )
+                        prompt: params.get("prompt").and_then(Value::as_str),
+                        model: params.get("model").and_then(Value::as_str),
+                    })
                     .map_err(task_runtime_error)?,
             )
         }

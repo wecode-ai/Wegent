@@ -9,9 +9,9 @@ use super::{
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
     IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
-    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
-    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskRuntimeError, TaskUpdate,
+    LocalRuntimeCommentStart, LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor,
+    ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
+    TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -697,28 +697,11 @@ impl TaskRuntime {
         self.local_store.create_comment(&create)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn start_runtime_comment(
         &self,
-        project_id: &str,
-        task_id: &str,
-        agent_id: &str,
-        trigger_message_id: &str,
-        runtime_device_id: &str,
-        runtime_task_id: &str,
-        prompt: Option<&str>,
-        model: Option<&str>,
+        input: &LocalRuntimeCommentStart<'_>,
     ) -> Result<LocalComment, TaskRuntimeError> {
-        self.local_store.start_runtime_comment(
-            project_id,
-            task_id,
-            agent_id,
-            trigger_message_id,
-            runtime_device_id,
-            runtime_task_id,
-            prompt,
-            model,
-        )
+        self.local_store.start_runtime_comment(input)
     }
 
     pub fn fail_runtime_comment(

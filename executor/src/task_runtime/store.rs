@@ -21,9 +21,9 @@ mod code_projects;
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
     ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
-    LocalExecutionClaim, LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind,
-    ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskUpdate,
+    LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
+    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind,
+    TaskReorder, TaskUpdate,
 };
 
 #[path = "local_automation.rs"]
@@ -1011,15 +1011,18 @@ impl LocalTaskStore {
 
     pub fn start_runtime_comment(
         &self,
-        project_id: &str,
-        task_id: &str,
-        agent_id: &str,
-        trigger_message_id: &str,
-        runtime_device_id: &str,
-        runtime_task_id: &str,
-        prompt: Option<&str>,
-        model: Option<&str>,
+        input: &LocalRuntimeCommentStart<'_>,
     ) -> Result<LocalComment, TaskRuntimeError> {
+        let LocalRuntimeCommentStart {
+            project_id,
+            task_id,
+            agent_id,
+            trigger_message_id,
+            runtime_device_id,
+            runtime_task_id,
+            prompt,
+            model,
+        } = *input;
         let connection = self.connection()?;
         if let Some(message_id) = connection
             .query_row(
@@ -5090,16 +5093,16 @@ mod tests {
             })
             .unwrap();
         let continuation = store
-            .start_runtime_comment(
-                &project.id,
-                &task.id,
-                &agent.id,
-                &follow_up.message_id,
-                "local-device",
-                "session-1",
-                Some("我之前说了什么"),
-                None,
-            )
+            .start_runtime_comment(&LocalRuntimeCommentStart {
+                project_id: &project.id,
+                task_id: &task.id,
+                agent_id: &agent.id,
+                trigger_message_id: &follow_up.message_id,
+                runtime_device_id: "local-device",
+                runtime_task_id: "session-1",
+                prompt: Some("我之前说了什么"),
+                model: None,
+            })
             .unwrap();
         assert_eq!(continuation.status, "streaming");
         assert_eq!(
