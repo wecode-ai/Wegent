@@ -37,6 +37,7 @@ NEVIS_IP_DEVICE_LOCK_PREFIX = "cloud_device_ip_index:device"
 NEVIS_IP_LOCK_TTL_SECONDS = 600
 NEVIS_IP_LOCK_RENEW_INTERVAL_SECONDS = 60
 NEVIS_IP_SYNC_RETRY_DELAYS_SECONDS = (0, 10, 30, 60)
+ADMIN_IP_LOOKUP_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,26 @@ class CloudDeviceIpSyncSummary:
     skip_reason: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class CloudDeviceIpObservation:
+    """An IP observation for the current Nevis sandbox."""
+
+    ip_address: Optional[str]
+    observed_at: Optional[str]
+
+
+class CloudDeviceIpLookupBusy(Exception):
+    """Another request is resolving this device's missing IP."""
+
+
+class CloudDeviceIpLookupConflict(Exception):
+    """The device disappeared or changed sandbox during IP resolution."""
+
+
+class CloudDeviceIpInvalidResponse(Exception):
+    """Nevis returned a nonempty value that is not an IP address."""
+
+
 def normalize_nevis_ip(value: Any) -> Optional[str]:
     """Return a canonical IP from a Nevis sandbox response field."""
     if not isinstance(value, str):
@@ -81,6 +102,20 @@ def get_indexed_nevis_ip(cloud_config: Dict[str, Any]) -> Optional[str]:
     if cloud_config.get(NEVIS_IP_SANDBOX_ID_FIELD) != sandbox_id:
         return None
     return normalize_nevis_ip(cloud_config.get(NEVIS_IP_FIELD))
+
+
+def get_indexed_nevis_observation(
+    cloud_config: Dict[str, Any],
+) -> CloudDeviceIpObservation:
+    """Read a matching IP and its observation time from a Device CRD."""
+    ip_address = get_indexed_nevis_ip(cloud_config)
+    observed_at = cloud_config.get(NEVIS_IP_OBSERVED_AT_FIELD)
+    return CloudDeviceIpObservation(
+        ip_address=ip_address,
+        observed_at=(
+            observed_at if ip_address and isinstance(observed_at, str) else None
+        ),
+    )
 
 
 async def _renew_redis_lock(lock: Any, lock_key: str) -> None:
@@ -386,6 +421,67 @@ class CloudDeviceIpIndexService:
             socket_timeout=5,
             socket_connect_timeout=5,
         )
+
+    def _read_current_observation(
+        self, target: CloudDeviceIpTarget
+    ) -> CloudDeviceIpObservation:
+        """Read one device without holding a DB transaction during Nevis I/O."""
+        with self._db_session_factory() as db:
+            device = self._load_device(db, target.user_id, target.device_name)
+            if device is None:
+                raise CloudDeviceIpLookupConflict()
+            spec = device.json.get("spec", {})
+            cloud_config = spec.get("cloudConfig") or {}
+            if (
+                spec.get("deviceType") != DeviceType.CLOUD.value
+                or cloud_config.get("sandboxId") != target.sandbox_id
+            ):
+                raise CloudDeviceIpLookupConflict()
+            return get_indexed_nevis_observation(cloud_config)
+
+    @trace_async(
+        span_name="wecode.cloud_device_ip_index.lookup_missing",
+        tracer_name="backend.wecode",
+    )
+    async def lookup_missing_ip(
+        self, target: CloudDeviceIpTarget
+    ) -> CloudDeviceIpObservation:
+        """Resolve one cache miss with a bounded Nevis request."""
+        redis_client = self._create_redis_client()
+        try:
+            async with acquire_nevis_ip_lock(
+                redis_client, self._device_lock_key(target)
+            ) as acquired:
+                observation = self._read_current_observation(target)
+                if observation.ip_address:
+                    return observation
+                if not acquired:
+                    raise CloudDeviceIpLookupBusy()
+
+                sandbox = await asyncio.wait_for(
+                    self._client.get_sandbox(target.sandbox_id),
+                    timeout=ADMIN_IP_LOOKUP_TIMEOUT_SECONDS,
+                )
+                details = sandbox.get("details") if isinstance(sandbox, dict) else None
+                if details is not None and not isinstance(details, dict):
+                    raise CloudDeviceIpInvalidResponse()
+                raw_ip = (details or {}).get("urls")
+                nevis_ip = normalize_nevis_ip(raw_ip)
+                if raw_ip and nevis_ip is None:
+                    raise CloudDeviceIpInvalidResponse()
+                if nevis_ip is None:
+                    return self._read_current_observation(target)
+
+                observed_at = datetime.now(timezone.utc).isoformat()
+                with self._db_session_factory() as db:
+                    if self.persist_observation(
+                        db, target, nevis_ip, observed_at, only_if_missing=True
+                    ):
+                        db.commit()
+                        return CloudDeviceIpObservation(nevis_ip, observed_at)
+                return self._read_current_observation(target)
+        finally:
+            await redis_client.aclose()
 
     async def _sync_device_with_lock(
         self,

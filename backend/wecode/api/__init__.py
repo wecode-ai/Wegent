@@ -86,6 +86,7 @@ from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from app.core.asgi_extensions import register_asgi_wrapper
 from app.core.config import settings
+from wecode.api.admin_cloud_device_ip import router as admin_cloud_device_ip_router
 from wecode.api.admin_published_apps import router as admin_published_apps_router
 from wecode.api.agent_usage import router as agent_usage_router
 from wecode.api.apikey import router as apikey_router
@@ -237,6 +238,11 @@ api_router.include_router(
 api_router.include_router(
     cloud_device_ip_index_router,
     prefix="/internal/admin/cloud-device-ip-index",
+    tags=["internal-admin"],
+)
+api_router.include_router(
+    admin_cloud_device_ip_router,
+    prefix="/internal/admin/cloud-devices",
     tags=["internal-admin"],
 )
 api_router.include_router(
