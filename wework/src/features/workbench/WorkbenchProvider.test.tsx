@@ -64,8 +64,10 @@ import {
   applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
+  setRuntimeConversationGoal,
 } from './runtimeConversationCache'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
 import {
@@ -2132,6 +2134,11 @@ function RuntimeOpenProbe() {
       </button>
     </div>
   )
+}
+
+function RuntimeGoalStatusProbe({ address }: { address: RuntimeTaskAddress }) {
+  const lifecycle = useRuntimeTaskLifecycle(address)
+  return <span data-testid="runtime-lifecycle-goal-status">{lifecycle?.goalStatus ?? 'none'}</span>
 }
 
 function RuntimeModelCompatibilityProbe() {
@@ -13822,6 +13829,67 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('none')
     )
     expect(getRuntimeGoal).toHaveBeenCalledTimes(2)
+  })
+
+  test('aligns cached and lifecycle Goal projections with the authoritative snapshot', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-a',
+      workspacePath: '/workspace/project-alpha',
+    }
+    const getRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: createRuntimeGoal({
+        objective: '权威目标',
+        status: 'paused',
+        updatedAt: 1780000000001,
+      }),
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeGoal })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <RuntimeGoalStatusProbe address={address} />
+      </>,
+      services
+    )
+    await screen.findByText('open runtime a')
+    setRuntimeConversationGoal(
+      address,
+      createRuntimeGoal({ objective: '过期的目标投影', status: 'active' })
+    )
+
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        subtaskId: '101',
+        deviceId: address.deviceId,
+        result: 'done',
+      })
+    })
+
+    await waitFor(() =>
+      expect(getRuntimeGoal).toHaveBeenCalledWith({
+        address: expect.objectContaining({
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+        }),
+      })
+    )
+    await waitFor(() => expect(getRuntimeConversationMetadata(address).goal?.status).toBe('paused'))
+    expect(screen.getByTestId('runtime-lifecycle-goal-status')).toHaveTextContent('paused')
   })
 
   test('keeps an active runtime goal active while the task list is between automatic turns', async () => {
