@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -43,13 +44,18 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.ghost_capabilities import MergedGhostCapabilities
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
     TaskContext,
     loop_item_execution_service,
 )
 from app.services.loop_items.service import loop_item_service
-from app.services.project_chat.service import bot_config, project_chat_service
+from app.services.project_chat.service import (
+    bot_config,
+    compiled_bot_config,
+    project_chat_service,
+)
 from app.services.runtime_work_service import upsert_device_workspace
 
 
@@ -78,6 +84,88 @@ def create_project(test_db: Session, user: User) -> CloudProject:
     test_db.add(agent)
     test_db.commit()
     return project
+
+
+def test_compiled_bot_config_follow_device_keeps_identity_without_ghost_capabilities(
+    mocker,
+) -> None:
+    row = ProjectChatAgent(
+        id="native-follow-device",
+        cloud_project_id=1,
+        title="Native agent",
+        name="Native agent",
+        status="active",
+        created_by_user_id=7,
+        metadata_json={"runtime": "wegent", "wegent_team_id": 9},
+    )
+    member = SimpleNamespace(
+        botRef=SimpleNamespace(namespace="default", name="custom-bot"),
+        prompt="Project role",
+    )
+    team = SimpleNamespace(user_id=7, json={})
+    bot = SimpleNamespace(json={})
+    shell = SimpleNamespace(json={})
+    own_ghost = SimpleNamespace(
+        spec=SimpleNamespace(systemPrompt="Custom native identity"),
+    )
+
+    mocker.patch(
+        "app.services.project_automation_domain.wegent_team",
+        return_value=team,
+    )
+    mocker.patch(
+        "app.services.execution.team_readiness.validate_team_execution_readiness"
+    )
+    mocker.patch(
+        "app.services.project_chat.service.Team.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(collaborationModel="solo", members=[member])
+        ),
+    )
+    mocker.patch(
+        "app.services.project_chat.service.Bot.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(
+                capability_mode="follow_device",
+                ghostRef=SimpleNamespace(namespace="default", name="custom-ghost"),
+                shellRef=SimpleNamespace(namespace="default", name="ClaudeCode"),
+                modelRef=None,
+            )
+        ),
+    )
+    mocker.patch(
+        "app.services.project_chat.service.Shell.model_validate",
+        return_value=SimpleNamespace(spec=SimpleNamespace(shellType="ClaudeCode")),
+    )
+    mocker.patch(
+        "app.services.readers.kindReader.get_by_name_and_namespace",
+        side_effect=[bot, shell],
+    )
+    mocker.patch(
+        "app.services.project_chat.service.load_ghost_chain",
+        return_value=[
+            (SimpleNamespace(), SimpleNamespace()),
+            (SimpleNamespace(), own_ghost),
+        ],
+    )
+    merge_capabilities = mocker.patch(
+        "app.services.project_chat.service.merge_ghost_capabilities",
+        return_value=MergedGhostCapabilities(),
+    )
+    mocker.patch(
+        "app.services.chat.config.model_resolver.resolve_model_name_for_bot",
+        return_value="claude-test",
+    )
+
+    result = compiled_bot_config(mocker.Mock(), row, execution_user_id=7)
+
+    merge_capabilities.assert_called_once_with([])
+    assert result["runtime"] == "claude_code"
+    assert result["system_prompt"] == (
+        "<base_prompt>\nCustom native identity\n\nProject role\n</base_prompt>"
+    )
+    assert result["additional_skills"] == []
+    assert result["mcp_servers"] == {}
 
 
 def make_device(

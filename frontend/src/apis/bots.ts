@@ -27,6 +27,7 @@ export interface CreateBotRequest {
   mcp_servers: Record<string, unknown>
   plugins?: UnifiedAgentPluginRef[]
   capability_mode?: 'follow_device' | 'manual'
+  inherit_base_capabilities?: boolean
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>
@@ -46,6 +47,7 @@ export interface UpdateBotRequest {
   mcp_servers?: Record<string, unknown>
   plugins?: UnifiedAgentPluginRef[]
   capability_mode?: 'follow_device' | 'manual'
+  inherit_base_capabilities?: boolean
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>

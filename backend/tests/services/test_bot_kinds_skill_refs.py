@@ -37,6 +37,62 @@ def test_create_capability_mode_preserves_legacy_explicit_capabilities():
     )
 
 
+def test_create_capability_mode_is_manual_when_inheriting_base_capabilities():
+    assert (
+        BotKindsService._resolve_create_capability_mode(
+            bot_create(inherit_base_capabilities=True)
+        )
+        == "manual"
+    )
+
+
+def test_resolve_default_base_ghost_ref_uses_two_point_queries(mocker):
+    query = mocker.Mock()
+    query.filter.return_value = query
+    query.first.side_effect = [
+        SimpleNamespace(json={"kind": "Team"}),
+        SimpleNamespace(json={"kind": "Bot"}),
+    ]
+    db = mocker.Mock()
+    db.query.return_value = query
+    mocker.patch(
+        "app.services.adapters.bot_kinds.Team.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(
+                members=[
+                    SimpleNamespace(
+                        role="leader",
+                        botRef=SimpleNamespace(
+                            name="chat-bot",
+                            namespace="default",
+                        ),
+                    )
+                ]
+            )
+        ),
+    )
+    mocker.patch(
+        "app.services.adapters.bot_kinds.Bot.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(
+                ghostRef=SimpleNamespace(
+                    name="chat-ghost",
+                    namespace="default",
+                )
+            )
+        ),
+    )
+
+    result = BotKindsService.resolve_default_base_ghost_ref(db)
+
+    assert result == {
+        "name": "chat-ghost",
+        "namespace": "default",
+        "user_id": 0,
+    }
+    assert query.first.call_count == 2
+
+
 def test_create_capability_mode_respects_explicit_follow_device():
     assert (
         BotKindsService._resolve_create_capability_mode(
