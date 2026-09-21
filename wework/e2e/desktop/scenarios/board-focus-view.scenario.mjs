@@ -354,13 +354,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         text: SECOND_ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      const twoCardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-      const secondItemTestId = boardItemTestIds(twoCardSnapshot).find(
-        testId => testId !== itemTestId
-      )
-      assert.ok(secondItemTestId, 'The board focus fixture did not create a second Issue card')
-      const secondItemId = secondItemTestId.slice('collaboration-issue-'.length)
-      const secondCardSurfaceSelector = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-drop-${secondItemId}"]`
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail-close"]`, {
         visible: true,
         timeoutMs: uiTimeoutMs,
@@ -376,6 +369,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         }
       )
+      const secondCardTestId = await control.command(
+        'markElementWithText',
+        `${ACTIVE_BOARD} [data-testid^="cloud-todo-card-drop-"]`,
+        {
+          text: SECOND_ISSUE_NAME,
+          value: 'board-focus-second-card',
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.ok(
+        secondCardTestId.startsWith('cloud-todo-card-drop-'),
+        'The board focus fixture did not create a second Issue card'
+      )
+      const secondItemId = secondCardTestId.slice('cloud-todo-card-drop-'.length)
+      const secondCardSurfaceSelector = `${ACTIVE_BOARD} [data-testid="${secondCardTestId}"]`
       await control.command('hover', '[data-testid="cloud-board-focus-running"]')
 
       const [shortProcessMetrics] = JSON.parse(

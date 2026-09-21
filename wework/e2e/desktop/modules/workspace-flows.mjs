@@ -1002,6 +1002,45 @@ async function verifyTrackedTaskSettledStatus(control) {
   )
 }
 
+async function openBoardTaskPageByText(control, activeBoardContentSelector, text, marker) {
+  const boardCardId = await control.command(
+    'markElementWithText',
+    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]`,
+    {
+      text,
+      value: marker,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
+  const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
+  const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
+  await control.command(
+    'click',
+    `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`,
+    {
+      visible: true,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `[data-testid="cloud-todo-card-progress-popup-${boardItemId}"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+}
+
 async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
@@ -1014,18 +1053,12 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     control,
     'The default Issue context test did not open its My Tasks tab'
   )
-  const boardCardSelector = [
-    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
-    ':not([data-testid^="cloud-todo-card-task-"])',
-    ':not([data-testid^="cloud-todo-card-more-"])',
-    ':not([data-testid^="cloud-todo-card-archive-"])',
-    ':not([data-testid^="cloud-todo-card-add-child-"])',
-  ].join('')
-  await control.command('clickElementWithText', boardCardSelector, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await openBoardTaskPageByText(
+    control,
+    activeBoardContentSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'enrich-default-issue-board-card'
+  )
   const titleSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
   await control.command('waitFor', titleSelector, {
     visible: true,
@@ -1096,18 +1129,12 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
-  const boardCardSelector = [
-    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
-    ':not([data-testid^="cloud-todo-card-task-"])',
-    ':not([data-testid^="cloud-todo-card-more-"])',
-    ':not([data-testid^="cloud-todo-card-archive-"])',
-    ':not([data-testid^="cloud-todo-card-add-child-"])',
-  ].join('')
-  await control.command('clickElementWithText', boardCardSelector, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await openBoardTaskPageByText(
+    control,
+    activeBoardContentSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'tracked-task-board-card'
+  )
   await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
