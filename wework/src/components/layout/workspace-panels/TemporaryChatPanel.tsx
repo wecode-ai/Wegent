@@ -52,8 +52,6 @@ import {
   updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
 import {
-  runtimeTaskLifecycleTransitionChanged,
-  type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -424,14 +422,10 @@ export function TemporaryChatPanel({
     })
   }, [address, globalSelectedModel, taskModelSelection])
 
-  const queuePort = useMemo<RuntimeConversationQueuePort<RuntimeTaskLifecycleSnapshot | null>>(
+  const queuePort = useMemo<RuntimeConversationQueuePort<number>>(
     () => ({
-      lifecycle: () => (address ? lifecycleStore.getTask(address) : null),
-      lifecycleChanged: previous =>
-        runtimeTaskLifecycleTransitionChanged(
-          previous,
-          address ? lifecycleStore.getTask(address) : null
-        ),
+      lifecycle: () => lifecycleStore.getTaskRevision(address),
+      lifecycleChanged: previous => previous !== lifecycleStore.getTaskRevision(address),
       isBusyError: isRuntimeTaskBusyError,
       sendFailedText: t('workbench.project_chat_send_failed'),
       guidanceFailedText: t('workbench.project_chat_send_failed'),
@@ -641,7 +635,9 @@ export function TemporaryChatPanel({
         })
       )
       if (isRuntimeTaskBusyError(sendError)) {
-        conversationQueue.enqueue(queuedMessage, { value: lifecycleStore.getTask(targetAddress) })
+        conversationQueue.enqueue(queuedMessage, {
+          value: lifecycleStore.getTaskRevision(targetAddress),
+        })
         sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {
           setSending(false)

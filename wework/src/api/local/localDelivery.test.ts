@@ -44,6 +44,61 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('preserves generated project execution environments when listing and updating', async () => {
+    const executionEnvironment = {
+      repositories: [
+        {
+          name: 'Wegent',
+          url: 'https://github.com/wecode-ai/Wegent.git',
+          ref: 'main',
+          path: 'Wegent',
+          primary: true,
+        },
+      ],
+      setup_steps: [],
+    }
+    const generatedProject = {
+      ...projectRecord,
+      metadata: {
+        ...projectRecord.metadata,
+        code_project_key: 'wegent',
+        execution_environment: executionEnvironment,
+      },
+    }
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [generatedProject]
+      if (method === 'projects.update') {
+        return {
+          ...generatedProject,
+          metadata: {
+            ...generatedProject.metadata,
+            execution_environment: (params?.project as Record<string, unknown>)
+              .execution_environment,
+          },
+          version: 2,
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listCloudProjects()).resolves.toMatchObject({
+      items: [{ execution_environment: executionEnvironment }],
+    })
+    await api.updateCloudProject('project-1', {
+      version: 1,
+      execution_environment: executionEnvironment,
+    })
+
+    expect(request).toHaveBeenCalledWith('projects.update', {
+      project_id: 'project-1',
+      project: {
+        version: 1,
+        execution_environment: executionEnvironment,
+      },
+    })
+  })
+
   test('loads a board snapshot with one batched task-binding request', async () => {
     const secondTask = {
       ...taskRecord,

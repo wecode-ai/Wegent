@@ -387,7 +387,8 @@ class DeliveryService:
                     actor_user_id=user_id,
                 )
                 return delivery
-            if item.status != "completed":
+            previous_status = item.status
+            if previous_status != "completed":
                 project = db.get(CloudProject, item.cloud_project_id)
                 if project is not None:
                     metadata = (
@@ -411,6 +412,17 @@ class DeliveryService:
                 item.metadata_json, actor_user_id=user_id
             )
             item.version += 1
+            if previous_status != "completed":
+                from app.services.workspace_cleanup_intents import sync_issue_status
+
+                sync_issue_status(
+                    db,
+                    item=item,
+                    previous_status=previous_status,
+                    next_status="completed",
+                    next_version=item.version,
+                    completed_at=now,
+                )
             db.commit()
             db.refresh(delivery)
             publish_loop_item_changed(

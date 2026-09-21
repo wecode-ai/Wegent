@@ -10,6 +10,7 @@ interface ConnectedIssueProjectWorkProps {
   project: ProjectWithTasks
   selectedDeviceWorkspaceId: number | null
   executionMode?: ProjectExecutionMode
+  executionModeLocked?: boolean
   worktreeBranch?: string | null
   onSelectProject: (projectId: number | null) => void
   onSelectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
@@ -23,6 +24,7 @@ export function ConnectedIssueProjectWork({
   project,
   selectedDeviceWorkspaceId,
   executionMode,
+  executionModeLocked = false,
   worktreeBranch,
   onSelectProject,
   onSelectProjectWorkspace,
@@ -80,6 +82,7 @@ export function ConnectedIssueProjectWork({
       selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: null,
       executionMode: executionMode ?? projectWork.executionMode,
+      executionModeLocked,
       worktreeBranch: worktreeBranch ?? projectWork.worktreeBranch,
       showProjectClearButton: false,
       onSelectProject,
@@ -89,6 +92,7 @@ export function ConnectedIssueProjectWork({
     }),
     [
       executionMode,
+      executionModeLocked,
       onSelectProject,
       onSelectProjectWorkspace,
       onExecutionModeChange,

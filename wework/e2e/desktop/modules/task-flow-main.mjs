@@ -1165,6 +1165,7 @@ async function main() {
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,

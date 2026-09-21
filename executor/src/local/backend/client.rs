@@ -26,6 +26,13 @@ const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
 const RUNTIME_TASK_PULL_EVENT: &str = "runtime.tasks.pull";
 const RUNTIME_TASK_ACCEPT_EVENT: &str = "runtime.tasks.accept";
+const RUNTIME_WORKSPACE_CLEANUP_CLAIM_EVENT: &str = "runtime.workspace_cleanup.claim";
+const RUNTIME_WORKSPACE_CLEANUP_ACCEPT_EVENT: &str = "runtime.workspace_cleanup.accept";
+
+pub struct RuntimeWorkPull {
+    pub task: Option<Value>,
+    pub workspace_cleanup_intents: Vec<Value>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum RawEventCallError {
@@ -145,7 +152,7 @@ where
             .await
     }
 
-    pub async fn pull_runtime_task(&self, timeout: Duration) -> Result<Option<Value>, String> {
+    pub async fn pull_runtime_work(&self, timeout: Duration) -> Result<RuntimeWorkPull, String> {
         let runtime_capacity = self
             .runtime_capacity
             .lock()
@@ -171,10 +178,17 @@ where
                 .unwrap_or("Runtime task pull failed")
                 .to_owned());
         }
-        Ok(payload
-            .and_then(|value| value.get("task"))
-            .cloned()
-            .filter(|task| !task.is_null()))
+        Ok(RuntimeWorkPull {
+            task: payload
+                .and_then(|value| value.get("task"))
+                .cloned()
+                .filter(|task| !task.is_null()),
+            workspace_cleanup_intents: payload
+                .and_then(|value| value.get("workspace_cleanup_intents"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        })
     }
 
     pub async fn acknowledge_runtime_task(
@@ -208,6 +222,60 @@ where
             .and_then(Value::as_str)
             .unwrap_or("Runtime task acceptance report failed")
             .to_owned())
+    }
+
+    pub async fn acknowledge_workspace_cleanup(
+        &self,
+        intent: &Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let response = self
+            .transport
+            .call(
+                RUNTIME_WORKSPACE_CLEANUP_ACCEPT_EVENT,
+                json!({
+                    "intent_id": intent.get("intent_id"),
+                    "issue_version": intent.get("issue_version"),
+                }),
+                timeout,
+            )
+            .await?;
+        let payload = ack_payload(&response);
+        if payload
+            .and_then(|value| value.get("success"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            return Ok(());
+        }
+        Err(payload
+            .and_then(|value| value.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("Workspace cleanup acceptance report failed")
+            .to_owned())
+    }
+
+    pub async fn claim_workspace_cleanup(
+        &self,
+        intent: &Value,
+        timeout: Duration,
+    ) -> Result<bool, String> {
+        let response = self
+            .transport
+            .call(
+                RUNTIME_WORKSPACE_CLEANUP_CLAIM_EVENT,
+                json!({
+                    "intent_id": intent.get("intent_id"),
+                    "issue_version": intent.get("issue_version"),
+                }),
+                timeout,
+            )
+            .await?;
+        let payload = ack_payload(&response);
+        Ok(payload
+            .and_then(|value| value.get("success"))
+            .and_then(Value::as_bool)
+            == Some(true))
     }
 
     pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {

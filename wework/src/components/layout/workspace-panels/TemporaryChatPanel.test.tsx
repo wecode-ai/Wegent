@@ -392,14 +392,33 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
   let epoch = -1
-  let store = { getTask: () => mocks.lifecycleSnapshot, syncTranscript: mocks.syncTranscript }
+  let revision = 0
+  let previousSnapshot = mocks.lifecycleSnapshot
+  const taskRevision = () => {
+    if (previousSnapshot !== mocks.lifecycleSnapshot) {
+      previousSnapshot = mocks.lifecycleSnapshot
+      revision += 1
+    }
+    return revision
+  }
+  let store = {
+    getTask: () => mocks.lifecycleSnapshot,
+    getTaskRevision: taskRevision,
+    syncTranscript: mocks.syncTranscript,
+  }
   return {
     runtimeTaskLifecycleTransitionChanged: (a: unknown, b: unknown) => a !== b,
     useRuntimeTaskLifecycle: () => mocks.lifecycleSnapshot,
     useRuntimeTaskLifecycleStore: () => {
       if (epoch !== mocks.lifecycleOwnerEpoch) {
         epoch = mocks.lifecycleOwnerEpoch
-        store = { getTask: () => mocks.lifecycleSnapshot, syncTranscript: mocks.syncTranscript }
+        revision = 0
+        previousSnapshot = mocks.lifecycleSnapshot
+        store = {
+          getTask: () => mocks.lifecycleSnapshot,
+          getTaskRevision: taskRevision,
+          syncTranscript: mocks.syncTranscript,
+        }
       }
       return store
     },
