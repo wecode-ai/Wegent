@@ -16,6 +16,7 @@ export const inject = [
 const PACKAGE_NAME = '@wegent/dsh-transcript-sync'
 const SNAPSHOT_INTERVAL = 10
 const MAX_ENCRYPTED_SEGMENT_BYTES = 256 * 1024 * 1024 + 33
+const SYNC_OPT_IN_VERSION = 1
 const PREFERENCES_UNIT = 'portable_preferences'
 const PREFERENCES_FIELDS = [
   'appearanceMode',
@@ -107,7 +108,7 @@ export class WeworkSync {
     this.state = state
     this.target = target
     this.pollIntervalMs = pollIntervalMs
-    this.enabled = state.value.enabled !== false
+    this.enabled = state.value.enabled === true
     this.active = false
     this.processing = null
     this.timer = null
@@ -630,19 +631,27 @@ function synchronizationFailure(failures) {
   return new AggregateError(errors, summary)
 }
 
-class SyncState {
+export class SyncState {
   constructor(path) {
     this.path = path
-    this.value = { version: 4, enabled: true, transcripts: {}, preferencesHash: null }
+    this.value = {
+      version: 4,
+      optInVersion: SYNC_OPT_IN_VERSION,
+      enabled: false,
+      transcripts: {},
+      preferencesHash: null,
+    }
   }
 
   async load() {
     try {
       const value = JSON.parse(await readFile(this.path, 'utf8'))
       if (value?.version === 2 || value?.version === 3 || value?.version === 4) {
+        const requiresOptInReset = value.optInVersion !== SYNC_OPT_IN_VERSION
         this.value = {
           version: 4,
-          enabled: value.enabled !== false,
+          optInVersion: SYNC_OPT_IN_VERSION,
+          enabled: requiresOptInReset ? false : value.enabled === true,
           transcripts: Object.fromEntries(
             Object.entries(value.transcripts ?? {}).map(([transcriptId, transcript]) => {
               const { turns: _obsoleteTurns, ...metadata } = transcript
@@ -659,6 +668,7 @@ class SyncState {
           ),
           preferencesHash: value.preferencesHash ?? null,
         }
+        if (requiresOptInReset) await this.save()
       }
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
