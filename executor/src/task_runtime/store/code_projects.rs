@@ -131,11 +131,9 @@ mod tests {
     use super::*;
 
     fn git(repository: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(repository)
-            .status()
-            .unwrap();
+        let mut command = Command::new("git");
+        crate::local::native_git::clear_local_git_env(&mut command);
+        let status = command.args(args).current_dir(repository).status().unwrap();
         assert!(status.success(), "git command failed: {args:?}");
     }
 
