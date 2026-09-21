@@ -389,7 +389,7 @@ export function createDesktopScenario({
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )
 
-        await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
+        await control.command('click', scoped('[data-testid="cloud-todo-start-default-assistant"]'))
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
           timeoutMs: uiTimeoutMs,
         })

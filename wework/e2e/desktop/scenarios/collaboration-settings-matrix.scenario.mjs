@@ -295,7 +295,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
 
     const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
-    await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
+    await control.command('click', scoped('[data-testid="cloud-todo-start-default-assistant"]'))
     await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
     await selectE2EModel(control, undefined, undefined, taskPanel)
     const composer = `${taskPanel} [data-testid="chat-message-input"]`
