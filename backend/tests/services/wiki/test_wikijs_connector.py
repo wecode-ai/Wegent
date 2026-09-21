@@ -467,7 +467,7 @@ class TestConnectionCompatibility:
     @pytest.mark.parametrize(
         ("version", "expected_message"),
         [
-            ("2.5.274", "2.5.300"),
+            ("2.4.999", "2.5.0"),
             ("3.0.0", "2.x"),
         ],
     )
@@ -480,6 +480,28 @@ class TestConnectionCompatibility:
 
         assert result.ok is False
         assert expected_message in result.message
+        assert result.version == version
+
+    @pytest.mark.parametrize("version", ["2.5.0", "2.5.297"])
+    @pytest.mark.asyncio
+    async def test_accepts_supported_wikijs_versions(self, version):
+        connector = WikijsConnector()
+
+        with (
+            patch.object(
+                connector,
+                "_probe_version",
+                return_value=version,
+            ),
+            patch.object(
+                connector,
+                "_post_graphql",
+                return_value={"pages": {"list": []}},
+            ),
+        ):
+            result = await connector.test_connection(_config())
+
+        assert result.ok is True
         assert result.version == version
 
     @pytest.mark.asyncio
