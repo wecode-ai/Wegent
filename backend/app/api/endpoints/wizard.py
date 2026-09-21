@@ -46,6 +46,7 @@ from app.schemas.wizard import (
     TestPromptRequest,
     TestPromptResponse,
 )
+from app.services.adapters.bot_kinds import bot_kinds_service
 from app.services.chat.config import extract_and_process_model_config
 from app.services.simple_chat import simple_chat_service
 
@@ -1022,6 +1023,10 @@ async def create_all_resources(
                 "skills": request.skills or [],
             },
         }
+        if request.inherit_base_capabilities:
+            ghost_json["spec"]["baseGhostRef"] = (
+                bot_kinds_service.resolve_default_base_ghost_ref(db)
+            )
 
         ghost = Kind(
             user_id=current_user.id,
@@ -1080,6 +1085,11 @@ async def create_all_resources(
                 "name": shell.name,
                 "namespace": shell.namespace,
             },
+            "capability_mode": (
+                "manual"
+                if request.inherit_base_capabilities or request.skills
+                else "follow_device"
+            ),
         }
 
         # Add model reference if specified
