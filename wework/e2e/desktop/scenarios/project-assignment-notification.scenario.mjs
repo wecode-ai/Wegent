@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
@@ -153,9 +153,14 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
   let modelRequestCount = 0
   let clickRequested = false
   let executionCompletionReleased = false
+  let executionWorkspacePath = null
   let releaseExecutionCompletionResolve = null
+  let resolveExecutionWorkspacePath = null
   const executionCompletionGate = new Promise(resolve => {
     releaseExecutionCompletionResolve = resolve
+  })
+  const executionWorkspacePathReady = new Promise(resolve => {
+    resolveExecutionWorkspacePath = resolve
   })
   const modelRequests = []
 
@@ -166,6 +171,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
     if (executionCompletionReleased) return
     executionCompletionReleased = true
     releaseExecutionCompletionResolve()
+  }
+  const setExecutionWorkspacePath = path => {
+    if (executionWorkspacePath) return
+    executionWorkspacePath = path
+    resolveExecutionWorkspacePath(path)
   }
 
   return {
@@ -232,9 +242,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
             toolCallId: DELIVERY_FINALIZE_CALL_ID,
           }).events
         } else if (requestContainsToolOutput(payload, DELIVERY_UPLOAD_SEARCH_ID)) {
+          const artifactWorkspacePath = await executionWorkspacePathReady
           const tool = selectMcpTool(payload, 'wework_space', 'upload_delivery_asset', {
             delivery_id: delivery.id,
-            file_path: join(workspacePath, EXECUTION_ARTIFACT_NAME),
+            file_path: join(artifactWorkspacePath, EXECUTION_ARTIFACT_NAME),
             relative_path: EXECUTION_ARTIFACT_NAME,
             display_name: EXECUTION_ARTIFACT_NAME,
             content_type: 'text/plain',
@@ -254,11 +265,12 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
           const directToolName = (payload.tools ?? [])
             .map(tool => tool.name ?? tool.function?.name)
             .find(name => name?.endsWith('__upload_delivery_asset'))
+          const artifactWorkspacePath = await executionWorkspacePathReady
           events = mcpToolRequestEvents(payload, {
             toolName: 'upload_delivery_asset',
             argumentsValue: {
               delivery_id: delivery.id,
-              file_path: join(workspacePath, EXECUTION_ARTIFACT_NAME),
+              file_path: join(artifactWorkspacePath, EXECUTION_ARTIFACT_NAME),
               relative_path: EXECUTION_ARTIFACT_NAME,
               display_name: EXECUTION_ARTIFACT_NAME,
               content_type: 'text/plain',
@@ -630,6 +642,33 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
           binding.taskId ?? binding.task_id,
           'The Runtime Task binding has no Runtime Task identity'
         )
+        const runtimeTaskId = binding.taskId ?? binding.task_id
+        const runtimeIndexPath = join(
+          dirname(workspacePath),
+          'executor-home',
+          'runtime-work',
+          'index.json'
+        )
+        const runtimeTask = await waitForApiValue(
+          async () => {
+            try {
+              const runtimeIndex = JSON.parse(await readFile(runtimeIndexPath, 'utf8'))
+              const task = runtimeIndex.tasks?.[runtimeTaskId]
+              return task
+                ? {
+                    taskId: runtimeTaskId,
+                    workspacePath: task.workspace_path,
+                  }
+                : null
+            } catch {
+              return null
+            }
+          },
+          value => value?.taskId === runtimeTaskId && Boolean(value.workspacePath),
+          'The assigned Runtime Task did not expose its execution workspace',
+          uiTimeoutMs
+        )
+        setExecutionWorkspacePath(runtimeTask.workspacePath)
         await control.command('waitFor', boundTaskPanel, { timeoutMs: uiTimeoutMs })
         const runningIssue = await waitForApiValue(
           () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
@@ -662,7 +701,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         activeSurface
       )
       assert.equal(
-        (await readFile(join(workspacePath, EXECUTION_ARTIFACT_NAME), 'utf8')).trim(),
+        (await readFile(join(executionWorkspacePath, EXECUTION_ARTIFACT_NAME), 'utf8')).trim(),
         EXECUTION_ARTIFACT_CONTENT,
         'The real local Executor did not write the expected isolated workspace artifact'
       )
