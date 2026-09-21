@@ -171,6 +171,18 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+
+
+def _claim_workspace_cleanup_sync(**kwargs: Any) -> bool:
+    with get_db_session() as db:
+        return _claim_workspace_cleanup(db, **kwargs)
+
+
+def _acknowledge_workspace_cleanup_sync(**kwargs: Any) -> bool:
+    with get_db_session() as db:
+        return _acknowledge_workspace_cleanup(db, **kwargs)
+
+
 DEVICE_TRACE_EXCLUDED_EVENTS = {
     "plugin.auth.local_lifecycle",
     "plugin.auth.automatic",
@@ -2619,7 +2631,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             return {"success": False, "error": "issue_version is required"}
         claimed = await run_sync_in_executor(
             partial(
-                _claim_workspace_cleanup,
+                _claim_workspace_cleanup_sync,
                 owner_user_id=int(user_id),
                 runtime_device_id=str(runtime_device_id),
                 intent_id=intent_id,
@@ -2647,7 +2659,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             return {"success": False, "error": "issue_version is required"}
         accepted = await run_sync_in_executor(
             partial(
-                _acknowledge_workspace_cleanup,
+                _acknowledge_workspace_cleanup_sync,
                 owner_user_id=int(user_id),
                 runtime_device_id=str(runtime_device_id),
                 intent_id=intent_id,

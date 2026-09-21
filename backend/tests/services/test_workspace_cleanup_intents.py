@@ -10,6 +10,7 @@ from app.models.delivery import (
     LoopItemTaskBinding,
     WorkspaceCleanupIntent,
 )
+from app.models.kind import Kind
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.services.loop_items.service import loop_item_service
 from app.services.workspace_cleanup_intents import (
@@ -169,3 +170,74 @@ def test_cleanup_ack_rejects_stale_issue_version(test_db, test_user) -> None:
     )
     test_db.refresh(intent)
     assert intent.status == "pending"
+
+
+def test_cleanup_intent_routes_app_alias_to_executor_record(
+    test_db, test_user, monkeypatch
+) -> None:
+    from app.services import workspace_cleanup_intents
+
+    monkeypatch.setattr(
+        workspace_cleanup_intents.settings,
+        "WORKTREE_CLEANUP_RETENTION_DAYS",
+        0,
+    )
+    device = Kind(
+        kind="Device",
+        name="desktop-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "deviceId": "electron-device",
+                "deviceType": "app",
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    project = _project(test_db, test_user)
+    item = loop_item_service.create(
+        test_db,
+        project.id,
+        test_user.id,
+        LoopItemCreate(title="Canonical cleanup route"),
+    )
+    test_db.add(
+        LoopItemTaskBinding(
+            cloud_project_id=project.id,
+            loop_item_id=item.id,
+            task_user_id=test_user.id,
+            device_id="electron-device",
+            task_id="runtime-task-1",
+            task_title=item.title,
+            linked_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+
+    closed = loop_item_service.update(
+        test_db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=item.version, status="completed"),
+    )
+
+    intent = (
+        test_db.query(WorkspaceCleanupIntent)
+        .filter(WorkspaceCleanupIntent.loop_item_id == item.id)
+        .one()
+    )
+    route_id = f"app-record-{device.id}"
+    assert intent.device_id == route_id
+    assert intent.metadata_json["execution_target_id"] == "electron-device"
+    assert (
+        pull_due(
+            test_db,
+            owner_user_id=test_user.id,
+            runtime_device_id=route_id,
+            now=_utcnow() + timedelta(seconds=1),
+        )[0]["issue_version"]
+        == closed.version
+    )

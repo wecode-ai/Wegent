@@ -8,9 +8,9 @@ Executors pull cloud work through their current Socket.IO connection. Celery
 only repairs durable leases, detects stalls, and publishes queue metrics.
 """
 
-import asyncio
 import logging
 
+import socketio
 from prometheus_client import Counter, Gauge
 from sqlalchemy import func, select
 
@@ -83,7 +83,7 @@ def scan_robot_queue(self) -> dict:
                 )
                 or 0
             )
-            asyncio.run(consume_queues_background())
+            _publish_work_availability(_queued_devices(db))
             return {
                 "status": "ok",
                 "requeued": requeued,
@@ -114,6 +114,25 @@ def _queued_devices(db) -> list[tuple[int, str]]:
     return sorted(devices)
 
 
+def _publish_work_availability(devices: list[tuple[int, str]]) -> None:
+    """Publish from Celery without borrowing the uvicorn event loop."""
+
+    if not devices:
+        return
+    logger.info(
+        "[RobotQueue] Publishing work availability source=celery targets=%s",
+        devices,
+    )
+    manager = socketio.RedisManager(settings.REDIS_URL, write_only=True)
+    for owner_user_id, device_id in devices:
+        manager.emit(
+            "runtime.tasks.available",
+            {},
+            room=f"execution-target:{owner_user_id}:{device_id}",
+            namespace="/local-executor",
+        )
+
+
 async def consume_queues_background() -> None:
     """Notify connected Executors; the notification never carries work."""
 
@@ -123,6 +142,11 @@ async def consume_queues_background() -> None:
     try:
         with get_db_session() as db:
             devices = _queued_devices(db)
+        if devices:
+            logger.info(
+                "[RobotQueue] Publishing work availability source=api targets=%s",
+                devices,
+            )
         for owner_user_id, device_id in devices:
             await get_sio().emit(
                 "runtime.tasks.available",

@@ -181,6 +181,7 @@ class LocalNevisSandboxService {
 
 class RealCloudEnvironment {
   constructor({
+    backendEnv = {},
     claudeBinary,
     codexBinary,
     managedCloudIdentity = false,
@@ -188,6 +189,7 @@ class RealCloudEnvironment {
     scenarioConfigToml = '',
     workspacePath,
   }) {
+    this.scenarioBackendEnv = backendEnv
     this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
     this.managedCloudIdentity = managedCloudIdentity
@@ -258,6 +260,7 @@ class RealCloudEnvironment {
       NEVIS_MANAGER_ID: 'wework-e2e-manager',
       NEVIS_IMAGE_ID: 'wework-e2e-image',
       NEVIS_SIGNATURE: 'wework-e2e-signature',
+      ...this.scenarioBackendEnv,
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {

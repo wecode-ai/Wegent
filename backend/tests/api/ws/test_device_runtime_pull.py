@@ -2,12 +2,51 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import contextmanager
 from unittest.mock import AsyncMock
 
 import pytest
 
 import app.api.ws.device_namespace as device_namespace_module
 from app.api.ws.device_namespace import DeviceNamespace
+
+
+def test_workspace_cleanup_sync_adapters_supply_database_session(monkeypatch):
+    database = object()
+    calls = []
+
+    @contextmanager
+    def database_session():
+        yield database
+
+    def claim(db, **kwargs):
+        calls.append(("claim", db, kwargs))
+        return True
+
+    def acknowledge(db, **kwargs):
+        calls.append(("acknowledge", db, kwargs))
+        return True
+
+    monkeypatch.setattr(device_namespace_module, "get_db_session", database_session)
+    monkeypatch.setattr(device_namespace_module, "_claim_workspace_cleanup", claim)
+    monkeypatch.setattr(
+        device_namespace_module,
+        "_acknowledge_workspace_cleanup",
+        acknowledge,
+    )
+    arguments = {
+        "owner_user_id": 17,
+        "runtime_device_id": "cloud-device",
+        "intent_id": "cleanup-1",
+        "issue_version": 4,
+    }
+
+    assert device_namespace_module._claim_workspace_cleanup_sync(**arguments)
+    assert device_namespace_module._acknowledge_workspace_cleanup_sync(**arguments)
+    assert calls == [
+        ("claim", database, arguments),
+        ("acknowledge", database, arguments),
+    ]
 
 
 @pytest.mark.asyncio
@@ -166,7 +205,7 @@ async def test_registered_device_acknowledges_workspace_cleanup(monkeypatch):
 
     monkeypatch.setattr(
         device_namespace_module,
-        "_acknowledge_workspace_cleanup",
+        "_acknowledge_workspace_cleanup_sync",
         acknowledge,
     )
 
@@ -206,7 +245,7 @@ async def test_registered_device_claims_workspace_cleanup(monkeypatch):
 
     monkeypatch.setattr(
         device_namespace_module,
-        "_claim_workspace_cleanup",
+        "_claim_workspace_cleanup_sync",
         claim,
     )
 

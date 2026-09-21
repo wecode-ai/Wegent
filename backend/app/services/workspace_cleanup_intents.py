@@ -32,6 +32,33 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _runtime_device_id(
+    db: Session,
+    *,
+    owner_user_id: int,
+    device_id: str,
+) -> str:
+    from app.services.device.runtime_route import resolve_runtime_route_identity
+
+    identity = resolve_runtime_route_identity(
+        db,
+        user_id=owner_user_id,
+        submitted_device_id=device_id,
+    )
+    return identity.runtime_device_id if identity is not None else device_id
+
+
+def _canonicalize_intent_route(db: Session, intent: WorkspaceCleanupIntent) -> None:
+    if not intent.task_user_id or not intent.device_id:
+        return
+    runtime_device_id = _runtime_device_id(
+        db,
+        owner_user_id=int(intent.task_user_id),
+        device_id=str(intent.device_id),
+    )
+    intent.device_id = runtime_device_id
+
+
 def _execution_target_by_runtime(
     db: Session,
     *,
@@ -81,6 +108,8 @@ def sync_issue_status(
         .filter(WorkspaceCleanupIntent.loop_item_id == item.id)
         .all()
     )
+    for intent in existing:
+        _canonicalize_intent_route(db, intent)
     if next_status != "completed":
         for intent in existing:
             intent.status = STATUS_CANCELLED
@@ -106,16 +135,22 @@ def sync_issue_status(
     )
     for binding in bindings:
         owner_user_id = int(binding.task_user_id)
-        runtime_device_id = str(binding.device_id or "")
+        binding_device_id = str(binding.device_id or "")
         runtime_task_id = str(binding.task_id or "")
-        if not runtime_device_id or not runtime_task_id:
+        if not binding_device_id or not runtime_task_id:
             continue
+        runtime_device_id = _runtime_device_id(
+            db,
+            owner_user_id=owner_user_id,
+            device_id=binding_device_id,
+        )
         group = grouped[(owner_user_id, runtime_device_id)]
         group["task_ids"].append(runtime_task_id)
-        group["execution_target_id"] = targets.get(
-            (owner_user_id, runtime_device_id, runtime_task_id),
-            group["execution_target_id"] or runtime_device_id,
+        target = targets.get(
+            (owner_user_id, binding_device_id, runtime_task_id),
+            binding_device_id,
         )
+        group["execution_target_id"] = target
 
     by_device = {
         (int(intent.task_user_id), str(intent.device_id or "")): intent

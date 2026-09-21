@@ -1173,6 +1173,7 @@ async def update_loop_item(
         should_start_workflow,
         sorted(values.model_fields_set),
     )
+    queue_wakeup_scheduled = False
     if should_start_workflow:
         await issue_workflow_start_service.start(
             db,
@@ -1188,6 +1189,7 @@ async def update_loop_item(
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
+        queue_wakeup_scheduled = True
         db.refresh(item)
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set or entered_processing
@@ -1203,7 +1205,12 @@ async def update_loop_item(
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
+        queue_wakeup_scheduled = True
         db.refresh(item)
+    if status_changed and not queue_wakeup_scheduled:
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
     if status_changed:
         item_metadata_before_automation = (
             item.metadata_json if isinstance(item.metadata_json, dict) else {}
