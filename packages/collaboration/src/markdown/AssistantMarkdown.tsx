@@ -28,7 +28,10 @@ import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MarkdownTable } from "./MarkdownTable";
 import { createTableMarkdownRehypePlugins } from "./markdownTableSource";
 import { MarkdownDiagramPreview } from "./MarkdownDiagramPreview";
-import { splitStaticMarkdownChunks } from "./assistantMarkdownWindowing";
+import {
+  isOversizedAtomicMarkdownChunk,
+  splitStaticMarkdownChunks,
+} from "./assistantMarkdownWindowing";
 import { useBufferedStreamingText } from "./useBufferedStreamingText";
 import { splitCodexInlineVisualizations } from "./codex-directives";
 import { getRecognizedLink } from "./link-preview";
@@ -396,13 +399,18 @@ function WindowedMarkdownChunk({
   children: ReactNode;
 }) {
   const chunkRef = useRef<HTMLDivElement>(null);
+  const wasEagerRef = useRef(eager);
+  if (eager) wasEagerRef.current = true;
+  const keepStreamedAtomicChunkMounted =
+    wasEagerRef.current && isOversizedAtomicMarkdownChunk(content);
+  const effectiveEager = eager || keepStreamedAtomicChunkMounted;
   const [nearViewport, setNearViewport] = useState(
-    () => typeof IntersectionObserver === "undefined" || eager,
+    () => typeof IntersectionObserver === "undefined" || effectiveEager,
   );
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null);
 
   useEffect(() => {
-    if (eager || typeof IntersectionObserver === "undefined") return;
+    if (effectiveEager || typeof IntersectionObserver === "undefined") return;
     const chunk = chunkRef.current;
     if (!chunk) return;
 
@@ -420,7 +428,7 @@ function WindowedMarkdownChunk({
     );
     observer.observe(chunk);
     return () => observer.disconnect();
-  }, [eager]);
+  }, [effectiveEager]);
 
   const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content);
 

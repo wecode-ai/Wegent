@@ -1177,6 +1177,78 @@ describe('MessageList', () => {
     expect(chunks[0].querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
   })
 
+  test('keeps a streamed oversized code chunk mounted after completion', () => {
+    runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1600px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    const longCode = [
+      '```sql',
+      ...Array.from(
+        { length: 110 },
+        (_, index) =>
+          `SELECT ${index + 1} AS value_${index + 1}, '${'payload '.repeat(8)}' AS payload;`
+      ),
+      '```',
+    ].join('\n')
+    const content = [
+      longCode,
+      ...Array.from(
+        { length: 8 },
+        (_, index) => `### Tail section ${index + 1}\n\n${'tail '.repeat(80)}\n`
+      ),
+    ].join('\n')
+    const streamingMessage = {
+      id: 'assistant-streamed-oversized-code',
+      role: 'assistant' as const,
+      content,
+      status: 'streaming' as const,
+      createdAt: '2026-09-21T10:00:00Z',
+    }
+
+    const { container, rerender } = render(<MessageList messages={[streamingMessage]} />)
+    const codeNode = container.querySelector('code')
+    expect(codeNode).not.toBeNull()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    act(() => {
+      intersectionCallbacks.forEach(callback =>
+        callback(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+    })
+
+    expect(container.querySelector('code')).toBe(codeNode)
+    expect(
+      codeNode
+        ?.closest('[data-markdown-window-chunk]')
+        ?.querySelector('[data-markdown-window-placeholder]')
+    ).toBeNull()
+  })
+
   test('keeps message row containment during a plain text click', () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     getSelectionSpy.mockReturnValue({
