@@ -53,6 +53,7 @@ import { getProcessingErrorMessage } from '../utils/processing-error'
 import { formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
+import { wikiApis } from '@/apis/wiki'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -67,6 +68,7 @@ import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
 import {
   getExternalSourceInfo,
+  getSyncedWikiConnectorType,
   isDocumentEditable,
   isDocumentIndexInFlight,
   isDingtalkCopyDocument,
@@ -77,6 +79,7 @@ import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import { useExternalDocumentSync } from '../hooks/useExternalDocumentSync'
+import { ExternalDocumentBadge } from './ExternalDocumentBadge'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -162,6 +165,10 @@ export function DocumentDetailDialog({
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
   const [chunkStorageEnabled, setChunkStorageEnabled] = useState(false)
+  const [resolvedWikiConnection, setResolvedWikiConnection] = useState<{
+    id: string
+    name: string | null
+  } | null>(null)
   // Extraction guards apply to the read-only protected preview, never the editor.
   const protectedContent = protectedPreview && !isEditing
 
@@ -211,6 +218,19 @@ export function DocumentDetailDialog({
     () => (document ? getExternalSourceInfo(document) : null),
     [document]
   )
+  const syncedWikiConnectorType = useMemo(
+    () => (document ? getSyncedWikiConnectorType(document) : null),
+    [document]
+  )
+  const sourceInfo = externalSourceInfo
+  const wikiConnectionId =
+    sourceInfo?.provider === 'wiki' && sourceInfo.sync?.enabled
+      ? sourceInfo.sync.connection_id
+      : undefined
+  const wikiConnectionName =
+    resolvedWikiConnection && resolvedWikiConnection.id === wikiConnectionId
+      ? resolvedWikiConnection.name
+      : null
   const externalLastImportedAt = useMemo(() => {
     if (!externalSourceInfo?.last_success_at) return null
     const date = parseUTCDate(externalSourceInfo.last_success_at)
@@ -224,6 +244,29 @@ export function DocumentDetailDialog({
   const sourceSyncBusy =
     !!document && (isDocumentSyncing(document.id) || isDocumentIndexInFlight(document))
   const sourceSyncLabel = document ? getDingtalkSyncLabel(document, sourceSyncBusy) : ''
+
+  useEffect(() => {
+    if (!open || !wikiConnectionId) return
+
+    let cancelled = false
+    void wikiApis
+      .listConnections()
+      .then(response => {
+        if (cancelled) return
+        const connection = response.connections.find(item => item.id === wikiConnectionId)
+        setResolvedWikiConnection({
+          id: wikiConnectionId,
+          name: connection?.display_name || null,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedWikiConnection({ id: wikiConnectionId, name: null })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, wikiConnectionId])
 
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
@@ -452,24 +495,40 @@ export function DocumentDetailDialog({
                         </span>
                       </DialogDescription>
                     )}
-                    {!isFullscreen && externalSourceInfo && (
+                    {!isFullscreen && sourceInfo && (
                       <div
                         className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"
                         data-testid="external-source-info"
                       >
-                        <span className="capitalize">{externalSourceInfo.provider}</span>
+                        {syncedWikiConnectorType ? (
+                          <ExternalDocumentBadge
+                            syncedWiki
+                            extension={document.file_extension}
+                            connectorType={syncedWikiConnectorType}
+                          />
+                        ) : (
+                          <span className="capitalize">{sourceInfo.provider}</span>
+                        )}
+                        {wikiConnectionName && (
+                          <>
+                            <span>•</span>
+                            <span data-testid="external-wiki-connection-name">
+                              {t('document.document.externalSource.wikiConnectionName', {
+                                name: wikiConnectionName,
+                              })}
+                            </span>
+                          </>
+                        )}
                         <span>•</span>
-                        {externalSourceInfo.url && (
+                        {sourceInfo.url && (
                           <a
-                            href={externalSourceInfo.url}
+                            href={sourceInfo.url}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex min-h-[44px] min-w-[44px] items-center gap-1 text-primary hover:underline md:min-h-0 md:min-w-0"
                             data-testid="external-source-link"
                           >
-                            <span className="truncate">
-                              {externalSourceInfo.title || externalSourceInfo.url}
-                            </span>
+                            <span className="truncate">{sourceInfo.title || sourceInfo.url}</span>
                             <ExternalLink className="h-3 w-3 flex-shrink-0" />
                           </a>
                         )}

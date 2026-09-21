@@ -102,6 +102,23 @@ export interface ExternalDocumentSourceInfo {
   last_success_at?: string
   /** Last reason the source was reported inaccessible. */
   last_error?: string
+  sync?: ExternalDocumentSyncInfo
+}
+
+export interface ExternalDocumentSyncInfo {
+  enabled: boolean
+  connection_id?: string
+  resource_id?: string
+  adapter_type?: string
+  resource_kind?: 'page' | 'file'
+  path?: string
+  locale?: string
+  observed_version?: string
+  content_version?: string
+  indexed_version?: string
+  last_checked_at?: string
+  last_synced_at?: string
+  last_error_code?: string
 }
 
 /**
@@ -134,6 +151,12 @@ export function getExternalSourceInfo(
     status: source.status as string | undefined,
     last_success_at: source.last_success_at as string | undefined,
     last_error: source.last_error as string | undefined,
+    sync:
+      source.sync &&
+      typeof source.sync === 'object' &&
+      typeof (source.sync as Record<string, unknown>).enabled === 'boolean'
+        ? (source.sync as ExternalDocumentSyncInfo)
+        : undefined,
   }
 }
 
@@ -179,4 +202,55 @@ export function isDocumentIndexInFlight(
   document: Pick<KnowledgeDocument, 'index_status'>
 ): boolean {
   return ['queued', 'indexing', 'converting', 'pending_conversion'].includes(document.index_status)
+}
+
+export function isSyncedWikiDocument(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): boolean {
+  const source = getExternalSourceInfo(document)
+  return (
+    document.source_type === 'external' && source?.provider === 'wiki' && !!source.sync?.enabled
+  )
+}
+
+export type SyncedWikiConnectorType = 'wikijs' | 'gitlab_repo' | 'gitlab_wiki'
+
+export function getSyncedWikiConnectorType(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): SyncedWikiConnectorType | null {
+  if (!isSyncedWikiDocument(document)) return null
+  const adapterType = getExternalSourceInfo(document)?.sync?.adapter_type
+  if (adapterType === 'gitlab_repo' || adapterType === 'gitlab_wiki') return adapterType
+  return 'wikijs'
+}
+
+export function isWikiSourceMissing(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): boolean {
+  const source = getExternalSourceInfo(document)
+  return (
+    isSyncedWikiDocument(document) && source?.sync?.last_error_code === 'external_source_missing'
+  )
+}
+
+/** True when the value parses as a valid timestamp. */
+function isValidTimestamp(value: string): boolean {
+  return !Number.isNaN(Date.parse(value))
+}
+
+/**
+ * The update timestamp a document list should display.
+ *
+ * Synchronized Wiki documents display the latest successful index time.
+ * Regular documents keep the existing rule: unmodified rows display '-'.
+ */
+export function getDocumentDisplayUpdatedAt(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config' | 'updated_at' | 'created_at'>
+): string | null {
+  if (isSyncedWikiDocument(document)) {
+    const lastSyncedAt = getExternalSourceInfo(document)?.sync?.last_synced_at
+    return lastSyncedAt && isValidTimestamp(lastSyncedAt) ? lastSyncedAt : null
+  }
+  if (document.updated_at === document.created_at) return null
+  return document.updated_at || null
 }

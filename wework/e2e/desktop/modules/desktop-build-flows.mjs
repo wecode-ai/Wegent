@@ -1190,10 +1190,10 @@ async function verifyCloudProjectFlow(
     false,
     'The bottom workspace add menu exposed IDE'
   )
-  assert.equal(
-    addMenuSnapshot.testIds.includes('workspace-add-desktop-option'),
-    false,
-    'The external build exposed the internal desktop extension'
+  assert.deepEqual(
+    addMenuSnapshot.testIds.filter(id => id.startsWith('workspace-add-') && id.endsWith('-option')),
+    ['workspace-add-terminal-option'],
+    'The external build exposed an unexpected workspace action'
   )
   await control.command('press', 'body', { key: 'Escape' })
   await captureVerificationScreenshot(control, 'cloud-05b-historical-terminal-restored.png')

@@ -1,6 +1,6 @@
 import type { LucideProps } from 'lucide-react'
 import { ChevronRight } from 'lucide-react'
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, MouseEventHandler, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 interface DesktopSidebarHeaderProps {
@@ -32,7 +32,7 @@ interface DesktopSidebarNavItemProps {
   icon?: ComponentType<LucideProps>
   iconElement?: ReactNode
   label: string
-  onClick: () => void
+  onClick: MouseEventHandler<HTMLButtonElement>
   selected?: boolean
   testId?: string
   onPointerEnter?: () => void

@@ -7,7 +7,7 @@
  * state, validation, and submit-field assembly.
  *
  * Used by Create/EditKnowledgeBaseDialog so the open-source dialog files stay
- * free of multimodal state management. Pattern follows useDeviceVncState.
+ * free of multimodal state management.
  */
 
 import { useState } from 'react'

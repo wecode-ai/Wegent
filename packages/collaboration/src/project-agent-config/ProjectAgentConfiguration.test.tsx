@@ -60,6 +60,7 @@ function projectAgent(
 
 function createApi(options?: {
   agents?: WorkspaceProjectAgent[];
+  resourceAgents?: CollaborationOwnedAgent[];
   workspaceAgents?: CollaborationOwnedAgent[];
 }) {
   const rows = [...(options?.agents ?? [projectAgent()])];
@@ -83,7 +84,7 @@ function createApi(options?: {
     projects: {},
     resources: {
       list: vi.fn(async () => ({
-        agents: [],
+        agents: options?.resourceAgents ?? [],
         execution_environments: [],
       })),
     },
@@ -309,6 +310,35 @@ describe("ProjectAgentConfiguration", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it("excludes cloud Agent resources from local projects", async () => {
+    const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
+    const { api } = createApi({
+      resourceAgents: [cloudAgent],
+      workspaceAgents: [],
+    });
+    const localProject = { ...project, project_store: "local" as const };
+    const host = {
+      ...hostedCreationHost,
+      supportsExistingAgentSelection: true,
+    };
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={host}
+          project={localProject}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+
+    await click("project-agent-add");
+    expect(
+      container.querySelector('[data-testid="project-agent-wegent-team"]'),
+    ).toBeNull();
+  });
+
   it("creates a project Agent through the resource-library host and binds it to the project", async () => {
     const { api, create } = createApi({ workspaceAgents: [] });
     await renderHosted(api);
@@ -385,7 +415,8 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
-  it("offers no edit action for project Agents without an editable resource", async () => {    const { api } = createApi({
+  it("offers no edit action for project Agents without an editable resource", async () => {
+    const { api } = createApi({
       agents: [projectAgent({ runtime: "claude_code" })],
       workspaceAgents: [],
     });
@@ -397,6 +428,52 @@ describe("ProjectAgentConfiguration", () => {
       ),
     ).toBeNull();
     expect(element("project-agent-archive-project-agent-1")).toBeTruthy();
+  });
+
+  it("edits a locally owned Agent without a cloud Team binding", async () => {
+    const { api, list, create } = createApi({
+      agents: [projectAgent({ runtime: "codex" })],
+    });
+    const onAgentsChange = vi.fn();
+    const host: ProjectAgentConfigurationHost = {
+      ...hostedCreationHost,
+      renderProjectAgentForm({ agentId, onSaved }) {
+        return (
+          <button
+            data-testid="local-agent-save"
+            data-agent-id={agentId}
+            onClick={() => void onSaved()}
+          >
+            Save
+          </button>
+        );
+      },
+    };
+    await act(async () =>
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={host}
+          project={{ ...project, project_store: "local" }}
+          onAgentsChange={onAgentsChange}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      ),
+    );
+    await click("project-agent-edit-project-agent-1");
+    expect(element("local-agent-save").getAttribute("data-agent-id")).toBe(
+      "project-agent-1",
+    );
+    list.mockResolvedValue([
+      projectAgent({ name: "Edited locally", runtime: "codex" }),
+    ]);
+    await click("local-agent-save");
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "Edited locally",
+    );
+    expect(onAgentsChange).toHaveBeenCalledOnce();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("archives an existing project agent with optimistic concurrency", async () => {

@@ -926,7 +926,9 @@ export function ProjectAutomaticProcessing({
                 <legend className="mb-2 text-sm font-medium text-text-primary">
                   {translate("todo.when", "当发生")}
                 </legend>
-                {TRIGGER_OPTIONS.map((option, index) => {
+                {TRIGGER_OPTIONS.filter(
+                  (option) => option.kind !== "external" || api.incomingHooks,
+                ).map((option, index) => {
                   const selected = draft.trigger === option.kind;
                   const Icon = option.icon;
                   const localeIndex = locale === "zh-CN" ? 0 : 1;

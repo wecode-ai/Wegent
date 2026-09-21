@@ -1,3 +1,4 @@
+import { createLocalProjectAutomationApi } from './localProjectAutomations'
 import {
   createRuntimeComposerApi,
   decodeRuntimeSkills,
@@ -1632,9 +1633,10 @@ async function createLocalRuntimeTaskPayload(
     ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   if (execution) normalizedData.execution = execution
-  const materialized = normalizedData.wegentTeamId
-    ? await materializeTeamRuntimeTask(normalizedData, materializeRuntimeTask)
-    : null
+  const materialized =
+    normalizedData.origin?.projectStore !== 'local' && normalizedData.wegentTeamId
+      ? await materializeTeamRuntimeTask(normalizedData, materializeRuntimeTask)
+      : null
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = {
@@ -1766,6 +1768,9 @@ async function createLocalRuntimeSendPayload(
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
     ...data,
+    origin:
+      data.origin ??
+      (recordValue(data.address.runtimeHandle).origin as RuntimeSendRequest['origin']),
     ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
@@ -1794,6 +1799,7 @@ async function createLocalRuntimeSendPayload(
   const wegentTeamId =
     typeof teamBinding.id === 'number' && teamBinding.id > 0 ? teamBinding.id : null
   const materializedExecutionRequest =
+    normalizedData.origin?.projectStore !== 'local' &&
     wegentTeamId &&
     !normalizedData.requestUserInputResponse &&
     !normalizedData.request_user_input_response
@@ -3309,13 +3315,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const localPluginApi = createLocalCodexPluginApi()
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins() {
-      const [appsResult, installedResult] = await Promise.allSettled([
-        localPluginApi.listApps(),
-        localPluginApi.listInstalledPlugins(),
-      ])
-      const apps = appsResult.status === 'fulfilled' ? appsResult.value : []
-      const installed = installedResult.status === 'fulfilled' ? installedResult.value.items : []
-      return buildProjectPluginCatalog(installed, apps)
+      const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
+      return buildProjectPluginCatalog(installed.items)
     },
   }
   const available = deps.available ?? deps.ensure ?? ensureLocalExecutorAvailable
@@ -3696,6 +3697,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         projectChatClient: localProjectChatClient,
         projectChatAgentApi: localProjectChatAgentApi,
         loopItemExecutionApi: localLoopItemExecutionApi,
+        localProjectAutomationApi: createLocalProjectAutomationApi(request, runtimeWorkApi),
         deviceApi,
         modelApi,
         teamApi,

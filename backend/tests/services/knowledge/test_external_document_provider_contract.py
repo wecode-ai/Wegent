@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reusable contract tests for external document provider adapters.
+"""Reusable contract tests for direct external document import adapters.
 
 ``ProviderContractSuite`` encodes the provider-neutral contract every adapter
-must fulfil (registry, resolution, fetch, and the source-unavailable signal).
+on the direct-import seam must fulfil (registry, resolution, fetch, and the
+source-unavailable signal).
 A new adapter — e.g. the internal WeiboAP documents provider — only subclasses
 the suite and implements the small fixture hooks below; it inherits the whole
 contract coverage instead of rewriting it. DingTalk is the reference adapter.
@@ -30,6 +31,7 @@ else:  # pragma: no cover - the declared Python 3.10 floor
 
 from app.models.user import User
 from app.services.knowledge.external_document_providers import (
+    DirectExternalDocumentImportProvider,
     ExternalDocumentContent,
     ExternalDocumentImportError,
     ExternalSourceUnavailableError,
@@ -90,6 +92,7 @@ class ProviderContractSuite:
 
         assert provider is not None
         assert provider.provider_id == self.provider_id
+        assert isinstance(provider, DirectExternalDocumentImportProvider)
 
     def test_resolve_returns_display_metadata(
         self,

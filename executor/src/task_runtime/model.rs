@@ -310,6 +310,18 @@ pub struct LocalCommentCreate {
     pub reply_to_message_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LocalRuntimeCommentStart<'a> {
+    pub project_id: &'a str,
+    pub task_id: &'a str,
+    pub agent_id: &'a str,
+    pub trigger_message_id: &'a str,
+    pub runtime_device_id: &'a str,
+    pub runtime_task_id: &'a str,
+    pub prompt: Option<&'a str>,
+    pub model: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskReorder {
     pub parent_id: Option<String>,

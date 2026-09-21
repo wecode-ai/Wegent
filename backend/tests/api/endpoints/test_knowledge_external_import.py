@@ -946,7 +946,61 @@ class TestRetryExternalDocumentImport:
         assert response.status_code == 403
 
 
+def _create_synchronized_wiki_document(
+    test_db: Session,
+    user_id: int,
+    knowledge_base_id: int,
+    *,
+    index_status: str = "success",
+) -> KnowledgeDocument:
+    document = _create_failed_external_document(
+        test_db,
+        user_id,
+        knowledge_base_id,
+        index_status=index_status,
+    )
+    document.external_source.external_provider = "wiki"
+    document.external_source.external_resource_id = "v1:conn-primary:42"
+    document.attachment_id = 123
+    document.is_active = index_status == "success"
+    document.source_config = {
+        "external": {
+            "provider": "wiki",
+            "title": "Runbook",
+            "sync": {
+                "enabled": True,
+                "connection_id": "conn-primary",
+                "resource_id": "42",
+                "content_version": "2026-09-06T01:00:00Z",
+                "indexed_version": "2026-09-06T01:00:00Z",
+            },
+        }
+    }
+    test_db.commit()
+    test_db.refresh(document)
+    return document
+
+
 class TestSynchronizeExternalDocument:
+    def test_requeues_successful_sync_without_hiding_old_index(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_synchronized_wiki_document(test_db, test_user.id, kb_id)
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["index_status"] == "queued"
+        assert response.json()["is_active"] is True
+        assert dispatched == [document.id]
+
     def test_refreshes_a_dingtalk_copy(
         self,
         import_client: TestClient,
@@ -974,10 +1028,14 @@ class TestSynchronizeExternalDocument:
         test_user: User,
         dispatched: list[int],
     ) -> None:
+        # A Wiki copy imported before synchronization has no persisted remote
+        # locator, unlike an imported DingTalk copy.
         kb_id = _create_kb(test_db, test_user.id)
         document = _create_failed_external_document(
-            test_db, test_user.id, kb_id, index_status="failed", external=False
+            test_db, test_user.id, kb_id, index_status="failed"
         )
+        document.external_source.external_provider = "wiki"
+        test_db.commit()
 
         response = import_client.post(
             f"/knowledge-documents/{document.id}/external-sync"
@@ -994,7 +1052,7 @@ class TestSynchronizeExternalDocument:
         dispatched: list[int],
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id)
-        document = _create_failed_external_document(
+        document = _create_synchronized_wiki_document(
             test_db, test_user.id, kb_id, index_status="queued"
         )
 
@@ -1013,9 +1071,7 @@ class TestSynchronizeExternalDocument:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id)
-        document = _create_failed_external_document(
-            test_db, test_user.id, kb_id, index_status="success"
-        )
+        document = _create_synchronized_wiki_document(test_db, test_user.id, kb_id)
         monkeypatch.setattr(
             KnowledgeService,
             "can_manage_knowledge_base_documents",

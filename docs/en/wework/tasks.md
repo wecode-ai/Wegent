@@ -75,6 +75,8 @@ bash executor/scripts/dev-cloud-device.sh stop     # stop
 
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.
 
+The coding-tool selector in the task composer chooses a local runtime such as Codex or Claude Code. The task composer currently does not provide a direct cloud Wegent Agent selector. To have a cloud Agent process project tasks automatically, configure its robot and execution environment under project-space **Automation**.
+
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
 
 Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:

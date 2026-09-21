@@ -1,6 +1,8 @@
 packages:
   - frontend
+  - frontend/wecode
   - wework
+  - wework/wecode/dsh/*
   - packages/*
 confirmModulesPurge: false
 allowBuilds:

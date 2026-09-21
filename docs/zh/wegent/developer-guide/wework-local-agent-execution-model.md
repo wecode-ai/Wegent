@@ -2,412 +2,154 @@
 sidebar_position: 34
 ---
 
-# Wework 本地智能体执行模型
+# Wework 本地项目与智能体执行
 
-本文在[云端协作领域模型](./cloud-collaboration-domain-model.md)基础上，定义本地
-Wework、Codex、Plugin、Executor、LocalTask 与云端 Issue/Run 的关系。
+本地项目由 Wework 存储和驱动，不依赖 Wegent Backend。项目、Issue、评论、
+智能体配置、协作组、自动处理规则、执行记录都保存在当前设备。模型请求使用
+本地配置的供应商或运行时登录；不连接 Backend 不等于模型推理不需要网络。
 
-目标不是让所有本地对话强制上云，而是让参与协作项目的本地执行使用与 Wegent
-云端相同的 Agent 定义、Run 协议和能力快照。
+## 所有权与入口
 
-## 产品承载边界
+| 对象                      | 本地项目                                 | 云端项目               |
+| ------------------------- | ---------------------------------------- | ---------------------- |
+| 项目、Issue、评论         | Executor 的 SQLite                       | Backend                |
+| 智能体                    | 本地 ProjectChatAgent                    | 云端资源与项目绑定     |
+| 模型、Skills、MCP、Plugin | Wework 本地配置与安装资源                | 云端定义及所选执行环境 |
+| 自动处理规则与执行记录    | 本地项目元数据、automation_run、执行队列 | Backend                |
+| 执行器                    | 当前 Wework 的本地运行时                 | 所选云端或本地执行环境 |
 
-协作管理界面只有一个实现，归 Wegent Web 所有。Wework 固定“协作”Tab 与固定
-“智能体”Tab 一样，通过内置浏览器直接打开 Wegent Web：
+界面复用 `packages/collaboration`。Wework 按项目的 `project_store` 选择数据接口，
+不能根据 API 请求是否成功猜测项目属于哪里。本地智能体创建和编辑直接调用本地
+IPC，不需要先在云端创建 Team，也不保存或解析云端 Team 绑定。
 
-```text
-Wework 固定“协作”Tab
-→ Wegent Web /collaboration
-→ Workspace / Project / Issue / Member / Agent / 执行环境
+```mermaid
+flowchart LR
+    UI[共享协作界面] --> Owner{项目存储归属}
+    Owner -->|local| API[本地项目 API / IPC]
+    API --> DB[(本地 SQLite)]
+    DB --> Rules[本地规则触发器]
+    Rules --> Queue[现有持久化执行队列与顺序工作流]
+    Queue --> App[Wework 本地调度器]
+    App --> Runtime[本地 Codex / Claude Code]
+    Runtime --> DB
+    DB --> UI
+    Owner -->|backend| Backend[云端项目 API]
+    Backend --> CloudQueue[云端执行队列]
 ```
 
-Wework 不再实现“所有空间”和空间资源管理页面。Wework 本地只保留执行域能力：
+## 复用的实现
 
-- 任务 Tab 内的系统默认“我的任务”看板视图；
-- 通知和 Issue 深链；
-- 具体 Issue 的本地执行入口；
-- LocalTask 创建、Issue/Run 绑定、执行和产物同步。
+- `localDelivery.ts`：本地项目、Issue、智能体和执行 API。
+- `localWorkspaceApi.ts`：共享协作界面的本地适配，包括每次看板刷新时加载智能体。
+- `LocalProjectAgentForm.tsx`：编辑本地运行时、模型、代码工作区、指令、审批、
+  Skills、MCP 和 Plugin。
+- `LocalTaskStore`：SQLite、版本冲突检查、执行身份、领取租约、停止、状态回写。
+- `local_automation.rs`：将本地自动处理规则转成已有队列记录或顺序工作流。
+- `localRobotQueueDispatcher.ts`：领取任务并提交给现有 Runtime API；本地与云端
+  领取循环互相独立，云端请求失败或挂起不会卡住本地任务。
 
-因此，固定“协作”Tab 使用云端页面；从“我的任务”或通知进入的具体项目任务仍可由
-Wework 本地执行页承载。两者复用同一套云端数据和
-`packages/collaboration` 领域组件，不复制 Workspace 管理状态。
+本地项目使用不带 `cloudModelGateway` 和云端 Team 物化器的服务实例。执行请求
+携带 `origin.projectStore = local`；执行器据此移除 Backend 凭据并禁止自动注入。
+会话历史响应携带已保存的 origin，读取本地任务历史不会向 Backend 回写状态。
 
-## 当前执行链路
+## 编辑智能体的加载边界
 
-现有本地看板机器人执行大致为：
+编辑表单仅等待本地智能体记录。模型列表独立加载，插件目录由用户点击后读取，
+都不阻塞名称、指令、工作区等字段。目录失败明确显示错误，重试目录不会重置草稿。
+旧配置的模型若不在可用列表中，显示原值并阻止保存；只有用户明确选择其他模型
+或运行时默认值后才更新，不静默替换模型。模型目录仍在加载时可保存默认模型。
 
-```text
-ProjectChatAgent
-→ WeworkExecutionProfile
-→ RuntimeTaskCreateRequest V2
-→ LoopItemExecution.execution_payload
-→ Wework Executor claim
-→ LocalTask
-→ Codex app-server thread/turn
+```mermaid
+sequenceDiagram
+    participant UI as 编辑表单
+    participant DB as 本地 SQLite
+    participant Catalog as 本地模型目录
+    participant Plugins as 已安装插件目录
+    par 智能体资料
+        UI->>DB: 读取智能体
+        DB-->>UI: 显示可编辑表单
+    and 模型列表
+        UI->>Catalog: 读取可用模型
+        Catalog-->>UI: 更新模型选项或显示错误
+    end
+    opt 用户选择插件
+        UI->>Plugins: 加载插件
+        Plugins-->>UI: 更新插件选项或显示错误
+    end
+    UI->>DB: 保存用户选择的配置与版本
 ```
 
-这条链路已经具备可复用基础：
+已安装插件选择只读取安装清单，不为了显示名称请求在线应用目录。
 
-- `LoopItemExecution` 已保存执行状态、设备、`runtime_instance_id`、本地
-  `runtime_task_id` 和不可变执行 intent；
-- `RuntimeTaskCreateRequest V2` 已携带模型、Plugin、Skill、工作区、附件和目标；
-- Wework Executor 已支持本地任务领取、Codex app-server、Plugin 物化、Skill
-  部署、事件回传和设备能力同步；
-- `LocalTask` 已拥有稳定的 `deviceId + localTaskId` 身份；
-- Codex transcript 已由 thread/turn/item API 作为事实来源。
+## 自动处理与状态
 
-当前主要断点是 `WeworkExecutionProfile` 从 `ProjectChatAgent` 配置临时拼接一个
-`shell_type = Codex` 的 Bot，并单独读取项目 Plugin，而不是消费统一的
-Team → Bot → Ghost → Shell 定义。结果是本地与 Wegent 执行拥有两套 Agent 配置
-来源。
-
-## 目标关系
-
-```text
-Workspace Agent
-└── Team
-    └── Bot
-        ├── Ghost
-        │   ├── Prompt
-        │   ├── Skills
-        │   ├── MCP Servers
-        │   └── Plugins
-        ├── Shell = Codex
-        └── Model
-
-Project
-└── Issue
-    └── Run
-        ├── Agent Snapshot
-        ├── Runtime Selection
-        ├── Execution Workspace
-        └── Backend Binding
-            └── LocalTask
-                └── Codex Thread
+```mermaid
+sequenceDiagram
+    participant UI as Wework
+    participant DB as 本地 SQLite
+    participant Rule as 本地规则触发器
+    participant Queue as 本地调度器
+    participant Run as Codex / Claude Code
+    UI->>DB: 创建 Issue / 添加 Tag
+    DB->>Rule: 同一事务内触发匹配规则
+    Rule->>DB: 保存 automation_run 与待执行记录
+    DB-->>UI: 返回已持久化的 Issue
+    Queue->>DB: 领取执行并保存稳定运行身份
+    Queue->>Run: 启动本地任务
+    Run->>DB: 执行事件与状态核对
+    UI->>DB: 再次打开、刷新或查询历史
+    DB-->>UI: 返回持久化执行事实
 ```
 
-本地 Wework 和云端 Wegent 不再代表两类 Agent，只代表两种 Runtime/Executor：
+当前支持 Issue 创建、添加指定 Tag、通过 Issue 更新接口改变状态，以及定时触发。
+人工目标更新本地负责人；智能体目标进入执行队列；协作组的阶段按顺序转成现有
+工作流。运行状态根据持久化执行记录及尚未完成的工作流阶段计算，等待人工阶段
+不能误报成功。规则无效或智能体已归档时，保留 Issue，并记录失败及原因。
 
-```text
-同一个 Agent
-├── Wework Local Runtime
-└── Wegent Cloud Runtime
+定时任务复用现有 Cron 与时区解析，下一次触发时间保存在项目元数据。应用重启
+后不会重复投递同一个已消费时间点；离线期间错过的周期在恢复后合并处理一次。
+调度由 Wework 驱动，完全退出应用后不会启动新执行。
+
+停止先保存工作流停止标记，再取消关联执行。尚未启动的任务直接取消；已经提交
+运行时的任务保持取消请求状态，直到运行时确认结果。停止后即使收到迟到的完成
+事件，也不能继续启动下一阶段。重试创建新的运行记录，保留旧失败或取消记录。
+
+外部 Webhook 接入和云端成员管理仍属于云端能力。本地自动处理不展示未接入的
+外部事件入口；旧云端工作流迁移接口不在本地模拟成功。
+
+## 本地执行动态
+
+执行入队时，在同一事务中创建动态卡片；自动规则、手动分配、评论和协作组阶段
+共用这个入口。请求运行前保存任务关联与动态中的运行地址，短任务即使早于启动
+确认完成，也不会丢失“查看任务”入口。Codex 的中间回复写入动态，最终结果和
+失败原因随执行状态落库；迟到的中间回复不能覆盖终态。
+
+```mermaid
+sequenceDiagram
+    participant Rule as 自动规则 / 分配 / 评论
+    participant DB as 本地 SQLite
+    participant Run as 本地运行时
+    participant UI as 共享动态组件
+    Rule->>DB: 同一事务创建执行和待处理动态
+    UI->>DB: 读取动态
+    DB-->>UI: 待处理卡片
+    DB->>DB: 保存启动请求、任务关联及运行地址
+    DB->>Run: 提交执行
+    Run->>DB: 中间回复、最终结果或失败原因
+    UI->>DB: 刷新动态和任务关联
+    DB-->>UI: 回复卡片、运行状态、查看任务入口
 ```
 
-## Agent 定义与执行快照
-
-Run 入队前，Backend 必须解析 Team、Bot、Ghost、Shell、Model 和 Plugin，生成一份
-不可变 `AgentExecutionSnapshot`：
-
-```text
-AgentExecutionSnapshot
-├── agent_id / team_id
-├── agent_revision
-├── bots
-│   ├── bot_id
-│   ├── ghost_revision
-│   ├── effective_prompt
-│   ├── shell_type
-│   ├── model_selection
-│   └── effective_capabilities
-│       ├── skills
-│       ├── mcp_servers
-│       └── plugins
-└── collaboration_mode
-```
-
-该快照进入 `LoopItemExecution.execution_payload`。Run 开始后修改 Team、Ghost、
-Plugin 或模型默认值，不得改变已经入队的执行。
-
-现有 `WeworkExecutionProfile` 应逐步退化为执行快照编译器或删除：
-
-- Bot 名称和 Shell 不再从 `ProjectChatAgent` 临时构造；
-- 模型默认值来自 Bot/Model，Project 或 Workflow 只能显式覆盖；
-- Plugin 默认值来自 Ghost，Project 和 Run 可以追加允许的覆盖；
-- `ProjectChatAgent` 只提供 Project Agent Binding 和运行策略覆盖。
-
-对于 Codex Shell，Workflow 可以不固化模型名。此时 Run 仍可进入执行队列，由本地
-Codex Runtime 使用自身当前的默认模型。只有明确选择了模型的 Run，Backend 才要求
-该模型配置在入队和领取时完整可用。
-
-## Codex Shell
-
-Codex 应成为正式 Shell 类型，而不是 Wework 专用分支中的硬编码字符串：
-
-```text
-Shell
-├── Chat
-├── ClaudeCode
-├── Codex
-├── Agno
-├── Dify
-└── ...
-```
-
-Codex Shell 定义协议和要求：
-
-```text
-Codex Shell
-├── provider protocol: app-server
-├── required capabilities
-├── supported models
-├── supported Plugin format
-├── cancellation capability
-├── continuation capability
-└── transcript capability
-```
-
-Wework Executor 是 Codex Shell 的一个本地实现。未来云端 Executor 也可以实现同一
-Shell；Agent 定义不因执行位置改变。
-
-## Plugin 的解析与物化
-
-Ghost 保存期望能力，设备安装状态保存实际能力：
-
-```text
-Ghost Plugin refs
-→ AgentExecutionSnapshot
-→ Runtime capability match
-→ PluginDeviceInstallation
-→ Executor materialization
-→ Codex plugin cache
-```
-
-职责边界为：
-
-| 层级 | 职责 |
-| --- | --- |
-| Ghost | 声明 Agent 需要哪些 Plugin 及版本、配置、权限 |
-| Workspace/Account | 保存 Plugin 安装授权与共享策略 |
-| Project | 选择允许使用的 Plugin，提供非敏感项目级覆盖 |
-| Runtime | 上报可支持和已物化的 Plugin 能力 |
-| Executor | 下载、校验、安装并为本次 Run 激活 Plugin |
-| Codex Shell | 按 Codex Plugin 协议加载本次 Run 的 Plugin |
-
-Plugin 包内发现的 Skill 和 MCP 必须进入统一有效能力清单。重复声明按稳定 identity
-去重；版本或配置冲突在入队或 Runtime 匹配阶段明确失败，不能静默选择一份配置。
-
-Wework 管理的 Plugin Manifest 是已安装能力的事实来源。即使 Codex 本地
-`installed_plugins.json` 尚未生成，Executor 也必须从 Manifest 的 `codex_link`
-或 `store_path` 扫描并上报 Plugin 内的 Skill；本地自行安装的 Plugin 则继续与
-托管 Plugin 合并上报，并按 Plugin identity 去重。
-
-仅限设备的授权和 secret 不进入 Ghost，也不持久化到 Run。Run 只保存引用和权限
-需求，由执行设备在启动时物化。
-
-## Runtime 与设备选择
-
-现有 `runtime_instance_id` 作为 Runtime 实例身份继续使用。Runtime 至少暴露：
-
-```text
-Runtime
-├── runtime_instance_id
-├── device_id
-├── executor_kind
-├── supported_shells
-├── capabilities
-├── online_status
-├── capacity
-├── owner
-└── access_policy
-```
-
-调度输入分为要求和偏好：
-
-```text
-requirements
-├── shell = Codex
-├── required_plugins
-├── required_skills
-├── workspace_access
-└── platform constraints
-
-preferences
-├── preferred_runtime_id
-├── preferred_device_id
-└── local | cloud preference
-```
-
-只有本地目录、私人凭据或设备专属能力构成硬绑定。普通 Git 仓库任务应允许调度器
-从满足要求的 Runtime 中选择。
-
-同一执行环境可能同时具有资源记录 ID、应用设备 ID 和 Runtime 上报 ID。Backend
-必须把这些值解析成同一组已认证设备 identity，再校验领取目标和工作区来源；不能
-直接比较原始字符串，否则同一台设备会被误判为跨设备执行。
-
-## Execution Workspace
-
-协作 Project 的资源与一次 Run 使用的目录必须分开：
-
-```text
-Project Resource
-├── Git Repository
-└── Device Local Directory Binding
-
-Run Execution Workspace
-├── local_directory
-├── git_checkout
-├── git_worktree
-└── standalone
-```
-
-- `local_directory`：固定到拥有该目录的 Device；
-- `git_checkout`：Runtime 准备独立 checkout；
-- `git_worktree`：Runtime 从指定仓库建立隔离 worktree；
-- `standalone`：不属于协作 Project 的本地 Codex 对话目录。
-
-现有本地 `Project` 展示分组不成为云端 Project 身份。它继续由
-`deviceId + workspacePath` 推导，但产品术语应改为本地工作区，避免与协作 Project
-混淆。
-
-## Run、LocalTask 与 Codex Thread
-
-三者不能合并为一个 ID：
-
-| 实体 | 身份 | 事实来源 |
-| --- | --- | --- |
-| Run | `run_id` / `LoopItemExecution.id` | Backend |
-| LocalTask | `deviceId + localTaskId` | Wework Executor |
-| Codex Thread | opaque `threadId` | Codex app-server |
-| Turn | provider turn ID / subtask ID | Codex 与 Executor |
-
-关系为：
-
-```text
-Run 1 ── 1 BackendBinding
-                 N ── 1 LocalTask ── 1 Codex Thread
-                                         └── N Turns
-```
-
-重试默认创建新 Run。是否继续原 LocalTask/Codex Thread，由明确的恢复策略决定并
-记录为 `resumed_from_run_id`，不能仅通过路径、标题或最近线程猜测。恢复创建的
-Run 始终建立自己的 BackendBinding；该绑定可以指向之前的 LocalTask 和 Codex
-Thread，因此一个 LocalTask 可以在不同时期对应多个 BackendBinding。恢复后的事件
-归属新 Run 及其 BackendBinding，按该绑定的事件序号单调递增，并且只更新新 Run；
-旧 Run、旧绑定及其事件保持为不可变历史。
-
-## 两类本地工作
-
-本地任务必须区分协作执行和个人对话。
-
-### 协作执行
-
-```text
-Issue
-→ 任意有执行权限的 Project Member 点击“在本地执行”
-→ Run
-→ Wework Runtime
-→ LocalTask
-→ Codex Thread
-```
-
-Backend Run 是生命周期事实来源；LocalTask 和 Codex Thread 提供设备侧执行细节。
-状态、日志、取消、交付和恢复必须投影回 Run。
-
-Issue 是否分配给当前用户不影响这个入口。Assignment 只决定通知和待处理列表，不
-决定谁可以启动本地执行。创建 Run 时必须记录：
-
-```text
-initiated_by = 当前 Member
-agent_id = 本次选择的 Codex Agent
-trigger = manual
-```
-
-Project 可以提供默认 Agent、Runtime 和本地工作区绑定，但用户在有权限时可以显式
-覆盖。若已有其他活跃 Run，Wework 应展示并发工作提示和已有执行入口，而不是因为
-用户未被分配而禁止启动。
-
-### 独立本地对话
-
-```text
-LocalTask
-→ Codex Thread
-```
-
-独立对话可以只存在设备，不要求先创建 Workspace、Project、Issue 或 Run。当用户
-选择“加入协作项目”或系统为其建立明确绑定后，才创建 Issue/Run 关系；不得把所有
-历史本地对话静默上传到云端。
-
-## 统一创建与执行协议
-
-协作执行统一使用：
-
-```text
-Create Run
-→ persist immutable intent
-→ select Runtime
-→ executor claim
-→ materialize Agent snapshot
-→ prepare Execution Workspace
-→ create/link LocalTask
-→ start/resume Codex Thread
-→ stream normalized events
-→ persist terminal state and Deliverables
-```
-
-现有 `RuntimeTaskCreateRequest V2` 可以演进为统一执行请求，但必须满足：
-
-1. 以 `run_id` 作为协作执行的顶层关联身份；
-2. Bot、Ghost、Shell、Model 和 Plugin 来自 Agent 快照；
-3. secret 只在本地或云端 compiler 中物化；
-4. Wework 与 Wegent Executor 消费相同的规范字段；
-5. 后端专有字段放入显式扩展区，不改变公共状态和事件协议。
-
-## 状态与事件
-
-Run 使用统一状态：
-
-```text
-pending_approval
-→ waiting_runtime
-→ queued
-→ claimed
-→ running
-→ completed | failed
-
-claimed | running
-→ cancel_requested
-→ cancelled
-
-pending_approval | waiting_runtime | queued
-→ cancelled
-```
-
-LocalTask、Codex thread 和 turn 的状态通过投影器更新 Run，不能直接由前端推断。
-每个事件至少携带：
-
-```text
-run_id
-runtime_instance_id
-device_id
-local_task_id
-provider_thread_id
-turn_id
-event_sequence
-event_type
-timestamp
-```
-
-Backend 只接受与当前 Run、Runtime 和 BackendBinding 一致且序号单调递增的事件。
-
-## 本地执行需要删除的重复路径
-
-收敛过程中应删除：
-
-- `ProjectChatAgent` 中重复的 Agent Prompt、Model、Plugin 和完整执行身份；
-- `WeworkExecutionProfile` 临时构造伪 Bot 的逻辑；
-- 本地和 Wegent 分别解析 Skill、MCP、Plugin 的两套能力路径；
-- 通过 `workspacePath`、标题或最近任务推断执行身份的路径；
-- 前端根据 LocalTask 或 transcript 猜测协作 Run 终态的逻辑；
-- 把 Executor 或安装了 Plugin 的 Device 暴露为协作 Member 的逻辑。
-
-## 演进顺序
-
-1. 在 Ghost 增加 Plugin 引用，并实现统一有效能力清单。
-2. 增加正式 Codex Shell，并让现有本地 Codex 请求从 Shell 定义生成。
-3. 从 Team/Bot/Ghost 编译不可变 `AgentExecutionSnapshot`。
-4. 让 LoopItemExecution 保存 `run_id`、Agent 快照和统一 BackendBinding。
-5. 修改 Wework Executor，使其直接消费统一快照和执行请求。
-6. 将 ProjectChatAgent 收敛为 ProjectAgentBinding。
-7. 统一本地和云端执行事件、取消、恢复与 Deliverable 协议。
-8. 保留独立 LocalTask 模式，并提供显式“加入协作项目”入口。
+## 数据升级与验证
+
+SQLite schema v8 为旧版 `loop_item_executions` 补齐 `execution_payload`。升级只
+增加缺失字段，不清空已有项目、Issue、会话或执行记录；已有 payload 保持不变。
+更新后的执行器启动时应用迁移，不需要手动修改个人数据库。
+
+SQLite schema v9 根据已有执行事实补齐缺失的动态和任务关联，保留已存储的回复、
+失败原因与手动解除的关联，不重新执行任务。升级和重复打开不能制造重复卡片。
+
+针对性验证覆盖本地智能体创建/编辑和错误恢复、云端阻塞隔离、Codex/Claude
+执行、规则触发、重启持久化、协作组阶段推进与停止/重试、v7 数据迁移。
+离线桌面场景位于已有 CI 桌面测试套件，并检查本地操作没有调用云端项目接口。
+E2E 和真实 Electron 验证按仓库策略，仅在明确要求时运行。

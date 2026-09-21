@@ -38,4 +38,13 @@ describe('getProcessingErrorMessage', () => {
       'safe fallback'
     )
   })
+
+  it('keeps the provider failure reason for an external import', () => {
+    expect(
+      getProcessingErrorMessage(
+        createError('external_import_failed', '无法连接 Wiki 站点'),
+        translate
+      )
+    ).toBe('无法连接 Wiki 站点')
+  })
 })

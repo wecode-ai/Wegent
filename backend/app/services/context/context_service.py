@@ -339,6 +339,7 @@ class ContextService:
         subtask_id: int = 0,
         storage_purpose: str = "default",
         *,
+        lifecycle_owner: str | None = None,
         commit: bool = True,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
@@ -351,6 +352,7 @@ class ContextService:
             binary_data: File binary data
             subtask_id: Subtask ID to link to (0 means unlinked)
             storage_purpose: Explicit purpose used to select external storage
+            lifecycle_owner: Optional owner used by a scoped orphan reaper
             commit: Commit locally; False leaves the transaction to the caller
 
         Returns:
@@ -385,6 +387,11 @@ class ContextService:
             subtask_id=subtask_id,
             storage_backend=storage_backend_type,
         )
+        if lifecycle_owner:
+            context.type_data = {
+                **(context.type_data or {}),
+                "lifecycle_owner": lifecycle_owner,
+            }
         db.add(context)
         db.flush()  # Get the ID
 
@@ -1643,6 +1650,8 @@ class ContextService:
         db: Session,
         context_id: int,
         user_id: int,
+        *,
+        keep_row_on_storage_failure: bool = False,
     ) -> bool:
         """
         Delete a context.
@@ -1654,6 +1663,8 @@ class ContextService:
             db: Database session
             context_id: Context ID
             user_id: User ID for ownership check
+            keep_row_on_storage_failure: Keep the database row so a scoped
+                cleanup task can retry a failed storage deletion
 
         Returns:
             True if deleted, False if not found or cannot be deleted
@@ -1663,7 +1674,11 @@ class ContextService:
         if context is None:
             return False
 
-        return self._delete_unlinked_context(db, context)
+        return self._delete_unlinked_context(
+            db,
+            context,
+            keep_row_on_storage_failure=keep_row_on_storage_failure,
+        )
 
     def delete_unlinked_context_by_id(self, db: Session, context_id: int) -> bool:
         """Delete an unlinked context for trusted ownership-cleanup callers."""
@@ -1673,7 +1688,12 @@ class ContextService:
         return self._delete_unlinked_context(db, context)
 
     @staticmethod
-    def _delete_unlinked_context(db: Session, context: SubtaskContext) -> bool:
+    def _delete_unlinked_context(
+        db: Session,
+        context: SubtaskContext,
+        *,
+        keep_row_on_storage_failure: bool = False,
+    ) -> bool:
         context_id = context.id
 
         # Only allow deletion of unlinked contexts (subtask_id == 0)
@@ -1687,12 +1707,21 @@ class ContextService:
         if context.context_type == ContextType.ATTACHMENT.value and context.storage_key:
             try:
                 storage_backend = get_storage_backend(db)
-                storage_backend.delete(context.storage_key)
+                if not storage_backend.delete(context.storage_key):
+                    logger.warning(
+                        "Storage did not delete context %s",
+                        context_id,
+                    )
+                    if keep_row_on_storage_failure:
+                        return False
             except StorageError as e:
                 logger.warning(
                     f"Failed to delete context {context_id} from storage: {e}"
                 )
-                # Continue with database deletion even if storage deletion fails
+                if keep_row_on_storage_failure:
+                    return False
+                # Preserve the existing contract for ordinary contexts: a
+                # storage failure does not block deletion of the database row.
 
         db.delete(context)
         db.commit()

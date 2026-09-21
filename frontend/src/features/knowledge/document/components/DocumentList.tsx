@@ -84,6 +84,7 @@ import {
 } from '../utils/resource-tree'
 import { findDocumentByName, findDocumentForDeepLink } from '../utils/document-lookup'
 import { createDocumentsFromAttachments } from '../utils/document-creation'
+import { isSyncedWikiDocument } from '../utils/documentUtils'
 import { DocumentSourceWorkspaceHeader } from './DocumentSourceWorkspaceHeader'
 import { getDocumentProtection } from '@/apis/knowledge'
 
@@ -444,6 +445,9 @@ export function DocumentList({
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
+  const openDocument = useCallback((document: KnowledgeDocument) => {
+    setViewingDoc(document)
+  }, [])
   const currentViewingDoc = useMemo(
     () => resolveCurrentDocumentSnapshot(viewingDoc, documents),
     [documents, viewingDoc]
@@ -588,7 +592,7 @@ export function DocumentList({
       initialDocumentId !== undefined ? doc.id === initialDocumentId : doc.name === initialDocPath
     )
     if (targetDoc) {
-      setViewingDoc(targetDoc)
+      openDocument(targetDoc)
       setInitialDocPathHandled(true)
       return
     }
@@ -606,7 +610,7 @@ export function DocumentList({
             controller.signal
           )
           if (!controller.signal.aborted && found) {
-            setViewingDoc(found)
+            openDocument(found)
           }
         } catch {
           // Silently ignore - auto-open is best-effort
@@ -628,6 +632,7 @@ export function DocumentList({
     documents,
     paginationEnabled,
     knowledgeBase.id,
+    openDocument,
   ])
 
   // Notebook view starts with no explicit document filter. Users can select
@@ -797,6 +802,30 @@ export function DocumentList({
     }
   }
 
+  const handleWikiImport = async (
+    pageIds: string[],
+    options: { connectionId: string; projectPath?: string; branch?: string }
+  ) => {
+    const { wikiApis } = await import('@/apis/wiki')
+
+    const result = await wikiApis.bindKbWikiDocuments(knowledgeBase.id, pageIds, {
+      connectionId: options.connectionId,
+      projectPath: options.projectPath,
+      branch: options.branch,
+      folderId: selectedUploadFolderId || 0,
+    })
+
+    await refresh()
+    onDocumentsChanged?.()
+
+    return {
+      createdCount: result.created_count,
+      updatedCount: result.updated_count,
+      processingCount: result.processing_count,
+      duplicateCount: result.duplicate_documents.length,
+    }
+  }
+
   const handleDelete = async () => {
     if (!deletingDoc) return
     try {
@@ -895,9 +924,10 @@ export function DocumentList({
   // replacing the attachment and reindexing.
   const handleReindexDocument = async (doc: KnowledgeDocument) => {
     setReindexingDocId(doc.id)
+    const usesImportRetry = doc.source_type === 'external' && !isSyncedWikiDocument(doc)
     try {
       let successMessage = t('document.document.reindexSuccess')
-      if (doc.source_type === 'external') {
+      if (usesImportRetry) {
         const { retryExternalDocumentImport } = await import('@/apis/knowledge')
         await retryExternalDocumentImport(doc.id)
         successMessage = t('document.document.retryImportSuccess')
@@ -924,10 +954,9 @@ export function DocumentList({
       onDocumentsChanged?.()
     } catch (err) {
       // Use ApiError.errorCode for structured error handling
-      const fallbackMessage =
-        doc.source_type === 'external'
-          ? t('document.document.retryImportFailed')
-          : t('document.document.reindexFailed')
+      const fallbackMessage = usesImportRetry
+        ? t('document.document.retryImportFailed')
+        : t('document.document.reindexFailed')
       let errorMessage = fallbackMessage
       if (err instanceof Error) {
         // Check if it's an ApiError with errorCode for structured error handling
@@ -1549,7 +1578,7 @@ export function DocumentList({
                 folders={directFolders}
                 documents={documents}
                 compact={true}
-                onViewDetail={setViewingDoc}
+                onViewDetail={openDocument}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
@@ -1612,7 +1641,7 @@ export function DocumentList({
                 isPartialSelected={isPartialSelected}
                 onSelectAll={handleSelectAll}
                 selectAllLabel={t('document.document.batch.selectCurrentPage')}
-                onViewDetail={setViewingDoc}
+                onViewDetail={openDocument}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
@@ -1686,7 +1715,7 @@ export function DocumentList({
         <DocAutoOpener
           documents={documents}
           loading={loading}
-          onOpen={setViewingDoc}
+          onOpen={openDocument}
           knowledgeBaseId={knowledgeBase.id}
           paginationEnabled={paginationEnabled}
         />
@@ -1717,6 +1746,7 @@ export function DocumentList({
         onUploadComplete={handleUploadComplete}
         onWebAdd={handleWebAdd}
         onDingtalkImport={handleDingtalkImport}
+        onWikiImport={handleWikiImport}
         canManageDocuments={canUploadDocuments}
         kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         folderId={selectedUploadFolderId}
