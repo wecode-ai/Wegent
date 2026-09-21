@@ -691,6 +691,16 @@ function normalizeRuntimeTaskSummary(
   const goalExecutionStatus = runtimeGoalExecutionStatusValue(
     taskRecord.goalExecutionStatus ?? taskRecord.goal_execution_status
   )
+  const rawInteractionStatus = Object.hasOwn(taskRecord, 'interactionStatus')
+    ? taskRecord.interactionStatus
+    : taskRecord.interaction_status
+  const interactionStatus =
+    rawInteractionStatus === null
+      ? null
+      : rawInteractionStatus === 'waitingForUserInput'
+        ? rawInteractionStatus
+        : undefined
+  const hasInteractionStatus = rawInteractionStatus === null || interactionStatus !== undefined
   const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
@@ -721,6 +731,7 @@ function normalizeRuntimeTaskSummary(
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
+    ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),

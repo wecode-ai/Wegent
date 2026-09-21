@@ -1568,6 +1568,7 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         }
+        self.set_interaction_status(local_task_id, None);
         Ok(json!({
             "success": true,
             "accepted": true,

@@ -6039,6 +6039,24 @@ const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
 const MCP_ELICITATION_DECLINE: &str = "Decline";
 const MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval_";
 
+pub(crate) fn codex_notification_requires_user_input(message: &Value) -> bool {
+    match message.get("method").and_then(Value::as_str) {
+        Some(
+            "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval",
+        ) => true,
+        Some("item/tool/requestUserInput") => {
+            mcp_tool_call_request_user_input_response(message_params(message)).is_none()
+        }
+        Some("mcpServer/elicitation/request") => {
+            mcp_server_elicitation_request_user_input_params(message_params(message)).is_some()
+                && !is_mcp_tool_call_approval(message_params(message))
+        }
+        _ => false,
+    }
+}
+
 fn is_mcp_tool_call_approval_request(message: &Value) -> bool {
     match message.get("method").and_then(Value::as_str) {
         Some("item/tool/requestUserInput") => {

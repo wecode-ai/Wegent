@@ -255,6 +255,14 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'turn_settled', turnId, outcome })
   }
 
+  userInputRequested(address: RuntimeTaskAddress): void {
+    this.dispatch(address, { type: 'user_input_requested' })
+  }
+
+  userInputResponded(address: RuntimeTaskAddress): void {
+    this.dispatch(address, { type: 'user_input_responded' })
+  }
+
   syncTranscript(
     address: RuntimeTaskAddress,
     transcript: RuntimePaneTranscript,
