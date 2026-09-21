@@ -434,10 +434,19 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
+    if !registry.routes.contains_key(token) {
+        return Err("local model proxy task route is not registered".to_owned());
+    }
+    let mut reassigned_routes = 0;
+    for (registered_token, registered) in &mut registry.routes {
+        if registered_token != token && registered.thread_ids.remove(thread_id) {
+            reassigned_routes += 1;
+        }
+    }
     let registered = registry
         .routes
         .get_mut(token)
-        .ok_or_else(|| "local model proxy task route is not registered".to_owned())?;
+        .expect("validated local model proxy task route should exist");
     registered.thread_ids.insert(thread_id.to_owned());
     registered.last_used = Instant::now();
     log_executor_event(
@@ -445,6 +454,7 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
         &[
             ("thread_id", thread_id.to_owned()),
             ("bound_threads", registered.thread_ids.len().to_string()),
+            ("reassigned_routes", reassigned_routes.to_string()),
         ],
     );
     Ok(())
@@ -559,6 +569,7 @@ pub(super) async fn handle_token_route(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
+    let token = token_route_token(token, &body)?;
     handle_for_token(token, headers, body).await
 }
 
@@ -698,9 +709,17 @@ fn bound_thread_token(body: &[u8]) -> Result<String, HttpError> {
         status: StatusCode::CONFLICT,
         detail: "Codex Responses request is missing task thread metadata".to_owned(),
     })?;
-    let registry = registry()
+    let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    bound_thread_token_in_registry(&registry, &identity)
+}
+
+fn bound_thread_token_in_registry(
+    registry: &LocalModelProxyRegistry,
+    identity: &RequestThreadIdentity,
+) -> Result<String, HttpError> {
     let mut tokens = registry.routes.iter().filter_map(|(token, registered)| {
         let matches_thread = registered.thread_ids.contains(&identity.thread_id);
         let matches_parent = identity
@@ -720,6 +739,29 @@ fn bound_thread_token(body: &[u8]) -> Result<String, HttpError> {
         });
     }
     Ok(token)
+}
+
+fn token_route_token(token: String, body: &[u8]) -> Result<String, HttpError> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    if registry.routes.contains_key(&token) {
+        return Ok(token);
+    }
+    let identity = request_thread_identity(body).ok_or_else(|| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "unknown or expired local model proxy token".to_owned(),
+    })?;
+    let recovered = bound_thread_token_in_registry(&registry, &identity)?;
+    log_executor_event(
+        "local model proxy stale token recovered",
+        &[
+            ("thread_id", identity.thread_id),
+            ("active_registrations", registry.routes.len().to_string()),
+        ],
+    );
+    Ok(recovered)
 }
 
 async fn handle_for_token(
@@ -3680,7 +3722,52 @@ mod tests {
     }
 
     #[test]
-    fn generic_route_rejects_unbound_and_ambiguous_codex_threads() {
+    fn token_route_recovers_a_stale_persisted_token_from_the_bound_thread() {
+        let token = register(
+            "stale-token-recovery-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        bind_thread(&token, "stale-token-thread").expect("root thread should bind");
+
+        assert_eq!(
+            token_route_token(
+                "task-expired-from-previous-executor".to_owned(),
+                br#"{"client_metadata":{"thread_id":"stale-token-thread"}}"#,
+            )
+            .expect("stale token should recover through the bound thread"),
+            token
+        );
+
+        unregister(&token);
+    }
+
+    #[test]
+    fn token_route_keeps_unknown_token_semantics_without_thread_metadata() {
+        let error = token_route_token(
+            "task-unknown".to_owned(),
+            br#"{"input":"request without task thread metadata"}"#,
+        )
+        .expect_err("unknown token without thread metadata must remain not found");
+
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert_eq!(error.detail, "unknown or expired local model proxy token");
+    }
+
+    #[test]
+    fn generic_route_rejects_unbound_threads_and_uses_the_latest_binding() {
         let unbound_error =
             bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-unbound-thread"}}"#)
                 .expect_err("unbound thread must not resolve");
@@ -3705,10 +3792,19 @@ mod tests {
         bind_thread(&first, "generic-ambiguous-thread").expect("first route should bind");
         bind_thread(&second, "generic-ambiguous-thread").expect("second route should bind");
 
-        let ambiguous_error =
+        assert_eq!(
             bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-ambiguous-thread"}}"#)
-                .expect_err("ambiguous thread must not resolve");
-        assert_eq!(ambiguous_error.status, StatusCode::CONFLICT);
+                .expect("the latest route binding should replace the stale binding"),
+            second
+        );
+        let entries = registry().lock().expect("registry lock");
+        assert!(!entries
+            .routes
+            .get(&first)
+            .expect("first route")
+            .thread_ids
+            .contains("generic-ambiguous-thread"));
+        drop(entries);
 
         unregister(&first);
         unregister(&second);

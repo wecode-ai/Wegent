@@ -3600,22 +3600,15 @@ fn configure_codex_router(
 }
 
 fn configure_codex_router_registration(launch_config: &mut CodexLaunchConfig, local_token: String) {
-    let local_base_url = executor_loopback_base_url()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     let provider = codex_model_catalog::PROVIDER_ID;
-    launch_config.local_proxy_registration =
-        Some(Arc::new(LocalProxyRegistration(local_token.clone())));
+    launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
     launch_config.model_provider = Some(provider.to_owned());
-    launch_config.config_overrides.extend([
-        "forced_login_method=api".to_owned(),
-        format!("model_provider={provider}"),
-        format!("model_providers.{provider}.name=\"Wework model router\""),
-        format!(
-            "model_providers.{provider}.base_url={}",
-            toml_value(&format!("{local_base_url}/v1/codex-router/{local_token}"))
-        ),
-        format!("model_providers.{provider}.wire_api=\"responses\""),
-    ]);
+    launch_config
+        .config_overrides
+        .push("forced_login_method=api".to_owned());
+    launch_config
+        .config_overrides
+        .extend(codex_router_provider_overrides());
 }
 
 fn request_model_switched(request: &ExecutionRequest) -> bool {

@@ -1562,7 +1562,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
     assert!(launch_config.local_proxy_registration.is_some());
     assert!(launch_config.config_overrides.iter().any(|value| {
         value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.contains("/v1/codex-router/task-")
+            && value.ends_with("/v1/codex-router\"")
     }));
     for params in [
         thread_start_params(&request, &launch_config),
@@ -1791,7 +1791,7 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     );
     assert!(launch_config.config_overrides.iter().any(|override_value| {
         override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.contains("/v1/codex-router/task-")
+            && override_value.ends_with("/v1/codex-router\"")
     }));
     assert!(!launch_config
         .config_overrides
