@@ -128,7 +128,6 @@ export interface LocalProjectChatAgent {
   executionMode: 'auto' | 'manual_approval'
   executionDeviceId: string | null
   localProjectId: number | null
-  wegentTeamId: number | null
   maxConcurrentExecutions: number
   workspacePolicy: 'project' | 'git_worktree'
   plugins: RuntimeProjectPluginRef[]
@@ -397,7 +396,6 @@ type LocalAgentRecord = Record<string, unknown> & {
   execution_mode?: string
   execution_device_id?: string | null
   local_project_id?: number | null
-  wegent_team_id?: number | null
   max_concurrent_executions?: number
   workspace_policy?: 'project' | 'git_worktree'
   plugins?: RuntimeProjectPluginRef[]
@@ -437,7 +435,6 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     executionMode: (record.execution_mode as LocalProjectChatAgent['executionMode']) ?? 'auto',
     executionDeviceId: record.execution_device_id ?? null,
     localProjectId: record.local_project_id ?? null,
-    wegentTeamId: record.wegent_team_id ?? null,
     maxConcurrentExecutions,
     workspacePolicy: record.workspace_policy === 'git_worktree' ? 'git_worktree' : 'project',
     plugins: record.plugins ?? [],
@@ -461,7 +458,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         name: string
         runtime: 'codex' | 'claude_code'
-        wegentTeamId?: number | null
         model?: string | null
         capabilityDescription?: string
         systemPrompt?: string
@@ -492,7 +488,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_mode: input.executionMode ?? 'auto',
           execution_device_id: input.executionDeviceId ?? null,
           local_project_id: input.localProjectId ?? null,
-          wegent_team_id: input.wegentTeamId ?? null,
           max_concurrent_executions: input.maxConcurrentExecutions ?? 1,
           workspace_policy: input.workspacePolicy ?? 'project',
           plugins: input.plugins ?? [],
@@ -507,7 +502,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         version: number
         runtime?: 'codex' | 'claude_code'
-        wegentTeamId?: number | null
         name?: string
         model?: string | null
         capabilityDescription?: string
@@ -543,7 +537,6 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_mode: input.executionMode,
           execution_device_id: input.executionDeviceId,
           local_project_id: input.localProjectId,
-          wegent_team_id: input.wegentTeamId,
           max_concurrent_executions: input.maxConcurrentExecutions,
           workspace_policy: input.workspacePolicy,
           plugins: input.plugins,

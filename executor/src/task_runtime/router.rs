@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use serde_json::Value;
+
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
@@ -633,6 +635,40 @@ impl TaskRuntime {
             .archive_chat_agent(project_id, agent_id, version)
     }
 
+    pub fn cancel_project_automation_run(
+        &self,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .cancel_project_automation_run(project_id, run_id)
+    }
+    pub fn retry_project_automation_run(
+        &self,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .retry_project_automation_run(project_id, run_id)
+    }
+    pub fn run_project_automation(
+        &self,
+        project_id: &str,
+        rule_id: &str,
+        issue_id: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .run_project_automation(project_id, rule_id, issue_id)
+    }
+    pub fn list_project_automation_runs(
+        &self,
+        project_id: &str,
+        rule_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store
+            .list_project_automation_runs(project_id, rule_id)
+    }
+
     pub fn list_executions(
         &self,
         project_id: &str,
@@ -659,6 +695,38 @@ impl TaskRuntime {
         create: LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
         self.local_store.create_comment(&create)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_runtime_comment(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        agent_id: &str,
+        trigger_message_id: &str,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        prompt: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store.start_runtime_comment(
+            project_id,
+            task_id,
+            agent_id,
+            trigger_message_id,
+            runtime_device_id,
+            runtime_task_id,
+            prompt,
+            model,
+        )
+    }
+
+    pub fn fail_runtime_comment(
+        &self,
+        message_id: &str,
+        error: &str,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store.fail_runtime_comment(message_id, error)
     }
 
     pub fn enqueue_execution(
@@ -702,6 +770,12 @@ impl TaskRuntime {
         &self,
         claim: LocalExecutionClaim,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        if let Err(error) = self.local_store.tick_project_automations() {
+            crate::logging::log_executor_event(
+                "local project automation scheduling failed",
+                &[("error", error.to_string())],
+            );
+        }
         self.local_store.claim_next_local_execution(&claim)
     }
 

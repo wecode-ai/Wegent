@@ -134,8 +134,6 @@ pub struct ChatAgentCreate {
     #[serde(default)]
     pub local_project_id: Option<i64>,
     #[serde(default)]
-    pub wegent_team_id: Option<i64>,
-    #[serde(default)]
     pub created_by_user_id: Option<i64>,
     #[serde(default)]
     pub plugins: Vec<Value>,
@@ -163,9 +161,6 @@ pub struct ChatAgentUpdate {
     /// Explicit `null` clears the binding; a missing key keeps it unchanged.
     #[serde(default)]
     pub local_project_id: Option<Option<i64>>,
-    /// Explicit `null` clears the resource binding; a missing key keeps it unchanged.
-    #[serde(default)]
-    pub wegent_team_id: Option<Option<i64>>,
     pub plugins: Option<Vec<Value>>,
     pub additional_skills: Option<Vec<Value>>,
     pub mcp_servers: Option<Value>,
@@ -188,7 +183,6 @@ pub struct ChatAgent {
     pub max_concurrent_executions: u64,
     pub workspace_policy: String,
     pub local_project_id: Option<i64>,
-    pub wegent_team_id: Option<i64>,
     pub plugins: Vec<Value>,
     pub additional_skills: Vec<Value>,
     pub mcp_servers: Value,

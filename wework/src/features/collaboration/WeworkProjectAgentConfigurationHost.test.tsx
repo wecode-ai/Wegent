@@ -83,7 +83,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
     const host = createWeworkProjectAgentConfigurationHost(api)
 
     expect(host.supportsExistingAgentSelection).toBe(true)
-    expect(host.supportsCrossLocationAgentSelection).toBe(true)
     expect(host.renderAgentCreator).toBeTypeOf('function')
     expect(host.renderAgentEditor).toBeTypeOf('function')
   })

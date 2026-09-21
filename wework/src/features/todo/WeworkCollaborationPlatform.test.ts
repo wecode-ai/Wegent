@@ -3,7 +3,6 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CollaborationPlatformLocation, SharedWorkspaceApi } from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
-import type { createAgentResourceApi } from '@/api/agentResources'
 import { ApiError } from '@/api/http'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
@@ -24,6 +23,8 @@ import {
 } from './WeworkCollaborationPlatform'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 
+const renderedProjectApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
+
 vi.mock('@wegent/collaboration', async importOriginal => {
   const actual = await importOriginal<typeof import('@wegent/collaboration')>()
   return {
@@ -37,6 +38,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       host: { location: { projectId: string | null } }
       refreshProjectRequestKey?: number
     }) => {
+      if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
       const renderCount = useRef(0)
       const [projectIds, setProjectIds] = useState('')
       const [resourceNames, setResourceNames] = useState('')
@@ -67,8 +69,9 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         void api.agents
           .create(projectId, {
             name: 'Review Agent',
-            runtime: 'wegent',
-            wegentTeamId: 91,
+            runtime: 'codex',
+            model: 'gpt-5.6-sol',
+            systemPrompt: 'Review carefully.',
           })
           .catch(() => undefined)
       }
@@ -270,6 +273,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
 
 afterEach(() => {
   vi.useRealTimers()
+  renderedProjectApis.clear()
 })
 
 function createLocalDeliveryApi() {
@@ -408,7 +412,7 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
-  it('uses the combined platform API inside local project details', async () => {
+  it('keeps local project data and Agent configuration independent of cloud resources', async () => {
     const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
       id: 'LA-1',
       projectId: 'local-project',
@@ -436,6 +440,17 @@ describe('Wework collaboration workspace API', () => {
     }))
     const listCloudAutomations = vi.fn().mockRejectedValue(new Error('Cloud project not found'))
     const localDeliveryApi = createLocalDeliveryApi()
+    const issue = { id: 'LOCAL-1', cloud_project_id: 'local-project', title: '执行pwd', version: 1 }
+    localDeliveryApi.createLoopItem = vi.fn().mockResolvedValue(issue)
+    localDeliveryApi.getLoopItem = vi.fn().mockResolvedValue(issue)
+    localDeliveryApi.updateLoopItem = vi.fn().mockResolvedValue({ ...issue, version: 2 })
+    localDeliveryApi.archiveLoopItem = vi.fn().mockResolvedValue(undefined)
+    const cloudIssues = {
+      create: vi.fn().mockRejectedValue(new Error('Request parameter validation failed')),
+      get: vi.fn().mockRejectedValue(new Error('Local Issue sent to cloud')),
+      update: vi.fn().mockRejectedValue(new Error('Local Issue sent to cloud')),
+      archive: vi.fn().mockRejectedValue(new Error('Local Issue sent to cloud')),
+    }
     vi.mocked(localDeliveryApi.listCloudProjects).mockResolvedValue({
       items: [
         {
@@ -483,6 +498,7 @@ describe('Wework collaboration workspace API', () => {
             agents: { create: vi.fn() },
             resources: { list: listCloudResources },
             automations: { list: listCloudAutomations },
+            issues: cloudIssues,
           },
           projectSpaceApis: {
             local: localDeliveryApi,
@@ -503,12 +519,11 @@ describe('Wework collaboration workspace API', () => {
     })
 
     await waitFor(() => expect(createLocalAgent).toHaveBeenCalledOnce())
-    expect(getAgent).toHaveBeenCalledWith(91)
+    expect(getAgent).not.toHaveBeenCalled()
     expect(createLocalAgent).toHaveBeenCalledWith(
       'local-project',
       expect.objectContaining({
         runtime: 'codex',
-        wegentTeamId: 91,
         model: 'gpt-5.6-sol',
         systemPrompt: 'Review carefully.',
       })
@@ -520,9 +535,9 @@ describe('Wework collaboration workspace API', () => {
     await waitFor(() =>
       expect(
         screen.getByTestId('collaboration-app-resource-names-local-project')
-      ).toHaveTextContent('Review Agent')
+      ).toBeEmptyDOMElement()
     )
-    expect(listCloudResources).toHaveBeenCalledOnce()
+    expect(listCloudResources).not.toHaveBeenCalled()
 
     await act(async () => {
       screen.getByTestId('collaboration-app-load-automations-local-project').click()
@@ -533,6 +548,24 @@ describe('Wework collaboration workspace API', () => {
       ).toHaveTextContent('Local automation')
     )
     expect(listCloudAutomations).not.toHaveBeenCalled()
+
+    const projectApi = renderedProjectApis.get('local-project')!
+    await expect(
+      projectApi.issues.create('local-project', { title: '执行pwd' })
+    ).resolves.toMatchObject(issue)
+    await expect(projectApi.issues.get('LOCAL-1')).resolves.toMatchObject(issue)
+    await projectApi.issues.update('LOCAL-1', { version: 1, title: '执行ls' })
+    await projectApi.issues.archive('LOCAL-1')
+    expect(localDeliveryApi.createLoopItem).toHaveBeenCalledWith('local-project', {
+      title: '执行pwd',
+    })
+    expect(localDeliveryApi.getLoopItem).toHaveBeenCalledWith('LOCAL-1')
+    expect(localDeliveryApi.updateLoopItem).toHaveBeenCalledWith('LOCAL-1', {
+      version: 1,
+      title: '执行ls',
+    })
+    expect(localDeliveryApi.archiveLoopItem).toHaveBeenCalledWith('LOCAL-1')
+    for (const request of Object.values(cloudIssues)) expect(request).not.toHaveBeenCalled()
   })
 
   it.each(['agents', 'teams', 'devices'] as const)(
@@ -2057,82 +2090,6 @@ describe('Wework collaboration workspace API', () => {
     expect(listCloudMembers).not.toHaveBeenCalled()
   })
 
-  it('materializes a Wegent Agent resource into a runnable local project agent', async () => {
-    const createLocalAgent = vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
-      id: 'LA-1',
-      projectId: 'local-project',
-      status: 'active',
-      version: 1,
-      ...input,
-    }))
-    const localDetails = {
-      ...createLocalDetailServices(),
-      projectChatAgentApi: {
-        list: vi.fn(async () => []),
-        create: createLocalAgent,
-        update: vi.fn(),
-      },
-    } as unknown as ProjectSpaceDetailServices
-    const getAgent = vi.fn(async () => ({
-      teamId: 91,
-      botId: 92,
-      name: 'review-agent',
-      displayName: 'Review Agent',
-      namespace: 'default',
-      runtime: 'Codex' as const,
-      shellName: 'Codex',
-      model: { name: 'gpt-5.6-sol', type: 'public' as const, namespace: 'default' },
-      systemPrompt: 'Review carefully.',
-      skills: [{ skillId: 7, name: 'code-review', namespace: 'default', isPublic: false }],
-      mcpServers: { github: { command: 'github-mcp' } },
-    }))
-    const agentResourceApi = {
-      getAgent,
-    } as unknown as ReturnType<typeof createAgentResourceApi>
-    const createCloudAgent = vi.fn()
-    const api = createWeworkPlatformApi(
-      {
-        workspaces: {},
-        projects: {},
-        agents: { create: createCloudAgent },
-      } as unknown as SharedWorkspaceApi,
-      createLocalDeliveryApi(),
-      1,
-      'admin',
-      null,
-      localDetails,
-      'zh-CN',
-      agentResourceApi
-    )
-
-    await expect(
-      api?.agents.create('local-project', {
-        name: 'Review Agent',
-        runtime: 'wegent',
-        wegentTeamId: 91,
-      })
-    ).resolves.toMatchObject({
-      runtime: 'codex',
-      wegentTeamId: 91,
-      model: 'gpt-5.6-sol',
-    })
-    expect(getAgent).toHaveBeenCalledWith(91)
-    expect(createLocalAgent).toHaveBeenCalledWith(
-      'local-project',
-      expect.objectContaining({
-        runtime: 'codex',
-        wegentTeamId: 91,
-        model: 'gpt-5.6-sol',
-        systemPrompt: 'Review carefully.',
-        additionalSkills: [
-          { skillId: 7, name: 'code-review', namespace: 'default', isPublic: false },
-        ],
-        mcpServers: { github: { command: 'github-mcp' } },
-      })
-    )
-    expect(createCloudAgent).not.toHaveBeenCalled()
-  })
-
   it('routes local workspace overview snapshots to the local project API', async () => {
     const localDeliveryApi = createLocalDeliveryApi()
     const getCloudBoardSnapshot = vi.fn()
@@ -2157,6 +2114,28 @@ describe('Wework collaboration workspace API', () => {
     )
     expect(localDeliveryApi.getBoardSnapshot).toHaveBeenCalledWith('local-project')
     expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('uses the local Agent catalog for every board refresh and reports catalog failures', async () => {
+    const agents = [{ id: 'agent-1', name: '处理智能体', runtime: 'codex', wegentTeamId: 91 }]
+    const listAgents = vi.fn().mockResolvedValue(agents)
+    const details = {
+      ...createLocalDetailServices(),
+      projectChatAgentApi: { list: listAgents },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, details)!
+
+    expect((await api.issues.getBoardSnapshot('local-project')).agents).toEqual(
+      await api.agents.list('local-project')
+    )
+    expect((await api.issues.getBoardSnapshot('local-project')).agents).toEqual(agents)
+    expect(listAgents).toHaveBeenCalledWith('local-project')
+    listAgents.mockRejectedValueOnce(new Error('Agent storage unavailable'))
+    await expect(api.issues.getBoardSnapshot('local-project')).rejects.toThrow(
+      'Agent storage unavailable'
+    )
+    listAgents.mockResolvedValue([])
+    expect((await api.issues.getBoardSnapshot('local-project')).agents).toEqual([])
   })
 
   it('keeps local navigation projects available when the cloud project list fails', async () => {
