@@ -461,7 +461,7 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
   assert.equal(sync.state.value.transcripts.available.downloadedThrough, 1)
 })
 
-test('the most recent writer never restores its own cloud transcript', async () => {
+test('the most recent writer restores a missing parent after creating a conflict fork', async () => {
   const restored = []
   const sync = new WeworkSync({
     apiBaseUrl: 'https://cloud.example.com/api',
@@ -470,8 +470,9 @@ test('the most recent writer never restores its own cloud transcript', async () 
     source: await segmentSource(),
     state: state(),
     target: {
-      async status() {
-        throw new Error('The origin device must not inspect a restore target')
+      async status(transcript) {
+        assert.equal(transcript.transcriptId, 'created-here')
+        return { available: true, importedThrough: 0, reason: 'restore_required' }
       },
       async restore(transcript) {
         restored.push(transcript.transcriptId)
@@ -481,29 +482,46 @@ test('the most recent writer never restores its own cloud transcript', async () 
     desktop: {
       weworkSync: {
         async request(request) {
-          assert.equal(request.path, '/wework-transcripts?includeArchived=false')
-          return {
-            status: 200,
-            body: {
-              items: [
-                {
-                  transcriptId: 'created-here',
-                  writerClientId: 'client-2',
-                  currentSequence: 1,
-                  archives: [
-                    {
-                      id: 1,
-                      fromSequence: 0,
-                      toSequence: 1,
-                      sha256: 'a'.repeat(64),
-                      sizeBytes: 32,
-                      format: 'codex-snapshot.v1.tgz.aes256gcm',
-                    },
-                  ],
-                },
-              ],
-            },
+          if (request.path === '/wework-transcripts?includeArchived=false') {
+            return {
+              status: 200,
+              body: {
+                items: [
+                  {
+                    transcriptId: 'created-here',
+                    writerClientId: 'client-2',
+                    currentSequence: 1,
+                    archives: [
+                      {
+                        id: 1,
+                        fromSequence: 0,
+                        toSequence: 1,
+                        sha256: 'a'.repeat(64),
+                        sizeBytes: 32,
+                        format: 'codex-snapshot.v1.tgz.aes256gcm',
+                      },
+                    ],
+                  },
+                  {
+                    transcriptId: 'fork-created-here',
+                    parentTranscriptId: 'created-here',
+                    writerClientId: 'client-2',
+                    currentSequence: 1,
+                    archives: [],
+                  },
+                ],
+              },
+            }
           }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          assert.match(request.path, /\/archives\/1\/download$/u)
+          await writeFile(request.downloadPath, 'fork')
+          return { status: 200, body: { path: request.downloadPath } }
         },
       },
     },
@@ -511,8 +529,9 @@ test('the most recent writer never restores its own cloud transcript', async () 
 
   await sync.pullTranscripts()
 
-  assert.deepEqual(restored, [])
-  assert.equal(sync.state.value.transcripts['created-here'].downloadedThrough, 0)
+  assert.deepEqual(restored, ['created-here'])
+  assert.equal(sync.state.value.transcripts['created-here'].downloadedThrough, 1)
+  assert.equal(sync.state.value.transcripts['fork-created-here'].downloadedThrough, 0)
 })
 
 test('branches deterministically when the cloud causal head changed', async () => {

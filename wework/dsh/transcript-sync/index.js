@@ -422,7 +422,15 @@ export class WeworkSync {
   async pullTranscripts() {
     if (!this.enabled) return
     const response = await this.request('/wework-transcripts?includeArchived=false')
-    for (const transcript of response.items ?? []) {
+    const transcripts = response.items ?? []
+    const forkedParents = new Set(
+      transcripts.flatMap(transcript =>
+        transcript.writerClientId === this.clientId && transcript.parentTranscriptId
+          ? [transcript.parentTranscriptId]
+          : []
+      )
+    )
+    for (const transcript of transcripts) {
       if (!this.enabled) return
       const current = this.state.value.transcripts[transcript.transcriptId]
       this.state.value.transcripts[transcript.transcriptId] = {
@@ -431,7 +439,12 @@ export class WeworkSync {
         downloadedArchiveIds: current?.downloadedArchiveIds ?? [],
       }
       if (this.outbox.hasPendingTranscript(transcript.transcriptId)) continue
-      if (transcript.writerClientId === this.clientId) continue
+      if (
+        transcript.writerClientId === this.clientId &&
+        !forkedParents.has(transcript.transcriptId)
+      ) {
+        continue
+      }
       const targetStatus = await this.target.status(transcript)
       if (!targetStatus?.available || targetStatus.reason !== 'restore_required') continue
       let after = targetStatus.importedThrough ?? 0

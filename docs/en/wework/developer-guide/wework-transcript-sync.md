@@ -84,7 +84,10 @@ acquire a short writer lease only while uploading, then release it immediately.
 An idle office computer does not hold the lease, and a running or already bound
 local task is never overwritten by restore. If both computers complete the same
 sequence concurrently, the first commit remains on the main line and the second
-becomes a deterministic branch, preserving both results.
+becomes a deterministic branch, preserving both results. After a device creates
+a conflict fork, its original local task moves to that fork, so synchronization
+restores only the now-missing parent main line as a second local task. The fork
+itself remains upload-only on its source device.
 
 The existing `wework_transcript_turns` table remains in place with the previous
 summary fields. Restore ignores this table, and it cannot replace the native
