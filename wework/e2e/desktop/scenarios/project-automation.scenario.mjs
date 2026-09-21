@@ -321,6 +321,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           !agentDialogSnapshot.testIds.some(testId => testId.includes('execution-environment')),
           'Custom Agent creation must not bind an execution environment'
         )
+        assert.ok(
+          agentDialogSnapshot.testIds.includes('wework-agent-device-capability-preview'),
+          'Custom Agent creation should follow the runtime device capabilities by default'
+        )
         await capture(control, 'project-automation-02-agent-create-without-environment.png')
         await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
           value: `${PROJECT_AGENT_RESOURCE_NAME}-${process.pid}`,
@@ -347,7 +351,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
-        await control.command('fill', '[data-testid="wework-agent-mcp"]', { value: '{}' })
         await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
           timeoutMs: uiTimeoutMs,
         })
