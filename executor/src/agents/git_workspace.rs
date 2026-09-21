@@ -505,6 +505,10 @@ async fn validate_existing_git_repository(project_path: &Path) -> Result<(), Str
         .arg("-C")
         .arg(project_path)
         .args(["rev-parse", "--verify", "HEAD^{commit}"])
+        // Validate the requested workspace, not a repository inherited from a hook.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
