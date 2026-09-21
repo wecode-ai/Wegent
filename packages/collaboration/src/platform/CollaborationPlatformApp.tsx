@@ -4118,7 +4118,7 @@ export function CollaborationPlatformApp({
             onClose: () => setProjectImporter(null),
             onImported: async (project) => {
               setProjectImporter(null);
-              await commands.reload();
+              commands.registerProject(project);
               openProject(project);
             },
           })

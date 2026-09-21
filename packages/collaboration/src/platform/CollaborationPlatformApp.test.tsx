@@ -2075,7 +2075,8 @@ describe("CollaborationPlatformApp real component flow", () => {
       byTestId(`collaboration-workspace-project-${importedProject.id}`)
         .textContent,
     ).toContain(importedProject.name);
-    expect(api.projects.list).toHaveBeenCalledTimes(2);
+    expect(api.projects.list).toHaveBeenCalledTimes(1);
+    expect(api.workspaces?.list).toHaveBeenCalledTimes(1);
     expect(
       byTestId(
         `collaboration-workspace-toggle-${localWorkspace.id}`,

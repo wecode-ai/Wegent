@@ -159,6 +159,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     CollaborationPlatformApp: ({
       host,
       navigationApis,
+      refreshKey,
       renderProject,
     }: {
       host: {
@@ -176,6 +177,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         }) => ReactNode
       }
       navigationApis?: SharedWorkspaceApi[]
+      refreshKey?: string
       renderProject?(props: {
         project: Record<string, unknown>
         workspace: Record<string, unknown>
@@ -188,6 +190,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         {
           'data-testid': 'collaboration-platform-root',
           'data-navigation-source-count': navigationApis?.length ?? 0,
+          'data-refresh-key': refreshKey ?? '',
           'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
         },
         createElement(
@@ -473,6 +476,53 @@ describe('Wework collaboration workspace API', () => {
     expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
       'data-navigation-source-count',
       '2'
+    )
+  })
+
+  it('does not reload collaboration navigation when task projects change', () => {
+    const props = {
+      user: {
+        id: 1,
+        user_name: 'admin',
+        email: 'admin@example.com',
+      } as never,
+      services: {
+        projectSpaceApis: {
+          local: createLocalDeliveryApi(),
+        },
+      } as never,
+    }
+    const { rerender } = render(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        localProjects: [],
+      })
+    )
+    const initialRefreshKey = screen
+      .getByTestId('collaboration-platform-root')
+      .getAttribute('data-refresh-key')
+
+    rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        localProjects: [
+          {
+            id: 12,
+            name: 'New task project',
+            config: {
+              mode: 'workspace',
+              execution: { targetType: 'local', deviceId: 'local-device' },
+              workspace: { source: 'local_path', localPath: '/workspace/new' },
+            },
+            tasks: [],
+          },
+        ],
+      })
+    )
+
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-refresh-key',
+      initialRefreshKey
     )
   })
 

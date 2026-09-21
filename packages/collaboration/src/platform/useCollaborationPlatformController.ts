@@ -663,6 +663,66 @@ export function useCollaborationPlatformController({
     };
   }, [load, refreshKey]);
 
+  const registerProject = (project: CollaborationProject) => {
+    const cachedProjectExists = navigationCacheRef.current.projects.some(
+      (candidate) => candidate.id === project.id,
+    );
+    navigationCacheRef.current = {
+      workspaces: navigationCacheRef.current.workspaces.map((workspace) =>
+        workspace.id === project.workspace_id && !cachedProjectExists
+          ? {
+              ...workspace,
+              project_count: workspace.project_count + 1,
+            }
+          : workspace,
+      ),
+      projects: [
+        project,
+        ...navigationCacheRef.current.projects.filter(
+          (candidate) => candidate.id !== project.id,
+        ),
+      ],
+    };
+    setState((current) => {
+      const projectExists = current.navigationProjects.some(
+        (candidate) => candidate.id === project.id,
+      );
+      const updateWorkspace = (workspace: CollaborationWorkspace) =>
+        workspace.id === project.workspace_id && !projectExists
+          ? {
+              ...workspace,
+              project_count: workspace.project_count + 1,
+            }
+          : workspace;
+      return {
+        ...current,
+        projects: [
+          project,
+          ...current.projects.filter(
+            (candidate) => candidate.id !== project.id,
+          ),
+        ],
+        projectIssues: {
+          ...current.projectIssues,
+          [project.id]: current.projectIssues[project.id] ?? {
+            status: "available",
+            issues: [],
+          },
+        },
+        navigationProjects: [
+          project,
+          ...current.navigationProjects.filter(
+            (candidate) => candidate.id !== project.id,
+          ),
+        ],
+        workspace: current.workspace
+          ? updateWorkspace(current.workspace)
+          : null,
+        workspaces: current.workspaces.map(updateWorkspace),
+      };
+    });
+  };
+
   return {
     state,
     commands: {
@@ -763,32 +823,10 @@ export function useCollaborationPlatformController({
           ...input,
           workspaceId: location.workspaceId,
         });
-        navigationCacheRef.current = {
-          workspaces: navigationCacheRef.current.workspaces.map((workspace) =>
-            workspace.id === project.workspace_id
-              ? {
-                  ...workspace,
-                  project_count: workspace.project_count + 1,
-                }
-              : workspace,
-          ),
-          projects: [project, ...navigationCacheRef.current.projects],
-        };
-        setState((current) => ({
-          ...current,
-          projects: [project, ...current.projects],
-          projectIssues: {
-            ...current.projectIssues,
-            [project.id]: { status: "available", issues: [] },
-          },
-          navigationProjects: [project, ...current.navigationProjects],
-          ...updateCurrentWorkspace(current, (workspace) => ({
-            ...workspace,
-            project_count: workspace.project_count + 1,
-          })),
-        }));
+        registerProject(project);
         return project;
       },
+      registerProject,
       async searchUsers(query: string): Promise<CollaborationUser[]> {
         return api.members.searchUsers(query);
       },

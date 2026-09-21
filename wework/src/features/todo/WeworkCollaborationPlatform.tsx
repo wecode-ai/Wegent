@@ -938,10 +938,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       )}
       <CollaborationPlatformApp
         api={platformApi}
-        refreshKey={JSON.stringify([
-          props.startupActive,
-          props.localProjects.map(project => [project.id, project.name]),
-        ])}
+        refreshKey={String(Boolean(props.startupActive))}
         navigationApis={navigationApis}
         locale={locale}
         onReady={handleReady}

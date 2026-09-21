@@ -14,7 +14,7 @@ import {
   selectShellToolCommand,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '专注视图验证'
 const ISSUE_NAME = '优化运行中卡片的进度展示'
@@ -29,8 +29,8 @@ const PROCESS_TEXT = [
   '等待界面稳定后完成视觉审查。',
 ].join('\n')
 const TOOL_CALL_ID = 'board-focus-view-command'
-const ACTIVE_BOARD =
-  '[data-workspace-tab-content][aria-hidden="false"] [data-testid="wework-collaboration-platform"]'
+const ACTIVE_CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const ACTIVE_BOARD = `${ACTIVE_CONTENT} [data-testid="wework-collaboration-platform"]`
 
 function textDelta(itemId, text, offset) {
   return {
@@ -159,42 +159,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         }
       )
-      const localWorkspaceSelector = inCollaborationSidebar(
-        '[data-testid="collaboration-workspace-wework-local-workspace"]'
-      )
-      await control.command('waitFor', localWorkspaceSelector, {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', localWorkspaceSelector)
-      await control.command(
-        'waitFor',
-        `${ACTIVE_BOARD} [data-testid="collaboration-workspace-project-create"]`,
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'click',
-        `${ACTIVE_BOARD} [data-testid="collaboration-workspace-project-create"]`
-      )
-      await control.command(
-        'waitFor',
-        `${ACTIVE_BOARD} [data-testid="collaboration-project-name-input"]`,
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'fill',
-        `${ACTIVE_BOARD} [data-testid="collaboration-project-name-input"]`,
-        { value: PROJECT_NAME }
-      )
-      await control.command(
-        'click',
-        `${ACTIVE_BOARD} [data-testid="cloud-project-task-provider-local"]`
-      )
-      await control.command(
-        'clickWhenEnabled',
-        `${ACTIVE_BOARD} [data-testid="collaboration-project-create-confirm"]`,
-        { timeoutMs: uiTimeoutMs }
-      )
+      await createLocalCollaborationProject(control, ACTIVE_CONTENT, PROJECT_NAME)
       await control.command(
         'waitFor',
         `${ACTIVE_BOARD} [data-testid="cloud-project-header-title"]`,
