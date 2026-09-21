@@ -574,6 +574,13 @@ recipe closely:
   their larger touch-oriented typography;
 - selecting a model is a terminal menu action and closes the model selector;
   reasoning and speed adjustments keep it open for consecutive changes;
+- keep the last successfully loaded local model catalog visible when a
+  background refresh fails; a transient catalog or authentication-status
+  request must not remove the model currently attached to an active thread;
+- when no valid local catalog has ever loaded and the selected model is
+  unavailable, keep the model selector visible with an explicit disabled
+  unavailable entry so the user can understand the state and choose another
+  model; reserve the blank loading placeholder for the initial pending load;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
