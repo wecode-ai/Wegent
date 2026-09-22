@@ -169,7 +169,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Autosaving the edited file displayed an unexpected save error'
       )
       await captureScreenshot(control, 'local-file-preview-02-dark-autosaved.png', 'body')
-      await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
       const rootBreadcrumb = `[data-testid=${JSON.stringify(
         `workspace-file-breadcrumb-${workspacePath.replace(/\\/g, '/')}`
       )}]`
@@ -177,20 +176,9 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('waitFor', '[data-testid="workspace-file-directory-menu"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const directoryMenuSelector = '[data-testid="workspace-file-directory-menu"]'
-      const directorySelector = await findTreeItem(
-        control,
-        'breadcrumb-fixture',
-        uiTimeoutMs,
-        directoryMenuSelector
-      )
+      const directorySelector = await findTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs)
       await control.command('click', directorySelector)
-      const firstFileSelector = await findTreeItem(
-        control,
-        'first.ts',
-        uiTimeoutMs,
-        directoryMenuSelector
-      )
+      const firstFileSelector = await findTreeItem(control, 'first.ts', uiTimeoutMs)
       await control.command('click', directorySelector)
       await waitForMissing(control, firstFileSelector, uiTimeoutMs)
       await control.command('click', directorySelector)
@@ -247,6 +235,13 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         3,
         'Selecting an already-open file must reuse its existing tab'
       )
+      if (
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-file-tree-pierre"]')
+        ) === 0
+      ) {
+        await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
+      }
       await control.command('click', `${fileTabsSelector}[title$="first.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const first = 1',
