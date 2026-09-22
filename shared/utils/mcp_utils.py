@@ -122,6 +122,10 @@ def _get_nested_value(obj: Optional["ExecutionRequest"], path: str) -> Optional[
     current: Any = obj
 
     for key in keys:
+        if key == "backend_url" and hasattr(current, "effective_backend_url"):
+            current = current.effective_backend_url
+            continue
+
         if isinstance(current, list):
             # Try to parse key as integer index
             try:
