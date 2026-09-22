@@ -56,6 +56,14 @@ describe('resolveWorkspaceTarget', () => {
     ).toEqual(worktree)
   })
 
+  test('skips invalid candidate roots before matching a local file target', () => {
+    expect(
+      createLocalFileWorkspaceTarget('/fixture/repo/src/a.ts', localDevices, {
+        workspaceTargets: [{ ...root, path: '' }, { ...root, path: 'relative/repo' }, root],
+      })
+    ).toEqual(root)
+  })
+
   test('does not confuse path prefixes, other devices, or remote filesystem roots', () => {
     expect(
       createLocalFileWorkspaceTarget('/fixture/repository/src/a.ts', localDevices, {

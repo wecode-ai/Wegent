@@ -67,7 +67,12 @@ export function createLocalFileWorkspaceTarget(
   if (!deviceId) return null
 
   const matchingRoot = (options.workspaceTargets ?? [])
-    .filter(target => target.deviceId === deviceId && target.workspaceSource !== 'remote')
+    .filter(
+      target =>
+        target.deviceId === deviceId &&
+        target.workspaceSource !== 'remote' &&
+        isAbsoluteWorkspacePath(target.path.trim().replace(/\\/g, '/'))
+    )
     .map(target => ({
       target,
       root: normalizeAbsoluteWorkspacePath(target.path, 'Workspace root must be absolute'),

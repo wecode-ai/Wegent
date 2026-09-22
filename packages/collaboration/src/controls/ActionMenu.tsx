@@ -154,13 +154,12 @@ export function ActionMenu({
 
   const scheduleSubmenuClose = useCallback(() => {
     cancelSubmenuClose();
-    if (submenuCloseDelayMs <= 0) {
-      closeSubmenu();
-      return;
-    }
-    submenuCloseTimeoutRef.current = window.setTimeout(() => {
-      closeSubmenu();
-    }, submenuCloseDelayMs);
+    submenuCloseTimeoutRef.current = window.setTimeout(
+      () => {
+        closeSubmenu();
+      },
+      Math.max(0, submenuCloseDelayMs),
+    );
   }, [cancelSubmenuClose, closeSubmenu, submenuCloseDelayMs]);
 
   const closeMenu = useCallback(

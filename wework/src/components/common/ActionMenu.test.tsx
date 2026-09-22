@@ -250,7 +250,8 @@ describe('ActionMenu', () => {
     await screen.findByTestId('clear-data-submenu')
   })
 
-  test('can close a hover submenu immediately for dense context menus', async () => {
+  test('keeps a zero-delay submenu selectable across the pointer gap', async () => {
+    const openInVsCode = vi.fn()
     render(
       <ActionMenu
         ariaLabel="More actions"
@@ -260,7 +261,7 @@ describe('ActionMenu', () => {
           {
             label: 'Open with',
             testId: 'open-with',
-            children: [{ label: 'VS Code', testId: 'vscode', onSelect: vi.fn() }],
+            children: [{ label: 'VS Code', testId: 'vscode', onSelect: openInVsCode }],
           },
         ]}
       />
@@ -270,7 +271,10 @@ describe('ActionMenu', () => {
     fireEvent.pointerEnter(screen.getByTestId('open-with'))
     await screen.findByTestId('open-with-submenu')
     fireEvent.pointerLeave(screen.getByTestId('open-with'))
+    fireEvent.pointerEnter(screen.getByTestId('open-with-submenu'))
+    fireEvent.click(screen.getByTestId('vscode'))
 
+    expect(openInVsCode).toHaveBeenCalledOnce()
     expect(screen.queryByTestId('open-with-submenu')).not.toBeInTheDocument()
   })
 
