@@ -33,48 +33,6 @@ class TestProcessQueryResults:
         assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
 
 
-class TestIndexWithMetadata:
-    @patch("knowledge_engine.storage.qdrant_backend.VectorStoreIndex")
-    @patch("knowledge_engine.storage.qdrant_backend.StorageContext")
-    @patch("knowledge_engine.storage.qdrant_backend.QdrantVectorStore")
-    def test_first_index_replaces_stale_chunks_only_after_the_write(
-        self,
-        mock_store_class,
-        mock_storage_ctx,
-        mock_vs_index,
-    ):
-        """A missing collection must not be probed before the write creates it."""
-        from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-        from knowledge_engine.storage.qdrant_backend import QdrantBackend
-
-        mock_store = MagicMock()
-        mock_store_class.return_value = mock_store
-        order = []
-        mock_vs_index.side_effect = lambda *_, **__: order.append("index")
-        mock_store.get_nodes.side_effect = lambda **_: (order.append("read") or [])
-        backend = QdrantBackend(
-            {
-                "url": "http://localhost:6333",
-                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
-            }
-        )
-
-        result = backend.index_with_metadata(
-            nodes=[TextNode(text="chunk one")],
-            chunk_metadata=ChunkMetadata(
-                knowledge_id="kb_1",
-                doc_ref="doc_1",
-                source_file="test.txt",
-                created_at="2026-01-01T00:00:00",
-            ),
-            embed_model=MagicMock(),
-        )
-
-        assert result["status"] == "success"
-        assert order == ["index", "read"]
-        mock_store.delete_nodes.assert_not_called()
-
-
 class TestDeleteDocument:
     @patch("knowledge_engine.storage.qdrant_backend.QdrantVectorStore")
     @patch("knowledge_engine.storage.qdrant_backend.QdrantClient")

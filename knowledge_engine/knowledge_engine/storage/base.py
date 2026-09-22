@@ -15,9 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.schema import BaseNode
-from llama_index.core.vector_stores.types import BasePydanticVectorStore
 
 from shared.models import RetrievalScope
 
@@ -157,53 +155,6 @@ class BaseStorageBackend(ABC):
                 continue
             prepared_nodes.append(node.model_copy(update={"text": embedding_text}))
         return prepared_nodes
-
-    def replace_stale_chunks(
-        self,
-        vector_store: BasePydanticVectorStore,
-        chunk_metadata: ChunkMetadata,
-        keep_node_ids: set[str],
-    ) -> int:
-        """Drop chunks of a document that the accepted write did not rewrite.
-
-        Indexing a document replaces its previous chunks. This runs only after
-        the write succeeded, so a rejected write never loses the old index.
-        The store may page its reads, so leftovers are drained page by page.
-        """
-        filters = self._build_doc_ref_filters(
-            chunk_metadata.knowledge_id,
-            chunk_metadata.doc_ref,
-        )
-        removed: set[str] = set()
-        while True:
-            stale_ids = [
-                node.node_id
-                for node in vector_store.get_nodes(filters=filters)
-                if node.node_id not in keep_node_ids and node.node_id not in removed
-            ]
-            if not stale_ids:
-                return len(removed)
-            vector_store.delete_nodes(node_ids=stale_ids)
-            removed.update(stale_ids)
-
-    def discard_failed_write(
-        self,
-        vector_store: BasePydanticVectorStore,
-        nodes: List[BaseNode],
-    ) -> None:
-        """Best-effort removal of the chunks a failed write already stored.
-
-        The previous index of the document stays in place, so a partial write
-        must not leave new chunks beside it.
-        """
-        try:
-            vector_store.delete_nodes(node_ids=[node.node_id for node in nodes])
-        except Exception:
-            logger.warning(
-                "Failed to discard chunks of an incomplete index write; "
-                "the next successful index replaces them.",
-                exc_info=True,
-            )
 
     def _validate_prefix(self, mode: str) -> str:
         """
@@ -361,7 +312,7 @@ class BaseStorageBackend(ABC):
         self,
         nodes: List[BaseNode],
         chunk_metadata: ChunkMetadata,
-        embed_model: BaseEmbedding,
+        embed_model,
         **kwargs,
     ) -> Dict:
         """
@@ -395,7 +346,7 @@ class BaseStorageBackend(ABC):
         self,
         knowledge_id: str,
         query: str,
-        embed_model: BaseEmbedding,
+        embed_model,
         retrieval_setting: Dict[str, Any],
         scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,

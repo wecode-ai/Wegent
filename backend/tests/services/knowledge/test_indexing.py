@@ -125,17 +125,26 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
     }
 
 
-def test_run_document_indexing_leaves_replacement_to_the_index_write() -> None:
-    """The old index must not be deleted before the new write is accepted."""
+def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
+    """Re-indexing keeps the main-branch order: delete the old index, then write."""
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
     runtime_spec = SimpleNamespace(embedding_model_config=None)
+    delete_spec = SimpleNamespace(knowledge_base_id=1, document_ref="4")
     gateway = MagicMock()
-    gateway.index_document = AsyncMock(
-        return_value={"status": "success", "indexed_count": 1, "index_name": "kb_1"}
-    )
-    gateway.delete_document_index = AsyncMock(return_value={"deleted_chunks": 2})
+    call_order: list[str] = []
+
+    async def fake_delete_document_index(*_: object, **__: object) -> dict:
+        call_order.append("delete")
+        return {"deleted_chunks": 2}
+
+    async def fake_index_document(*_: object, **__: object) -> dict:
+        call_order.append("index")
+        return {"status": "success", "indexed_count": 1, "index_name": "kb_1"}
+
+    gateway.delete_document_index = AsyncMock(side_effect=fake_delete_document_index)
+    gateway.index_document = AsyncMock(side_effect=fake_index_document)
 
     with (
         patch(
@@ -145,6 +154,10 @@ def test_run_document_indexing_leaves_replacement_to_the_index_write() -> None:
         patch(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
             return_value=runtime_spec,
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=delete_spec,
         ),
         patch(
             "app.services.knowledge.indexing.get_index_gateway",
@@ -167,7 +180,9 @@ def test_run_document_indexing_leaves_replacement_to_the_index_write() -> None:
             db=db,
         )
 
-    gateway.delete_document_index.assert_not_awaited()
+    gateway.delete_document_index.assert_awaited_once_with(delete_spec, db=None)
+    gateway.index_document.assert_awaited_once_with(runtime_spec, db=None)
+    assert call_order == ["delete", "index"]
 
 
 def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec() -> (

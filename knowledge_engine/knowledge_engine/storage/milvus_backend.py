@@ -375,12 +375,12 @@ class MilvusBackend(BaseStorageBackend):
         Note: Metadata is already applied to nodes by the indexer layer via
         chunk_metadata.apply_to_nodes() before calling this method.
 
-        The embedding dimension contract is resolved before anything is written,
-        so the Milvus collection always matches the embedding vectors. The first
-        real batch of document vectors is the evidence for that decision, and it
-        is reused by the write instead of being requested twice. Models that
-        never declared a dimension keep working: that same batch decides the
-        dimension of their collection.
+        This adapter writes nothing until the embedding dimension contract is
+        resolved, so the collection it creates or appends to always matches the
+        embedding vectors. The first real batch of document vectors is the
+        evidence for that decision, and it is reused by the write instead of
+        being requested twice. Models that never declared a dimension keep
+        working: that same batch decides the dimension of their collection.
 
         Args:
             nodes: List of nodes to index (metadata already applied)
@@ -396,7 +396,7 @@ class MilvusBackend(BaseStorageBackend):
 
         nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
 
-        # Resolve the contract before any delete or write happens.
+        # Resolve the contract before this adapter writes anything.
         embed_dim = self._resolve_write_dimension(
             nodes_for_embedding,
             embed_model,
@@ -422,23 +422,11 @@ class MilvusBackend(BaseStorageBackend):
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-        try:
-            VectorStoreIndex(
-                nodes_for_embedding,
-                storage_context=storage_context,
-                embed_model=embed_model,
-                show_progress=True,
-            )
-        except Exception:
-            # A partial write must not leave new chunks beside the old index.
-            self.discard_failed_write(vector_store, nodes_for_embedding)
-            raise
-
-        # Only an accepted write may replace the document's previous chunks.
-        self.replace_stale_chunks(
-            vector_store,
-            chunk_metadata,
-            keep_node_ids={node.node_id for node in nodes_for_embedding},
+        VectorStoreIndex(
+            nodes_for_embedding,
+            storage_context=storage_context,
+            embed_model=embed_model,
+            show_progress=True,
         )
 
         return {
