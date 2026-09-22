@@ -1142,17 +1142,19 @@ class LoopItemExecutionService:
             ),
         )
         db.flush()
-        if requires_approval:
-            notify_execution_lifecycle(
-                db,
-                execution=row,
-                status=STATUS_PENDING_APPROVAL,
-            )
-        elif waiting_runtime:
+        # The persisted status checks the runtime first, so the notification
+        # has to read the same way when both are true.
+        if waiting_runtime:
             notify_execution_lifecycle(
                 db,
                 execution=row,
                 status=STATUS_WAITING_RUNTIME,
+            )
+        elif requires_approval:
+            notify_execution_lifecycle(
+                db,
+                execution=row,
+                status=STATUS_PENDING_APPROVAL,
             )
         else:
             notify_execution_lifecycle(

@@ -347,7 +347,11 @@ class IMNotificationDispatcher:
 
         sender = DingTalkRobotSender(client_id, client_secret)
         if markdown:
-            content = f"**{headline}**\n\n{text}" if headline else text
+            content = (
+                f"**{_escape_markdown(headline)}**\n\n{_escape_markdown(text)}"
+                if headline
+                else _escape_markdown(text)
+            )
             if links:
                 content = f"{content}\n\n{_markdown_links(links)}"
             result = await sender.send_markdown_message(
@@ -499,6 +503,19 @@ def _markdown_links(links: Sequence[NotificationLink]) -> str:
     """Render every destination as one clickable DingTalk markdown line."""
 
     return " · ".join(f"[{link.label}]({link.url})" for link in links)
+
+
+# Markdown control characters that could turn a member's own words into a link,
+# an image or emphasis inside the bot's message. Links need their brackets and
+# the rest carry the markup, so escaping these characters disarms the text
+# while ordinary punctuation — parentheses, dates, dashes — stays readable.
+_MARKDOWN_ESCAPES = str.maketrans({char: f"\\{char}" for char in "\\`*_~[]!<>"})
+
+
+def _escape_markdown(text: str) -> str:
+    """Neutralise Markdown syntax in text the recipient's peer controls."""
+
+    return text.translate(_MARKDOWN_ESCAPES)
 
 
 def _plain_links(links: Sequence[NotificationLink]) -> str:

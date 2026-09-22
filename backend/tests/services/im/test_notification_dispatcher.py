@@ -475,6 +475,65 @@ async def test_dingtalk_notification_pushes_the_inbox_headline_above_a_link(
     }
 
 
+async def test_dingtalk_markdown_escapes_link_syntax_from_a_comment(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A member's own words must not render as a link inside the bot's push."""
+
+    _create_channel(
+        test_db,
+        channel_id=9422,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9422,
+        channel_type="dingtalk",
+        sender_id="sender-union-2",
+        proactive_recipient_id="staff-2",
+    )
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            calls.append({"client_id": client_id})
+
+        async def send_markdown_message(self, user_ids, title, text):
+            calls.append({"user_ids": user_ids, "title": title, "text": text})
+            return {"success": True, "result": {"processQueryKey": "query-escape"}}
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+
+    result = await im_notification_dispatcher.send_notification(
+        test_db,
+        session,
+        "评论内容：[点这里](https://tracker.example/login)",
+        title="hajimi 在「修复登录」提到了你",
+        links=[
+            NotificationLink(
+                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+            ),
+        ],
+    )
+
+    assert result["success"] is True
+    assert calls[1]["text"] == (
+        "**hajimi 在「修复登录」提到了你**\n\n"
+        "评论内容：\\[点这里\\](https://tracker.example/login)\n\n"
+        "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
+    )
+
+
 @pytest.mark.asyncio
 async def test_failed_dingtalk_runtime_notification_does_not_enable_reply(
     test_db: Session,

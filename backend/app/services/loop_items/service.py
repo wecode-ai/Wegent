@@ -1637,7 +1637,9 @@ class LoopItemService:
             db,
             actor_user_id=actor_user_id,
             user_id=target_user_id,
-            target=board_notification_target(db, project, item),
+            target=board_notification_target(
+                db, project, item, pending_assignee_user_id=target_user_id
+            ),
             assigner_name=actor.user_name,
         )
 
@@ -1889,7 +1891,9 @@ class LoopItemService:
                 db,
                 actor_user_id=user_id,
                 user_id=target_user_id,
-                target=board_notification_target(db, project, item),
+                target=board_notification_target(
+                    db, project, item, pending_assignee_user_id=target_user_id
+                ),
                 assigner_name=assigner.user_name if assigner else str(user_id),
             )
 

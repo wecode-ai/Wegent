@@ -7452,3 +7452,37 @@ def test_enqueue_notifies_the_task_creator_when_unassigned(
     )
     assert notification.kind == "execution"
     assert notification.payload["itemId"] == item.id
+
+
+def test_enqueue_notifies_the_runtime_wait_when_approval_also_waits(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that both needs approval and waits for a runtime reports the row."""
+
+    monkeypatch.setattr(async_utils, "schedule_async_task", MagicMock())
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot = _make_bot(test_db, project, test_user, mode="manual_approval")
+    _ensure_device(test_db, test_user, "cloud-device-1")
+
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority="medium",
+    )
+
+    test_db.commit()
+    assert execution.status == "waiting_runtime"
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == test_user.id)
+        .one()
+    )
+    assert notification.kind == "execution"
+    assert notification.payload["status"] == "waiting_runtime"
+    assert "需要选择运行设备" in notification.title

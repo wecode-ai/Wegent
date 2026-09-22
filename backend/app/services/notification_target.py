@@ -11,12 +11,26 @@ from app.services.notification_copy import NotificationTarget
 
 
 def board_notification_target(
-    db: Session, project: CloudProject, item: LoopItem | None
+    db: Session,
+    project: CloudProject,
+    item: LoopItem | None,
+    *,
+    pending_assignee_user_id: int | None = None,
 ) -> NotificationTarget:
-    """Collect the board fields a recipient needs to recognise the item."""
+    """Collect the board fields a recipient needs to recognise the item.
+
+    ``pending_assignee_user_id`` names the owner an assignment is about to
+    apply: the assignment notifies before its row carries that owner, so the
+    caller states which member the notification is about.
+    """
 
     if item is None:
         return NotificationTarget(project_id=str(project.id), project_name=project.name)
+    assignee_user_id = (
+        item.assignee_user_id
+        if pending_assignee_user_id is None
+        else pending_assignee_user_id
+    )
     return NotificationTarget(
         project_id=str(project.id),
         project_name=project.name,
@@ -26,16 +40,16 @@ def board_notification_target(
         item_status=board_status_label(project, item.status),
         item_priority=item.priority,
         item_due_at=item.due_at.isoformat() if item.due_at else None,
-        assignee_name=assignee_name(db, item),
+        assignee_name=member_name(db, assignee_user_id),
     )
 
 
-def assignee_name(db: Session, item: LoopItem) -> str | None:
-    """The member who owns the item right now, when a person owns it."""
+def member_name(db: Session, user_id: int | None) -> str | None:
+    """The user_name behind one member id, when it resolves."""
 
-    if not item.assignee_user_id:
+    if not user_id:
         return None
-    user = db.get(User, item.assignee_user_id)
+    user = db.get(User, user_id)
     return user.user_name if user is not None else None
 
 
