@@ -51,6 +51,7 @@ from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.schemas.user import UserInDB
 from app.services.adapters.pipeline_context import normalize_context_passing
+from app.services.adapters.public_model import is_public_model_allowed_for_user_id
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
@@ -1167,7 +1168,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .all()
             )
             for model in public_models_query:
-                public_models_cache[model.name] = model
+                if is_public_model_allowed_for_user_id(db, model.json, user_id):
+                    public_models_cache[model.name] = model
 
         # Build cache dict for passing to conversion methods
         preloaded_cache = {
@@ -2228,6 +2230,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             model = kindReader.get_by_name_and_namespace(
                 db, user_id, KindType.MODEL, model_ref_namespace, model_ref_name
             )
+
+            if (
+                model is not None
+                and model.user_id == 0
+                and not is_public_model_allowed_for_user_id(db, model.json, user_id)
+            ):
+                # Restricted public model: treat as if no model was selected.
+                model = None
 
             if model and model.json:
                 model_crd = Model.model_validate(model.json)
