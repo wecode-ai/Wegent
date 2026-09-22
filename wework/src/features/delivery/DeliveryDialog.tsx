@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
@@ -67,6 +68,12 @@ export function DeliveryDialog({
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [completed, setCompleted] = useState(false)
+  const activeDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
+    if (!submitting) onCancel()
+  }, !completed)
+  const completedDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
+    if (!submitting) onDelivered()
+  }, completed)
   const selectedCount = chatScope === 'conversation' ? messages.length : selectedMessages.length
   const chatMessages = useMemo(
     () =>
@@ -189,6 +196,10 @@ export function DeliveryDialog({
     return createPortal(
       <div className="fixed inset-0 z-system flex items-center justify-center bg-black/30">
         <div
+          ref={completedDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('delivery.completed', '交付完成')}
           data-testid="delivery-complete-dialog"
           className="w-[360px] rounded-xl border border-border bg-background p-6 text-center shadow-lg"
         >
@@ -216,6 +227,7 @@ export function DeliveryDialog({
   return createPortal(
     <div className="fixed inset-0 z-system flex items-center justify-center bg-black/30 p-6">
       <div
+        ref={activeDialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="delivery-dialog-title"

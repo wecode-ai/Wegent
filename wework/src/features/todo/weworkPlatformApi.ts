@@ -430,6 +430,14 @@ export function createWeworkPlatformApi(
           return localResources
         }
       },
+      async removeAgent(agent) {
+        const target =
+          (agent.location ?? 'cloud') === 'local' ? localApi.resources : cloudApi.resources
+        if (!target?.removeAgent) {
+          throw new Error('Agent deletion is unavailable')
+        }
+        await target.removeAgent(agent)
+      },
     },
   })
 }

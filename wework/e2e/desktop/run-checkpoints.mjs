@@ -58,6 +58,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-settings-matrix': './scenarios/collaboration-settings-matrix.scenario.mjs',
+  'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
+  'collaboration-local-agent-capabilities':
+    './scenarios/collaboration-local-agent-capabilities.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
@@ -84,6 +87,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-login-proxy',
   'collaboration-shared-core',
   'collaboration-settings-matrix',
+  'collaboration-first-use',
+  'collaboration-local-agent-capabilities',
   'collaboration-agent-automation-chain',
   'plugin-development',
   'task-attachments',

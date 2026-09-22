@@ -3,6 +3,24 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('waits for the delivery fence and never posts if it is rejected', async () => {
+    const post = vi.fn().mockResolvedValue({ accepted: true })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { runtime: 'codex' as const, message: 'run' }
+    const beforeDispatch = vi.fn(async () => {
+      expect(post).not.toHaveBeenCalled()
+      throw new Error('Execution is no longer dispatchable')
+    })
+    await expect(api.createRuntimeTask(request, beforeDispatch)).rejects.toThrow(
+      'no longer dispatchable'
+    )
+    expect(beforeDispatch).toHaveBeenCalledOnce()
+    expect(post).not.toHaveBeenCalled()
+    await api.createRuntimeTask(request, async () => {
+      expect(post).not.toHaveBeenCalled()
+    })
+    expect(post).toHaveBeenCalledOnce()
+  })
   test('loads the addressed board goal through the shared runtime API', async () => {
     const response = { accepted: true, taskId: 'task-1', goal: null }
     const post = vi.fn().mockResolvedValue(response)

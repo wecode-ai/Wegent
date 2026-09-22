@@ -52,6 +52,17 @@ function renderDetails(props: Partial<RuntimeExecutionDetailsProps> = {}) {
 }
 
 describe("runtime execution details without a desktop host", () => {
+  it("preserves a successful run while showing the actual transcript read failure", () => {
+    renderDetails({
+      runStatus: "completed",
+      transcriptUnavailable: true,
+      transcriptError: "Device 'original-cloud' is offline",
+    });
+    expect(element("runtime-execution-detail-status").textContent).toContain("执行成功");
+    const error = element("runtime-execution-detail-transcript-error");
+    expect(error.textContent).toContain("original-cloud");
+    expect(error.textContent).not.toContain("执行器确认当前未运行");
+  });
   it("never offers stop or claims ongoing execution when idle history is unavailable", () => {
     renderDetails({
       runStatus: "unknown",

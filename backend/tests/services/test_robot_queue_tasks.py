@@ -4,7 +4,7 @@
 
 import uuid
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy.orm import Session
 
@@ -360,6 +360,57 @@ def test_periodic_scan_does_not_dispatch_runtime_work(
         "reconciled": 0,
         "stalled": 0,
     }
+
+
+def test_periodic_scan_publishes_with_write_only_redis_manager(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    from app.core.config import settings
+    from app.tasks.robot_queue_tasks import scan_robot_queue
+
+    _make_execution(test_db, test_user)
+
+    @contextmanager
+    def _acquired(*args, **kwargs):
+        yield True
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    manager = MagicMock()
+    monkeypatch.setattr(settings, "ROBOT_QUEUE_SCHEDULER_ENABLED", True)
+    with (
+        patch("app.db.session.get_db_session", _test_session),
+        patch(
+            "app.tasks.robot_queue_tasks.loop_item_execution_service.recovery_scan",
+            return_value=(0, 0),
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks.loop_item_execution_service.stall_scan",
+            return_value=[],
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks.distributed_lock.acquire_context",
+            _acquired,
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks.socketio.RedisManager",
+            return_value=manager,
+        ) as redis_manager,
+    ):
+        result = scan_robot_queue.run()
+
+    assert result["status"] == "ok"
+    redis_manager.assert_called_once_with(settings.REDIS_URL, write_only=True)
+    manager.emit.assert_called_once_with(
+        "runtime.tasks.available",
+        {},
+        room=f"execution-target:{test_user.id}:cloud-device",
+        namespace="/local-executor",
+    )
 
 
 def test_stall_cancel_routes_managed_runs_to_the_chat_runtime() -> None:

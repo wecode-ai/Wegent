@@ -7,8 +7,8 @@ const WORKSPACE_NAME = '协作组验收空间'
 const PROJECT_NAME = '协作组验收项目'
 const WORKSPACE_GROUP_NAME = '空间交付协作组'
 const PROJECT_GROUP_NAME = '项目响应协作组'
+const DELETABLE_GROUP_NAME = '待删除协作小组'
 const PROJECT_AGENT_NAME = '项目 Codex 负责人'
-const PROJECT_AGENT_RESOURCE_NAME = 'project-codex-owner'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -329,14 +329,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Custom Agent creation must not bind an execution environment'
         )
         await capture(control, 'project-automation-02-agent-create-without-environment.png')
-        await control.command('fill', '[data-testid="wework-agent-resource-name"]', {
-          value: `${PROJECT_AGENT_RESOURCE_NAME}-${process.pid}`,
-        })
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
-        })
-        await control.command('select', '[data-testid="wework-agent-runtime"]', {
-          value: 'Codex',
         })
         const modelCatalog = await request(
           '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
@@ -354,6 +348,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
+        await control.command(
+          'click',
+          '[data-testid="wework-agent-resource-creator-advanced-toggle"]'
+        )
+        await control.command('click', '[data-testid="wework-agent-capability-mode-manual"]')
         await control.command('fill', '[data-testid="wework-agent-mcp"]', { value: '{}' })
         await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
           timeoutMs: uiTimeoutMs,
@@ -461,6 +460,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped(`[data-testid="collaboration-group-available-${workspaceGroup.id}"]`)
         )
         await capture(control, 'project-automation-05-project-groups-removed.png')
+
+        await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await createAgentGroup(control, {
+          name: DELETABLE_GROUP_NAME,
+          agentResourceId: String(projectAgent.wegentTeamId),
+        })
+        const deletableGroup = await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
+          response =>
+            response.items?.find(candidate => candidate.name === DELETABLE_GROUP_NAME) ?? null,
+          'Creating the deletable collaboration group did not persist',
+          uiTimeoutMs
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="collaboration-group-detail-${deletableGroup.id}"]`),
+          { text: DELETABLE_GROUP_NAME, timeoutMs: uiTimeoutMs }
+        )
+        await control.command('click', scoped('[data-testid="collaboration-group-detail-delete"]'))
+        await capture(control, 'project-automation-06-group-delete-confirmation.png')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-detail-delete-confirm"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
+          response => !response.items?.some(candidate => candidate.id === deletableGroup.id),
+          'Deleting the collaboration group from its detail view did not persist',
+          uiTimeoutMs
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="collaboration-group-${deletableGroup.id}"]`),
+          { visible: false, timeoutMs: uiTimeoutMs }
+        )
+        await capture(control, 'project-automation-07-group-deleted.png')
       } finally {
         try {
           await archiveFixture()

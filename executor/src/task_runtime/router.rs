@@ -69,6 +69,17 @@ impl TaskRuntime {
         self.local_store.create_project(input).map(mask_project)
     }
 
+    pub fn import_code_project(
+        &self,
+        key: &str,
+        name: &str,
+        roots: &[String],
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.local_store
+            .import_code_project(key, name, roots)
+            .map(mask_project)
+    }
+
     pub fn update_project(
         &self,
         project_id: &str,
@@ -613,6 +624,15 @@ impl TaskRuntime {
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
         self.local_store.create_chat_agent(project_id, input)
+    }
+
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        self.local_store
+            .ensure_default_chat_agent(project_id, input)
     }
 
     pub fn update_chat_agent(

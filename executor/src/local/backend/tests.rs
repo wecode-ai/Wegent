@@ -18,6 +18,9 @@ use std::{
 struct RuntimeWorkPollTransport {
     pull_calls: Arc<AtomicUsize>,
     accepted_tasks: Arc<AtomicUsize>,
+    cleanup_enabled: Arc<AtomicBool>,
+    claimed_cleanups: Arc<AtomicUsize>,
+    accepted_cleanups: Arc<AtomicUsize>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -48,10 +51,34 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
                     } else {
                         Value::Null
                     };
-                    Ok(json!({"success": true, "task": task}))
+                    let workspace_cleanup_intents =
+                        if pull_index == 0 && self.cleanup_enabled.load(AtomicOrdering::Acquire) {
+                            json!([{
+                                "intent_id": "cleanup-1",
+                                "issue_id": "issue-1",
+                                "issue_version": 3,
+                                "action": "release",
+                                "runtime_task_ids": ["runtime-task-1"],
+                            }])
+                        } else {
+                            json!([])
+                        };
+                    Ok(json!({
+                        "success": true,
+                        "task": task,
+                        "workspace_cleanup_intents": workspace_cleanup_intents,
+                    }))
                 }
                 "runtime.tasks.accept" => {
                     self.accepted_tasks.fetch_add(1, AtomicOrdering::AcqRel);
+                    Ok(json!({"success": true}))
+                }
+                "runtime.workspace_cleanup.claim" => {
+                    self.claimed_cleanups.fetch_add(1, AtomicOrdering::AcqRel);
+                    Ok(json!({"success": true}))
+                }
+                "runtime.workspace_cleanup.accept" => {
+                    self.accepted_cleanups.fetch_add(1, AtomicOrdering::AcqRel);
                     Ok(json!({"success": true}))
                 }
                 _ => Err(format!("unexpected transport call: {event}")),
@@ -175,6 +202,34 @@ fn app_ipc_sidecar_device_id_falls_back_to_backend_device_id() {
 
     restore_env(APP_IPC_DEVICE_ID_ENV, previous);
     assert_eq!(device_id, "remote-device");
+}
+
+#[tokio::test]
+async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
+    let transport = RuntimeWorkPollTransport::default();
+    transport
+        .cleanup_enabled
+        .store(true, AtomicOrdering::Release);
+    let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
+
+    let work = client
+        .pull_runtime_work(Duration::from_secs(1))
+        .await
+        .unwrap();
+    let intent = &work.workspace_cleanup_intents[0];
+    assert!(client
+        .claim_workspace_cleanup(intent, Duration::from_secs(1))
+        .await
+        .unwrap());
+    client
+        .acknowledge_workspace_cleanup(intent, Duration::from_secs(1))
+        .await
+        .unwrap();
+
+    assert_eq!(intent["intent_id"], "cleanup-1");
+    assert_eq!(intent["runtime_task_ids"], json!(["runtime-task-1"]));
+    assert_eq!(transport.claimed_cleanups.load(AtomicOrdering::Acquire), 1);
+    assert_eq!(transport.accepted_cleanups.load(AtomicOrdering::Acquire), 1);
 }
 
 #[tokio::test]

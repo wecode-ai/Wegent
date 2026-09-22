@@ -1,4 +1,4 @@
-import { FileReferenceIcon } from '../composer/FileReferenceIcon';
+import { FileReferenceIcon } from "../composer/FileReferenceIcon";
 import {
   Fragment,
   createContext,
@@ -14,7 +14,7 @@ import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from "react";
 import { Folder, Link2 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { ComposerLinkChip } from "./ComposerLinkChip";
-import { unescapeMarkdownReference } from '../composer/composerReference'
+import { unescapeMarkdownReference } from "../composer/composerReference";
 import "streamdown/styles.css";
 import {
   classifyMarkdownLink,
@@ -28,7 +28,10 @@ import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MarkdownTable } from "./MarkdownTable";
 import { createTableMarkdownRehypePlugins } from "./markdownTableSource";
 import { MarkdownDiagramPreview } from "./MarkdownDiagramPreview";
-import { splitStaticMarkdownChunks } from "./assistantMarkdownWindowing";
+import {
+  isOversizedAtomicMarkdownChunk,
+  splitStaticMarkdownChunks,
+} from "./assistantMarkdownWindowing";
 import { useBufferedStreamingText } from "./useBufferedStreamingText";
 import { splitCodexInlineVisualizations } from "./codex-directives";
 import { getRecognizedLink } from "./link-preview";
@@ -54,7 +57,8 @@ const WEWORK_MARKDOWN_FILE_LINK_PATH = "/markdown-file";
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`;
 const WEWORK_MARKDOWN_IMAGE_PATH = "/markdown-image";
 const WEWORK_MARKDOWN_IMAGE_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_IMAGE_PATH}?path=`;
-const MARKDOWN_LINK_PATTERN = /(!?)\[((?:\\[^\r\n]|[^\]\\\r\n])+)\]\(((?:\\[^\r\n]|[^)\\\r\n])+)\)/g;
+const MARKDOWN_LINK_PATTERN =
+  /(!?)\[((?:\\[^\r\n]|[^\]\\\r\n])+)\]\(((?:\\[^\r\n]|[^)\\\r\n])+)\)/g;
 const tableMarkdownRehypePlugins = createTableMarkdownRehypePlugins(
   restoreLocalMarkdownLinks,
 );
@@ -333,7 +337,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             <WindowedMarkdownChunk
               key={`markdown-${index}`}
               content={part.content}
-              eager={index === 0 || index === contentParts.length - 1}
+              eager={
+                isStreaming &&
+                (index === 0 || index === contentParts.length - 1)
+              }
             >
               <MarkdownStreamingContext.Provider
                 value={isStreaming && index === contentParts.length - 1}
@@ -392,13 +399,16 @@ function WindowedMarkdownChunk({
   children: ReactNode;
 }) {
   const chunkRef = useRef<HTMLDivElement>(null);
+  // An indivisible long chunk cannot use an estimated-height placeholder:
+  // reopening a transcript must preserve its full scrollable content too.
+  const effectiveEager = eager || isOversizedAtomicMarkdownChunk(content);
   const [nearViewport, setNearViewport] = useState(
-    () => typeof IntersectionObserver === "undefined" || eager,
+    () => typeof IntersectionObserver === "undefined" || effectiveEager,
   );
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null);
 
   useEffect(() => {
-    if (eager || typeof IntersectionObserver === "undefined") return;
+    if (effectiveEager || typeof IntersectionObserver === "undefined") return;
     const chunk = chunkRef.current;
     if (!chunk) return;
 
@@ -416,17 +426,18 @@ function WindowedMarkdownChunk({
     );
     observer.observe(chunk);
     return () => observer.disconnect();
-  }, [eager]);
+  }, [effectiveEager]);
 
   const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content);
+  const shouldRender = effectiveEager || nearViewport;
 
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={nearViewport ? undefined : { minHeight: reservedHeight }}
+      style={shouldRender ? undefined : { minHeight: reservedHeight }}
     >
-      {nearViewport ? (
+      {shouldRender ? (
         children
       ) : (
         <div
@@ -628,7 +639,7 @@ function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(
     MARKDOWN_LINK_PATTERN,
     (match, imageMarker, label, rawHref) => {
-      const href = unescapeMarkdownReference(String(rawHref).trim())
+      const href = unescapeMarkdownReference(String(rawHref).trim());
       if (imageMarker) {
         const { destination, titleSuffix } =
           splitMarkdownImageDestination(href);
@@ -739,7 +750,13 @@ function getMarkdownFileOpenOptions(
 }
 
 function getMarkdownFileIcon(path: string): ReactNode {
-  return <FileReferenceIcon path={path} className="h-3.5 w-3.5 shrink-0" data-testid="assistant-markdown-link-icon" />;
+  return (
+    <FileReferenceIcon
+      path={path}
+      className="h-3.5 w-3.5 shrink-0"
+      data-testid="assistant-markdown-link-icon"
+    />
+  );
 }
 
 function AssistantMarkdownLink({

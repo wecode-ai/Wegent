@@ -676,8 +676,15 @@ export function CloudTodoWorkspace({
   )
   const cloudWorkspaceApi = services.sharedWorkspaceApi
   const projectAgentConfigurationHost = useMemo(
-    () => createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
-    [services.agentResourceApi]
+    () =>
+      createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        undefined,
+        undefined,
+        services.pluginApi,
+        services.deviceApi
+      ),
+    [services.agentResourceApi, services.deviceApi, services.pluginApi]
   )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)
@@ -2105,7 +2112,7 @@ export function CloudTodoWorkspace({
   }
 
   async function renameSelectedProject() {
-    if (!renameProject) return
+    if (!renameProject || !renameProjectName.trim() || renameBusy) return
     const api = apiForProject(renameProject)
     if (renameProject.location === 'cloud' ? !cloudWorkspaceApi : !api) {
       throw new Error('项目空间接口当前不可用')
@@ -4056,13 +4063,12 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (!selectedItem || backgroundTaskItemId === selectedItem.id) return
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
       event.preventDefault()
-      event.stopPropagation()
       closeIssuePanelStack()
     }
-    window.addEventListener('keydown', handleEscape, true)
-    return () => window.removeEventListener('keydown', handleEscape, true)
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
   }, [backgroundTaskItemId, closeIssuePanelStack, selectedItem])
 
   return (
@@ -5099,11 +5105,15 @@ export function CloudTodoWorkspace({
                             }}
                             previewPinned={pinnedBoardPreviewItemId === item.id}
                             onPreviewPinnedChange={pinned =>
-                              setPinnedBoardPreview(
-                                pinned
-                                  ? { contextKey: boardPreviewContextKey, itemId: item.id }
-                                  : null
-                              )
+                              setPinnedBoardPreview(current => {
+                                if (pinned) {
+                                  return { contextKey: boardPreviewContextKey, itemId: item.id }
+                                }
+                                return current?.contextKey === boardPreviewContextKey &&
+                                  current.itemId === item.id
+                                  ? null
+                                  : current
+                              })
                             }
                             onMarkRead={isMyTasksBoard ? markTaskBoardItemRead : undefined}
                             onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
@@ -5852,7 +5862,12 @@ export function CloudTodoWorkspace({
             />
           )}
         {renameProject && (
-          <Modal title="修改项目名称" onClose={() => !renameBusy && setRenameProject(null)}>
+          <Modal
+            title="修改项目名称"
+            onClose={() => setRenameProject(null)}
+            pending={renameBusy}
+            onSubmit={renameSelectedProject}
+          >
             <div className="px-5 pb-5 pt-4">
               <label className="block text-sm font-medium text-text-secondary">
                 项目名称
@@ -5880,10 +5895,9 @@ export function CloudTodoWorkspace({
                   取消
                 </button>
                 <button
-                  type="button"
+                  type="submit"
                   data-testid="cloud-project-rename-confirm"
                   disabled={!renameProjectName.trim() || renameBusy}
-                  onClick={() => void renameSelectedProject()}
                   className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
                 >
                   {renameBusy ? '保存中…' : '保存'}

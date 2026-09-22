@@ -1927,6 +1927,31 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(runtime.create_project(input).map_err(task_runtime_error)?)
         }
+        "projects.import_code_project" => {
+            let project_key = required_task_string(&params, "project_key")?;
+            let name = required_task_string(&params, "name")?;
+            let roots = params
+                .get("roots")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|root| !root.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if roots.is_empty() {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "roots must contain at least one workspace path",
+                ));
+            }
+            serialize_task_value(
+                runtime
+                    .import_code_project(project_key, name, &roots)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "projects.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let input = task_input::<ProjectUpdate>(&params, "project")?;
@@ -2426,6 +2451,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .create_chat_agent(project_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "chat_agents.ensure_default" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = task_input::<ChatAgentCreate>(&params, "agent")?;
+            serialize_task_value(
+                runtime
+                    .ensure_default_chat_agent(project_id, input)
                     .map_err(task_runtime_error)?,
             )
         }

@@ -128,12 +128,7 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
         Ok(json!({"success": true})),
         Ok(json!({"success": true})),
     ])
-    .with_emit_results(vec![
-        Ok(()),
-        Err("heartbeat timeout 1".to_owned()),
-        Err("heartbeat timeout 2".to_owned()),
-        Ok(()),
-    ]);
+    .with_failure_after_initial_liveness();
     let mut config = local_backend_config();
     config.heartbeat_interval = Duration::from_millis(80);
     config.heartbeat_timeout = Duration::from_millis(10);
@@ -149,11 +144,15 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
 
     assert!(transport.connects() >= 2);
     assert!(transport.disconnects() >= 1);
-    let heartbeat_emits = transport.emits_for_event("device:heartbeat");
-    assert!(heartbeat_emits.len() >= 3);
-    let retry_gap = heartbeat_emits[2]
+    let failures: Vec<_> = transport
+        .emits_for_event("device:heartbeat")
+        .into_iter()
+        .filter(|emit| emit.failed)
+        .collect();
+    assert!(failures.len() >= 2);
+    let retry_gap = failures[failures.len() - 1]
         .recorded_at
-        .duration_since(heartbeat_emits[1].recorded_at);
+        .duration_since(failures[failures.len() - 2].recorded_at);
     assert!(
         retry_gap < Duration::from_millis(40),
         "expected retry gap to be shorter than the regular heartbeat interval, got {retry_gap:?}"
@@ -166,12 +165,7 @@ async fn runner_backs_off_when_connection_drops_before_a_stable_heartbeat() {
         Ok(json!({"success": true})),
         Ok(json!({"success": true})),
     ])
-    .with_emit_results(vec![
-        Ok(()),
-        Err("heartbeat timeout 1".to_owned()),
-        Err("heartbeat timeout 2".to_owned()),
-        Ok(()),
-    ]);
+    .with_failure_after_initial_liveness();
     let mut config = local_backend_config();
     config.heartbeat_interval = Duration::from_millis(5);
     config.heartbeat_timeout = Duration::from_millis(1);
@@ -255,6 +249,7 @@ struct RecordedCall {
 struct RecordedEmit {
     event: String,
     recorded_at: Instant,
+    failed: bool,
 }
 
 #[derive(Clone, Default)]
@@ -262,7 +257,8 @@ struct ScriptedTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     call_results: Arc<Mutex<VecDeque<Result<Value, String>>>>,
     emits: Arc<Mutex<Vec<RecordedEmit>>>,
-    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
+    heartbeat_failure: Arc<Mutex<bool>>,
+    fail_after_initial_liveness: bool,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
     connects: Arc<Mutex<usize>>,
     disconnects: Arc<Mutex<usize>>,
@@ -277,8 +273,8 @@ impl ScriptedTransport {
         }
     }
 
-    fn with_emit_results(mut self, results: Vec<Result<(), String>>) -> Self {
-        self.emit_results = Arc::new(Mutex::new(results.into()));
+    fn with_failure_after_initial_liveness(mut self) -> Self {
+        self.fail_after_initial_liveness = true;
         self
     }
 
@@ -333,6 +329,7 @@ impl LocalBackendTransport for ScriptedTransport {
         _config: &'a LocalBackendConfig,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
+            *self.heartbeat_failure.lock().unwrap() = false;
             *self.connects.lock().unwrap() += 1;
             self.notify.notify_waiters();
             Ok(())
@@ -373,16 +370,26 @@ impl LocalBackendTransport for ScriptedTransport {
         _payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
+            let failed = event == "device:heartbeat" && *self.heartbeat_failure.lock().unwrap();
+            // Registration succeeds, then the connection remains broken until
+            // reconnect. Capacity heartbeats cannot consume or clear the fault.
+            if event == "device:heartbeat"
+                && self.fail_after_initial_liveness
+                && self.connects() == 1
+            {
+                *self.heartbeat_failure.lock().unwrap() = true;
+            }
             self.emits.lock().unwrap().push(RecordedEmit {
                 event: event.to_owned(),
                 recorded_at: Instant::now(),
+                failed,
             });
             self.notify.notify_waiters();
-            self.emit_results
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or(Ok(()))
+            if failed {
+                Err("heartbeat transport failed".to_owned())
+            } else {
+                Ok(())
+            }
         })
     }
 

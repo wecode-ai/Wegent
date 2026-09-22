@@ -147,9 +147,8 @@ export function createWeworkProjectAgentConfigurationHost(
   agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
   localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
   localModelApi?: WorkbenchServices['modelApi'],
-  localPluginApi?: {
-    listPlugins(deviceId: string): Promise<import('@/types/api').RuntimeProjectPluginRef[]>
-  }
+  pluginApi?: WorkbenchServices['pluginApi'],
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
 ): ProjectAgentConfigurationHost {
   return {
     ...weworkProjectAgentConfigurationHost,
@@ -157,13 +156,16 @@ export function createWeworkProjectAgentConfigurationHost(
       ? {
           supportsExistingAgentSelection: true,
           supportsCrossLocationAgentSelection: true,
-          renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
+          renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                deviceApi={deviceApi}
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onCreated}
+                ownerOptions={ownerOptions}
+                pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />
             )
@@ -172,11 +174,13 @@ export function createWeworkProjectAgentConfigurationHost(
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                deviceApi={deviceApi}
                 editingTeamId={agent.teamId}
                 key={agent.teamId}
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onSaved}
+                pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />
             )
@@ -185,25 +189,31 @@ export function createWeworkProjectAgentConfigurationHost(
       : {}),
     ...(localAgentApi && localModelApi
       ? {
-          renderLocalAgentCreator({ onClose, onCreated }) {
+          renderLocalAgentCreator({ onClose, onCreated, projectId }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
+                deviceApi={deviceApi}
                 modelApi={localModelApi}
-                pluginApi={localPluginApi}
+                pluginApi={pluginApi}
+                projectId={projectId}
+                skillApi={agentResourceApi}
                 onClose={onClose}
                 onSaved={onCreated}
               />
             )
           },
-          renderLocalAgentEditor({ resourceId, onClose, onSaved }) {
+          renderLocalAgentEditor({ projectId, resourceId, onClose, onSaved }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
+                deviceApi={deviceApi}
                 editingAgentId={resourceId}
                 key={resourceId}
                 modelApi={localModelApi}
-                pluginApi={localPluginApi}
+                pluginApi={pluginApi}
+                projectId={projectId}
+                skillApi={agentResourceApi}
                 onClose={onClose}
                 onSaved={onSaved}
               />

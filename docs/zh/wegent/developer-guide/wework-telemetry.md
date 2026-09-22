@@ -42,7 +42,7 @@ Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStor
 
 任务生命周期事件的 `execution_target` 使用 `local`、`cloud`、`remote` 或 `unknown`。其中 `task_started` 只在任务真正进入运行状态时上报，是衡量云设备和远程设备实际使用量的主事件；`conversation_created` 表示创建请求已被接受。远程设备必须记录为 `remote`，不能合并到 `cloud`。事件不得包含设备 ID、设备名称、IP 地址或工作区路径。
 
-跨领域的资源操作统一使用 `feature_action_completed`，其 `domain` 和 `action` 都是受控枚举，覆盖项目空间、任务卡片、任务关联、附件与工作区文件、AI 表格、插件、Skill、MCP、Hooks、Sites、模型、Git、云设备、快捷短语和归档会话。关键业务的已处理失败统一使用 `operation_failed` 和有限的操作类型，不上传异常消息。资源 ID、项目名、插件名、URL、文件路径和用户输入均不属于事件属性；唯一的例外是下文描述的 AI 关联 ID，它们是按运行生成的透明关联 token，而非原始 ID。功能代码应在 API 或本机操作确认成功后打点，失败回滚路径不得误报成功。
+跨领域的资源操作统一使用 `feature_action_completed`，其 `domain` 和 `action` 都是受控枚举，覆盖项目空间、任务卡片、任务关联、附件与工作区文件、AI 表格、插件、Skill、MCP、Hooks、Sites、模型、Git、云设备、快捷短语和归档会话。关键业务的已处理失败统一使用 `operation_failed` 和有限的操作类型，不上传异常消息。资源 ID、项目名、插件名、URL、文件路径和用户输入均不属于事件属性。插件生命周期和调用事件可以携带 `plugin_id`：安全的市场与插件 slug 使用 `<marketplace>/<plugin-key>`，其余值在本机转换为稳定的不透明摘要，因此不会上传仓库 URL、本机路径或插件显示名。下文描述的 AI 关联 ID 同样是按运行生成的透明关联 token，而非原始 ID。功能代码应在 API 或本机操作确认成功后打点，失败回滚路径不得误报成功。
 
 ## AI 分析事件
 

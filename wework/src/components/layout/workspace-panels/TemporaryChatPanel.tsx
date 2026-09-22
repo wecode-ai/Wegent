@@ -20,6 +20,7 @@ import {
   type ReactNode,
 } from 'react'
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
@@ -52,8 +53,6 @@ import {
   updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
 import {
-  runtimeTaskLifecycleTransitionChanged,
-  type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -153,7 +152,9 @@ export function TemporaryChatPanel({
   scrollOrigin = 'bottom',
   onOpenRuntimeTask,
 }: TemporaryChatPanelProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+  const conversationTranslate = useMemo(() => createCollaborationTranslator(locale), [locale])
   const {
     services,
     state,
@@ -270,6 +271,9 @@ export function TemporaryChatPanel({
   )
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(Boolean(initialAddress && !sendEphemeral))
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyRevision, setHistoryRevision] = useState(0)
   const [sending, setSending] = useState(false)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -345,6 +349,8 @@ export function TemporaryChatPanel({
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
     const hydrationToken = beginRuntimeConversationHydration(address)
+    setHistoryLoading(true)
+    setHistoryError(null)
     const usageRevision = contextUsageStore.getRevision()
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
@@ -366,14 +372,24 @@ export function TemporaryChatPanel({
       .catch(caughtError => {
         abortRuntimeConversationHydration(address, hydrationToken)
         if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
-          setError(caughtError instanceof Error ? caughtError.message : '加载临时聊天失败')
+          setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
         }
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
       })
     return () => {
       cancelled = true
       abortRuntimeConversationHydration(address, hydrationToken)
     }
-  }, [address, contextUsageStore, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
+  }, [
+    address,
+    contextUsageStore,
+    lifecycleStore,
+    loadRuntimeTranscriptForPane,
+    sendEphemeral,
+    historyRevision,
+  ])
 
   useEffect(() => {
     if (!address) return
@@ -424,14 +440,10 @@ export function TemporaryChatPanel({
     })
   }, [address, globalSelectedModel, taskModelSelection])
 
-  const queuePort = useMemo<RuntimeConversationQueuePort<RuntimeTaskLifecycleSnapshot | null>>(
+  const queuePort = useMemo<RuntimeConversationQueuePort<number>>(
     () => ({
-      lifecycle: () => (address ? lifecycleStore.getTask(address) : null),
-      lifecycleChanged: previous =>
-        runtimeTaskLifecycleTransitionChanged(
-          previous,
-          address ? lifecycleStore.getTask(address) : null
-        ),
+      lifecycle: () => lifecycleStore.getTaskRevision(address),
+      lifecycleChanged: previous => previous !== lifecycleStore.getTaskRevision(address),
       isBusyError: isRuntimeTaskBusyError,
       sendFailedText: t('workbench.project_chat_send_failed'),
       guidanceFailedText: t('workbench.project_chat_send_failed'),
@@ -492,8 +504,12 @@ export function TemporaryChatPanel({
 
   const sendQueuedMessageAsGuidance = useCallback(
     (message: RuntimePaneQueuedMessage, forceActiveTurn = false) =>
-      conversationQueue.guide(message.id, queuePort, busy || forceActiveTurn),
-    [conversationQueue, queuePort, busy]
+      conversationQueue.guide(
+        message.id,
+        queuePort,
+        forceActiveTurn || Boolean(address && lifecycleStore.getTask(address)?.derived.isTurnActive)
+      ),
+    [address, conversationQueue, lifecycleStore, queuePort]
   )
 
   const send = useCallback(
@@ -592,6 +608,7 @@ export function TemporaryChatPanel({
         updateAddress(targetAddress)
         setGoalDraftActive(false)
         sideChatProjectChat.resetAttachments()
+        setSending(false)
         return true
       }
 
@@ -627,6 +644,7 @@ export function TemporaryChatPanel({
       )
       if (sent) {
         sideChatProjectChat.resetAttachments()
+        setSending(false)
         return true
       }
       setMessages(
@@ -635,7 +653,9 @@ export function TemporaryChatPanel({
         })
       )
       if (isRuntimeTaskBusyError(sendError)) {
-        conversationQueue.enqueue(queuedMessage, { value: lifecycleStore.getTask(targetAddress) })
+        conversationQueue.enqueue(queuedMessage, {
+          value: lifecycleStore.getTaskRevision(targetAddress),
+        })
         sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {
           setSending(false)
@@ -705,7 +725,7 @@ export function TemporaryChatPanel({
     (id: string) => {
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage) return
-      void sendQueuedMessageAsGuidance(queuedMessage, true)
+      void sendQueuedMessageAsGuidance(queuedMessage)
     },
     [queuedMessages, sendQueuedMessageAsGuidance]
   )
@@ -796,12 +816,15 @@ export function TemporaryChatPanel({
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
+      loading={historyLoading}
+      loadError={historyError}
+      onRetry={() => setHistoryRevision(value => value + 1)}
       testId={testId}
       emptyStateText={emptyStateText}
       expanded={expanded}
       wideComposer={wideComposer}
       onRestoreConversation={onRestoreConversation}
-      translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
+      translate={conversationTranslate}
       composer={
         <ComposerCatalogContext.Provider value={composerCatalog}>
           <BufferedChatInput
@@ -848,6 +871,7 @@ export function TemporaryChatPanel({
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"
+        contentClassName="min-h-full shrink-0"
         messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
         scrollTestId="right-workspace-chat-scroll-area"
         onRetryFailedMessage={

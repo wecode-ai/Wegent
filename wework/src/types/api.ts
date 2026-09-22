@@ -945,6 +945,7 @@ export interface RuntimeTaskForkRequest {
   target: RuntimeTaskForkTarget
   lastTurnId?: string
   title?: string
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface RuntimeTaskForkResponse {
@@ -952,7 +953,8 @@ export interface RuntimeTaskForkResponse {
   source: RuntimeTaskAddress
   target: RuntimeTaskAddress
   runtime: RuntimeName
-  transcript: RuntimeTranscriptResponse
+  transcript?: RuntimeTranscriptResponse | null
+  setupError?: string | null
   error?: string | null
 }
 

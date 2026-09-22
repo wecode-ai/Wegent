@@ -525,6 +525,7 @@ export interface SharedCollaborationWorkspacesApi {
 
 export interface SharedCollaborationResourcesApi {
   list(): Promise<CollaborationPlatformResources>
+  removeAgent?(agent: CollaborationOwnedAgent): Promise<void>
 }
 
 /**

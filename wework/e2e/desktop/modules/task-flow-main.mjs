@@ -125,6 +125,7 @@ import {
 import {
   verifyFollowUpSendRejectionNotice,
   verifyModelServiceConnectionError,
+  verifyModelProxyRestartRecovery,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -816,6 +817,19 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh-task')
+  control.setScenario('checkpoint_task')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    CHECKPOINT_TASK_PROMPT,
+    'checkpoint_task'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   setPhase('model-catalog-refresh')
   const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
   await control.command('waitFor', modelSelector, {
@@ -841,6 +855,29 @@ async function verifyLocalModelRouting({
     text: selectedModelLabel,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+
+  setPhase('model-catalog-refresh-failure')
+  await control.command('failNextLocalCodexModelList', '')
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const failedRefreshSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.ok(
+    failedRefreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared after the local Codex catalog refresh failed'
+  )
+  assert.ok(
+    !failedRefreshSnapshot.testIds.includes('model-selector-loading'),
+    'The failed local Codex catalog refresh left a blank loading placeholder'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'model-catalog-refresh-failure.png')
 
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
@@ -1128,6 +1165,7 @@ async function main() {
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
@@ -1142,6 +1180,7 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
+        publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
@@ -1882,6 +1921,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
@@ -2168,6 +2208,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'remote-project-dialog'
       await control.command('click', '[data-testid="projects-create-button"]')
+      await control.command('waitFor', '[data-testid="projects-create-button-menu"]', {
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'project-create-local-option',
+        'Opening project creation did not move focus into the dialog'
+      )
+      await control.command('nativePress', '[data-testid="project-create-local-option"]', {
+        key: 'Escape',
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('projects-create-button-menu'),
+        'Escape did not close the project source dialog'
+      )
+      await control.command('click', '[data-testid="projects-create-button"]')
       await control.command('click', '[data-testid="project-create-remote-option"]')
       await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2211,6 +2268,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
     }
 
@@ -3390,6 +3448,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'model-service-connection-error'
       await verifyModelServiceConnectionError({ composerSelector, control })
 
+      phase = 'model-proxy-restart-recovery'
+      await verifyModelProxyRestartRecovery({
+        composerSelector,
+        control,
+        executorLogPath,
+        restartDesktopApp,
+      })
+
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('resilience')) {
@@ -3682,7 +3748,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
@@ -3723,16 +3788,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        value: 'file-panel-anchor',
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,

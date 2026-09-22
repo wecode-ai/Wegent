@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   captureVerificationScreenshot,
+  completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'
 
@@ -11,6 +12,7 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
+const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -180,29 +182,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-workspace-project-create"]')
       )
-      await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
+      await control.command(
+        'click',
+        '[data-testid="collaboration-workspace-project-import-folder"]'
+      )
+      await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const createSnapshot = await snapshot(control)
-      assert.ok(
-        createSnapshot.testIds.includes('cloud-project-location-local'),
-        'The local workspace project dialog did not identify local storage'
-      )
       assert.equal(
-        createSnapshot.testIds.includes('cloud-project-location-cloud'),
-        false,
-        'The local workspace project dialog incorrectly offered cloud storage'
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="collaboration-project-name-input"]',
+            { visible: true }
+          )
+        ),
+        0,
+        'The local workspace unexpectedly opened the cloud project form'
       )
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
@@ -264,16 +262,22 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="local-project-agent-name"]', {
+      await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="local-project-agent-name"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体',
       })
-      await control.command('clickWhenEnabled', '[data-testid="local-project-agent-save"]', {
+      await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
+        value: MODEL_NAME,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="local-project-agent-form"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
@@ -282,16 +286,16 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', scoped('[data-testid^="project-agent-edit-"]'))
-      await control.command('waitFor', '[data-testid="local-project-agent-name"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="local-project-agent-name"]', {
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体（已编辑）',
       })
-      await control.command('clickWhenEnabled', '[data-testid="local-project-agent-save"]', {
+      await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="local-project-agent-form"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         visible: false,
         timeoutMs: uiTimeoutMs,
       })

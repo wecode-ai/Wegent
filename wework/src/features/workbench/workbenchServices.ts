@@ -79,10 +79,17 @@ export interface WorkspaceSessionApi {
 
 export type ProjectSpaceLocation = 'local' | 'cloud'
 export type DeliveryApi = ReturnType<typeof createDeliveryApi>
+export type LocalProjectSpaceApi = DeliveryApi & {
+  importLocalCodeProject?(input: {
+    runtimeProjectKey: string
+    name: string
+    roots: string[]
+  }): Promise<import('@/api/deliveries').CloudProject>
+}
 export type ExternalIssueApi = ReturnType<typeof createExternalIssueApi>
 
 export interface ProjectSpaceApis {
-  local?: DeliveryApi
+  local?: LocalProjectSpaceApi
   cloud?: DeliveryApi
   defaultLocation: ProjectSpaceLocation
 }
@@ -91,6 +98,7 @@ export interface ProjectSpaceDetailServices {
   deliveryApi: DeliveryApi
   projectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localProjectAutomationApi?: ReturnType<typeof createLocalProjectAutomationApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>

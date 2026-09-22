@@ -34,7 +34,11 @@ import {
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { getLocalExecutorStatus, readLocalExecutorLog } from '@/desktop/localExecutor'
+import {
+  failNextLocalExecutorRequestForE2E,
+  getLocalExecutorStatus,
+  readLocalExecutorLog,
+} from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
@@ -818,12 +822,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
-function pressDesktopControlPointer(selector: string): string {
-  const element = findDesktopControlElements(selector)[0]
+function pressDesktopControlPointer(selector: string, click = false): string {
+  const elements = findDesktopControlElements(selector)
+  const element = click ? elements.find(desktopControlElementVisible) : elements[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  if (click && !desktopControlElementEnabled(element))
+    throw new Error(`Pointer target is disabled: "${selector}"`)
   const options = desktopControlEventOptions(element)
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   dispatchDesktopControlPointerEvent(element, 'pointerup', options)
+  if (click) {
+    if (!element.isConnected) throw new Error(`Pointer target detached before click: "${selector}"`)
+    if (!desktopControlElementEnabled(element))
+      throw new Error(`Pointer target is disabled: "${selector}"`)
+    element.click()
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -996,6 +1009,39 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
 async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   await startDesktopControlDrag(command)
   return endDesktopControlDrag(command)
+}
+
+async function dragDesktopControlElementBy(command: DesktopControlCommand): Promise<string> {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const delta = JSON.parse(command.value ?? '{}') as { x?: number; y?: number }
+  const deltaX = Number(delta.x ?? 0)
+  const deltaY = Number(delta.y ?? 0)
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+    throw new Error('dragBy requires finite x and y deltas')
+  }
+
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && activeElement !== element) {
+    activeElement.blur()
+    await waitForDesktopControlTick()
+  }
+
+  const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
+  const endOptions = {
+    ...startOptions,
+    clientX: Math.max(0, Math.floor(Number(startOptions.clientX ?? 0) + deltaX)),
+    clientY: Math.max(0, Math.floor(Number(startOptions.clientY ?? 0) + deltaY)),
+  }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+  dispatchDesktopControlPointerEvent(element, 'pointerup', { ...endOptions, buttons: 0 })
+  await waitForDesktopControlTick()
+  return element.textContent?.trim() ?? ''
 }
 
 let activeDesktopControlDataTransfer: {
@@ -1675,6 +1721,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       await waitForDesktopControlTick()
       return ''
+    case 'failNextLocalCodexModelList': {
+      const failedRequest = failNextLocalExecutorRequestForE2E(
+        'runtime.codex.models.list',
+        'Desktop E2E intentional local Codex catalog failure'
+      )
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      await failedRequest
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'dispatchRuntimeLifecycleEvent':
       window.dispatchEvent(
         new CustomEvent('wework:e2e:runtime-task-lifecycle', {
@@ -1929,6 +1985,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dragBy':
+      return dragDesktopControlElementBy(command)
     case 'dragDataTransfer':
       return dragDesktopControlDataTransfer(command)
     case 'dragDataTransferStart':
@@ -2609,6 +2667,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerClick':
+      // Keep one gesture together across transient hover UI, without transport gaps.
+      return pressDesktopControlPointer(command.selector, true)
     case 'pointerDownOnly': {
       await invokeDesktopHost('e2e.focusMainWindow')
       const result = startDesktopControlPointer(command.selector)

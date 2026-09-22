@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from 'react'
 import {
@@ -19,6 +20,7 @@ import {
   IssueConversationDrawers,
   toSharedIssueDetailTaskBinding,
   type CollaborationHostAdapter,
+  type CollaborationDefaultAssistant,
   type CollaborationIssue,
   type CollaborationPlatformLocation,
   type CollaborationProjectRendererWorkspaceContext,
@@ -42,9 +44,8 @@ import {
   type DesktopSidebarAccountSettingsOptions,
 } from '@/components/layout/DesktopSidebarAccount'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { LocalProjectAgentForm } from '@/features/collaboration/LocalProjectAgentForm'
-import { weworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
@@ -58,6 +59,7 @@ import type {
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import {
   isRuntimeTaskExecutionRunning,
@@ -140,11 +142,40 @@ export interface WeworkCollaborationPlatformProps {
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
+  renderLocalProjectImporter?: (input: {
+    mode: 'folder' | 'existing'
+    projects: ProjectWithTasks[]
+    onClose: () => void
+    onCreated: (
+      runtimeProjectKey: string,
+      projectName: string,
+      workspaceRoots: string[]
+    ) => Promise<void>
+  }) => ReactNode
+}
+
+function normalizeWorkspaceRoot(root: string): string {
+  const trimmed = root.trim()
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(trimmed) || /^\\\\/.test(trimmed)
+  const normalized = isWindowsPath ? trimmed.replaceAll('\\', '/').toLowerCase() : trimmed
+  if (normalized === '/' || /^[a-z]:\/$/i.test(normalized)) return normalized
+  return normalized.replace(isWindowsPath ? /\/+$/ : /[\\/]+$/, '')
+}
+
+function projectWorkspaceRoots(project: CollaborationProject): string[] {
+  const roots = project.metadata?.workspace_roots
+  return Array.isArray(roots)
+    ? roots
+        .filter((root): root is string => typeof root === 'string')
+        .map(normalizeWorkspaceRoot)
+        .filter(Boolean)
+    : []
 }
 
 export function WeworkSharedProject({
   api,
   detailServices,
+  defaultAssistant,
   focusedItemId,
   localProjects,
   locale,
@@ -163,6 +194,7 @@ export function WeworkSharedProject({
 }: {
   api: SharedWorkspaceApi
   detailServices?: ProjectSpaceDetailServices
+  defaultAssistant?: CollaborationDefaultAssistant
   focusedItemId?: string | null
   localProjects: ProjectWithTasks[]
   locale: 'zh-CN' | 'en'
@@ -252,6 +284,7 @@ export function WeworkSharedProject({
         dingtalkAitable: true,
         projectLocation: project.project_store === 'local' ? 'local' : 'cloud',
       },
+      defaultAssistant,
       location: {
         projectId: String(project.id),
         issueId: location.issueId,
@@ -270,38 +303,27 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
-      projectAgentConfiguration:
-        project.project_store === 'local'
-          ? {
-              ...weworkProjectAgentConfigurationHost,
-              supportsExistingAgentSelection: false,
-              renderProjectAgentForm:
-                services.localProjectChatAgentApi && detailServices
-                  ? form => (
-                      <LocalProjectAgentForm
-                        key={form.agentId ?? 'new'}
-                        {...form}
-                        api={services.localProjectChatAgentApi!}
-                        catalog={detailServices}
-                        projectId={String(project.id)}
-                        projects={localProjects}
-                      />
-                    )
-                  : undefined,
-            }
-          : createWeworkProjectAgentConfigurationHost(services.agentResourceApi),
+      projectAgentConfiguration: createWeworkProjectAgentConfigurationHost(
+        services.agentResourceApi,
+        project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
+        project.project_store === 'local' ? detailServices?.modelApi : undefined,
+        services.pluginApi,
+        services.deviceApi
+      ),
     }),
     [
       focusedItemId,
+      detailServices?.modelApi,
+      defaultAssistant,
       location.issueId,
       location.projectView,
       onFocusedItemHandled,
       project.id,
       project.project_store,
       services.agentResourceApi,
+      services.deviceApi,
       services.localProjectChatAgentApi,
-      detailServices,
-      localProjects,
+      services.pluginApi,
       setLocation,
       workspace.id,
     ]
@@ -541,6 +563,7 @@ export function WeworkSharedProject({
       <div className="min-w-0 flex-1">
         <CollaborationApp
           api={scopedApi}
+          initialProject={project}
           host={projectHost}
           locale={locale}
           showProjectBack={false}
@@ -561,6 +584,7 @@ export function WeworkSharedProject({
             allIssues,
             assignments,
             taskBindings,
+            defaultAssistant,
             onChange,
             onClose,
             onCreateTask,
@@ -612,6 +636,7 @@ export function WeworkSharedProject({
                     !issue.workflow?.nodes?.length
                   }
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
+                  defaultAssistant={defaultAssistant}
                   aitableApi={
                     project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined
                   }
@@ -730,6 +755,23 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         : 'Local user'
       : props.user.user_name
   const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
+  const currentAgentDevice = useCurrentAgentDevice(
+    props.services.deviceApi,
+    props.services.pluginApi
+  )
+  const defaultAssistant = useMemo(
+    () => ({
+      name: locale === 'zh-CN' ? '本机助手' : 'Device assistant',
+      description:
+        locale === 'zh-CN'
+          ? `在“${currentAgentDevice.currentDevice?.name ?? '当前设备'}”上运行，使用设备当前可用能力`
+          : `Runs on “${currentAgentDevice.currentDevice?.name ?? 'this device'}” with its available capabilities`,
+      ...(currentAgentDevice.capabilitySummary
+        ? { capabilitySummary: currentAgentDevice.capabilitySummary }
+        : {}),
+    }),
+    [currentAgentDevice.capabilitySummary, currentAgentDevice.currentDevice?.name, locale]
+  )
   const [ownerGroups, setOwnerGroups] = useState<Array<{ label: string; namespace: string }>>([])
   const workspaceOwnerOptions = useMemo(
     () => [{ label: personalOwnerLabel, namespace: 'default' }, ...ownerGroups],
@@ -741,12 +783,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         props.services.agentResourceApi,
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
-        props.services.projectSpaceDetailServices?.local?.pluginApi
+        props.services.pluginApi,
+        props.services.deviceApi
       ),
     [
       props.services.agentResourceApi,
+      props.services.deviceApi,
       props.services.projectSpaceDetailServices?.local?.modelApi,
-      props.services.projectSpaceDetailServices?.local?.pluginApi,
+      props.services.pluginApi,
       props.services.localProjectChatAgentApi,
     ]
   )
@@ -895,10 +939,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       )}
       <CollaborationPlatformApp
         api={platformApi}
-        refreshKey={JSON.stringify([
-          props.startupActive,
-          props.localProjects.map(project => [project.id, project.name]),
-        ])}
+        refreshKey={String(Boolean(props.startupActive))}
         navigationApis={navigationApis}
         locale={locale}
         onReady={handleReady}
@@ -908,6 +949,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             requestLogin: () => setCloudLoginOpen(true),
           },
           renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
+          defaultAssistant,
           location,
           capabilities: {
             automation: true,
@@ -1001,6 +1043,77 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                 </section>
               </div>
             ),
+          renderProjectImporter: props.renderLocalProjectImporter
+            ? ({ mode, projects: collaborationProjects, onClose, onImported }) => {
+                const importedRuntimeProjectKeys = new Set(
+                  collaborationProjects.flatMap(project => {
+                    const key = project.metadata?.code_project_key
+                    return typeof key === 'string' ? [key] : []
+                  })
+                )
+                const importedWorkspaceRoots = new Set(
+                  collaborationProjects.flatMap(projectWorkspaceRoots)
+                )
+                const runtimeProjectIdentitiesById = new Map(
+                  (props.runtimeWork?.projects ?? []).map(projectWork => [
+                    runtimeProjectUiId(projectWork.project),
+                    {
+                      key: projectWork.project.key,
+                      roots: Array.from(
+                        new Set([
+                          ...(projectWork.project.roots ?? []).map(root => root.path),
+                          ...projectWork.deviceWorkspaces
+                            .filter(workspace => workspace.workspaceKind !== 'chat')
+                            .map(workspace => workspace.workspacePath),
+                        ])
+                      )
+                        .map(normalizeWorkspaceRoot)
+                        .filter(Boolean),
+                    },
+                  ])
+                )
+                const availableProjects = props.localProjects.filter(project => {
+                  const runtimeProject = runtimeProjectIdentitiesById.get(project.id)
+                  if (runtimeProject && importedRuntimeProjectKeys.has(runtimeProject.key)) {
+                    return false
+                  }
+                  const workspacePath =
+                    project.config?.workspace?.source === 'local_path' &&
+                    typeof project.config.workspace.localPath === 'string'
+                      ? normalizeWorkspaceRoot(project.config.workspace.localPath)
+                      : null
+                  const workspaceRoots = new Set([
+                    ...(runtimeProject?.roots ?? []),
+                    ...(workspacePath ? [workspacePath] : []),
+                  ])
+                  return ![...workspaceRoots].some(root => importedWorkspaceRoots.has(root))
+                })
+                return props.renderLocalProjectImporter!({
+                  mode,
+                  projects: availableProjects,
+                  onClose,
+                  onCreated: async (runtimeProjectKey, projectName, workspaceRoots) => {
+                    const localDeliveryApi = props.services.projectSpaceApis?.local
+                    if (!localDeliveryApi?.importLocalCodeProject) {
+                      throw new Error(
+                        locale === 'zh-CN'
+                          ? '本地协作服务当前不可用'
+                          : 'The local collaboration service is unavailable'
+                      )
+                    }
+                    const importedProject = await localDeliveryApi.importLocalCodeProject({
+                      runtimeProjectKey,
+                      name: projectName,
+                      roots: workspaceRoots,
+                    })
+                    await onImported({
+                      ...importedProject,
+                      workspace_id: LOCAL_WORKSPACE_ID,
+                    })
+                  },
+                })
+              }
+            : undefined,
           workspaceOwnerOptions,
           projectAgentConfiguration,
         }}
@@ -1032,6 +1145,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                   project.project_store === 'local' ? 'local' : 'cloud'
                 ]
               }
+              defaultAssistant={defaultAssistant}
               focusedItemId={props.focusedItemId}
               localProjects={props.localProjects}
               locale={locale}

@@ -46,9 +46,12 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
     this.take(id)
   }
   async pump(port: RuntimeConversationQueuePort<Lifecycle>, busy: boolean) {
+    // Observe active turns before they return to an identical idle snapshot.
+    if (this.awaitingNextTurn && port.lifecycleChanged(this.awaitingNextTurn.lifecycle)) {
+      this.awaitingNextTurn = null
+    }
     if (busy || this.messages.some(message => message.status === 'sending')) return
-    if (this.awaitingNextTurn && !port.lifecycleChanged(this.awaitingNextTurn.lifecycle)) return
-    this.awaitingNextTurn = null
+    if (this.awaitingNextTurn) return
     const message = this.messages.find(item => item.status === 'queued')
     if (!message) return
     if (
@@ -60,19 +63,27 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
   }
   async send(id: string, port: RuntimeConversationQueuePort<Lifecycle>): Promise<boolean> {
     const message = this.messages.find(item => item.id === id && item.status !== 'sending')
-    if (!message || this.messages.some(item => item.status === 'sending')) return false
-    const lifecycle = port.lifecycle()
+    if (!message || this.awaitingNextTurn || this.messages.some(item => item.status === 'sending'))
+      return false
+    const lifecycleBeforeSend = port.lifecycle()
+    this.awaitingNextTurn = { lifecycle: lifecycleBeforeSend }
     this.patch(id, { status: 'sending', error: undefined, deliveryMode: 'message' })
     try {
       const result = await port.send(message)
       if (result.sent) {
-        this.awaitingNextTurn = { lifecycle }
         this.remove(id)
         return true
       }
-      this.rejectSend(id, result.error || port.sendFailedText, port)
+      this.awaitingNextTurn = null
+      this.rejectSend(id, result.error || port.sendFailedText, port, lifecycleBeforeSend)
     } catch (cause) {
-      this.rejectSend(id, cause instanceof Error ? cause.message : port.sendFailedText, port)
+      this.awaitingNextTurn = null
+      this.rejectSend(
+        id,
+        cause instanceof Error ? cause.message : port.sendFailedText,
+        port,
+        lifecycleBeforeSend
+      )
     }
     return false
   }
@@ -125,9 +136,15 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
     this.blocked.delete(id)
     this.patch(id, { status: 'failed', deliveryMode: undefined, notice: undefined, error })
   }
-  private rejectSend(id: string, error: string, port: RuntimeConversationQueuePort<Lifecycle>) {
+  private rejectSend(
+    id: string,
+    error: string,
+    port: RuntimeConversationQueuePort<Lifecycle>,
+    lifecycleBeforeSend: Lifecycle
+  ) {
     if (port.isBusyError(error)) {
-      this.blocked.set(id, port.lifecycle())
+      if (port.lifecycleChanged(lifecycleBeforeSend)) this.blocked.delete(id)
+      else this.blocked.set(id, lifecycleBeforeSend)
       this.patch(id, { status: 'queued', error: undefined })
     } else {
       this.fail(id, error)

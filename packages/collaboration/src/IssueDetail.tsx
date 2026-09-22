@@ -31,6 +31,7 @@ import type {
   CollaborationAgent,
   CollaborationAssignment,
   CollaborationComment,
+  CollaborationDefaultAssistant,
   CollaborationExecution,
   CollaborationIssue,
   CollaborationMember,
@@ -64,6 +65,7 @@ interface IssueDetailProps {
   executions?: CollaborationExecution[]
   members?: CollaborationMember[]
   agents?: CollaborationAgent[]
+  defaultAssistant?: CollaborationDefaultAssistant
   messages: Messages
   translate?: CollaborationTranslate
   onClose(): void
@@ -213,6 +215,7 @@ function BrowserIssueDetail({
   executions = [],
   members = [],
   agents = [],
+  defaultAssistant,
   messages,
   translate,
   onClose,
@@ -254,6 +257,7 @@ function BrowserIssueDetail({
         conversation={
           selectedConversation && api.runtime ? (
             <IssueTaskConversation
+              projectStore={project.project_store}
               key={selectedConversation.id}
               binding={selectedConversation}
               issueId={issue.id}
@@ -294,6 +298,7 @@ function BrowserIssueDetail({
             canAssign={permissions.canAssign}
             currentAssignment={currentAssignment}
             canStartWork={permissions.canStartWork}
+            defaultAssistant={defaultAssistant}
             onCreateTask={onCreateTask}
             translate={editorTranslate}
             extensions={{
@@ -345,7 +350,20 @@ function BrowserIssueDetail({
       </IssueConversationDrawers>
       {selectedExecution && api.runtime ? (
         <IssueExecutionDetails
-          target={selectedExecution}
+          target={
+            project.project_store === 'backend'
+              ? {
+                  ...selectedExecution,
+                  address: {
+                    ...selectedExecution.address,
+                    projectSession: {
+                      projectId: String(project.id),
+                      issueId: issue.id,
+                    },
+                  },
+                }
+              : selectedExecution
+          }
           runtime={api.runtime}
           translate={editorTranslate}
           onClose={closeExecution}

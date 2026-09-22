@@ -10,6 +10,7 @@ only repairs durable leases, detects stalls, and publishes queue metrics.
 
 import logging
 
+import socketio
 from prometheus_client import Counter, Gauge
 from sqlalchemy import func, select
 
@@ -82,6 +83,7 @@ def scan_robot_queue(self) -> dict:
                 )
                 or 0
             )
+            _publish_work_availability(_queued_devices(db))
             return {
                 "status": "ok",
                 "requeued": requeued,
@@ -105,7 +107,30 @@ def _queued_devices(db) -> list[tuple[int, str]]:
         )
         .distinct()
     ).all()
-    return [(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]]
+    devices = {(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]}
+    from app.services.workspace_cleanup_intents import due_execution_targets
+
+    devices.update(due_execution_targets(db))
+    return sorted(devices)
+
+
+def _publish_work_availability(devices: list[tuple[int, str]]) -> None:
+    """Publish from Celery without borrowing the uvicorn event loop."""
+
+    if not devices:
+        return
+    logger.info(
+        "[RobotQueue] Publishing work availability source=celery targets=%s",
+        devices,
+    )
+    manager = socketio.RedisManager(settings.REDIS_URL, write_only=True)
+    for owner_user_id, device_id in devices:
+        manager.emit(
+            "runtime.tasks.available",
+            {},
+            room=f"execution-target:{owner_user_id}:{device_id}",
+            namespace="/local-executor",
+        )
 
 
 async def consume_queues_background() -> None:
@@ -117,6 +142,11 @@ async def consume_queues_background() -> None:
     try:
         with get_db_session() as db:
             devices = _queued_devices(db)
+        if devices:
+            logger.info(
+                "[RobotQueue] Publishing work availability source=api targets=%s",
+                devices,
+            )
         for owner_user_id, device_id in devices:
             await get_sio().emit(
                 "runtime.tasks.available",

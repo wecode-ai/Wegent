@@ -75,7 +75,7 @@ export function CodeCommentPreview({
     [],
   );
 
-  useEscapeKey(() => setOpen(false), open);
+  useEscapeKey(() => setOpen(false), open, contentRef);
 
   return (
     <>

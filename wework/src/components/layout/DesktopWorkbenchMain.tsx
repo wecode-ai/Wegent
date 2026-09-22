@@ -234,6 +234,7 @@ import { consumeWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceL
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
+import { ConversationHeaderTitle } from './ConversationHeaderTitle'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import {
   SupervisorSuggestionCards,
@@ -251,6 +252,7 @@ import type {
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
+  RuntimeTaskForkRequest,
 } from '@/types/api'
 import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
@@ -308,6 +310,24 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
+
+function runtimeTaskForkModelOptions(
+  projectChat: ProjectChatControls
+): Pick<RuntimeTaskForkRequest, 'modelSelection'> {
+  const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
+  const selectedModelOptions =
+    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const executionModel = selectedModelExecutionFields(selectedModel ?? null, selectedModelOptions)
+  if (!executionModel.modelId) return {}
+  return {
+    modelSelection: {
+      modelName: executionModel.modelId,
+      modelType: executionModel.modelType ?? null,
+      options: executionModel.modelOptions ?? {},
+    },
+  }
+}
+
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
@@ -1143,9 +1163,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
-  const currentRuntimeProject = state.runtimeWork?.projects.find(
+  const currentRuntimeProjectWork = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
-  )?.project
+  )
+  const currentRuntimeProject = currentRuntimeProjectWork?.project
   const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
   const paneKeyRef = useRef(paneKey)
@@ -1910,11 +1931,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const displayedRightPanelOpen = rightPanelOpen
   const displayedRightPanelExpanded = rightPanelExpanded
   const compactRightPanelOpen =
-    (rightPanelTabs.length === 1 &&
-      rightPanelTabs[0].startsWith('chat:') &&
-      rightPanelView === rightPanelTabs[0]) ||
-    rightPanelView === 'subagents' ||
-    isRightWorkspaceExtensionTab(rightPanelView)
+    rightPanelView === 'subagents' || isRightWorkspaceExtensionTab(rightPanelView)
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,
@@ -4611,6 +4628,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
+  const conversationHeaderTitle =
+    currentRuntimeConversationSource && runtimeTaskSummary && !activeLocalHarnessSession ? (
+      <ConversationHeaderTitle
+        key={paneKey}
+        title={runtimeTaskSummary.title}
+        displayTitle={workbenchTitle ?? runtimeTaskSummary.title}
+        address={currentRuntimeConversationSource}
+        projectWork={currentRuntimeProjectWork}
+      />
+    ) : (
+      <span className="block min-w-0 truncate">{workbenchTitle}</span>
+    )
   const paneTaskTitle =
     workbenchTitle && !isDesktop ? (
       <div
@@ -4622,7 +4651,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )}
         style={{ width: paneTitleWidth }}
       >
-        <span className="block w-full min-w-0 truncate">{workbenchTitle}</span>
+        {conversationHeaderTitle}
       </div>
     ) : undefined
   const topBarLeftActions = !isDesktop ? (
@@ -4772,7 +4801,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
         >
-          <span className="block min-w-0 truncate">{workbenchTitle}</span>
+          {conversationHeaderTitle}
         </div>
       ) : (
         <div className="min-w-0 flex-1" />
@@ -5337,18 +5366,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onEditLastUserMessage={paneSession.editLastUserMessage}
                     canEditLastUserMessage={canEditLastUserMessage}
                     onForkMessage={
-                      currentRuntimeUsesCodex
-                        ? message => {
+                      currentRuntimeUsesCodex &&
+                      currentRuntimeTask &&
+                      (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
+                        ? async message => {
                             const workspacePath =
                               currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
                             if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                            return forkCurrentRuntimeTask(
-                              {
-                                deviceId: currentRuntimeTask.deviceId,
-                                workspacePath,
-                              },
-                              { lastTurnId: message.turnId }
-                            )
+                            paneSession.clearError()
+                            try {
+                              await forkCurrentRuntimeTask(
+                                {
+                                  deviceId: currentRuntimeTask.deviceId,
+                                  workspacePath,
+                                },
+                                {
+                                  source: currentRuntimeConversationSource ?? currentRuntimeTask,
+                                  lastTurnId: message.turnId,
+                                  ...runtimeTaskForkModelOptions(projectChat),
+                                }
+                              )
+                            } catch (error) {
+                              paneSession.setError(
+                                getErrorMessage(error, t('workbench.task_fork_failed'))
+                              )
+                            }
                           }
                         : undefined
                     }
@@ -5753,7 +5795,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onFork={async target => {
-            await forkCurrentRuntimeTask(target)
+            await forkCurrentRuntimeTask(target, {
+              source: currentRuntimeTask ?? undefined,
+            })
           }}
         />
         <ContinueInImDialog

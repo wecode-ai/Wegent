@@ -817,6 +817,8 @@ describe('Simple TeamEditDialog', () => {
           name: 'new-agent-bot',
           shell_name: 'Chat',
           system_prompt: 'Answer with context.',
+          inherit_base_capabilities: true,
+          capability_mode: 'manual',
           skills: ['repo-reader'],
           preload_skills: ['repo-reader'],
           preload_skill_refs: {
