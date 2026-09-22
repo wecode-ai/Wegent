@@ -29,7 +29,49 @@ import ModelEditDialog, {
   ModelFormData,
   ModelInitialData,
 } from '@/features/settings/components/ModelEditDialog'
-import { extractAdvancedModelEnv } from '@/features/settings/components/model-config'
+import {
+  extractAdvancedModelEnv,
+  extractThinkingConfig,
+} from '@/features/settings/components/model-config'
+
+export function convertAdminModelToInitialData(model: AdminPublicModel): ModelInitialData {
+  const json = model.json as Record<string, unknown>
+  const spec = json?.spec as Record<string, unknown>
+  const metadata = json?.metadata as Record<string, unknown>
+  const modelConfig = spec?.modelConfig as Record<string, unknown>
+  const env = modelConfig?.env as Record<string, unknown>
+
+  const modelType = env?.model as string
+  let providerType: string
+  if (spec?.protocol === 'openai-responses') {
+    providerType = 'openai-responses'
+  } else if (modelType === 'claude') {
+    providerType = 'anthropic'
+  } else {
+    providerType = modelType || 'openai'
+  }
+
+  return {
+    name: model.name,
+    displayName: (metadata?.displayName as string) || '',
+    modelCategoryType: (spec?.modelType as ModelCategoryType) || 'llm',
+    providerType,
+    modelId: env?.model_id as string,
+    apiKey: (env?.api_key as string) || '',
+    baseUrl: (env?.base_url as string) || '',
+    customHeaders: env?.custom_headers as Record<string, string>,
+    advancedEnvConfig: extractAdvancedModelEnv(env),
+    thinkingConfig: extractThinkingConfig(env),
+    protocol: spec?.protocol as string,
+    contextWindow: modelConfig?.context_window as number | undefined,
+    maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
+    costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
+    modelCapabilities: getModelCapabilitiesFromSpec({
+      modelCapabilities: spec?.modelCapabilities,
+      modelConfig,
+    }),
+  }
+}
 
 const SetupModelStep: React.FC = () => {
   const { t } = useTranslation()
@@ -59,45 +101,6 @@ const SetupModelStep: React.FC = () => {
   useEffect(() => {
     fetchModels()
   }, [fetchModels])
-
-  // Convert AdminPublicModel to ModelInitialData for editing
-  const convertToInitialData = (model: AdminPublicModel): ModelInitialData => {
-    const json = model.json as Record<string, unknown>
-    const spec = json?.spec as Record<string, unknown>
-    const metadata = json?.metadata as Record<string, unknown>
-    const modelConfig = spec?.modelConfig as Record<string, unknown>
-    const env = modelConfig?.env as Record<string, unknown>
-
-    const modelType = env?.model as string
-    let providerType: string
-    if (spec?.protocol === 'openai-responses') {
-      providerType = 'openai-responses'
-    } else if (modelType === 'claude') {
-      providerType = 'anthropic'
-    } else {
-      providerType = modelType || 'openai'
-    }
-
-    return {
-      name: model.name,
-      displayName: (metadata?.displayName as string) || '',
-      modelCategoryType: (spec?.modelType as ModelCategoryType) || 'llm',
-      providerType,
-      modelId: env?.model_id as string,
-      apiKey: (env?.api_key as string) || '',
-      baseUrl: (env?.base_url as string) || '',
-      customHeaders: env?.custom_headers as Record<string, string>,
-      advancedEnvConfig: extractAdvancedModelEnv(env),
-      protocol: spec?.protocol as string,
-      contextWindow: modelConfig?.context_window as number | undefined,
-      maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
-      costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
-      modelCapabilities: getModelCapabilitiesFromSpec({
-        modelCapabilities: spec?.modelCapabilities,
-        modelConfig,
-      }),
-    }
-  }
 
   // Custom save handler for admin API
   const handleSaveModel = async (
@@ -159,7 +162,7 @@ const SetupModelStep: React.FC = () => {
   }
 
   const openEditDialog = (model: AdminPublicModel) => {
-    setEditingModelData(convertToInitialData(model))
+    setEditingModelData(convertAdminModelToInitialData(model))
     setEditingModelId(model.id)
     setIsAddDialogOpen(true)
   }

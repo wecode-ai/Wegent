@@ -42,6 +42,30 @@ export function extractAdvancedModelEnv(
   )
 }
 
+export function extractThinkingConfig(
+  env: Record<string, unknown> | null | undefined
+): Record<string, unknown> | undefined {
+  const config = env?.thinking_config ?? env?.thinkingConfig
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+    return undefined
+  }
+
+  const keys = Object.keys(config)
+  const nestedKey = keys[0]
+  const nestedConfig = nestedKey ? (config as Record<string, unknown>)[nestedKey] : undefined
+  if (
+    keys.length === 1 &&
+    (nestedKey === 'thinking_config' || nestedKey === 'thinkingConfig') &&
+    typeof nestedConfig === 'object' &&
+    nestedConfig !== null &&
+    !Array.isArray(nestedConfig)
+  ) {
+    return nestedConfig as Record<string, unknown>
+  }
+
+  return config as Record<string, unknown>
+}
+
 export function formatAdvancedModelEnv(value: Record<string, unknown> | undefined): string {
   if (!value || Object.keys(value).length === 0) return ''
   return JSON.stringify(value, null, 2)

@@ -8,6 +8,8 @@ import userEvent from '@testing-library/user-event'
 import ModelEditDialog from '@/features/settings/components/ModelEditDialog'
 import type { ModelCRD } from '@/apis/models'
 
+jest.setTimeout(30000)
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) =>

@@ -54,6 +54,7 @@ import {
   ImageConfigSection,
   ImageConfigState,
   extractAdvancedModelEnv,
+  extractThinkingConfig,
   formatAdvancedModelEnv,
   getDefaultImageConfig,
   toImageGenerationConfig,
@@ -148,31 +149,6 @@ export interface ModelInitialData {
   modelCapabilities?: ModelCapabilities
   isWeworkAvailable?: boolean
   visionSidecarModel?: VisionSidecarModelRef
-}
-
-/**
- * Extract thinkingConfig from model - reads from env (single source of truth).
- * Unwraps double-nested thinking_config if found (caused by earlier bug).
- */
-function extractThinkingConfig(
-  model: import('@/apis/models').ModelCRD
-): Record<string, unknown> | undefined {
-  const env = model.spec?.modelConfig?.env
-  let config = (env?.thinking_config ?? env?.thinkingConfig) as Record<string, unknown> | undefined
-  // Unwrap double-nested thinking_config from corrupted DB data
-  if (config) {
-    const keys = Object.keys(config)
-    if (
-      keys.length === 1 &&
-      (keys[0] === 'thinking_config' || keys[0] === 'thinkingConfig') &&
-      typeof config[keys[0]] === 'object' &&
-      config[keys[0]] !== null &&
-      !Array.isArray(config[keys[0]])
-    ) {
-      config = config[keys[0]] as Record<string, unknown>
-    }
-  }
-  return config
 }
 
 interface ModelEditDialogProps {
@@ -356,7 +332,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             modelCapabilities: getModelCapabilitiesFromSpec(model.spec),
             videoConfig: model.spec.videoConfig,
             imageConfig: model.spec.imageConfig,
-            thinkingConfig: extractThinkingConfig(model),
+            thinkingConfig: extractThinkingConfig(model.spec.modelConfig?.env),
             isWeworkAvailable: model.spec.isWeworkAvailable,
             visionSidecarModel: model.spec.modelConfig?.visionSidecarModel,
           }

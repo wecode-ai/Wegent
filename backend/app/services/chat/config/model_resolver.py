@@ -1154,7 +1154,7 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     if supports_developer_role is not None:
         logger.info(
             "[model_resolver] _extract_model_config: "
-            f"supports_developer_role={supports_developer_role}"
+            "supports_developer_role configured"
         )
 
     result = {

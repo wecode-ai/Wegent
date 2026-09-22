@@ -19,6 +19,7 @@ export {
 export {
   countAdvancedModelEnvFields,
   extractAdvancedModelEnv,
+  extractThinkingConfig,
   formatAdvancedModelEnv,
   validateAdvancedModelEnv,
   type AdvancedModelEnvValidationError,

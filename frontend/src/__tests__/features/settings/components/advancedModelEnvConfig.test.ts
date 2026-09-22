@@ -4,6 +4,7 @@
 
 import {
   extractAdvancedModelEnv,
+  extractThinkingConfig,
   formatAdvancedModelEnv,
   validateAdvancedModelEnv,
 } from '@/features/settings/components/model-config'
@@ -41,6 +42,23 @@ describe('advanced model env configuration', () => {
       error: null,
       keys: [],
     })
+  })
+
+  it.each(['thinking_config', 'thinkingConfig'])(
+    'extracts and unwraps legacy %s configuration',
+    key => {
+      expect(
+        extractThinkingConfig({
+          [key]: {
+            [key]: { effort: 'high', enabled: false },
+          },
+        })
+      ).toEqual({ effort: 'high', enabled: false })
+    }
+  )
+
+  it('ignores invalid thinking configuration values', () => {
+    expect(extractThinkingConfig({ thinking_config: ['high'] })).toBeUndefined()
   })
 
   it.each([
