@@ -3620,22 +3620,25 @@ mod tests {
                 max_output_tokens: None,
             },
         );
-        bind_thread(&token, "thread-root").expect("root thread should bind");
+        bind_thread(&token, "thread-bound-root").expect("root thread should bind");
         let mut entries = registry().lock().expect("registry lock");
         let route = entries.routes.get_mut(&token).expect("task route");
 
-        authorize_task_thread(route, br#"{"client_metadata":{"thread_id":"thread-root"}}"#)
-            .expect("bound root should be accepted");
         authorize_task_thread(
             route,
-            br#"{"client_metadata":{"thread_id":"thread-child","x-codex-turn-metadata":"{\"parent_thread_id\":\"thread-root\"}"}}"#,
+            br#"{"client_metadata":{"thread_id":"thread-bound-root"}}"#,
+        )
+        .expect("bound root should be accepted");
+        authorize_task_thread(
+            route,
+            br#"{"client_metadata":{"thread_id":"thread-bound-child","x-codex-turn-metadata":"{\"parent_thread_id\":\"thread-bound-root\"}"}}"#,
         )
         .expect("child of a bound root should be accepted");
-        assert!(route.thread_ids.contains("thread-child"));
+        assert!(route.thread_ids.contains("thread-bound-child"));
 
         let error = authorize_task_thread(
             route,
-            br#"{"client_metadata":{"thread_id":"thread-unrelated"}}"#,
+            br#"{"client_metadata":{"thread_id":"thread-bound-unrelated"}}"#,
         )
         .expect_err("unrelated thread must not use the task route");
         assert_eq!(error.status, StatusCode::CONFLICT);
@@ -3829,7 +3832,7 @@ mod tests {
                 max_output_tokens: None,
             },
         );
-        bind_thread(&token, "thread-root").expect("root thread should bind");
+        bind_thread(&token, "missing-metadata-thread-root").expect("root thread should bind");
         let mut entries = registry().lock().expect("registry lock");
         let route = entries.routes.get_mut(&token).expect("task route");
 

@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 
 import type { CollaborationTranslate } from "../i18n";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
@@ -18,6 +24,7 @@ export function CollaborationParticipantsTabs({
   initialTab = "agents",
   membersContent,
   membersLabel,
+  requestedTab,
   testIdPrefix = "collaboration-participants",
 }: {
   agentsContent: ReactNode;
@@ -28,6 +35,7 @@ export function CollaborationParticipantsTabs({
   initialTab?: ParticipantTab;
   membersContent: ReactNode;
   membersLabel: string;
+  requestedTab?: ParticipantTab;
   testIdPrefix?: string;
 }) {
   const [selectedTab, setSelectedTab] = useState<ParticipantTab>(initialTab);
@@ -36,6 +44,9 @@ export function CollaborationParticipantsTabs({
     members: null,
     groups: null,
   });
+  useEffect(() => {
+    if (requestedTab) setSelectedTab(requestedTab);
+  }, [requestedTab]);
   const tabs: Array<{ id: ParticipantTab; label: string }> = [
     {
       id: "agents",
@@ -127,11 +138,13 @@ export function ProjectCollaborationParticipants({
   agentsContent,
   groupsContent,
   membersContent,
+  requestedTab,
   translate,
 }: {
   agentsContent: ReactNode;
   groupsContent: ReactNode;
   membersContent: ReactNode;
+  requestedTab?: ParticipantTab;
   translate: CollaborationTranslate;
 }) {
   const title = translate("todo.collaboration_participants", "协作成员");
@@ -154,6 +167,7 @@ export function ProjectCollaborationParticipants({
         groupsLabel={translate("todo.collaboration_groups", "协作小组")}
         membersContent={membersContent}
         membersLabel={translate("todo.project_members", "项目成员")}
+        requestedTab={requestedTab}
       />
     </ProjectSettingsPage>
   );

@@ -1639,6 +1639,56 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('routes the current app record execution target through the local runtime', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'electron-current-app',
+        name: 'Current App',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1839,
+        device_id: 'logical-current-app',
+        socket_device_id: 'app-record-1839',
+        app_device_id: 'electron-current-app',
+        name: 'Current App Registration',
+        status: 'online',
+        is_default: false,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+      },
+    ])
+    mocks.localCreateRuntimeTask.mockResolvedValue({
+      accepted: true,
+      deviceId: 'electron-current-app',
+      taskId: 'local-task',
+      workspacePath: '/tmp/prepared-environment',
+    })
+    const services = createServices()
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'app-record-1839',
+      workspacePath: '/tmp/prepared-environment',
+      runtime: 'codex',
+      message: 'handle assigned issue',
+    })
+
+    expect(mocks.localCreateRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'app-record-1839',
+        executionDeviceId: 'app-record-1839',
+        workspacePath: '/tmp/prepared-environment',
+      })
+    )
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
   it('routes remote task creation through the logical remote device id', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {

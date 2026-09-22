@@ -139,6 +139,7 @@ export interface ProjectWorkControls {
   // When false, the project trigger renders a static folder icon instead of the
   // hover-to-clear button (for defaults that cannot be cleared from the bar).
   showProjectClearButton?: boolean
+  showProjectSelector?: boolean
   projectMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
 }

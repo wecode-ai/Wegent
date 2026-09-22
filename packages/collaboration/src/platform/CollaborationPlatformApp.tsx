@@ -29,6 +29,8 @@ import {
 import { CollaborationApp } from "../CollaborationApp";
 import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
+import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueExecutionEnvironmentNotice";
+import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
 import { Tooltip } from "../issue-detail/Tooltip";
@@ -550,7 +552,11 @@ function navigateWithin(
   host: CollaborationPlatformHostAdapter,
   patch: Partial<CollaborationPlatformLocation>,
 ) {
-  host.navigate({ ...host.location, ...patch });
+  const location = { ...host.location, ...patch };
+  if (patch.projectView && patch.projectView !== "manage") {
+    location.projectSettingsSection = null;
+  }
+  host.navigate(location);
 }
 
 function workspaceAgentRecord(
@@ -2604,6 +2610,7 @@ function IssueHomeLauncher({
   selectedProjectId,
   onSelectProject,
   onCreateIssue,
+  onOpenExecutionEnvironments,
   pending,
   api,
   locale,
@@ -2619,6 +2626,7 @@ function IssueHomeLauncher({
     owner: IssueHomeOwner | null,
     files: File[],
   ): Promise<boolean>;
+  onOpenExecutionEnvironments(project: CollaborationProject): void;
   pending: boolean;
   api: SharedWorkspaceApi;
   locale: CollaborationLocale;
@@ -2635,6 +2643,17 @@ function IssueHomeLauncher({
   >([]);
   const [memberError, setMemberError] = useState<string | null>(null);
   const composerRef = useRef<ComposerInputHandle>(null);
+  const selectedProject = projects.find(
+    (project) => project.id === selectedProjectId,
+  );
+  const translate = useMemo(
+    () => createCollaborationTranslator(locale),
+    [locale],
+  );
+  const environmentReadiness = useProjectExecutionEnvironmentReadiness({
+    api,
+    project: selectedProject,
+  });
   useEffect(() => {
     let active = true;
     setMembers([]);
@@ -2702,11 +2721,26 @@ function IssueHomeLauncher({
         setMentionIssues([]);
         onSelectProject(id);
       }}
-      translate={createCollaborationTranslator(locale)}
+      translate={translate}
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
       memberLabel={messages.members}
       error={memberError}
+      environmentNotice={
+        selectedProject ? (
+          <IssueExecutionEnvironmentNotice
+            canManage={
+              selectedProject.access_role === "Owner" ||
+              selectedProject.access_role === "Maintainer"
+            }
+            onOpenEnvironmentSettings={() =>
+              onOpenExecutionEnvironments(selectedProject)
+            }
+            readiness={environmentReadiness}
+            translate={translate}
+          />
+        ) : null
+      }
     />
   );
   if (renderTaskComposer)
@@ -2769,19 +2803,55 @@ function WorkItemsPage({
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
 }) {
+  const toHandle = items.filter(
+    (item) => item.human_work?.can_start || item.human_work?.can_submit,
+  );
+  const toReview = items.filter((item) => item.human_work?.can_review);
+  const remaining = items.filter(
+    (item) => !toHandle.includes(item) && !toReview.includes(item),
+  );
+  const sections = [
+    {
+      id: "assigned",
+      title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
+      items: toHandle,
+    },
+    {
+      id: "review",
+      title: locale === "zh-CN" ? "待我验收" : "To review",
+      items: toReview,
+    },
+    {
+      id: "other",
+      title: locale === "zh-CN" ? "其他工作" : "Other work",
+      items: remaining,
+    },
+  ].filter((section) => section.items.length);
   return (
     <div className="collaboration-platform-page">
       <PageHeader title={title} subtitle={subtitle} />
       {items.length ? (
-        <div className="collaboration-home-work-list">
-          {items.map((item) => (
-            <WorkItemRow
-              item={item}
-              locale={locale}
-              messages={messages}
-              key={item.id}
-              onOpen={onOpenItem}
-            />
+        <div className="collaboration-home-work-groups">
+          {sections.map((section) => (
+            <section
+              key={section.id}
+              data-testid={`collaboration-work-group-${section.id}`}
+            >
+              <h2 className="collaboration-home-work-group-title">
+                {section.title}
+              </h2>
+              <div className="collaboration-home-work-list">
+                {section.items.map((item) => (
+                  <WorkItemRow
+                    item={item}
+                    locale={locale}
+                    messages={messages}
+                    key={item.id}
+                    onOpen={onOpenItem}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       ) : (
@@ -3323,6 +3393,12 @@ export function CollaborationPlatformApp({
       const created = await api.issues.create(rootIssueProject.id, {
         title: truncateRuntimeTaskTitle(content.replace(/\s+/g, " "))!,
         description: content,
+        ...(owner?.kind === "user"
+          ? {
+              assigneeUserId: Number(owner.id),
+              notifyAssignee: true,
+            }
+          : {}),
       });
       let assignmentFailed = false;
       for (const file of files) {
@@ -3335,16 +3411,14 @@ export function CollaborationPlatformApp({
           );
         }
       }
-      if (owner) {
+      if (owner && owner.kind !== "user") {
         try {
           const current = await api.issues.get(created.id);
           await api.issues.update(created.id, {
             version: current.version,
-            ...(owner.kind === "user"
-              ? { assigneeUserId: Number(owner.id) }
-              : owner.kind === "agent"
-                ? { assigneeAgentId: owner.id }
-                : { assigneeGroupId: owner.id }),
+            ...(owner.kind === "agent"
+              ? { assigneeAgentId: owner.id }
+              : { assigneeGroupId: owner.id }),
           });
         } catch {
           assignmentFailed = true;
@@ -3552,12 +3626,14 @@ export function CollaborationPlatformApp({
               projectId: host.location.projectId,
               issueId: host.location.issueId,
               view: host.location.projectView,
+              projectSettingsSection: host.location.projectSettingsSection,
             },
             navigate: (location) =>
               navigateWithin(host, {
                 projectId: location.projectId,
                 issueId: location.issueId,
                 projectView: location.view,
+                projectSettingsSection: location.projectSettingsSection,
                 workspaceView: "projects",
               }),
             notify: host.notify,
@@ -3580,7 +3656,14 @@ export function CollaborationPlatformApp({
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return item.is_unread || operation === "failed" || operation === "review";
+      return (
+        item.human_work?.can_start ||
+        item.human_work?.can_submit ||
+        item.human_work?.can_review ||
+        item.is_unread ||
+        operation === "failed" ||
+        operation === "review"
+      );
     });
     content =
       rootView === "agents" ||
@@ -3710,6 +3793,16 @@ export function CollaborationPlatformApp({
               pending={rootIssueLoading}
               onCreateIssue={(content, memberIds, files) =>
                 startRootIssueCreation(content, memberIds, files)
+              }
+              onOpenExecutionEnvironments={(project) =>
+                navigateWithin(host, {
+                  workspaceId: project.workspace_id ?? null,
+                  workspaceView: "projects",
+                  projectId: project.id,
+                  projectView: "manage",
+                  projectSettingsSection: "environments",
+                  issueId: null,
+                })
               }
             />
           )}

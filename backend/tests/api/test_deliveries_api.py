@@ -622,6 +622,105 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert immutable.status_code == 409
 
 
+def test_delivery_does_not_accept_human_assigned_issue(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Human review is required",
+            "status": "pending",
+            "assignee_user_id": delivery_project.created_by_user_id,
+        },
+    )
+    assert created.status_code == 201
+    item = created.json()
+    assert item["human_work"] is not None
+    started = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/work/start",
+        headers=_auth(test_token),
+        json={"version": item["version"]},
+    )
+    assert started.status_code == 200, started.text
+
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Work evidence"},
+    )
+    assert draft.status_code == 201, draft.text
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
+        headers=_auth(test_token),
+    )
+    assert finalized.status_code == 200, finalized.text
+    latest = test_client.get(
+        f"/api/v1/loop-items/{item['id']}", headers=_auth(test_token)
+    ).json()
+    assert latest["status"] == "in_progress"
+    assert latest["current_delivery_id"] == draft.json()["id"]
+
+
+def test_reporter_assignee_can_attach_evidence_while_working(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    member_name = f"human-evidence-{uuid.uuid4().hex[:8]}"
+    member = User(
+        user_name=member_name,
+        password_hash=get_password_hash("member-password"),
+        email=f"{member_name}@example.com",
+        is_active=True,
+    )
+    test_db.add(member)
+    test_db.flush()
+    test_db.add(
+        ResourceMember.create(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=delivery_project.id,
+            entity_id=str(member.id),
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    member_token = create_access_token(data={"sub": member_name})
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Evidence", "status": "pending"},
+    ).json()
+    assigned = test_client.post(
+        f"/api/v1/loop-items/{created['id']}/assignments",
+        headers=_auth(test_token),
+        json={"target_type": "human", "target_id": str(member.id)},
+    ).json()["issue"]
+    started = test_client.post(
+        f"/api/v1/loop-items/{created['id']}/work/start",
+        headers=_auth(member_token),
+        json={"version": assigned["version"]},
+    )
+    assert started.status_code == 200, started.text
+
+    uploaded = test_client.post(
+        f"/api/v1/loop-items/{created['id']}/attachments",
+        headers=_auth(member_token),
+        files={"file": ("evidence.txt", b"verified", "text/plain")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    removed = test_client.delete(
+        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}",
+        headers=_auth(member_token),
+    )
+    assert removed.status_code == 204, removed.text
+
+
 def test_workflow_delivery_rejects_empty_fulfillments(
     test_client: TestClient,
     test_token: str,
@@ -1133,6 +1232,53 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     status_event = ingest.await_args_list[1].args[1]
     assert status_event.event_type == "task.status_changed"
     assert status_event.subject_id == created["id"]
+
+
+def test_human_assigned_issue_does_not_start_creation_automation(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matching_rules = MagicMock(return_value=[SimpleNamespace(id="rule-1")])
+    ingest = AsyncMock(return_value=1)
+    should_start_workflow = MagicMock(return_value=True)
+    start_workflow = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.matching_rules",
+        matching_rules,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.issue_workflow_start_service,
+        "should_start_after_creation",
+        should_start_workflow,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.issue_workflow_start_service,
+        "start",
+        start_workflow,
+    )
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Human-owned Issue",
+            "assignee_user_id": delivery_project.created_by_user_id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["human_work"] is not None
+    matching_rules.assert_not_called()
+    ingest.assert_not_awaited()
+    should_start_workflow.assert_not_called()
+    start_workflow.assert_not_awaited()
 
 
 def test_status_automation_workflow_is_returned_by_status_update(

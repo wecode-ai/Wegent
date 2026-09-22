@@ -552,7 +552,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
-  test('does not apply a terminal transcript after a newer turn starts', async () => {
+  test('reconciles terminal messages without settling a newer turn', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
@@ -600,6 +600,10 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.turn.outcome).toBeNull()
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      '之前的请求',
+      '已恢复的 AI 输出',
+    ])
   })
 
   test('reconciles executor state when completion already carries content', async () => {

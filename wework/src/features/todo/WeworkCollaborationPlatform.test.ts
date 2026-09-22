@@ -38,7 +38,10 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       refreshProjectRequestKey = 0,
     }: {
       api: SharedWorkspaceApi
-      host: { location: { projectId: string | null } }
+      host: {
+        location: { projectId: string | null }
+        manageResource?(kind: 'agents' | 'environments', resourceId?: string): void
+      }
       refreshProjectRequestKey?: number
     }) => {
       if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
@@ -153,6 +156,15 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             'data-testid': `collaboration-app-automation-names-${host.location.projectId}`,
           },
           automationNames
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': `collaboration-app-manage-environments-${host.location.projectId}`,
+            onClick: () => host.manageResource?.('environments'),
+            type: 'button',
+          },
+          'Manage environments'
         )
       )
     },
@@ -192,6 +204,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           'data-navigation-source-count': navigationApis?.length ?? 0,
           'data-refresh-key': refreshKey ?? '',
           'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
+          'data-issue-id': host.location.issueId ?? '',
         },
         createElement(
           'span',
@@ -1035,6 +1048,52 @@ describe('Wework collaboration workspace API', () => {
     expect(onActiveProjectChange).toHaveBeenCalledWith(null)
     expect(getProject).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('collaboration-platform-location')).toHaveTextContent('workspace')
+  })
+
+  it('opens a focused Issue when the controlled project is already active', async () => {
+    const getProject = vi.fn().mockResolvedValue({
+      id: 'active-project',
+      name: 'Active project',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    })
+    const props = {
+      user: {
+        id: 1,
+        user_name: 'admin',
+        email: 'admin@example.com',
+      } as never,
+      localProjects: [],
+      services: {
+        sharedWorkspaceApi: {
+          projects: {
+            get: getProject,
+          },
+        },
+      } as never,
+      activeProjectRef: {
+        projectStore: 'backend' as const,
+        projectId: 'active-project',
+      },
+      onActiveProjectChange: vi.fn(),
+    }
+    const view = render(createElement(WeworkCollaborationPlatform, props))
+
+    await screen.findByText('active-project')
+    view.rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        focusedItemId: 'issue-1',
+      })
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-issue-id',
+        'issue-1'
+      )
+    )
+    expect(getProject).toHaveBeenCalledTimes(1)
   })
 
   it('resumes controlled project synchronization after navigation loading fails', async () => {
@@ -2519,6 +2578,51 @@ describe('Wework collaboration workspace API', () => {
     })
     expect(resolveDeviceResourceSettingsOptions(undefined, 'local')).toEqual({
       settingsPage: 'execution-environments',
+    })
+  })
+
+  it('opens cloud device setup from project environment management', async () => {
+    const onOpenSettings = vi.fn()
+    render(
+      createElement(WeworkSharedProject, {
+        api: {
+          projects: {},
+          issues: {},
+        } as unknown as SharedWorkspaceApi,
+        localProjects: [],
+        locale: 'zh-CN',
+        location: {
+          platformView: 'spaces',
+          workspaceId: 'cloud-workspace',
+          workspaceView: 'projects',
+          projectId: 'cloud-project',
+          projectView: 'manage',
+          projectSettingsSection: 'environments',
+          issueId: null,
+        },
+        onOpenSettings,
+        project: {
+          id: 'cloud-project',
+          name: 'Cloud project',
+          project_store: 'backend',
+        } as never,
+        services: {} as never,
+        setLocation: vi.fn(),
+        userId: 1,
+        workspace: {
+          id: 'cloud-workspace',
+          name: 'Cloud workspace',
+        } as never,
+      })
+    )
+
+    await act(async () =>
+      screen.getByTestId('collaboration-app-manage-environments-cloud-project').click()
+    )
+
+    expect(onOpenSettings).toHaveBeenCalledWith({
+      settingsPage: 'connections',
+      autoOpenAddCloudDeviceDialog: true,
     })
   })
 

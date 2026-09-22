@@ -83,6 +83,8 @@ pub struct TaskCreate {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
+    pub assignee_user_id: Option<i64>,
+    #[serde(default)]
     pub workflow: Option<Value>,
 }
 

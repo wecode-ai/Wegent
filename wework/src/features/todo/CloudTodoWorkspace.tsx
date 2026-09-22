@@ -69,6 +69,7 @@ import {
   type CollaborationIssue,
   type CollaborationProject,
   type ProjectCreateTarget,
+  type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
   type CollaborationProjectView,
   type WorkspaceTaskBinding,
@@ -106,6 +107,7 @@ import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { getRuntimeWorkDeviceNamesById } from '@/lib/workbench-device'
 import {
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
@@ -140,6 +142,7 @@ import {
   findRuntimeTask,
   hydrateRuntimeTaskAddress,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { AITableView } from '@/features/todo/AITableView'
 import {
   AutomationSelectionDialog,
@@ -170,6 +173,7 @@ import {
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
+import { runtimeTaskConversationStatusesByAddress } from './runtimeTaskConversationStatus'
 import {
   canEditProjectSpaceIssue,
   type LocatedProjectSpace,
@@ -205,6 +209,7 @@ import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns } from './todoShared'
 import { AiChatModal } from './AiChatModal'
 import { BackgroundTaskStarter } from './BackgroundTaskStarter'
+import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import {
   shouldPrepareWorkItemTask,
   shouldRevealWorkItemWorkflowActions,
@@ -474,9 +479,19 @@ function ProjectChangeRequestAutoRepairObserver({
 }
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
-  'id' | 'device_id' | 'task_id' | 'task_title'
+  'id' | 'device_id' | 'task_id' | 'task_title' | 'modelSelection'
 > & {
   work_item_id: string
+}
+
+function selectedTaskBindingAddress(binding: SelectedTaskBinding): RuntimeTaskAddress {
+  return {
+    deviceId: binding.device_id,
+    taskId: binding.task_id,
+    ...(binding.modelSelection
+      ? { runtimeHandle: { modelSelection: binding.modelSelection } }
+      : {}),
+  }
 }
 type TaskComposerRequest = {
   workItemId: string
@@ -485,6 +500,12 @@ type TaskComposerRequest = {
   taskRequest?: RuntimeTaskCreateRequest
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
+}
+
+type AssigneeQuickAddRequest = {
+  id: number
+  projectKey: string
+  target: 'members' | 'agents'
 }
 
 export interface CloudTodoWorkspaceProps {
@@ -675,6 +696,11 @@ export function CloudTodoWorkspace({
     [changeRequestStatusEnabled, services.deviceApi]
   )
   const cloudWorkspaceApi = services.sharedWorkspaceApi
+  const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
+  const runtimeTaskExecutionStatusByAddress = useMemo(
+    () => runtimeTaskConversationStatusesByAddress(runtimeWork, runtimeTaskLifecycle),
+    [runtimeTaskLifecycle, runtimeWork]
+  )
   const projectAgentConfigurationHost = useMemo(
     () =>
       createWeworkProjectAgentConfigurationHost(
@@ -698,6 +724,9 @@ export function CloudTodoWorkspace({
         : null
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [projectSettingsSectionId, setProjectSettingsSectionId] = useState('project')
+  const assigneeQuickAddRequestIdRef = useRef(0)
+  const [assigneeQuickAddRequest, setAssigneeQuickAddRequest] =
+    useState<AssigneeQuickAddRequest | null>(null)
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
@@ -1270,6 +1299,8 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
+  const activeAssigneeQuickAddRequest =
+    assigneeQuickAddRequest?.projectKey === selectedProjectKey ? assigneeQuickAddRequest : null
   const activeItemTaskBindings = useMemo(() => {
     const refreshedBindings =
       itemTaskBindingsProjectKey === selectedProjectKey
@@ -1305,6 +1336,16 @@ export function CloudTodoWorkspace({
     selectedProject?.location,
     selectedProjectKey,
   ])
+  const taskExecutionStatesByBindingId = useMemo(() => {
+    const states: Record<string, SharedIssueDetailTaskExecutionState> = {}
+    for (const binding of Object.values(activeItemTaskBindings).flat()) {
+      const status = runtimeTaskExecutionStatusByAddress.get(
+        runtimeConversationKey({ deviceId: binding.device_id, taskId: binding.task_id })
+      )
+      if (status) states[String(binding.id)] = { status }
+    }
+    return states
+  }, [activeItemTaskBindings, runtimeTaskExecutionStatusByAddress])
   const boardTaskBindings = useMemo<Record<string, CloudTodoBoardTaskBinding[]>>(
     () =>
       Object.fromEntries(
@@ -2111,6 +2152,28 @@ export function CloudTodoWorkspace({
     onActiveProjectChange?.(project)
   }
 
+  function openAssigneeQuickAdd(
+    project: LocatedCloudProject,
+    target: AssigneeQuickAddRequest['target']
+  ) {
+    assigneeQuickAddRequestIdRef.current += 1
+    setAssigneeQuickAddRequest({
+      id: assigneeQuickAddRequestIdRef.current,
+      projectKey: projectSpaceKey(projectSpaceRef(project)),
+      target,
+    })
+    setCreateTodoOpen(false)
+    setCreateTodoParent(null)
+    setCreateTodoInitialTitle(undefined)
+    selectProject(project)
+    setProjectSettingsSectionId('collaboration-participants')
+    setProjectView('manage')
+  }
+
+  const consumeAssigneeQuickAddRequest = useCallback((requestId: number) => {
+    setAssigneeQuickAddRequest(current => (current?.id === requestId ? null : current))
+  }, [])
+
   async function renameSelectedProject() {
     if (!renameProject || !renameProjectName.trim() || renameBusy) return
     const api = apiForProject(renameProject)
@@ -2395,6 +2458,8 @@ export function CloudTodoWorkspace({
     project: LocatedCloudProject,
     taskRequest?: RuntimeTaskCreateRequest
   ) {
+    const resolvedTaskRequest =
+      taskRequest ?? projectExecutionEnvironmentTaskRequest(project as CollaborationProject)
     setSelectedTaskBinding(null)
     setSelectedItem(item)
     setBackgroundTaskItemId(item.id)
@@ -2402,9 +2467,9 @@ export function CloudTodoWorkspace({
       workItemId: item.id,
       initialInput: workItemTaskInput(item),
       backgroundAfterSend: true,
-      taskRequest: taskRequest
+      taskRequest: resolvedTaskRequest
         ? {
-            ...taskRequest,
+            ...resolvedTaskRequest,
             message: workItemTaskInput(item),
             title: item.title,
             cloudProjectId: String(project.id),
@@ -3378,6 +3443,9 @@ export function CloudTodoWorkspace({
         shouldPrepareWorkItemTask(locatedUpdated, item.status, taskBindingCount)
       if (shouldOpenTaskComposer) {
         const initialInput = workItemTaskInput(locatedUpdated)
+        const preparedEnvironmentTaskRequest = projectExecutionEnvironmentTaskRequest(
+          itemProject as CollaborationProject
+        )
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
         setBackgroundTaskItemId(
@@ -3387,13 +3455,15 @@ export function CloudTodoWorkspace({
           workItemId: locatedUpdated.id,
           initialInput,
           backgroundAfterSend: column.status === 'in_progress',
-          taskRequest: forceStart
-            ? {
-                runtime: 'codex',
-                message: initialInput,
-                forceStart: true,
-              }
-            : undefined,
+          taskRequest:
+            preparedEnvironmentTaskRequest || forceStart
+              ? {
+                  ...preparedEnvironmentTaskRequest,
+                  runtime: 'codex',
+                  message: initialInput,
+                  ...(forceStart ? { forceStart: true } : {}),
+                }
+              : undefined,
         })
       } else if (forceStart && workbench) {
         const addresses = new Map<string, RuntimeTaskAddress>()
@@ -3716,6 +3786,12 @@ export function CloudTodoWorkspace({
                   ...(input.priority ? { priority: input.priority } : {}),
                   ...(input.tags ? { tags: input.tags } : {}),
                   ...(input.automationRuleId ? { automationRuleId: input.automationRuleId } : {}),
+                  ...(input.assigneeUserId
+                    ? {
+                        assigneeUserId: input.assigneeUserId,
+                        notifyAssignee,
+                      }
+                    : {}),
                   parentId: null,
                   ...(issueLocalProjectInput
                     ? {
@@ -3780,20 +3856,8 @@ export function CloudTodoWorkspace({
                 })
         }
       }
-      if (input.assigneeUserId) {
-        if (targetProject.location === 'cloud') {
-          created = await cloudWorkspace.commands
-            .assignIssue(String(targetProject.id), created.id, {
-              version: created.version,
-              assigneeType: 'user',
-              assigneeId: String(input.assigneeUserId),
-              notifyAssignee,
-            })
-            .then(issue => {
-              if (!issue) throw new Error(cloudWorkspaceMessages.saveFailed)
-              return toCloudLoopItem(issue)
-            })
-        } else if (typeof targetApi!.assignLoopItem === 'function') {
+      if (input.assigneeUserId && targetProject.location === 'local') {
+        if (typeof targetApi!.assignLoopItem === 'function') {
           created = await targetApi!.assignLoopItem(targetProject.id, created.id, {
             version: created.version,
             assigneeType: 'user',
@@ -4597,6 +4661,7 @@ export function CloudTodoWorkspace({
                           testId: 'cloud-project-settings-participants',
                           content: (
                             <ProjectCollaborationParticipants
+                              requestedTab={activeAssigneeQuickAddRequest?.target}
                               translate={(key, fallback, options) =>
                                 fallback === undefined ? t(key, options) : t(key, fallback, options)
                               }
@@ -4609,6 +4674,8 @@ export function CloudTodoWorkspace({
                                   }
                                   embedded
                                   project={selectedProject}
+                                  quickAddRequest={activeAssigneeQuickAddRequest ?? undefined}
+                                  onQuickAddRequestConsumed={consumeAssigneeQuickAddRequest}
                                   section="members"
                                   onChange={updated =>
                                     replaceProject(selectedProject, updated as CloudProject)
@@ -4635,6 +4702,8 @@ export function CloudTodoWorkspace({
                                   }
                                   embedded
                                   project={selectedProject}
+                                  quickAddRequest={activeAssigneeQuickAddRequest ?? undefined}
+                                  onQuickAddRequestConsumed={consumeAssigneeQuickAddRequest}
                                   section="agents"
                                   onChange={updated =>
                                     replaceProject(selectedProject, updated as CloudProject)
@@ -5478,6 +5547,8 @@ export function CloudTodoWorkspace({
                     !selectedItem.workflow?.nodes.length
                   }
                   initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
+                  taskExecutionStates={taskExecutionStatesByBindingId}
+                  deviceNamesById={deviceNamesById}
                   taskRefreshKey={boardRefreshNonce}
                   onWorkflowPlanChanged={() => {
                     setBoardRefreshNonce(value => value + 1)
@@ -5538,6 +5609,11 @@ export function CloudTodoWorkspace({
                       backgroundAfterSend: false,
                       workflowNodeId,
                       inheritFromTask,
+                      taskRequest: inheritFromTask
+                        ? undefined
+                        : (projectExecutionEnvironmentTaskRequest(
+                            selectedItemProject as CollaborationProject
+                          ) ?? undefined),
                     })
                   }}
                   onClose={closeIssuePanelStack}
@@ -5604,10 +5680,7 @@ export function CloudTodoWorkspace({
                   }
                   initialAddress={
                     selectedTaskBinding?.work_item_id === selectedItem.id
-                      ? {
-                          deviceId: selectedTaskBinding.device_id,
-                          taskId: selectedTaskBinding.task_id,
-                        }
+                      ? selectedTaskBindingAddress(selectedTaskBinding)
                       : null
                   }
                   taskTitle={
@@ -5650,6 +5723,7 @@ export function CloudTodoWorkspace({
                         device_id: address.deviceId,
                         task_id: address.taskId,
                         task_title: null,
+                        modelSelection: modelSelectionFromRuntimeHandle(address.runtimeHandle),
                         work_item_id: selectedItem.id,
                       })
                     }
@@ -5788,6 +5862,18 @@ export function CloudTodoWorkspace({
               projectChatAgentApi={selectedProjectAgentApi}
               teamApi={services.teamApi}
               project={createTodoProject}
+              deviceNamesById={deviceNamesById}
+              onAddAssigneeMember={
+                createTodoProject.location === 'cloud' &&
+                !isDefaultWorkItemProject(createTodoProject)
+                  ? () => openAssigneeQuickAdd(createTodoProject, 'members')
+                  : undefined
+              }
+              onAddAssigneeAgent={
+                !isDefaultWorkItemProject(createTodoProject)
+                  ? () => openAssigneeQuickAdd(createTodoProject, 'agents')
+                  : undefined
+              }
               initialParent={createTodoParent}
               initialStatus={createTodoStatus}
               initialTitle={createTodoInitialTitle}

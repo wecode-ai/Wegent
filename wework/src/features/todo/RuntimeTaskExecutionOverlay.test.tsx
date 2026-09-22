@@ -45,7 +45,20 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
         ],
         totalTasks: 1,
       },
-      devices: [{ device_id: 'device-1', name: 'Cloud Device' }],
+      devices: [
+        {
+          device_id: 'device-1',
+          name: 'Cloud Device',
+          runtime_routes: [
+            {
+              kind: 'cloud-relay',
+              device_id: 'device-1',
+              runtime_device_id: 'runtime-device-1',
+              status: 'online',
+            },
+          ],
+        },
+      ],
     },
     cancelRuntimeTask: vi.fn(),
     openRuntimeTask: vi.fn(),
@@ -86,6 +99,19 @@ describe('RuntimeTaskExecutionOverlay', () => {
     )
     expect(screen.getByText(/current-cloud-model/)).toBeInTheDocument()
     expect(screen.queryByText(/stale-model/)).not.toBeInTheDocument()
+  })
+
+  it('shows the device name when the runtime address uses a route id', () => {
+    render(
+      <RuntimeTaskExecutionOverlay
+        address={{ deviceId: 'runtime-device-1', taskId: 'codex-queue-1' }}
+        senderName="Bot"
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText(/执行设备: Cloud Device/)).toBeInTheDocument()
+    expect(screen.queryByText(/执行设备: runtime-device-1/)).not.toBeInTheDocument()
   })
 
   it('separates transcript timeout from the running execution and offers retry', async () => {

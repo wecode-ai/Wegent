@@ -8,7 +8,7 @@ import type { RuntimeExecutionTarget } from './issue-detail/runtimeExecutionTarg
 // SPDX-License-Identifier: Apache-2.0
 
 import { collaborationTestIds } from './testIds'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import {
   collaborationMessages,
@@ -85,6 +85,7 @@ interface IssueCreateProps {
   allIssues: CollaborationIssue[]
   messages: Messages
   translate?: CollaborationTranslate
+  environmentNotice?: ReactNode
   onClose(): void
   onCreated(issue: CollaborationIssue): void | Promise<void>
   onError(): void
@@ -167,6 +168,7 @@ export function IssueCreate({
   allIssues,
   messages,
   translate,
+  environmentNotice,
   onClose,
   onCreated,
   onError,
@@ -187,7 +189,10 @@ export function IssueCreate({
         onClose={onClose}
         onCreated={onCreated}
         translate={editorTranslate}
-        extensions={browserDueDateExtensions}
+        extensions={{
+          ...browserDueDateExtensions,
+          ...(environmentNotice ? { renderCreateOptions: () => environmentNotice } : {}),
+        }}
       />
     </div>
   )

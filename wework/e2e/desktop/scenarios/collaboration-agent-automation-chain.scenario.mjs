@@ -536,6 +536,11 @@ export async function createDesktopScenario({
       scoped('[data-testid="collaboration-project-execution-environment-add"]'),
       { timeoutMs: uiTimeoutMs }
     )
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-project-execution-environment-add-repository"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
     const devices = await request('/api/devices')
     const cloudDevice = devices.items.find(candidate => candidate.device_id === CLOUD_DEVICE_ID)
     assert.ok(cloudDevice?.id, 'The real cloud Executor device was not registered')
@@ -576,6 +581,28 @@ export async function createDesktopScenario({
     )
     await control.command(
       'clickWhenEnabled',
+      scoped('[data-testid="collaboration-project-execution-environment-save-configuration"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-project-execution-environment-configuration-status"]'),
+      { text: '配置已保存', timeoutMs: uiTimeoutMs }
+    )
+    // Re-enter the environment settings after saving. The parent must keep
+    // the returned Project version or initialization will fail with HTTP 409.
+    await control.command('click', scoped('[data-testid="collaboration-project-settings-project"]'))
+    await control.command(
+      'click',
+      scoped('[data-testid="collaboration-project-settings-environments"]')
+    )
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-project-execution-environment-add"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'clickWhenEnabled',
       scoped('[data-testid="collaboration-project-execution-environment-add"]'),
       { timeoutMs: uiTimeoutMs }
     )
@@ -592,12 +619,26 @@ export async function createDesktopScenario({
       { timeoutMs: uiTimeoutMs }
     )
     await control.command(
-      'clickWhenEnabled',
-      scoped(
-        `[data-testid="collaboration-project-execution-environment-initialize-${appDevice.id}"]`
-      ),
-      { timeoutMs: Math.max(uiTimeoutMs, 60_000) }
+      'waitFor',
+      scoped('[data-testid="collaboration-project-execution-environment-required"]'),
+      { text: '必需', timeoutMs: uiTimeoutMs }
     )
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-project-execution-environment-readiness"]'),
+      { text: '待完成', timeoutMs: uiTimeoutMs }
+    )
+    const initializeButton = scoped(
+      `[data-testid="collaboration-project-execution-environment-initialize-${appDevice.id}"]`
+    )
+    assert.match(
+      await control.command('getAttribute', initializeButton, { value: 'class' }),
+      /collaboration-primary-button/,
+      'An uninitialized required environment must expose initialization as the primary action'
+    )
+    await control.command('clickWhenEnabled', initializeButton, {
+      timeoutMs: Math.max(uiTimeoutMs, 60_000),
+    })
     await control.command(
       'waitFor',
       scoped(`[data-testid="collaboration-project-execution-environment-${appDevice.id}"]`),
@@ -605,6 +646,16 @@ export async function createDesktopScenario({
         text: '环境已就绪',
         timeoutMs: Math.max(uiTimeoutMs, 60_000),
       }
+    )
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-project-execution-environment-readiness"]'),
+      { text: '已完成', timeoutMs: uiTimeoutMs }
+    )
+    assert.match(
+      await control.command('getAttribute', initializeButton, { value: 'class' }),
+      /collaboration-secondary-button/,
+      'Reinitialization must become a secondary action after the environment is ready'
     )
     const appEnvironmentPool = await request(
       `/api/v1/cloud-projects/${project.id}/execution-environments`
@@ -715,9 +766,6 @@ export async function createDesktopScenario({
     )
     assert.ok(skill?.id, `${SKILL_UI_REFERENCE} is missing from the real Skill catalog`)
     await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {

@@ -140,8 +140,8 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
 }
 
 /**
- * Wework manages Agents through the resource library. Existing resources can
- * be selected, while the same dialog can create or edit the backing resource.
+ * Wework manages Agents through the resource library. Project additions open
+ * the resource form directly, while existing project Agents remain editable.
  */
 export function createWeworkProjectAgentConfigurationHost(
   agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
@@ -154,7 +154,7 @@ export function createWeworkProjectAgentConfigurationHost(
     ...weworkProjectAgentConfigurationHost,
     ...(agentResourceApi
       ? {
-          supportsExistingAgentSelection: true,
+          supportsExistingAgentSelection: false,
           supportsCrossLocationAgentSelection: true,
           renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
             return (

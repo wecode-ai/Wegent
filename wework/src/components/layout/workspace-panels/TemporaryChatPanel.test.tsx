@@ -786,6 +786,32 @@ describe('TemporaryChatPanel', () => {
     )
   })
 
+  it('notifies the parent with the resolved task address instead of its optimistic route', async () => {
+    const optimisticAddress = { deviceId: 'project-device', taskId: 'task-1' }
+    const resolvedAddress = { deviceId: 'runtime-device', taskId: 'task-1' }
+    const onAddressChange = vi.fn()
+    mocks.createTask.mockImplementation(async (_message, options) => {
+      options.onRuntimeTaskOptimisticOpen(optimisticAddress)
+      options.onRuntimeTaskOptimisticOpen(resolvedAddress)
+      return resolvedAddress
+    })
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="resolved-task-address"
+        createTask={mocks.createTask}
+        onAddressChange={onAddressChange}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-send'))
+
+    await waitFor(() => expect(onAddressChange).toHaveBeenCalledOnce())
+    expect(onAddressChange).toHaveBeenCalledWith(resolvedAddress)
+  })
+
   it('creates a new formal task with the submitted text as its initial goal', async () => {
     mocks.createTask.mockImplementation(async (_message, options) => {
       options.onRuntimeTaskOptimisticOpen(address)

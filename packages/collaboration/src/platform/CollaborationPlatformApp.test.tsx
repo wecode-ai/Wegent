@@ -1925,6 +1925,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     await render(<PlatformHarness api={api} />);
 
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
+    expect(
+      byTestId("issue-execution-environment-notice").textContent,
+    ).toContain("Issue 仍可创建");
     expect(byTestId("collaboration-issue-guide-1").textContent).toContain(
       "拆解一个新需求",
     );
@@ -1957,6 +1960,107 @@ describe("CollaborationPlatformApp real component flow", () => {
         '[data-testid="collaboration-issue-create-dialog"]',
       ),
     ).toBeNull();
+  });
+
+  it("opens the selected project's execution environment settings from the notice", async () => {
+    const { api } = createApi();
+    await render(<PlatformHarness api={api} />);
+
+    await click(byTestId("issue-execution-environment-notice-action"));
+
+    expect(byTestId("test-location").textContent).toContain(
+      '"projectSettingsSection":"environments"',
+    );
+    expect(
+      byTestId("collaboration-project-settings-environments").getAttribute(
+        "aria-current",
+      ),
+    ).toBe("page");
+
+    await click(byTestId("collaboration-tab-board"));
+    expect(byTestId("test-location").textContent).toContain(
+      '"projectSettingsSection":null',
+    );
+  });
+
+  it("hides the notice when an online environment is ready with a workspace path", async () => {
+    const readyProject: CollaborationProject = {
+      ...project,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "environment-v1",
+        devices: {
+          "device-21": {
+            status: "ready",
+            workspace_path: "/workspace/project-1",
+          },
+        },
+      },
+    };
+    const { api } = createApi({ initialProjects: [readyProject] });
+
+    await render(<PlatformHarness api={api} />);
+
+    expect(
+      container.querySelector(
+        '[data-testid="issue-execution-environment-notice"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("lets read-only members view environment details and tells them to contact a manager", async () => {
+    const { api } = createApi({
+      initialProjects: [{ ...project, access_role: "Reporter" }],
+    });
+    await render(<PlatformHarness api={api} />);
+
+    expect(
+      byTestId("issue-execution-environment-notice").textContent,
+    ).toContain("请联系项目 Owner 或 Maintainer");
+    expect(
+      byTestId("issue-execution-environment-notice-action").textContent,
+    ).toContain("查看执行环境");
+  });
+
+  it("submits a human owner atomically with the create request", async () => {
+    const { api } = createApi();
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-issue-owner"));
+    await click(portalByTestId("collaboration-issue-owner-7"));
+    await click(byTestId("collaboration-issue-guide-2"));
+
+    await click(byTestId("collaboration-home-create-issue"));
+
+    expect(api.issues.create).toHaveBeenCalledWith(project.id, {
+      title: "修复一个问题：记录现象、复现步骤、影响范围和期望结果。",
+      description: "修复一个问题：记录现象、复现步骤、影响范围和期望结果。",
+      assigneeUserId: 7,
+      notifyAssignee: true,
+    });
+    expect(api.issues.update).not.toHaveBeenCalled();
+  });
+
+  it("shows the same environment notice in the project Issue create dialog", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "projects",
+          projectId: project.id,
+        }}
+      />,
+    );
+
+    await click(byTestId("collaboration-issue-create"));
+
+    expect(byTestId("collaboration-issue-create-dialog")).toBeTruthy();
+    expect(
+      byTestId("issue-execution-environment-notice").textContent,
+    ).toContain("Issue 仍可创建");
   });
 
   it("saves a selected project team as the Issue owner, not as a numeric agent team", async () => {
@@ -3543,6 +3647,43 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
+  it("preselects the current online local device for a new cloud project", async () => {
+    const currentEnvironment = {
+      ...environment,
+      is_current_device: true,
+    };
+    const { api } = createApi({
+      initialProjects: [],
+      initialResources: {
+        agents: [],
+        execution_environments: [currentEnvironment],
+      },
+    });
+    api.members.list = emptyAsync([]);
+    api.projects.addExecutionEnvironment = vi.fn(
+      async () => currentEnvironment,
+    );
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    await click(byTestId("collaboration-workspace-project-create"));
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      project.name,
+    );
+    expect(checkboxWithLabel(currentEnvironment.name).checked).toBe(true);
+    await click(byTestId("collaboration-project-create-confirm"));
+
+    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
+      project.id,
+      currentEnvironment.device_id,
+    );
+  });
+
   it("does not create project agents when member or environment setup fails", async () => {
     const { api } = createApi({ initialProjects: [] });
     api.projects.addExecutionEnvironment = vi.fn(async () => {
@@ -3611,6 +3752,9 @@ describe("CollaborationPlatformApp real component flow", () => {
 
 describe("Issue permission separation in the real shared editor", () => {
   it("keeps editing, commenting, assigning, and starting work independent", async () => {
+    const titleScrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockReturnValue(96);
     const { api } = createApi();
     const onCreateTask = vi.fn();
     await render(
@@ -3639,6 +3783,9 @@ describe("Issue permission separation in the real shared editor", () => {
       (byTestId("cloud-todo-detail-title") as HTMLTextAreaElement).readOnly,
     ).toBe(true);
     expect(
+      (byTestId("cloud-todo-detail-title") as HTMLTextAreaElement).style.height,
+    ).toBe("96px");
+    expect(
       (byTestId("collaboration-issue-comment") as HTMLTextAreaElement).disabled,
     ).toBe(false);
     expect(
@@ -3648,5 +3795,6 @@ describe("Issue permission separation in the real shared editor", () => {
     ).toBeNull();
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
+    titleScrollHeight.mockRestore();
   });
 });
