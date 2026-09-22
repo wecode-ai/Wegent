@@ -73,6 +73,7 @@ export interface ProjectBoardIssueCardRenderContext {
   onOpen(): void
   /** Present only when the host enabled Issue deletion for this board. */
   onDelete?(): void
+  previewDisabled: boolean
   taskBindings: WorkspaceTaskBinding[]
 }
 
@@ -389,6 +390,7 @@ export function ProjectBoardAdapter({
               issue,
               onOpen: () => onOpen(issue),
               onDelete: cardProps.onArchive,
+              previewDisabled,
               taskBindings: taskBindings.filter(binding => binding.issueId === issue.id),
             })
           ) : runtime ? (

@@ -150,7 +150,7 @@ export interface WorkspaceIssueUpdateInput {
 
 export interface WorkspaceIssueAssignmentInput {
   version: number
-  assigneeType: 'user' | 'agent' | 'team'
+  assigneeType: 'user' | 'agent' | 'team' | 'group'
   assigneeId: string
   notifyAssignee?: boolean
 }

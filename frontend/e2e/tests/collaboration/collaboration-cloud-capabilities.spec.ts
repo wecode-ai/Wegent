@@ -128,7 +128,9 @@ async function createProjectByUi(
   )
 
   await page.getByTestId('collaboration-workspace-project-create').click()
+  await page.getByTestId('collaboration-workspace-project-create-blank').click()
   await page.getByTestId('collaboration-project-name-input').fill(projectName)
+  await page.getByTestId('collaboration-project-create-advanced').click()
   await page
     .getByTestId('collaboration-project-description-input')
     .fill('Created through the shared Collaboration UI.')

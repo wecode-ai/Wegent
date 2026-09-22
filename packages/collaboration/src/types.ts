@@ -235,6 +235,7 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
   owner_name: string
   status: 'available' | 'unavailable'
   execution_environment_ids: string[]
+  project_binding_input?: Record<string, unknown>
 }
 
 export interface CollaborationPlatformResources {
