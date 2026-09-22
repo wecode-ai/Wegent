@@ -44,17 +44,34 @@ def get_public_model_allowed_users(
     return [name.strip() for name in raw if isinstance(name, str) and name.strip()]
 
 
+def is_public_model_whitelist_enabled(json_data: Optional[Dict[str, Any]]) -> bool:
+    """Return whether whitelist-only mode is active for a public model.
+
+    Active when ``spec.allowedUsersEnabled`` is True, or when a non-empty
+    ``spec.allowedUsers`` list exists (backward compatible).
+    """
+    if not isinstance(json_data, dict):
+        return False
+    spec = json_data.get("spec")
+    if not isinstance(spec, dict):
+        return False
+    if spec.get("allowedUsersEnabled") is True:
+        return True
+    return bool(get_public_model_allowed_users(json_data))
+
+
 def is_public_model_allowed_for_user(
     json_data: Optional[Dict[str, Any]], user_name: Optional[str]
 ) -> bool:
     """Return whether the user may see and use the public model.
 
-    A model without an ``allowedUsers`` whitelist is available to everyone;
-    otherwise only users whose ``user_name`` appears in the list qualify.
+    A model without whitelist-only mode is available to everyone. When the
+    mode is active, only users whose ``user_name`` appears in
+    ``allowedUsers`` qualify; an empty list then denies everyone.
     """
-    allowed_users = get_public_model_allowed_users(json_data)
-    if not allowed_users:
+    if not is_public_model_whitelist_enabled(json_data):
         return True
+    allowed_users = get_public_model_allowed_users(json_data)
     return bool(user_name) and user_name in allowed_users
 
 
@@ -233,6 +250,7 @@ class ModelAdapter:
             "costIndex": cost_index,
             "modelCapabilities": model_capabilities,
             "allowedUsers": allowed_users,
+            "allowedUsersEnabled": is_public_model_whitelist_enabled(kind.json),
             "model_category_type": model_category_type,
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,

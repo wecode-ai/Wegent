@@ -551,7 +551,9 @@
       "is_wework_available": "Available in wework",
       "allowed_users": "User whitelist",
       "allowed_users_placeholder": "Enter usernames, separated by commas",
-      "allowed_users_hint": "Only whitelisted users can see and use this model. Leave empty to allow everyone."
+      "allowed_users_hint": "Separate multiple usernames with commas or spaces; a non-empty list also applies when the switch is off",
+      "allowed_users_enabled": "Whitelist only",
+      "allowed_users_enabled_hint": "When enabled, only whitelisted users can see and use this model; an empty list denies everyone"
     },
     "confirm": {
       "delete_title": "Delete Model",

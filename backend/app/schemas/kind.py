@@ -355,6 +355,13 @@ class ModelSpec(BaseModel):
         "non-empty, only the listed users can see and use the model. "
         "Absent or empty means the model is available to everyone.",
     )
+    allowedUsersEnabled: Optional[bool] = Field(
+        None,
+        description="Explicit switch for whitelist-only mode. When True, only "
+        "users listed in allowedUsers can see and use the model, and an empty "
+        "allowedUsers list denies everyone. When absent/False, a non-empty "
+        "allowedUsers list still restricts access (backward compatible).",
+    )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared multimodal capabilities (supportsImage / supportsVideo). "

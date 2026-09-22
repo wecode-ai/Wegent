@@ -797,7 +797,10 @@ class ModelAggregationService:
             )
             if model_dict:
                 allowed_users = model_dict.get("allowedUsers") or []
-                if allowed_users and current_user.user_name not in allowed_users:
+                if (
+                    model_dict.get("allowedUsersEnabled")
+                    and current_user.user_name not in allowed_users
+                ):
                     raise HTTPException(
                         status_code=403,
                         detail=f"Model '{name}' is restricted to whitelisted users",

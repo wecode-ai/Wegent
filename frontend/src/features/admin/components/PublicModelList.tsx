@@ -93,12 +93,37 @@ export const getPublicModelAllowedUsersFromConfig = (value: string): string[] =>
   )
 }
 
+export const getPublicModelAllowedUsersEnabledFromConfig = (value: string): boolean => {
+  const parsed = parsePublicModelConfig(value)
+  if (!parsed || !isJsonObject(parsed.spec)) {
+    return false
+  }
+  return parsed.spec.allowedUsersEnabled === true
+}
+
 export const parseAllowedUsersInput = (value: string): string[] => {
   const names = value
     .split(/[\s,]+/)
     .map(name => name.trim())
     .filter(Boolean)
   return Array.from(new Set(names))
+}
+
+export const setPublicModelAllowedUsersEnabledInConfig = (
+  value: string,
+  enabled: boolean
+): string => {
+  const config = parsePublicModelConfig(value)
+  if (!config) {
+    return value
+  }
+  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
+  if (enabled) {
+    spec.allowedUsersEnabled = true
+  } else {
+    delete spec.allowedUsersEnabled
+  }
+  return JSON.stringify({ ...config, spec }, null, 2)
 }
 
 export const setPublicModelAllowedUsersInConfig = (
@@ -144,6 +169,7 @@ const PublicModelList: React.FC = () => {
     is_advanced: boolean
     is_wework_available: boolean
     allowed_users: string
+    allowed_users_enabled: boolean
   }>({
     name: '',
     namespace: 'default',
@@ -155,6 +181,7 @@ const PublicModelList: React.FC = () => {
     is_advanced: false,
     is_wework_available: false,
     allowed_users: '',
+    allowed_users_enabled: false,
   })
   const [configError, setConfigError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -246,6 +273,11 @@ const PublicModelList: React.FC = () => {
     } else {
       delete spec.allowedUsers
     }
+    if (formData.allowed_users_enabled) {
+      spec.allowedUsersEnabled = true
+    } else {
+      delete spec.allowedUsersEnabled
+    }
 
     nextConfig.spec = spec
     return nextConfig
@@ -265,6 +297,17 @@ const PublicModelList: React.FC = () => {
         : {}),
       ...(configVisibility === undefined ? {} : { is_visible: configVisibility }),
       ...(config ? { allowed_users: getPublicModelAllowedUsersFromConfig(value).join(', ') } : {}),
+      ...(config
+        ? { allowed_users_enabled: getPublicModelAllowedUsersEnabledFromConfig(value) }
+        : {}),
+    }))
+  }
+
+  const handleAllowedUsersEnabledChange = (enabled: boolean) => {
+    setFormData(current => ({
+      ...current,
+      allowed_users_enabled: enabled,
+      config: setPublicModelAllowedUsersEnabledInConfig(current.config, enabled),
     }))
   }
 
@@ -431,6 +474,7 @@ const PublicModelList: React.FC = () => {
       is_advanced: false,
       is_wework_available: false,
       allowed_users: '',
+      allowed_users_enabled: false,
     })
     setConfigError('')
     setSelectedModel(null)
@@ -449,6 +493,9 @@ const PublicModelList: React.FC = () => {
       is_advanced: model.is_advanced ?? false,
       is_wework_available: getSpecBooleanValue(model.json, 'isWeworkAvailable'),
       allowed_users: getPublicModelAllowedUsersFromConfig(JSON.stringify(model.json)).join(', '),
+      allowed_users_enabled: getPublicModelAllowedUsersEnabledFromConfig(
+        JSON.stringify(model.json)
+      ),
     })
     setIsEditDialogOpen(true)
   }
@@ -653,6 +700,22 @@ const PublicModelList: React.FC = () => {
               </div>
             </div>
             <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="allowed-users-enabled">
+                  {t('admin:public_models.form.allowed_users_enabled')}
+                </Label>
+                <Switch
+                  id="allowed-users-enabled"
+                  data-testid="public-model-allowed-users-enabled-switch"
+                  checked={formData.allowed_users_enabled}
+                  onCheckedChange={handleAllowedUsersEnabledChange}
+                />
+              </div>
+              <p className="text-xs text-text-muted">
+                {t('admin:public_models.form.allowed_users_enabled_hint')}
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="allowed-users">{t('admin:public_models.form.allowed_users')}</Label>
               <Input
                 id="allowed-users"
@@ -775,6 +838,22 @@ const PublicModelList: React.FC = () => {
                   placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="edit-allowed-users-enabled">
+                  {t('admin:public_models.form.allowed_users_enabled')}
+                </Label>
+                <Switch
+                  id="edit-allowed-users-enabled"
+                  data-testid="edit-public-model-allowed-users-enabled-switch"
+                  checked={formData.allowed_users_enabled}
+                  onCheckedChange={handleAllowedUsersEnabledChange}
+                />
+              </div>
+              <p className="text-xs text-text-muted">
+                {t('admin:public_models.form.allowed_users_enabled_hint')}
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-allowed-users">

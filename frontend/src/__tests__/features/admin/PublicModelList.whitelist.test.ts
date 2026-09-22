@@ -4,7 +4,9 @@
 
 import {
   getPublicModelAllowedUsersFromConfig,
+  getPublicModelAllowedUsersEnabledFromConfig,
   parseAllowedUsersInput,
+  setPublicModelAllowedUsersEnabledInConfig,
   setPublicModelAllowedUsersInConfig,
 } from '@/features/admin/components/PublicModelList'
 
@@ -52,5 +54,32 @@ describe('PublicModelList user whitelist config synchronization', () => {
   test('leaves invalid JSON unchanged while editing', () => {
     const invalidJson = '{"spec":'
     expect(setPublicModelAllowedUsersInConfig(invalidJson, ['alice'])).toBe(invalidJson)
+  })
+
+  test('reads and writes spec.allowedUsersEnabled', () => {
+    expect(
+      getPublicModelAllowedUsersEnabledFromConfig(
+        JSON.stringify({ kind: 'Model', spec: { allowedUsersEnabled: true } })
+      )
+    ).toBe(true)
+    expect(
+      getPublicModelAllowedUsersEnabledFromConfig(JSON.stringify({ kind: 'Model', spec: {} }))
+    ).toBe(false)
+
+    const enabled = setPublicModelAllowedUsersEnabledInConfig(
+      JSON.stringify({ kind: 'Model', spec: { modelType: 'llm' } }),
+      true
+    )
+    expect(JSON.parse(enabled)).toEqual({
+      kind: 'Model',
+      spec: { modelType: 'llm', allowedUsersEnabled: true },
+    })
+
+    const disabled = setPublicModelAllowedUsersEnabledInConfig(enabled, false)
+    expect(JSON.parse(disabled)).toEqual({
+      kind: 'Model',
+      spec: { modelType: 'llm' },
+    })
+    expect(setPublicModelAllowedUsersEnabledInConfig('{"spec":', true)).toBe('{"spec":')
   })
 })
