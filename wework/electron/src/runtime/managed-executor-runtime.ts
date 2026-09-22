@@ -263,8 +263,8 @@ function prepareCodexAuth(nativeCodexHome: string, managedCodexHome: string): vo
   mkdirSync(managedCodexHome, { recursive: true, mode: 0o700 })
   if (samePath(source, target) || !existsSync(source)) return
   if (existsSync(target)) {
-    // Refresh the managed marker for an existing managed auth (link or copy).
-    writeManagedAuthMarker(managedCodexHome)
+    // An existing target was not created here. Leave it and its marker state
+    // untouched so a user-managed auth file is never reclassified as managed.
     return
   }
   try {

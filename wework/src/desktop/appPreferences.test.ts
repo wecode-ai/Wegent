@@ -24,7 +24,7 @@ const mergedDefaultPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 85,
   experimentalFeaturesEnabled: false,
-  localCodexSubscriptionEnabled: false,
+  localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   supervisorPrinciples: '',
@@ -155,14 +155,14 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
-  test('normalizes the local Codex subscription toggle and defaults to off', async () => {
-    invokeMock.mockResolvedValue({ localCodexSubscriptionEnabled: true })
+  test('normalizes the local Codex subscription toggle and defaults to on', async () => {
+    invokeMock.mockResolvedValue({ localCodexSubscriptionEnabled: false })
 
     const { getAppPreferences } = await import('./appPreferences')
 
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
-      localCodexSubscriptionEnabled: true,
+      localCodexSubscriptionEnabled: false,
     })
 
     invokeMock.mockResolvedValue({ localCodexSubscriptionEnabled: 'yes' })

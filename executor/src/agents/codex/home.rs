@@ -208,6 +208,9 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
                         target.display()
                     )
                 })?;
+                // Clear the marker so a later user-managed auth file is not
+                // mistaken for a wework-managed one.
+                remove_managed_auth_marker(codex_home)?;
             } else if has_managed_auth_marker(codex_home) {
                 // Real file copied by the enabled path on Windows; remove only the
                 // copy wework created, leaving user-managed files untouched.
@@ -237,7 +240,9 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
                 )
             })?;
         } else {
-            write_managed_auth_marker(codex_home)?;
+            // An existing target (link or real file) was not created here; leave
+            // it and its marker state untouched so user-managed auth is never
+            // reclassified as wework-managed.
             return Ok(());
         }
     }

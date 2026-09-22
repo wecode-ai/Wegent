@@ -166,7 +166,7 @@ export const defaultAppPreferences: AppPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
   experimentalFeaturesEnabled: false,
-  localCodexSubscriptionEnabled: false,
+  localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   supervisorPrinciples: '',
