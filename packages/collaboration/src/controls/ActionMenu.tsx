@@ -74,6 +74,7 @@ interface ActionMenuProps {
   contextMenuPosition?: MenuPosition | null;
   width?: number;
   itemClassName?: string;
+  submenuCloseDelayMs?: number;
   onContextMenuClose?: () => void;
   onOpenChange?: (open: boolean) => void;
   showTriggerTooltip?: boolean;
@@ -98,6 +99,7 @@ export function ActionMenu({
   contextMenuPosition,
   width,
   itemClassName,
+  submenuCloseDelayMs = 100,
   onContextMenuClose,
   onOpenChange,
   showTriggerTooltip = true,
@@ -152,10 +154,14 @@ export function ActionMenu({
 
   const scheduleSubmenuClose = useCallback(() => {
     cancelSubmenuClose();
+    if (submenuCloseDelayMs <= 0) {
+      closeSubmenu();
+      return;
+    }
     submenuCloseTimeoutRef.current = window.setTimeout(() => {
       closeSubmenu();
-    }, 100);
-  }, [cancelSubmenuClose, closeSubmenu]);
+    }, submenuCloseDelayMs);
+  }, [cancelSubmenuClose, closeSubmenu, submenuCloseDelayMs]);
 
   const closeMenu = useCallback(
     (restoreFocus = false) => {
@@ -439,10 +445,10 @@ export function ActionMenu({
       }
     };
 
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     return () => {
       window.cancelAnimationFrame(animationFrame);
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
     };
   }, [closeMenu, contextMenuPosition, menuOpen]);
 

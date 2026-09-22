@@ -30,6 +30,7 @@ import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-m
 import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
+import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
@@ -820,6 +821,7 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  registerWorkspaceFileActions(router, () => requiredWindow(window))
   router.register('workspace.openFile', params =>
     openFileInWorkspaceApp(stringParam(params, 'opener'), stringParam(params, 'path'), {
       open: (opener, path) => openLocalWorkspace(opener, path, app.getPath('userData')),

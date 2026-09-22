@@ -17,7 +17,15 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   FileChangesReviewPanel,
@@ -58,10 +66,21 @@ import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/a
 import type { GitPatchAction } from '@/api/environment'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
 import { shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
-import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
+import {
+  FileWorkspacePanel,
+  type FileWorkspacePanelHandle,
+  type FileWorkspacePanelSelection,
+} from './FileWorkspacePanel'
+import {
+  isWorkspaceFileTab,
+  workspaceFileTabLabel,
+  type WorkspaceFileTabId,
+  type WorkspaceFileTabs,
+} from './workspaceFileTabs'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
 import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
@@ -110,6 +129,7 @@ export type RightWorkspacePanelTab =
   | RightWorkspaceHarnessTab
   | RightWorkspaceTerminalTab
   | RightWorkspaceExtensionTab
+  | WorkspaceFileTabId
 export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
 
 function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
@@ -204,6 +224,8 @@ interface RightWorkspacePanelProps {
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   initialFileSelection?: FileWorkspacePanelSelection | null
+  fileTabs?: WorkspaceFileTabs
+  onOpenFileTab?: (target: WorkspaceTarget, path: string) => void
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   planContent?: string | null
@@ -526,6 +548,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   workspaceFileApi,
   openFileRequest,
   initialFileSelection,
+  fileTabs = {},
+  onOpenFileTab,
   workspaceTargetError,
   review,
   planContent,
@@ -567,6 +591,22 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
+  const filePanelRef = useRef<FileWorkspacePanelHandle>(null)
+  const activeFileTab = isWorkspaceFileTab(activeView) ? fileTabs[activeView] : undefined
+  const fileViewActive = activeView === 'files' || Boolean(activeFileTab)
+  const primaryFilePath =
+    openFileRequest?.attachment?.filename ??
+    (initialFileSelection
+      ? initialFileSelection.isDirectory
+        ? undefined
+        : initialFileSelection.path
+      : openFileRequest && !openFileRequest.isDirectory
+        ? openFileRequest.path
+        : undefined)
+  const navigateFromFile = useCallback((action: () => void) => {
+    if (filePanelRef.current) filePanelRef.current.navigate(action)
+    else action()
+  }, [])
   const registeredExtensionTabs = useSyncExternalStore(
     rightWorkspaceDshSidebar.subscribe,
     rightWorkspaceDshSidebar.getTabs,
@@ -607,7 +647,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const availableTabs = allowTemporaryChat
     ? openTabs
     : openTabs.filter(tab => !isRightWorkspaceChatTab(tab))
-  const visibleTabs = canBrowseFiles ? availableTabs : availableTabs.filter(tab => tab !== 'files')
+  const visibleTabs = availableTabs.filter(tab =>
+    isWorkspaceFileTab(tab) ? Boolean(fileTabs[tab]) : canBrowseFiles || tab !== 'files'
+  )
   const showTabs = visibleTabs.length > 0
   const platform = getPlatform()
   const renderTabsInTitlebar =
@@ -683,12 +725,15 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     visible,
   ])
 
-  const closeTab = (tab: RightWorkspacePanelTab) => onCloseTab(tab)
+  const closeTab = (tab: RightWorkspacePanelTab) => {
+    if (tab === activeView) navigateFromFile(() => onCloseTab(tab))
+    else onCloseTab(tab)
+  }
 
   const getTabSelectHandler =
     (tab: RightWorkspacePanelTab): (() => void) =>
     () =>
-      onSelectTab(tab)
+      navigateFromFile(() => onSelectTab(tab))
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     ...workspaceActions,
@@ -773,6 +818,13 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           key={tab}
           tab={tab}
           active={activeView === tab}
+          filePath={
+            isWorkspaceFileTab(tab)
+              ? fileTabs[tab]?.path
+              : tab === 'files'
+                ? primaryFilePath
+                : undefined
+          }
           label={getRightWorkspaceTabLabel(
             tab,
             t,
@@ -892,22 +944,30 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         ) : (
           !isRightWorkspaceChatTab(activeView) &&
           canBrowseFiles &&
-          activeView === 'files' && (
+          fileViewActive && (
             <FileWorkspacePanel
+              ref={filePanelRef}
               key={
-                fileWorkspaceTarget
-                  ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
-                  : 'empty'
+                activeFileTab
+                  ? activeView
+                  : fileWorkspaceTarget
+                    ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
+                    : 'empty'
               }
-              target={fileWorkspaceTarget}
+              target={activeFileTab?.target ?? fileWorkspaceTarget}
               workspaceTargets={fileWorkspaceTargets}
               workspaceFileApi={workspaceFileApi}
-              openFileRequest={openFileRequest}
-              initialSelection={initialFileSelection}
+              openFileRequest={activeFileTab ? undefined : openFileRequest}
+              initialSelection={
+                activeFileTab
+                  ? { path: activeFileTab.path, isDirectory: false }
+                  : initialFileSelection
+              }
               onAddCodeComment={onAddCodeComment}
               onDirtyChange={onFileDirtyChange}
-              onSelectionChange={onFileSelectionChange}
+              onSelectionChange={activeFileTab ? undefined : onFileSelectionChange}
               onSelectWorkspaceTarget={onSelectFileWorkspaceTarget}
+              onOpenFileTab={onOpenFileTab}
             />
           )
         )}
@@ -1139,6 +1199,7 @@ function RightWorkspaceTitleTab({
   tab,
   active,
   label,
+  filePath,
   icon: Icon,
   extensionState,
   iconSrc,
@@ -1150,6 +1211,7 @@ function RightWorkspaceTitleTab({
   tab: RightWorkspacePanelTab
   active: boolean
   label: string
+  filePath?: string
   icon: LucideIcon
   extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
@@ -1172,6 +1234,7 @@ function RightWorkspaceTitleTab({
       data-testid={getRightWorkspaceTabTestId(tab)}
       role="tab"
       aria-selected={active}
+      title={filePath}
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={handleKeyDown}
@@ -1190,15 +1253,21 @@ function RightWorkspaceTitleTab({
         }}
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2 pr-7 text-left"
       >
-        <RightWorkspaceTabIcon
-          icon={Icon}
-          extensionState={extensionState}
-          iconSrc={iconSrc}
-          loading={loading}
-          agentActive={agentActive}
-          testId={getRightWorkspaceTabTestId(tab)}
-        />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {filePath ? (
+          <WorkspaceFileIcon path={filePath} testId={`${getRightWorkspaceTabTestId(tab)}-icon`} />
+        ) : (
+          <RightWorkspaceTabIcon
+            icon={Icon}
+            extensionState={extensionState}
+            iconSrc={iconSrc}
+            loading={loading}
+            agentActive={agentActive}
+            testId={getRightWorkspaceTabTestId(tab)}
+          />
+        )}
+        <span className="min-w-0 flex-1 truncate">
+          {filePath ? workspaceFileTabLabel(filePath) : label}
+        </span>
       </button>
       <span className="pointer-events-none absolute right-1 top-1/2 z-critical flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
         <button
@@ -1463,6 +1532,7 @@ function getRightWorkspaceTabLabel(
 }
 
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
+  if (isWorkspaceFileTab(tab)) return `right-workspace-file-tab-${tab.slice('file:'.length)}`
   if (isRightWorkspaceExtensionTab(tab)) {
     return `right-workspace-extension-tab-${tab.slice('dsh:'.length)}`
   }

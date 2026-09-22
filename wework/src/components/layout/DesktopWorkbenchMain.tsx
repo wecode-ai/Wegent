@@ -1,5 +1,10 @@
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import {
+  isWorkspaceFileTab,
+  workspaceFileTabId,
+  type WorkspaceFileTabs,
+} from './workspace-panels/workspaceFileTabs'
+import {
   memo,
   type MouseEvent as ReactMouseEvent,
   useCallback,
@@ -365,6 +370,7 @@ interface SubagentTranscriptState {
 }
 
 interface WorkbenchPaneWorkspaceState {
+  fileTabs?: WorkspaceFileTabs
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
@@ -489,6 +495,7 @@ function rightPanelTabType(
   tab: RightWorkspacePanelTab
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
+  if (isWorkspaceFileTab(tab)) return 'files'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
   if (isRightWorkspaceHarnessTab(tab) || isRightWorkspaceTerminalTab(tab)) return 'terminal'
   if (tab === 'review' || tab === 'files') return tab
@@ -1686,6 +1693,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(
     () => initialWorkspaceState?.selectedWorkspaceFile ?? null
   )
+  const [fileTabs, setFileTabs] = useState<WorkspaceFileTabs>(
+    () => initialWorkspaceState?.fileTabs ?? {}
+  )
   const [reviewState, setReviewState] = useState<DesktopReviewState>(
     () =>
       initialWorkspaceState?.reviewState ?? {
@@ -1806,6 +1816,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       reviewState,
       selectedFileWorkspaceTargetKey,
       selectedWorkspaceFile,
+      fileTabs,
       sourceBrowserLabel: defaultEmbeddedBrowserLabel,
     })
   }, [
@@ -1823,6 +1834,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reviewState,
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
+    fileTabs,
   ])
   const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
     id: number
@@ -1997,7 +2009,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(
-      workspaceProject || openFileRequest?.target || openFileRequest?.attachment
+      workspaceProject ||
+      openFileRequest?.target ||
+      openFileRequest?.attachment ||
+      Object.keys(fileTabs).length
     )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
@@ -2021,6 +2036,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [
     openFileRequest?.target,
     openFileRequest?.attachment,
+    fileTabs,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
@@ -2140,7 +2156,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       : null
   const canBrowseFiles = Boolean(
-    workspaceProject || openFileRequest?.target || openFileRequest?.attachment
+    workspaceProject ||
+    openFileRequest?.target ||
+    openFileRequest?.attachment ||
+    Object.keys(fileTabs).length
   )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
@@ -3871,6 +3890,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (tab === 'files') {
       setOpenFileRequest(null)
     }
+    if (isWorkspaceFileTab(tab)) {
+      setFileTabs(current => {
+        const next = { ...current }
+        delete next[tab]
+        return next
+      })
+    }
     if (browserState?.developmentPreview) {
       smartAppDevelopmentPreviewRequestsRef.current.set(
         tab as RightWorkspaceBrowserTab,
@@ -4138,8 +4164,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (target: WorkspaceTarget) => {
       setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
       setOpenFileRequest(null)
+      openRightPanelTab('files')
     },
-    [setOpenFileRequest]
+    [setOpenFileRequest, openRightPanelTab]
+  )
+  const openFileTab = useCallback(
+    (target: WorkspaceTarget, path: string) => {
+      const tab = workspaceFileTabId(target, path)
+      if (
+        rightPanelTabs.includes('files') &&
+        selectedWorkspaceFile &&
+        !selectedWorkspaceFile.isDirectory &&
+        workspaceFileTabId(selectedWorkspaceFile.target, selectedWorkspaceFile.path) === tab
+      ) {
+        openRightPanelTab('files')
+        return
+      }
+      setFileTabs(current => (current[tab] ? current : { ...current, [tab]: { target, path } }))
+      openRightPanelTab(tab)
+    },
+    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile]
   )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
@@ -4200,7 +4244,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         logFilePreviewDiagnostic(traceId, 'message_link_click', pathMetadata)
         scheduleFilePreviewMainThreadProbe(traceId, 'message_link_click')
         const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
-        const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
+        const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
+          workspaceTargets: fileWorkspaceTargets,
+        })
         let localTarget =
           attachmentTarget ??
           (absoluteLocalTarget &&
@@ -4222,10 +4268,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
         }
         if (localTarget && isDirectory) {
-          localTarget = {
-            ...localTarget,
-            path: trimmedPath.replace(/\\/g, '/').replace(/\/+$/, '') || '/',
-          }
+          localTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
+            workspaceTargets: attachmentTarget ? [] : fileWorkspaceTargets,
+            isDirectory: true,
+          })
         }
         setOpenFileRequest(current => ({
           id: (current?.id ?? 0) + 1,
@@ -4251,6 +4297,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       devices,
       effectiveWorkspaceTarget,
+      fileWorkspaceTargets,
       getDeviceHomeDirectory,
       openRightPanelTab,
       setOpenFileRequest,
@@ -5625,6 +5672,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               initialFileSelection={initialFileWorkspaceSelection}
+              fileTabs={fileTabs}
+              onOpenFileTab={openFileTab}
               workspaceTargetError={
                 openFileRequest?.target || openFileRequest?.attachment ? null : workspaceTargetError
               }

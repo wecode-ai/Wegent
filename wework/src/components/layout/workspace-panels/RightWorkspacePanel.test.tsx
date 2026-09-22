@@ -1,7 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { RightWorkspacePanel } from './RightWorkspacePanel'
+import { workspaceFileTabId } from './workspaceFileTabs'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 
 vi.mock('./WorkspaceBrowserPanelContainer', () => ({
   WorkspaceBrowserPanel: ({
@@ -105,4 +107,87 @@ describe('RightWorkspacePanel workspace target errors', () => {
 
     expect(screen.getByTestId('workspace-target-error')).toHaveTextContent('Workspace is not ready')
   })
+})
+
+describe('RightWorkspacePanel file tab labels', () => {
+  test('shows the current file name and type icon on the original and additional tabs', () => {
+    const target: WorkspaceTarget = {
+      deviceId: 'fixture-device',
+      path: '/fixture/repo',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    const path = '/fixture/repo/main.ts'
+    const tab = workspaceFileTabId(target, path)
+    renderPanel({
+      openTabs: ['files', tab, 'browser:1'],
+      initialFileSelection: { path: '/fixture/repo/api.py', isDirectory: false },
+      fileTabs: { [tab]: { target, path } },
+    })
+    const pythonTab = screen.getByRole('tab', { name: /api.py/ })
+    expect(pythonTab).toHaveAttribute('title', '/fixture/repo/api.py')
+    expect(within(pythonTab).getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
+      'data-file-icon',
+      'python'
+    )
+    const tsTab = screen.getByRole('tab', { name: /main.ts/ })
+    expect(tsTab.querySelector('[data-file-icon="typescript"] path')).not.toBeNull()
+  })
+
+  test('shows the requested file before the initial preview selection is ready', () => {
+    renderPanel({
+      openTabs: ['files', 'browser:1'],
+      openFileRequest: { id: 1, path: '/fixture/repo/api.py' },
+    })
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveTextContent('api.py')
+    expect(screen.getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
+      'data-file-icon',
+      'python'
+    )
+  })
+
+  test('uses the actual selected file after a directory open request', () => {
+    renderPanel({
+      openTabs: ['files', 'browser:1'],
+      initialFileSelection: { path: '/fixture/repo/api.py', isDirectory: false },
+      openFileRequest: { id: 1, path: '/fixture/repo', isDirectory: true },
+    })
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveTextContent('api.py')
+    expect(screen.getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
+      'data-file-icon',
+      'python'
+    )
+  })
+
+  test('an attachment replaces the previous selection in the file tab title', () => {
+    renderPanel({
+      openTabs: ['files', 'browser:1'],
+      initialFileSelection: { path: '/fixture/repo/api.py', isDirectory: false },
+      openFileRequest: {
+        id: 1,
+        path: 'report.md',
+        attachment: {
+          filename: 'report.md',
+          contentType: 'text/markdown',
+          loadFile: async () => new Blob(),
+        },
+      },
+    })
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveTextContent('report.md')
+    expect(screen.getByTestId('right-workspace-file-tab-icon')).toHaveAttribute(
+      'data-file-icon',
+      'markdown'
+    )
+  })
+
+  test.each([null, { path: '/fixture/repo', isDirectory: true }])(
+    'keeps the generic tab only when no file is selected: %j',
+    initialFileSelection => {
+      renderPanel({ openTabs: ['files', 'browser:1'], initialFileSelection })
+      expect(screen.getByTestId('right-workspace-file-tab-icon')).not.toHaveAttribute(
+        'data-file-icon'
+      )
+      expect(screen.getByTestId('right-workspace-file-tab')).not.toHaveAttribute('title')
+    }
+  )
 })

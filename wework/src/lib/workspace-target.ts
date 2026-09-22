@@ -13,6 +13,10 @@ import {
 } from '@/lib/project-workspace'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isAbsoluteWorkspacePath } from '@/lib/workspace-paths'
+import {
+  normalizeAbsoluteWorkspacePath,
+  splitAbsoluteWorkspaceFilePath,
+} from '@/lib/workspace-file-contract'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
@@ -50,20 +54,38 @@ export interface RuntimeTaskSource {
 
 export function createLocalFileWorkspaceTarget(
   filePath: string,
-  devices: DeviceInfo[]
+  devices: DeviceInfo[],
+  options: { workspaceTargets?: WorkspaceTarget[]; isDirectory?: boolean } = {}
 ): WorkspaceTarget | null {
-  const normalizedPath = filePath.trim().replace(/\\/g, '/')
-  if (!isAbsoluteWorkspacePath(normalizedPath)) return null
+  if (!isAbsoluteWorkspacePath(filePath.trim().replace(/\\/g, '/'))) return null
+  const normalizedPath = normalizeAbsoluteWorkspacePath(
+    filePath,
+    'Workspace file path must be absolute'
+  )
 
-  const separatorIndex = normalizedPath.lastIndexOf('/')
-  const parentPath = separatorIndex > 0 ? normalizedPath.slice(0, separatorIndex) : '/'
-  const directoryPath = /^[a-zA-Z]:$/.test(parentPath) ? `${parentPath}/` : parentPath
   const deviceId = resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)
   if (!deviceId) return null
 
+  const matchingRoot = (options.workspaceTargets ?? [])
+    .filter(target => target.deviceId === deviceId && target.workspaceSource !== 'remote')
+    .map(target => ({
+      target,
+      root: normalizeAbsoluteWorkspacePath(target.path, 'Workspace root must be absolute'),
+    }))
+    .filter(({ root }) => {
+      const windows = /^[a-z]:\//i.test(root) || root.startsWith('//')
+      const path = windows ? normalizedPath.toLowerCase() : normalizedPath
+      const comparableRoot = windows ? root.toLowerCase() : root
+      return path === comparableRoot || path.startsWith(`${comparableRoot.replace(/\/+$/, '')}/`)
+    })
+    .sort((left, right) => right.root.length - left.root.length)[0]
+  if (matchingRoot) return { ...matchingRoot.target, workspaceSource: 'local' }
+
   return {
     deviceId,
-    path: directoryPath,
+    path: options.isDirectory
+      ? normalizedPath
+      : splitAbsoluteWorkspaceFilePath(normalizedPath).parentPath,
     source: 'runtime',
     workspaceSource: 'local',
   }
