@@ -546,9 +546,16 @@ class MilvusBackend(BaseStorageBackend):
 
     @staticmethod
     def _embeddable_nodes(nodes: List[BaseNode]) -> List[BaseNode]:
-        """Return the nodes that carry content and therefore reach the provider."""
+        """Return the nodes that carry retrieval text and reach the provider.
+
+        Metadata alone never makes a node embeddable: embedding it would send a
+        metadata-only text and let the configured default dimension create the
+        collection this guard exists to prevent.
+        """
         return [
-            node for node in nodes if node.get_content(metadata_mode=MetadataMode.EMBED)
+            node
+            for node in nodes
+            if node.get_content(metadata_mode=MetadataMode.NONE).strip()
         ]
 
     def _collection_snapshot(self, collection_name: str) -> CollectionSnapshot:

@@ -397,6 +397,44 @@ class TestEmbeddingDimensionContract:
         mock_milvus_vs.assert_not_called()
         mock_vs_index.assert_not_called()
 
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_with_metadata_only_nodes_never_touches_the_collection(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        """Metadata is not content, so an empty node must not create a collection."""
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = collection_description(768)
+
+        chunk_metadata = self._chunk_metadata()
+        nodes = chunk_metadata.apply_to_nodes([TextNode(text="")])
+        embed_model = StubEmbeddingModel(declared_dimension=None, vector_dimension=4)
+
+        result = self._backend().index_with_metadata(
+            nodes=nodes,
+            chunk_metadata=chunk_metadata,
+            embed_model=embed_model,
+        )
+
+        assert result == {
+            "indexed_count": 0,
+            "index_name": "test_kb_kb_1",
+            "status": "success",
+        }
+        assert embed_model.text_batches == []
+        client.has_collection.assert_not_called()
+        client.describe_collection.assert_not_called()
+        mock_milvus_vs.assert_not_called()
+        mock_vs_index.assert_not_called()
+
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_keyword_queries_ignore_the_stored_dimension(
