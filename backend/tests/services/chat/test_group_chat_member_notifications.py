@@ -26,7 +26,10 @@ COPIED_TASK_ID = 316109593138700
 
 
 class _RecordingEmitter:
+    """Emitter stub that records the notified user ids."""
+
     def __init__(self) -> None:
+        """Initialize the recorder."""
         self.notified: list[int] = []
 
     async def emit_group_chat_new_message(
@@ -37,10 +40,12 @@ class _RecordingEmitter:
         status: str,
         progress: int = 0,
     ) -> None:
+        """Record one notification target."""
         self.notified.append(user_id)
 
 
 def _member(entity_id: int, *, copied_resource_id: int = 0) -> ResourceMember:
+    """Build an approved ResourceMember row for the task under test."""
     return ResourceMember(
         resource_type=ResourceType.TASK.value,
         resource_id=TASK_ID,
@@ -53,6 +58,7 @@ def _member(entity_id: int, *, copied_resource_id: int = 0) -> ResourceMember:
 
 
 def _task() -> TaskResource:
+    """Build a minimal Task resource the notifier can parse."""
     return TaskResource(
         id=TASK_ID,
         user_id=OWNER_ID,
@@ -76,6 +82,7 @@ def _task() -> TaskResource:
 
 
 def _record_emitter(monkeypatch: pytest.MonkeyPatch) -> _RecordingEmitter:
+    """Patch the emitter factory with a recording stub."""
     emitter = _RecordingEmitter()
     monkeypatch.setattr(
         "app.services.chat.webpage_ws_extended_emitter.get_extended_emitter",
@@ -88,6 +95,7 @@ def _record_emitter(monkeypatch: pytest.MonkeyPatch) -> _RecordingEmitter:
 async def test_share_recipient_is_not_notified(
     test_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Share copies are not subscribed to the original task's updates."""
     test_db.add_all(
         [
             _member(MEMBER_ID),
@@ -106,6 +114,7 @@ async def test_share_recipient_is_not_notified(
 async def test_direct_member_is_notified_but_sender_is_skipped(
     test_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Direct members are notified; the sender and the owner as sender are not."""
     test_db.add_all([_member(MEMBER_ID), _member(OTHER_MEMBER_ID)])
     test_db.commit()
     emitter = _record_emitter(monkeypatch)

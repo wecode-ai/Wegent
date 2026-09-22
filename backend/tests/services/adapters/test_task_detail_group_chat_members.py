@@ -30,6 +30,7 @@ def _member(
     copied_resource_id: int = 0,
     status: str = MemberStatus.APPROVED.value,
 ) -> ResourceMember:
+    """Build an approved ResourceMember row for the task under test."""
     return ResourceMember(
         resource_type=ResourceType.TASK.value,
         resource_id=TASK_ID,
@@ -42,6 +43,7 @@ def _member(
 
 
 def _task_detail(db: Session) -> dict:
+    """Run the detail helper and return the mutated task dict."""
     task_dict: dict = {"user_id": OWNER_ID}
     add_group_chat_info_to_task(
         db, task_id=TASK_ID, task_dict=task_dict, user_id=OWNER_ID
@@ -64,6 +66,7 @@ def test_share_recipient_does_not_mark_task_as_group_chat(test_db: Session) -> N
 
 @pytest.mark.unit
 def test_direct_member_marks_task_as_group_chat(test_db: Session) -> None:
+    """A real member still turns the task into a group chat."""
     test_db.add(_member(RECIPIENT_ID))
     test_db.commit()
 
@@ -75,6 +78,7 @@ def test_direct_member_marks_task_as_group_chat(test_db: Session) -> None:
 
 @pytest.mark.unit
 def test_member_count_ignores_share_recipients(test_db: Session) -> None:
+    """member_count only counts direct members, not share copies."""
     test_db.add_all(
         [
             _member(RECIPIENT_ID),
@@ -91,6 +95,7 @@ def test_member_count_ignores_share_recipients(test_db: Session) -> None:
 
 @pytest.mark.unit
 def test_pending_member_is_not_a_group_chat_member(test_db: Session) -> None:
+    """Only approved members count."""
     test_db.add(_member(RECIPIENT_ID, status=MemberStatus.PENDING.value))
     test_db.commit()
 
