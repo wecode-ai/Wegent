@@ -120,6 +120,10 @@ You'll see a unified model list showing both public (system) and your personal m
 | **Base URL** | No | Custom endpoint (for proxies) |
 | **Wework Available** | No | Whether the model is shown in the wework desktop model list |
 
+Expand **Advanced Model Configuration** to add a JSON object whose fields are merged into the Model CRD at `spec.modelConfig.env`. Use it for optional capabilities that do not yet have dedicated form controls. For example, an OpenAI-compatible model that rejects the `developer` message role can use `{"supports_developer_role": false}`.
+
+The regular form continues to own `model`, `model_id`, `api_key`, `base_url`, `custom_headers`, and thinking configuration, so advanced JSON cannot override them. When an existing model is edited, other unknown fields are loaded and preserved, including nested objects and values such as `false` and `0`. A newly stored field still needs corresponding Backend or Executor support before it can change runtime behavior.
+
 The selected provider is persisted as `spec.protocol`, and the corresponding API format (e.g. `chat/completions` for OpenAI Chat Completions, `responses` for OpenAI Responses) is persisted as `spec.apiFormat`. The **Wework Available** toggle controls `spec.isWeworkAvailable`; only models marked as available are distributed to the wework desktop client.
 
 ### Step 3: Configure Model Details

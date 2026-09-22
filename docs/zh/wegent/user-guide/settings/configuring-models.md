@@ -481,6 +481,12 @@ sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   - 使用可见性切换按钮 (👁️) 显示/隐藏密钥
 - **Base URL**: 可选的自定义 API 端点 (用于代理或自托管服务)
 
+**高级模型配置**:
+- 展开 **高级模型配置**，可以输入一个 JSON 对象；保存后其中的字段会合并到 Model CRD 的 `spec.modelConfig.env`。
+- 该入口适合配置表单暂未提供的可选能力，例如不接受 `developer` 消息角色的 OpenAI 兼容模型可填写 `{"supports_developer_role": false}`。
+- `model`、`model_id`、`api_key`、`base_url`、`custom_headers` 和 thinking 配置仍由普通表单管理，不能在高级 JSON 中覆盖。
+- 编辑已有模型时，界面会读取并保留其他未知字段，包括嵌套对象以及 `false`、`0` 等值；新增字段如需影响运行时行为，仍需对应的后端或执行器支持。
+
 选择的提供商会保存为 `spec.protocol`，对应的 API 格式（例如 OpenAI Chat Completions 保存为 `chat/completions`，OpenAI Responses 保存为 `responses`）会保存为 `spec.apiFormat`。如果界面提供 **Wework 可用** 开关，它会控制 `spec.isWeworkAvailable`，只有标记为可用的模型才会分发到 wework 桌面客户端。
 
 #### 步骤 3: 测试连接
