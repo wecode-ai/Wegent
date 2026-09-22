@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
 import type { RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import type { ProcessingBlock, SubagentBlock } from './types'
@@ -20,7 +20,9 @@ import {
   isContextCompactionToolBlock,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
-import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { usePersistentDisclosure } from './disclosureState'
+import { processingSummaryDisclosureKey } from './disclosureKeys'
+import { useReaderDisclosure } from '../ReaderDisclosure'
 import { getDurationText } from './processingDuration'
 import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
 import { SubagentActivityGroup } from './SubagentBlockItem'
@@ -62,7 +64,7 @@ interface ToolBlocksDisplayProps {
   showInterToolThinking?: boolean
   thinkingContent?: string
   showSummary?: boolean
-  stateKey?: string
+  disclosureScope?: string
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -82,7 +84,7 @@ export function ToolBlocksDisplay({
   showInterToolThinking = false,
   thinkingContent = '',
   showSummary = true,
-  stateKey,
+  disclosureScope,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -92,11 +94,18 @@ export function ToolBlocksDisplay({
   onOpenSubagent,
 }: ToolBlocksDisplayProps) {
   const { t } = useConversationTranslation()
+  const reportReaderDisclosure = useReaderDisclosure()
+  // A process section belongs to a message, so the message identity is the scope of what
+  // the reader opens inside it. A section rendered on its own (a preview or a test) owns
+  // its disclosures for its own lifetime instead of borrowing an identity that would be
+  // shared with whatever renders the same block elsewhere.
+  const fallbackScope = useId()
+  const sectionScope = disclosureScope ?? fallbackScope
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const isRunning =
     (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
-  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
-    stateKey ? `${stateKey}:processing` : undefined
+  const [userExpanded, setUserExpanded] = usePersistentDisclosure(
+    processingSummaryDisclosureKey(sectionScope, blocks[0]?.id)
   )
   const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
   const [mountedAt] = useState(() => Date.now())
@@ -252,6 +261,7 @@ export function ToolBlocksDisplay({
   )
   const summaryExpanded = expanded || previewRows.length > 0
   const toggleSummary = () => {
+    reportReaderDisclosure()
     if (hasLivePreview) {
       setLivePreviewCollapsed(value => !value)
       return
@@ -330,7 +340,7 @@ export function ToolBlocksDisplay({
               <ToolBlockItem
                 key={item.id}
                 block={item.block}
-                stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
+                disclosureScope={sectionScope}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 fileEditDurations={fileEditDurations}
@@ -347,8 +357,8 @@ export function ToolBlocksDisplay({
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
-      stateKey,
       onOpenSubagent,
+      sectionScope,
     ]
   )
 
@@ -389,7 +399,7 @@ export function ToolBlocksDisplay({
           thinkingContent={thinkingContent}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
-          stateKey={stateKey}
+          disclosureScope={sectionScope}
           onOpenSubagent={onOpenSubagent}
         />
       ) : null}

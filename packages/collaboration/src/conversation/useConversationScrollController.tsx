@@ -235,7 +235,15 @@ export function useConversationScrollController({
     scroller.style.overflowAnchor = 'none'
   }, [bottomOrigin, clearScheduledScrolls, currentScrollKey, releasePendingLayoutScrollPosition])
 
-  const preserveUserMessagePosition = useCallback(() => {
+  /**
+   * Claims the viewport for a disclosure the reader opened or closed themselves.
+   *
+   * Growing the conversation is not by itself a reason to move the reader, but the content
+   * they just revealed is not the content they were reading either: the layout change is
+   * theirs, so their place stands and the follow engine hands the viewport back until they
+   * return to the bottom.
+   */
+  const preserveReaderPositionForDisclosure = useCallback(() => {
     preserveScrollPositionForNextLayout()
     const scroller = activeScrollRefRef.current.current
     const pending = pendingLayoutScrollPositionRef.current
@@ -791,7 +799,7 @@ export function useConversationScrollController({
     isTurnNavigationAutoScrollSuspended,
     releasePendingLayoutScrollPosition,
     preserveScrollPositionForNextLayout,
-    preserveUserMessagePosition,
+    preserveReaderPositionForDisclosure,
     handleTurnNavigationScrollTargetChange,
     handleTurnNavigationLoadStateChange,
     renderTranscriptGapAfterMessage,

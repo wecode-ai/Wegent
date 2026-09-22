@@ -24,7 +24,8 @@ import { AssistantThinkingIndicator } from "./AssistantThinkingIndicator";
 import { ToolBlocksDisplay } from "./blocks/ToolBlocksDisplay";
 import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
 import { ProcessingDurationLabel } from "./ProcessingDurationLabel";
-import { usePersistentProcessingExpansion } from "./blocks/processingExpansionState";
+import { usePersistentDisclosure } from "./blocks/disclosureState";
+import { messageDisclosureKey } from "./blocks/disclosureKeys";
 import { WebSearchSourcesChip } from "./blocks/WebSearchSources";
 import { getWebSearchSourceItems } from "./blocks/webSearchActivity";
 import { CodexMemoryCitations, CodexReferenceList } from "./CodexTurnArtifacts";
@@ -164,7 +165,9 @@ export function AssistantMessage({
     message,
   );
   const [finalProcessingExpanded, setFinalProcessingExpanded] =
-    usePersistentProcessingExpansion(`${processingStateKey}:final-processing`);
+    usePersistentDisclosure(
+      messageDisclosureKey(processingStateKey, "final-processing"),
+    );
   const isProcessingOnlyBeforeGuidance =
     Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent;
   const hasPlanResponse = displayBlocks.some(
@@ -265,7 +268,7 @@ export function AssistantMessage({
           }
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === "tool"}
-          stateKey={`${processingStateKey}:${index}`}
+          disclosureScope={processingStateKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -323,7 +326,7 @@ export function AssistantMessage({
                 }
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
-                stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                disclosureScope={processingStateKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -450,6 +453,7 @@ export function AssistantMessage({
             <CodexMemoryCitations
               citations={memoryCitations}
               onOpenFile={onOpenWorkspaceFile}
+              disclosureScope={processingStateKey}
             />
           )}
           {canShowFinalArtifacts &&
@@ -458,6 +462,7 @@ export function AssistantMessage({
               <CodexReferenceList
                 references={references}
                 onOpenFile={openFileFromLink}
+                disclosureScope={processingStateKey}
               />
             )}
           {message.status === "failed" && (
@@ -477,6 +482,7 @@ export function AssistantMessage({
           onRevertFileChanges ? (
             <FileChangesCard
               subtaskId={message.subtaskId}
+              disclosureScope={processingStateKey}
               summary={message.fileChanges}
               deviceOnline={devices.some(
                 (device) =>

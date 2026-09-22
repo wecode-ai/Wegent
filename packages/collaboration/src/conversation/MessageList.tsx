@@ -53,7 +53,6 @@ export interface MessageListProps {
   turns?: RuntimeConversationTurn[];
   scrollElementRef?: RefObject<HTMLDivElement | null>;
   initialDistanceFromBottomPx?: number;
-  onBeforeUserMessageToggle?: () => void;
   onVirtualLayoutChange?: () => void;
   className?: string;
   conversationKey?: string | number | null;
@@ -139,7 +138,6 @@ export const MessageList = memo(function MessageList({
   turns = [],
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
-  onBeforeUserMessageToggle,
   onVirtualLayoutChange,
   className,
   conversationKey,
@@ -620,7 +618,6 @@ export const MessageList = memo(function MessageList({
               <UserMessage
                 services={userMessageServices}
                 message={message}
-                onBeforeToggle={onBeforeUserMessageToggle}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenLocalSkillFile={onOpenLocalSkillFile}
                 editable={message.id === editableLastUserMessageId}
@@ -811,9 +808,6 @@ function areMessageListPropsEqual(
     previous.bottomOrigin !== next.bottomOrigin ? "bottomOrigin" : null,
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? "initialDistanceFromBottomPx"
-      : null,
-    previous.onBeforeUserMessageToggle !== next.onBeforeUserMessageToggle
-      ? "onBeforeUserMessageToggle"
       : null,
     previous.onVirtualLayoutChange !== next.onVirtualLayoutChange
       ? "onVirtualLayoutChange"

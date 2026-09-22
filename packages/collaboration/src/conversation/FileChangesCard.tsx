@@ -18,9 +18,13 @@ import {
   FileChangeSummaryTrigger,
   FileChangesStats,
 } from "./FileChangesPreview";
+import { usePersistentDisclosure } from "./blocks/disclosureState";
+import { messageDisclosureKey } from "./blocks/disclosureKeys";
+import { useReaderDisclosure } from "./ReaderDisclosure";
 const DEFAULT_VISIBLE_FILE_COUNT = 3;
 interface FileChangesCardProps {
   subtaskId: string;
+  disclosureScope?: string;
   summary: TurnFileChangesSummary;
   deviceOnline: boolean;
   diffPreviewDisabled?: boolean;
@@ -48,6 +52,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export function FileChangesCard({
   subtaskId,
+  disclosureScope,
   summary,
   deviceOnline,
   diffPreviewDisabled,
@@ -56,7 +61,10 @@ export function FileChangesCard({
   onOpenReview,
 }: FileChangesCardProps) {
   const { t } = useConversationTranslation();
-  const [expanded, setExpanded] = useState(false);
+  const reportReaderDisclosure = useReaderDisclosure();
+  const [expanded, setExpanded] = usePersistentDisclosure(
+    messageDisclosureKey(disclosureScope, "file-changes-list"),
+  );
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [actionError, setActionError] = useState<string>();
@@ -207,7 +215,10 @@ export function FileChangesCard({
             type="button"
             data-testid="toggle-file-changes-button"
             aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => {
+              reportReaderDisclosure();
+              setExpanded((value) => !value);
+            }}
             className="flex h-8 w-full items-center gap-1 px-4 text-xs font-medium text-text-secondary hover:bg-muted"
           >
             <span>

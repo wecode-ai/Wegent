@@ -1,5 +1,5 @@
 import { useToolInteractionServices } from "../ToolInteractionServices";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useConversationTranslation } from "../ConversationTranslation";
 import type { ProcessingBlock, SubagentBlock } from "./types";
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../../markdown/MarkdownServices";
@@ -9,7 +9,9 @@ import {
   AssistantPlanCard,
   type AssistantPlanOpenRequest,
 } from "../AssistantPlanCard";
-import { usePersistentProcessingExpansion } from "./processingExpansionState";
+import { usePersistentDisclosure } from "./disclosureState";
+import { processingBlockDisclosureKey } from "./disclosureKeys";
+import { useReaderDisclosure } from "../ReaderDisclosure";
 import {
   ProcessFileChangesBlockItem,
   type FileEditDurationsByBlock,
@@ -31,13 +33,12 @@ interface ToolBlockItemProps {
   durationEndAt?: number;
   fileEditDurations?: FileEditDurationsByBlock;
   forceExpanded?: boolean;
-  stateKey?: string;
+  disclosureScope?: string;
   onOpenWorkspaceFile?: (
     path: string,
     options?: WorkspaceFileOpenOptions,
   ) => void;
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void;
-  onExpandedChange?: (expanded: boolean) => void;
 }
 
 export function ToolBlockItem({
@@ -47,15 +48,16 @@ export function ToolBlockItem({
   durationEndAt,
   fileEditDurations,
   forceExpanded = false,
-  stateKey,
+  disclosureScope,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
-  onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useConversationTranslation();
   const interactions = useToolInteractionServices();
-  const [userExpanded, setUserExpanded] =
-    usePersistentProcessingExpansion(stateKey);
+  const [userExpanded, setUserExpanded] = usePersistentDisclosure(
+    processingBlockDisclosureKey(disclosureScope, block.id),
+  );
+  const reportReaderDisclosure = useReaderDisclosure();
   const isRunning = block.status !== "done" && block.status !== "error";
   const reconnectingBlockId =
     block.type === "tool" &&
@@ -75,9 +77,10 @@ export function ToolBlockItem({
   const hasDetail = block.type === "tool" && hasBlockDetail(block);
   const expanded = hasDetail && (forceExpanded || userExpanded);
 
-  useLayoutEffect(() => {
-    if (block.type === "tool") onExpandedChange?.(expanded);
-  }, [block.type, expanded, onExpandedChange]);
+  const toggleDetail = () => {
+    reportReaderDisclosure();
+    setUserExpanded((value) => !value);
+  };
 
   if (block.type === "thinking") {
     return null;
@@ -101,7 +104,7 @@ export function ToolBlockItem({
       <ProcessFileChangesBlockItem
         block={block}
         fileEditDurations={fileEditDurations}
-        onExpandedChange={onExpandedChange}
+        disclosureScope={disclosureScope}
       />
     );
   }
@@ -204,7 +207,7 @@ export function ToolBlockItem({
             type="button"
             data-tool-detail-toggle
             aria-expanded={expanded}
-            onClick={() => setUserExpanded((value) => !value)}
+            onClick={toggleDetail}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
             {labelContent}
@@ -218,7 +221,7 @@ export function ToolBlockItem({
           <button
             type="button"
             data-tool-detail-toggle
-            onClick={() => setUserExpanded((value) => !value)}
+            onClick={toggleDetail}
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={expanded ? "收起工具详情" : "展开工具详情"}
             aria-expanded={expanded}

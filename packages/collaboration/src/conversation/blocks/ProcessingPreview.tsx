@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, TransitionEvent } from "react";
 import {
   ChevronDown,
@@ -18,6 +18,8 @@ import {
   type ProcessingDisplayRow,
 } from "./toolBlockActivity";
 import { SubagentActivityGroup } from "./SubagentBlockItem";
+import { useAnyDisclosureOpen } from "./disclosureState";
+import { getRowDisclosureKeys } from "./disclosureKeys";
 import { type ToolActivityLabels } from "./processingDisplayTypes";
 import {
   countProcessingActivityKinds,
@@ -146,7 +148,7 @@ export function LiveProcessingPreview({
   thinkingContent,
   onOpenWorkspaceFile,
   fileEditDurations,
-  stateKey,
+  disclosureScope,
   onOpenSubagent,
 }: {
   rows: ProcessingDisplayRow[];
@@ -154,30 +156,24 @@ export function LiveProcessingPreview({
   thinkingContent: string;
   onOpenWorkspaceFile?: (path: string) => void;
   fileEditDurations: FileEditDurationsByBlock;
-  stateKey?: string;
+  disclosureScope?: string;
   onOpenSubagent?: (block: SubagentBlock) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(
-    () => new Set(),
+  const rowDisclosureKeys = useMemo(
+    () => getRowDisclosureKeys(disclosureScope, rows),
+    [disclosureScope, rows],
   );
-  const hasExpandedDetail = rows.some((row) => expandedRowIds.has(row.id));
+  // Whether the reader has anything open inside is read from the same store the rows keep
+  // their state in, so the cap lifts again on the first frame after a remount instead of
+  // waiting for a row to report itself back.
+  const hasExpandedDetail = useAnyDisclosureOpen(rowDisclosureKeys);
 
-  const updateExpandedRow = useCallback((rowId: string, expanded: boolean) => {
-    setExpandedRowIds((current) => {
-      if (current.has(rowId) === expanded) return current;
-      const next = new Set(current);
-      if (expanded) next.add(rowId);
-      else next.delete(rowId);
-      return next;
-    });
-    if (!expanded) {
-      requestAnimationFrame(() => {
-        const scrollArea = scrollRef.current;
-        if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
-      });
-    }
-  }, []);
+  useLayoutEffect(() => {
+    if (hasExpandedDetail) return;
+    const scrollArea = scrollRef.current;
+    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
+  }, [hasExpandedDetail]);
 
   useLayoutEffect(() => {
     const scrollArea = scrollRef.current;
@@ -205,8 +201,7 @@ export function LiveProcessingPreview({
             row={row}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             fileEditDurations={fileEditDurations}
-            onExpandedChange={updateExpandedRow}
-            stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+            disclosureScope={disclosureScope}
             onOpenSubagent={onOpenSubagent}
           />
         ))}
@@ -232,8 +227,7 @@ function LiveProcessingPreviewRow({
   durationEndAt,
   fileEditDurations,
   onOpenWorkspaceFile,
-  onExpandedChange,
-  stateKey,
+  disclosureScope,
   onOpenSubagent,
 }: {
   row: ProcessingDisplayRow;
@@ -241,15 +235,9 @@ function LiveProcessingPreviewRow({
   durationEndAt?: number;
   fileEditDurations: FileEditDurationsByBlock;
   onOpenWorkspaceFile?: (path: string) => void;
-  onExpandedChange: (rowId: string, expanded: boolean) => void;
-  stateKey?: string;
+  disclosureScope?: string;
   onOpenSubagent?: (block: SubagentBlock) => void;
 }) {
-  const handleExpandedChange = useCallback(
-    (expanded: boolean) => onExpandedChange(row.id, expanded),
-    [onExpandedChange, row.id],
-  );
-
   if (row.type === "activity_group") {
     return (
       <div className="min-h-8 min-w-0 py-1">
@@ -275,8 +263,7 @@ function LiveProcessingPreviewRow({
         durationEndAt={durationEndAt}
         fileEditDurations={fileEditDurations}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
-        onExpandedChange={handleExpandedChange}
-        stateKey={stateKey}
+        disclosureScope={disclosureScope}
       />
     );
   }
@@ -296,8 +283,7 @@ function LiveProcessingPreviewRow({
       durationStartedAt={durationStartedAt}
       durationEndAt={durationEndAt}
       fileEditDurations={fileEditDurations}
-      onExpandedChange={handleExpandedChange}
-      stateKey={stateKey}
+      disclosureScope={disclosureScope}
     />
   );
 }

@@ -4,6 +4,7 @@ export type {
   NavigationMessage,
 } from "./turnNavigationTypes";
 export * from "./ConversationTranslation";
+export * from "./ReaderDisclosure";
 export * from "./AssistantThinkingIndicator";
 export * from "./SelectionActionsPopover";
 export * from "./CodexTurnArtifacts";

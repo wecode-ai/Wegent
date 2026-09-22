@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createRef, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
+import { getDistanceFromBottom } from './bottomOriginScroll'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import {
   cacheConversationScrollSnapshot,
@@ -4965,6 +4966,77 @@ describe('ScrollableMessageArea', () => {
 
     expect(scroller.scrollTop).toBe(0)
     expect(scroller.scrollTo).toHaveBeenCalled()
+  })
+
+  test('keeps the reader on their text when they open a tool detail at the bottom', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const runningToolMessage = {
+      id: 'tool-detail-message',
+      role: 'assistant' as const,
+      content: '这是正在流式输出的最终答案。',
+      status: 'streaming' as const,
+      createdAt: '2026-09-21T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'call-1',
+          subtaskId: 1,
+          type: 'tool' as const,
+          toolName: 'Bash',
+          toolInput: { command: 'pwd' },
+          toolOutput: '/workspace/project\n',
+          status: 'streaming' as const,
+          createdAt: 1770000000000,
+        },
+      ],
+    }
+    render(
+      <ScrollableMessageArea
+        conversationKey="tool-detail-disclosure"
+        scrollOrigin="bottom"
+        messages={[runningToolMessage]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    let scrollHeight = 2_000
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    }) as unknown as HTMLDivElement['scrollTo']
+    fireEvent.scroll(scroller)
+
+    const toggle = screen.getByRole('button', { name: '展开工具详情' })
+    fireEvent.pointerDown(toggle)
+    fireEvent.click(toggle)
+
+    // Opening the detail grows the conversation. The reader opened it where they were
+    // reading, so their text stays put and the growth lands below them instead of the
+    // viewport being pulled back to the bottom.
+    scrollHeight = 2_600
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(getDistanceFromBottom(scroller, true)).toBe(600)
   })
 
   test('brings a message the reader sends into view even while they are parked in history', () => {

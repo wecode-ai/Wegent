@@ -5,6 +5,7 @@ import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 import { MessageList } from './MessageList'
+import { ReaderDisclosureProvider } from './ReaderDisclosure'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 
 import {
@@ -140,7 +141,7 @@ function ScrollableMessagePaneContent({
     isTurnNavigationAutoScrollSuspended,
     releasePendingLayoutScrollPosition,
     preserveScrollPositionForNextLayout,
-    preserveUserMessagePosition,
+    preserveReaderPositionForDisclosure,
     handleTurnNavigationScrollTargetChange,
     handleTurnNavigationLoadStateChange,
     renderTranscriptGapAfterMessage,
@@ -875,48 +876,51 @@ function ScrollableMessagePaneContent({
                   </button>
                 </div>
               )}
-              <MessageList
-                userMessageServices={userMessageServices}
-                virtualize={virtualize}
-                useContentVisibility={useContentVisibility}
-                onVirtualMeasurement={onVirtualMeasurement}
-                renderVisualization={renderVisualization}
-                key={currentScrollKey ?? 'keyless-conversation'}
-                messages={messages}
-                turns={turns}
-                onBeforeUserMessageToggle={preserveUserMessagePosition}
-                onVirtualLayoutChange={handleContentLayoutChange}
-                scrollElementRef={scrollRef}
-                initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
-                className={messageListClassName}
-                conversationKey={conversationKey}
-                forceVirtualMessageId={turnNavigationTargetMessageId}
-                isWaitingForAssistant={isWaitingForAssistant}
-                disableContentVisibility={turnNavigationLoading}
-                devices={devices}
-                onRetryFailedMessage={onRetryFailedMessage}
-                onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-                onLoadFileChangesDiff={onLoadFileChangesDiff}
-                onRevertFileChanges={onRevertFileChanges}
-                onOpenFileChangesReview={onOpenFileChangesReview}
-                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-                onOpenLocalSkillFile={onOpenLocalSkillFile}
-                onRequestUserInputSubmit={onRequestUserInputSubmit}
-                onRequestUserInputIgnore={onRequestUserInputIgnore}
-                onOpenAssistantPlan={onOpenAssistantPlan}
-                onOpenSubagent={onOpenSubagent}
-                onEditLastUserMessage={onEditLastUserMessage}
-                canEditLastUserMessage={canEditLastUserMessage}
-                onForkMessage={onForkMessage}
-                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
-                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-                onAddSelectionToConversation={onAddSelectionToConversation}
-                onAskSelectionInSidebar={onAskSelectionInSidebar}
-                virtualAnchorToEnd={!showScrollButton}
-                bottomOrigin={bottomOrigin}
-                renderGapAfterMessage={renderTranscriptGapAfterMessage}
-              />
+              <ReaderDisclosureProvider
+                onReaderDisclosure={preserveReaderPositionForDisclosure}
+              >
+                <MessageList
+                  userMessageServices={userMessageServices}
+                  virtualize={virtualize}
+                  useContentVisibility={useContentVisibility}
+                  onVirtualMeasurement={onVirtualMeasurement}
+                  renderVisualization={renderVisualization}
+                  key={currentScrollKey ?? 'keyless-conversation'}
+                  messages={messages}
+                  turns={turns}
+                  onVirtualLayoutChange={handleContentLayoutChange}
+                  scrollElementRef={scrollRef}
+                  initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
+                  className={messageListClassName}
+                  conversationKey={conversationKey}
+                  forceVirtualMessageId={turnNavigationTargetMessageId}
+                  isWaitingForAssistant={isWaitingForAssistant}
+                  disableContentVisibility={turnNavigationLoading}
+                  devices={devices}
+                  onRetryFailedMessage={onRetryFailedMessage}
+                  onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+                  onLoadFileChangesDiff={onLoadFileChangesDiff}
+                  onRevertFileChanges={onRevertFileChanges}
+                  onOpenFileChangesReview={onOpenFileChangesReview}
+                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onOpenLocalSkillFile={onOpenLocalSkillFile}
+                  onRequestUserInputSubmit={onRequestUserInputSubmit}
+                  onRequestUserInputIgnore={onRequestUserInputIgnore}
+                  onOpenAssistantPlan={onOpenAssistantPlan}
+                  onOpenSubagent={onOpenSubagent}
+                  onEditLastUserMessage={onEditLastUserMessage}
+                  canEditLastUserMessage={canEditLastUserMessage}
+                  onForkMessage={onForkMessage}
+                  hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                  hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                  onAddSelectionToConversation={onAddSelectionToConversation}
+                  onAskSelectionInSidebar={onAskSelectionInSidebar}
+                  virtualAnchorToEnd={!showScrollButton}
+                  bottomOrigin={bottomOrigin}
+                  renderGapAfterMessage={renderTranscriptGapAfterMessage}
+                />
+              </ReaderDisclosureProvider>
               {contentFooter ? (
                 <div
                   data-testid={`${scrollTestId}-content-footer`}

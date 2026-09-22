@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Box, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { useConversationTranslation } from "./ConversationTranslation";
 import type {
@@ -12,18 +11,26 @@ import {
   fileExtension,
   getDisplayCodexReferences,
 } from "./codexReferences";
+import { usePersistentDisclosure } from "./blocks/disclosureState";
+import { messageDisclosureKey } from "./blocks/disclosureKeys";
+import { useReaderDisclosure } from "./ReaderDisclosure";
 
 const DEFAULT_VISIBLE_REFERENCE_COUNT = 3;
 
 export function CodexMemoryCitations({
   citations,
   onOpenFile,
+  disclosureScope,
 }: {
   citations: CodexMemoryCitation[];
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void;
+  disclosureScope?: string;
 }) {
   const { t } = useConversationTranslation();
-  const [expanded, setExpanded] = useState(false);
+  const reportReaderDisclosure = useReaderDisclosure();
+  const [expanded, setExpanded] = usePersistentDisclosure(
+    messageDisclosureKey(disclosureScope, "memory-citations"),
+  );
   const entries = citations.flatMap((citation) => citation.entries ?? []);
   if (entries.length === 0) return null;
 
@@ -36,7 +43,10 @@ export function CodexMemoryCitations({
         type="button"
         data-testid="codex-memory-citations-toggle"
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {
+          reportReaderDisclosure();
+          setExpanded((value) => !value);
+        }}
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
       >
         <ChevronDown
@@ -65,12 +75,17 @@ export function CodexMemoryCitations({
 export function CodexReferenceList({
   references,
   onOpenFile,
+  disclosureScope,
 }: {
   references: CodexReference[];
   onOpenFile: (path: string, options?: WorkspaceFileOpenOptions) => void;
+  disclosureScope?: string;
 }) {
   const { t } = useConversationTranslation();
-  const [expanded, setExpanded] = useState(false);
+  const reportReaderDisclosure = useReaderDisclosure();
+  const [expanded, setExpanded] = usePersistentDisclosure(
+    messageDisclosureKey(disclosureScope, "codex-references"),
+  );
   const uniqueReferences = getDisplayCodexReferences(references);
   if (uniqueReferences.length === 0) return null;
   const hiddenCount = Math.max(
@@ -139,7 +154,10 @@ export function CodexReferenceList({
             type="button"
             data-testid="toggle-codex-reference-list-button"
             aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => {
+              reportReaderDisclosure();
+              setExpanded((value) => !value);
+            }}
             className="flex h-8 w-full items-center justify-center gap-1 border-t border-border text-xs font-medium text-text-secondary hover:bg-muted"
           >
             <span>

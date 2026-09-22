@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageList } from './MessageList'
+import { ReaderDisclosureProvider } from '@wegent/collaboration/conversation'
 import { getDistanceFromTop } from './bottomOriginScroll'
 import type { WorkbenchMessage } from '@/types/workbench'
 
@@ -88,16 +89,22 @@ test.each([
   }
 )
 
-test('uses the latest toggle callback when messages stay unchanged', () => {
-  const previousCallback = vi.fn()
-  const nextCallback = vi.fn()
+test('uses the latest reader disclosure handler while messages stay unchanged', () => {
+  const previousHandler = vi.fn()
+  const nextHandler = vi.fn()
   const { rerender } = render(
-    <MessageList messages={messages} onBeforeUserMessageToggle={previousCallback} />
+    <ReaderDisclosureProvider onReaderDisclosure={previousHandler}>
+      <MessageList messages={messages} />
+    </ReaderDisclosureProvider>
   )
-  rerender(<MessageList messages={messages} onBeforeUserMessageToggle={nextCallback} />)
+  rerender(
+    <ReaderDisclosureProvider onReaderDisclosure={nextHandler}>
+      <MessageList messages={messages} />
+    </ReaderDisclosureProvider>
+  )
 
   fireEvent.click(screen.getByTestId('toggle-user-message-button'))
 
-  expect(previousCallback).not.toHaveBeenCalled()
-  expect(nextCallback).toHaveBeenCalledOnce()
+  expect(previousHandler).not.toHaveBeenCalled()
+  expect(nextHandler).toHaveBeenCalledOnce()
 })

@@ -483,14 +483,14 @@ describe('ToolBlockItem', () => {
       status: 'done',
       createdAt: 1770000000002,
     }
-    const stateKey = 'view-image-remount-expansion'
-    const firstRender = render(<ToolBlockItem block={block} stateKey={stateKey} />)
+    const scope = 'view-image-remount-expansion'
+    const firstRender = render(<ToolBlockItem block={block} disclosureScope={scope} />)
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
     expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
 
     firstRender.unmount()
-    render(<ToolBlockItem block={block} stateKey={stateKey} />)
+    render(<ToolBlockItem block={block} disclosureScope={scope} />)
 
     expect(screen.getByRole('button', { name: /收起工具详情/ })).toHaveAttribute(
       'aria-expanded',

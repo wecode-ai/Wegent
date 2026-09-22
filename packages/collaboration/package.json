@@ -162,9 +162,9 @@
       "types": "./src/conversation/blocks/processingDuration.ts",
       "import": "./src/conversation/blocks/processingDuration.ts"
     },
-    "./conversation/blocks/processingExpansionState": {
-      "types": "./src/conversation/blocks/processingExpansionState.ts",
-      "import": "./src/conversation/blocks/processingExpansionState.ts"
+    "./conversation/blocks/disclosureState": {
+      "types": "./src/conversation/blocks/disclosureState.ts",
+      "import": "./src/conversation/blocks/disclosureState.ts"
     },
     "./conversation/blocks/toolBlockKinds": {
       "types": "./src/conversation/blocks/toolBlockKinds.ts",

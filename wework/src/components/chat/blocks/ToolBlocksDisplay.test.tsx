@@ -1288,12 +1288,12 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
   })
 
-  test('only persists the top-level processing expansion state', () => {
+  test('keeps a modified file diff open after a remount', () => {
     const { unmount } = render(
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
         isStreaming={false}
-        stateKey="file-changes-local-expansion"
+        disclosureScope="file-changes-remount"
       />
     )
 
@@ -1307,14 +1307,15 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
         isStreaming={false}
-        stateKey="file-changes-local-expansion"
+        disclosureScope="file-changes-remount"
       />
     )
 
-    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
-    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
-    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
-    expect(screen.queryByTestId('process-file-change-diff')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-live-preview-scroll')).toHaveStyle({
+      maxHeight: 'none',
+      overflowY: 'visible',
+    })
   })
 
   test('uses the same tool list for completed and streaming processing', () => {

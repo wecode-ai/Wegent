@@ -2928,6 +2928,51 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
+  test('keeps a tool detail open when the runtime reorders the process section', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'call-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'streaming',
+        createdAt: 1770000000000,
+      },
+    ]
+    const message: WorkbenchMessage = {
+      id: 'assistant-process-order',
+      role: 'assistant',
+      content: '这是正在流式输出的最终答案。',
+      status: 'streaming',
+      blocks,
+      createdAt: '2026-06-24T08:00:01.000Z',
+    }
+    const answerItem = {
+      id: 'answer-1',
+      type: 'assistant_text' as const,
+      content: '这是正在流式输出的最终答案。',
+    }
+    const processItem = { id: 'call-1', type: 'block' as const }
+
+    const { rerender } = render(
+      <MessageList messages={[{ ...message, runtimeDisplayItems: [processItem, answerItem] }]} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+    expect(screen.getByTestId('shell-tool-output')).toBeInTheDocument()
+
+    // The runtime re-projects the turn with the answer first, which moves the process
+    // section to another timeline. The detail the reader opened is theirs, not the
+    // layout's, so it stays open.
+    rerender(
+      <MessageList messages={[{ ...message, runtimeDisplayItems: [answerItem, processItem] }]} />
+    )
+
+    expect(screen.getByTestId('shell-tool-output')).toBeInTheDocument()
+  })
+
   test('keeps a running tool visible when streamed answer text appears', () => {
     const blocks: ProcessingBlock[] = [
       {

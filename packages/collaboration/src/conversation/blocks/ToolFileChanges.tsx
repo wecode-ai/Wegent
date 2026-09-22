@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ChevronDown, FileDiff } from "lucide-react";
 import { useConversationTranslation } from "../ConversationTranslation";
@@ -7,24 +7,27 @@ import type { ProcessingBlock } from "./types";
 import { ActivityShimmerText } from "../../issue-card/ActivityShimmerText";
 import { InlineDiffPreview, fileDiffPreviewLines } from "./ToolInlineDiff";
 import { basename } from "./toolBlockText";
+import { usePersistentDisclosureSelection } from "./disclosureState";
+import { processingBlockFileDisclosureKey } from "./disclosureKeys";
+import { useReaderDisclosure } from "../ReaderDisclosure";
 
 export function ProcessFileChangesBlockItem({
   block,
   fileEditDurations,
-  onExpandedChange,
+  disclosureScope,
 }: {
   block: Extract<ProcessingBlock, { type: "file_changes" }>;
   fileEditDurations?: FileEditDurationsByBlock;
-  onExpandedChange?: (expanded: boolean) => void;
+  disclosureScope?: string;
 }) {
   const { t } = useConversationTranslation();
+  const reportReaderDisclosure = useReaderDisclosure();
   const summary = block.fileChanges;
   const isRunning = block.status !== "done" && block.status !== "error";
-  const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null);
-
-  useLayoutEffect(() => {
-    onExpandedChange?.(expandedFilePath !== null);
-  }, [expandedFilePath, onExpandedChange]);
+  const [expandedFilePath, setExpandedFilePath] =
+    usePersistentDisclosureSelection(
+      processingBlockFileDisclosureKey(disclosureScope, block.id),
+    );
 
   if (!summary.files.length) return null;
 
@@ -51,11 +54,12 @@ export function ProcessFileChangesBlockItem({
                 aria-expanded={
                   previewLines.length > 0 ? fileExpanded : undefined
                 }
-                onClick={() =>
+                onClick={() => {
+                  reportReaderDisclosure();
                   setExpandedFilePath((current) =>
                     current === file.path ? null : file.path,
-                  )
-                }
+                  );
+                }}
                 className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />

@@ -31,6 +31,7 @@ import {
   visibleRuntimeUserMessage,
 } from '@wegent/chat-core/runtime-user-message'
 import { UserMessageEditForm } from './UserMessageEditForm'
+import { useReaderDisclosure } from './ReaderDisclosure'
 import { isIMSource } from '@wegent/chat-core/im-source'
 import { ImSourceBadge } from './ImSourceBadge'
 import {
@@ -90,7 +91,6 @@ const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
 export function UserMessage({
   services,
   message,
-  onBeforeToggle,
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   editable = false,
@@ -102,7 +102,6 @@ export function UserMessage({
 }: {
   services: UserMessageServices
   message: WorkbenchMessage
-  onBeforeToggle?: () => void
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
@@ -113,6 +112,7 @@ export function UserMessage({
   onSubmitEdit?: (content: string) => Promise<boolean | void> | boolean | void
 }) {
   const { t } = useConversationTranslation()
+  const reportReaderDisclosure = useReaderDisclosure()
   const [isExpanded, setIsExpanded] = useState(false)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
   const codexLocalFileMentions = useMemo(
@@ -326,7 +326,7 @@ export function UserMessage({
                 data-testid="toggle-user-message-button"
                 aria-expanded={isExpanded}
                 onClick={() => {
-                  onBeforeToggle?.()
+                  reportReaderDisclosure()
                   setIsExpanded(value => !value)
                 }}
                 className="flex h-9 w-full items-center justify-center gap-1 border-t border-border/60 text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
