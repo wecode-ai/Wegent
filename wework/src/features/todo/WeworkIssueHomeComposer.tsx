@@ -88,6 +88,7 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
             </button>
           ))}
         </div>
+        {props.environmentNotice}
         <div>
           <BufferedChatInput
             projectWorkBar={

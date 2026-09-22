@@ -8,6 +8,7 @@ import type {
   CollaborationDefaultAssistant,
   CollaborationProject,
   CollaborationView,
+  ProjectSettingsSectionId,
   CollaborationWorkspace,
 } from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
@@ -39,6 +40,7 @@ export interface CollaborationPlatformLocation {
   workspaceView: CollaborationWorkspaceView;
   projectId: string | null;
   projectView: CollaborationView;
+  projectSettingsSection?: ProjectSettingsSectionId | null;
   issueId: string | null;
 }
 

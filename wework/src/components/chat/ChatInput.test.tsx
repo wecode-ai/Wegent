@@ -4775,7 +4775,7 @@ describe('ChatInput', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('ignores the projects table when runtime work is empty', async () => {
+  test('keeps configured projects available while runtime work is empty', async () => {
     const onSelectProject = vi.fn()
 
     render(
@@ -4814,9 +4814,9 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByText('暂无项目')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-option-7')).not.toBeInTheDocument()
-    expect(screen.queryByText('Online Project')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-option-7')).toHaveTextContent('Online Project')
+    expect(screen.getByTestId('project-option-8')).toHaveTextContent('Offline Project')
+    expect(screen.queryByTestId('project-empty-state')).not.toBeInTheDocument()
     expect(onSelectProject).not.toHaveBeenCalled()
   })
 

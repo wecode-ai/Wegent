@@ -1114,10 +1114,12 @@ function DebugSnapshotInputProbe({ testId, value }: { testId: string; value: str
 
 function ProjectSendProbe({
   prepareRuntimeTask,
+  onPreparedEnvironmentOptimisticOpen,
 }: {
   prepareRuntimeTask?: (
     address: RuntimeTaskAddress
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+  onPreparedEnvironmentOptimisticOpen?: (address: RuntimeTaskAddress) => void
 } = {}) {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
@@ -1506,6 +1508,36 @@ function ProjectSendProbe({
         }}
       >
         send project sidebar chat
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.createProjectRuntimeTask('处理项目 Issue', {
+            project: null,
+            collaborationMode: 'default',
+            executionModel: {
+              modelId: 'deepseek-v4-pro',
+              modelType: 'public',
+              modelOptions: {
+                weworkCloudModelNamespace: 'default',
+                weworkCloudModelResourceUserId: '0',
+              },
+            },
+            taskRequest: {
+              schemaVersion: 2,
+              runtime: 'codex',
+              message: '',
+              deviceId: 'shared-environment-device',
+              workspacePath: '/workspace/prepared-environment',
+              execution: {
+                workspace: { source: 'git_worktree' },
+              },
+            },
+            onRuntimeTaskOptimisticOpen: onPreparedEnvironmentOptimisticOpen,
+          })
+        }
+      >
+        send prepared environment task
       </button>
       <button
         type="button"
@@ -9302,6 +9334,105 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
+  test('creates an Issue task in its prepared execution environment workspace', async () => {
+    const onOptimisticOpen = vi.fn()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: `/workspace/worktrees/${request.taskId}/prepared-environment`,
+        runtime: 'codex',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <ProjectSendProbe onPreparedEnvironmentOptimisticOpen={onOptimisticOpen} />,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByText('send prepared environment task')).toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByText('send prepared environment task'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'shared-environment-device',
+        workspacePath: '/workspace/prepared-environment',
+        execution: {
+          workspace: { source: 'git_worktree' },
+        },
+        message: '处理项目 Issue',
+        modelId: 'deepseek-v4-pro',
+        modelType: 'public',
+        modelOptions: {
+          collaborationMode: 'default',
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+        modelSelection: {
+          modelName: 'deepseek-v4-pro',
+          modelType: 'public',
+          options: {
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+          },
+        },
+      })
+    )
+    expect(onOptimisticOpen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'deepseek-v4-pro',
+            modelType: 'public',
+            options: {
+              weworkCloudModelNamespace: 'default',
+              weworkCloudModelResourceUserId: '0',
+            },
+          },
+        },
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
+      'standaloneChatWorkspace'
+    )
+  })
+
+  test('blocks a prepared execution environment that is known to be offline', async () => {
+    const listDevices = vi.fn().mockResolvedValue([
+      createDevice({
+        device_id: 'shared-environment-device',
+        status: 'offline',
+        client_ip: '10.0.0.2',
+      }),
+    ])
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn(),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByText('send prepared environment task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workbench-error')).toHaveTextContent('10.0.0.2 当前不可用')
+    )
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+  })
+
   test('registers multiple selected local folders as one Codex project', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi
@@ -15371,16 +15502,37 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     let executorSettling = false
     const listRuntimeWork = vi.fn().mockResolvedValue(emptyRuntimeWork)
-    const getRuntimeTranscript = vi.fn().mockImplementation(() =>
-      Promise.resolve({
+    const getRuntimeTranscript = vi.fn().mockImplementation((request: RuntimeTranscriptRequest) => {
+      const includeRecoveredAnswer =
+        executorSettling && request.refresh === true && request.limit === undefined
+      return Promise.resolve({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
         runtime: 'claude_code',
-        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
+          ...(includeRecoveredAnswer
+            ? [{ id: 'runtime-a:assistant:1', role: 'assistant', content: 'recovered answer' }]
+            : []),
+        ],
         running: !executorSettling,
-        turns: [],
+        turns: includeRecoveredAnswer
+          ? [
+              {
+                id: '101',
+                status: 'completed',
+                items: [
+                  {
+                    id: 'runtime-a:assistant:1',
+                    type: 'assistant_text',
+                    content: 'recovered answer',
+                  },
+                ],
+              },
+            ]
+          : [],
       })
-    )
+    })
     const services = createWorkbenchServices({
       runtimeWorkApi: createRuntimeWorkApiMock({
         listRuntimeWork,
@@ -15395,7 +15547,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <EphemeralRuntimeLifecycleProbe />
         <FollowUpProbe />
@@ -15443,6 +15595,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     await waitFor(() => expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('idle'))
+    expect(
+      getRuntimeConversationMessages(EPHEMERAL_STREAM_ADDRESS).some(message =>
+        message.content.includes('recovered answer')
+      )
+    ).toBe(true)
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
   })
 

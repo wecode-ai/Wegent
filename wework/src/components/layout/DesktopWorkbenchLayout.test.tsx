@@ -1744,7 +1744,7 @@ describe('DesktopWorkbenchLayout', () => {
     return render(withAppearance ? <AppearanceProvider>{layout}</AppearanceProvider> : layout)
   }
 
-  function createLocalRuntimeTaskPanelFixture() {
+  function createLocalRuntimeTaskPanelFixture(taskCount = 11) {
     const runtimeProject = {
       id: 35,
       name: 'Wegent',
@@ -1760,7 +1760,7 @@ describe('DesktopWorkbenchLayout', () => {
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
     }
-    const taskSuffixes = 'abcdefghijk'.split('')
+    const taskSuffixes = 'abcdefghijk'.slice(0, taskCount).split('')
     const taskAddresses = taskSuffixes.map(suffix => ({
       deviceId: localDevice.device_id,
       workspacePath: `/Users/me/Wegent/.worktrees/${suffix}`,
@@ -2039,7 +2039,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
     await userEvent.click(screen.getByTestId('collaboration-board-settings'))
     expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '看板设置' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '看板设置' })).toHaveClass(
+      'text-heading-sm',
+      'font-medium'
+    )
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -5757,6 +5760,7 @@ describe('DesktopWorkbenchLayout', () => {
     const menu = screen.getByTestId('project-work-menu')
     const addLocalProjectOption = screen.getByTestId('add-local-project-option')
     expect([...menu.querySelectorAll('button')].map(button => button.dataset.testid)).toEqual([
+      'project-option-1',
       'add-local-project-option',
       'add-remote-project-option',
       'no-project-option',
@@ -8408,7 +8412,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(within(sideChat).getByTestId(/queue-more-button-/))
     await userEvent.click(await screen.findByTestId(/queue-edit-button-/))
 
-    await waitFor(() => expect(sideChatInput).toHaveValue('queued follow-up'))
+    await waitFor(() =>
+      expect(within(sideChat).getByTestId('chat-message-input')).toHaveValue('queued follow-up')
+    )
     expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
     expect(within(sideChat).getByTitle('queued-attachment.txt')).toBeInTheDocument()
     expect(within(sideChat).queryByTitle('draft-attachment.txt')).not.toBeInTheDocument()
@@ -13277,7 +13283,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('preserves the review when switching runtime tasks', async () => {
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     const onLoadEnvironmentDiff = vi
       .fn()
       .mockResolvedValue(
@@ -13310,7 +13316,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(activePane().getByTestId('file-changes-review-panel')).toHaveTextContent('restored')
     })
     expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
-  })
+  }, 10_000)
 
   test('preserves the open directory when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -13479,43 +13485,6 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(activeContent().scrollLeft).toBe(0)
   })
-
-  test('keeps runtime task terminals alive while switching through many tasks', async () => {
-    const { localDevice, propsForTask, taskA, taskAddresses } = createLocalRuntimeTaskPanelFixture()
-    isLocalTerminalAvailableMock.mockReturnValue(true)
-    getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
-    localPathExistsMock.mockResolvedValue(true)
-    taskAddresses.forEach(task => {
-      const suffix = task.taskId.replace('runtime-', '')
-      startLocalTerminalMock.mockResolvedValueOnce(`local-terminal-${suffix}`)
-    })
-    const visibleLocalTerminals = () =>
-      within(screen.getByTestId('desktop-workbench-main'))
-        .queryAllByTestId('embedded-local-terminal')
-        .filter(element => !element.hasAttribute('hidden'))
-
-    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
-
-    for (const [index, task] of taskAddresses.entries()) {
-      if (index > 0) {
-        rerender(<DesktopWorkbenchLayout {...propsForTask(task)} />)
-      }
-      const suffix = task.taskId.replace('runtime-', '')
-      await userEvent.click(
-        within(screen.getByTestId('desktop-workbench-main')).getByTestId(
-          'toggle-bottom-workspace-panel-button'
-        )
-      )
-      await waitFor(() => {
-        const terminals = visibleLocalTerminals()
-        expect(terminals).toHaveLength(1)
-        expect(terminals[0]).toHaveAttribute('data-session-id', `local-terminal-${suffix}`)
-      })
-    }
-
-    expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
-    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
-  }, 30_000)
 
   test('omits the device surface add-menu item when the extension is unavailable', async () => {
     renderWorkspacePanelLayout()

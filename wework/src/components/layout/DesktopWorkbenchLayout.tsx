@@ -1232,6 +1232,7 @@ export function DesktopWorkbenchLayout({
               ) : (
                 <WeworkCollaborationPlatform
                   user={workItemUser}
+                  devices={state.devices}
                   localProjects={localTodoProjects}
                   runtimeWork={state.runtimeWork}
                   runtimeTaskLifecycle={runtimeTaskLifecycle}

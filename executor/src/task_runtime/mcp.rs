@@ -233,6 +233,12 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         })
         .and_then(id_value)
         .filter(|value| !value.is_empty());
+    let execution_device_id = request
+        .extra
+        .get("executionDeviceId")
+        .or_else(|| request.extra.get("execution_device_id"))
+        .and_then(id_value)
+        .filter(|value| !value.is_empty());
     let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
     log_executor_event(
         "space capability context decision",
@@ -263,7 +269,8 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         task_id: request.task_id.clone(),
         space_id,
         item_id,
-        device_id: request.device_id.clone().filter(|value| !value.is_empty()),
+        device_id: execution_device_id
+            .or_else(|| request.device_id.clone().filter(|value| !value.is_empty())),
         automation_run_id: automation_origin
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
@@ -3186,6 +3193,25 @@ mod tests {
     }
 
     #[test]
+    fn binds_issue_context_to_the_logical_execution_device() {
+        let mut request = ExecutionRequest {
+            task_id: "runtime-7".to_owned(),
+            device_id: Some("physical-device".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
+        request
+            .extra
+            .insert("execution_device_id".to_owned(), json!("logical-device"));
+
+        let grant = decode_grant(&request);
+
+        assert_eq!(grant.device_id.as_deref(), Some("logical-device"));
+    }
+
+    #[test]
     fn binds_automation_manager_scope() {
         let mut request = ExecutionRequest::default();
         request
@@ -3772,6 +3798,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec!["bug".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -3786,6 +3813,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec!["docs".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -3846,6 +3874,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec!["feedback".to_owned()],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -3889,6 +3918,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -3982,6 +4012,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: Some(json!({
                         "version": 1,
                         "nodes": [{

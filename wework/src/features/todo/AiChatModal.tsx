@@ -77,9 +77,11 @@ const isolatedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] = {
 
 function automaticExecutionMode(
   projectWork: AutomaticIssueTaskComposerProps['projectWork'],
-  inheritFromTask: RuntimeTaskAddress | null
+  inheritFromTask: RuntimeTaskAddress | null,
+  taskRequest: RuntimeTaskCreateRequest | null
 ): ProjectExecutionMode {
   if (inheritFromTask) return 'current_workspace'
+  if (taskRequest?.execution?.workspace?.source === 'git_worktree') return 'git_worktree'
   return projectWork?.worktreeAvailability?.available ? 'git_worktree' : 'current_workspace'
 }
 
@@ -94,7 +96,7 @@ function AutomaticIssueTaskComposer({
   onTaskCreated,
   panelProps,
 }: AutomaticIssueTaskComposerProps) {
-  const executionMode = automaticExecutionMode(projectWork, inheritFromTask)
+  const executionMode = automaticExecutionMode(projectWork, inheritFromTask, taskRequest)
   const effectiveTaskRequest = taskRequest
     ? {
         ...taskRequest,
@@ -185,10 +187,23 @@ export function AiChatModal({
     () => resolveRuntimeTaskProjects(localProjects, state?.runtimeWork),
     [localProjects, state?.runtimeWork]
   )
-  const storageKey = lastAddressStorageKey(project.id, task?.id)
-  const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
-    () => initialAddress ?? storedLastAddress(storageKey)
+  const hasPreparedEnvironmentTarget = Boolean(
+    initialTaskRequest?.deviceId?.trim() && initialTaskRequest.workspacePath?.trim()
   )
+  const storageKey = lastAddressStorageKey(project.id, task?.id)
+  const initialAddressKey = initialAddress ? JSON.stringify(initialAddress) : null
+  const hasInitialAddress = Boolean(initialAddress)
+  const [addressState, setAddressState] = useState<{
+    initialAddressKey: string | null
+    address: RuntimeTaskAddress | null
+  }>(() => ({
+    initialAddressKey,
+    address: initialAddress ?? storedLastAddress(storageKey),
+  }))
+  const currentAddress =
+    addressState.initialAddressKey === initialAddressKey
+      ? addressState.address
+      : (initialAddress ?? addressState.address)
   const issueId = task?.id
   const conversationAddress = useMemo(
     () =>
@@ -200,7 +215,7 @@ export function AiChatModal({
         : currentAddress,
     [currentAddress, project.id, project.project_store, issueId]
   )
-  const notifiedInitialAddressRef = useRef(Boolean(initialAddress))
+  const notifiedInitialAddressRef = useRef(hasInitialAddress)
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
   // mount, so explicit toggles bump the remount key; creating a new runtime
@@ -209,12 +224,10 @@ export function AiChatModal({
   const [sessionKey, setSessionKey] = useState(0)
   const [localProjectId, setLocalProjectId] = useState<number | null>(() => {
     const requestedProjectId = runtimeTaskProjectUiId(state?.runtimeWork, initialTaskRequest)
-    const matched =
-      runtimeTaskProjects.find(
-        candidate => candidate.id === (requestedProjectId ?? initialLocalProjectId)
-      ) ??
-      runtimeTaskProjects.find(candidate => String(candidate.id) === String(project.id)) ??
-      runtimeTaskProjects[0]
+    const initialProjectId = hasPreparedEnvironmentTarget
+      ? null
+      : (requestedProjectId ?? initialLocalProjectId)
+    const matched = runtimeTaskProjects.find(candidate => candidate.id === initialProjectId)
     return matched?.id ?? null
   })
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(
@@ -258,28 +271,35 @@ export function AiChatModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [embedded, onClose, open])
 
-  const taskRequest = useMemo(
-    () =>
-      initialTaskRequest
+  const taskRequest = useMemo(() => {
+    if (!initialTaskRequest) return null
+    const directEnvironmentTarget =
+      !selectedLocalProject &&
+      initialTaskRequest.deviceId?.trim() &&
+      initialTaskRequest.workspacePath?.trim()
         ? {
-            ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
-            ...runtimeContext,
+            deviceId: initialTaskRequest.deviceId.trim(),
+            workspacePath: initialTaskRequest.workspacePath.trim(),
           }
-        : null,
-    [initialTaskRequest, runtimeContext]
-  )
+        : {}
+    return {
+      ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
+      ...directEnvironmentTarget,
+      ...runtimeContext,
+    }
+  }, [initialTaskRequest, runtimeContext, selectedLocalProject])
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
       if (!address) return
       window.localStorage.setItem(storageKey, JSON.stringify(address))
-      setCurrentAddress(address)
+      setAddressState({ initialAddressKey, address })
       setComposeNew(false)
       if (!notifiedInitialAddressRef.current) {
         notifiedInitialAddressRef.current = true
-        onAddressChange?.(address)
+        if (!hasInitialAddress) onAddressChange?.(address)
       }
     },
-    [onAddressChange, storageKey]
+    [hasInitialAddress, initialAddressKey, onAddressChange, storageKey]
   )
 
   const startNewConversation = useCallback(() => {

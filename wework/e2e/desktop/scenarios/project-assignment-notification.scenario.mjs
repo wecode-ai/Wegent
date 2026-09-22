@@ -157,6 +157,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
   let assignedTask = null
   let selfAssignedTask = null
   let delivery = null
+  let executionBinding = null
+  let cloudEnvironment = null
+  let executionEnvironment = null
+  let executionSourceWorkspacePath = ''
   let modelRequestCount = 0
   let clickRequested = false
   let executionCompletionReleased = false
@@ -284,10 +288,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
             tool.arguments
           )
         } else if (requestContainsToolOutput(payload, DELIVERY_CREATE_CALL_ID)) {
-          delivery = findDeliveryDraft(findToolOutput(payload.input ?? [], DELIVERY_CREATE_CALL_ID))
+          const createDeliveryOutput = findToolOutput(payload.input ?? [], DELIVERY_CREATE_CALL_ID)
+          delivery = findDeliveryDraft(createDeliveryOutput)
           assert.ok(
             delivery,
-            'The real local Codex runtime did not return its persisted Delivery draft'
+            `The real local Codex runtime did not return its persisted Delivery draft: ${JSON.stringify(createDeliveryOutput)}`
           )
           const directToolName = (payload.tools ?? [])
             .map(tool => tool.name ?? tool.function?.name)
@@ -380,6 +385,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       return true
     },
 
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
+    },
+
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       databasePath = cloud.databasePath
@@ -464,6 +473,54 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('clearSystemNotifications', 'body')
 
       await createSingleRootLocalProject(control, workspacePath, 'general-notification')
+      const configuredDevice = await cloudEnvironment.waitForConnectedAppDevice()
+      project = await ownerRequest(`/api/v1/cloud-projects/${project.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          version: project.version,
+          execution_environment: {
+            repositories: [
+              {
+                name: 'assignment-fixture',
+                url: workspacePath,
+                ref: '',
+                path: 'assignment-fixture',
+                primary: true,
+              },
+            ],
+            setup_steps: [],
+          },
+        }),
+      })
+      executionEnvironment = await ownerRequest(
+        `/api/v1/cloud-projects/${project.id}/execution-environments`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ device_id: configuredDevice.id }),
+        }
+      )
+      project = await ownerRequest(
+        `/api/v1/cloud-projects/${project.id}/execution-environment/initialize`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            device_id: configuredDevice.id,
+            version: project.version,
+          }),
+        }
+      )
+      const preparedEnvironment =
+        project.execution_environment?.devices?.[executionEnvironment.device_key]
+      assert.equal(
+        preparedEnvironment?.status,
+        'ready',
+        'The assigned Project execution environment was not prepared'
+      )
+      assert.ok(
+        preparedEnvironment?.workspace_path,
+        'The assigned Project execution environment has no workspace path'
+      )
+      executionSourceWorkspacePath = preparedEnvironment.workspace_path
       await selectE2EModel(control)
       const activeSurface = '[data-workspace-tab-content][aria-hidden="false"]'
       const composer = `${activeSurface} [data-testid="chat-message-input"]`
@@ -627,7 +684,29 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       assert.equal(forbiddenRead.status, 404, 'Another user must not read the recipient inbox')
 
-      const createTaskButton = `${activeSurface} [data-testid="cloud-todo-start-default-assistant"]`
+      const startWorkButton = `${activeSurface} [data-testid="human-issue-start"]`
+      await control.command('waitFor', startWorkButton, { timeoutMs: uiTimeoutMs })
+      const actionGroup = `${activeSurface} [data-testid="human-issue-actions"]`
+      assert.ok(
+        (await control.command('getAttribute', actionGroup, { value: 'class' })).includes(
+          'bg-muted/60'
+        ),
+        'Human Issue actions must render as one compact visual group'
+      )
+      assert.match(
+        await control.command('getAttribute', startWorkButton, { value: 'class' }),
+        /(?:^|\s)bg-primary(?:\s|$)/,
+        'The human Issue primary action must be visually prominent'
+      )
+      await control.command('click', startWorkButton)
+      const startedIssue = await waitForApiValue(
+        () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
+        value => value?.status === 'in_progress',
+        'The human assignee did not start the Issue',
+        uiTimeoutMs
+      )
+      assert.equal(startedIssue.human_work.can_submit, true)
+      const createTaskButton = `${activeSurface} [data-testid="human-issue-ai-assist"]`
       const taskPanel = `${activeSurface} [data-testid="work-item-new-task-chat-panel"]`
       const boundTaskPanel = `${activeSurface} [data-testid="work-item-task-chat-panel"]`
       const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`
@@ -637,6 +716,12 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       })
       await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', taskComposer, { timeoutMs: uiTimeoutMs })
+      const codeProjectButton = `${taskPanel} [data-testid="project-work-button"]`
+      assert.equal(
+        Number(await control.command('getElementCount', codeProjectButton)),
+        0,
+        'A manually handled Issue with a prepared environment must not expose project selection'
+      )
       const taskBridge = JSON.parse(await control.command('snapshot', activeSurface))
       assert.ok(
         taskBridge.text.includes(project.name) &&
@@ -657,6 +742,17 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
           uiTimeoutMs
         )
         const binding = taskBindings[0]
+        executionBinding = binding
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              `${activeSurface} [data-testid="chat-input-error"]`
+            )
+          ),
+          0,
+          'The prepared execution environment was incorrectly reported as unavailable'
+        )
         assert.equal(
           binding.loopItemId ?? binding.loop_item_id,
           assignedTask.id,
@@ -665,6 +761,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         assert.ok(
           binding.deviceId ?? binding.device_id,
           'The Runtime Task binding has no local Executor device'
+        )
+        assert.equal(
+          binding.deviceId ?? binding.device_id,
+          executionEnvironment.device_key,
+          'The Runtime Task did not use the Project execution environment device'
         )
         assert.ok(
           binding.taskId ?? binding.task_id,
@@ -721,11 +822,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         )
         assert.notEqual(
           runtimeTask.workspacePath,
-          workspacePath,
-          'The assigned collaboration Runtime Task reused the base Project workspace'
+          executionSourceWorkspacePath,
+          'The assigned collaboration Runtime Task reused its prepared environment workspace'
         )
         const gitWorktrees = await commandOutputAsync('git', ['worktree', 'list', '--porcelain'], {
-          cwd: workspacePath,
+          cwd: executionSourceWorkspacePath,
         })
         assert.ok(
           gitWorktrees.includes(`worktree ${runtimeTask.workspacePath}`),
@@ -748,35 +849,19 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
           activeSurface
         )
         await captureScreenshot(control, 'assignment-04-task-running.png', activeSurface)
+        const runtimeArtifact = await waitForApiValue(
+          () =>
+            readFile(join(runtimeTask.workspacePath, EXECUTION_ARTIFACT_NAME), 'utf8').catch(
+              () => null
+            ),
+          value => value?.trim() === EXECUTION_ARTIFACT_CONTENT,
+          'The real local Executor did not write the expected isolated workspace artifact',
+          uiTimeoutMs
+        )
         assert.equal(
-          (await readFile(join(runtimeTask.workspacePath, EXECUTION_ARTIFACT_NAME), 'utf8')).trim(),
+          runtimeArtifact.trim(),
           EXECUTION_ARTIFACT_CONTENT,
           'The real local Executor did not write the expected isolated workspace artifact'
-        )
-        const finalizedIssue = await waitForApiValue(
-          () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
-          value => value?.status === 'completed',
-          'Finalizing the Runtime Task Delivery did not complete the assigned Issue',
-          uiTimeoutMs
-        )
-        const reopenedIssue = await ownerRequest(`/api/v1/loop-items/${assignedTask.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            version: finalizedIssue.version,
-            status: 'in_progress',
-          }),
-        })
-        await waitForApiValue(
-          async () => readCleanupIntent(),
-          value =>
-            value?.status === 'acknowledged' && Number(value.version) === reopenedIssue.version,
-          'The local Executor did not acknowledge the reopened Issue retain intent',
-          uiTimeoutMs
-        )
-        assert.equal(
-          await pathExists(runtimeTask.workspacePath),
-          true,
-          'Reopening the Issue removed its active Worktree'
         )
       } finally {
         releaseExecutionCompletion()
@@ -793,32 +878,18 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         uiTimeoutMs,
         activeSurface
       )
-      const issueBeforeFinalClose = await waitForApiValue(
+      assert.equal(
+        (await readFile(join(executionWorkspacePath, EXECUTION_ARTIFACT_NAME), 'utf8')).trim(),
+        EXECUTION_ARTIFACT_CONTENT,
+        'The real local Executor did not write the expected isolated workspace artifact'
+      )
+      const deliveredIssue = await waitForApiValue(
         () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
-        value => value?.status === 'in_progress' || value?.status === 'in_review',
-        'The reopened Issue did not remain open after Runtime completion',
+        value => value?.current_delivery_id && value?.status === 'in_progress',
+        'Finalizing AI assistance must preserve human ownership and review',
         uiTimeoutMs
       )
-      const completedIssue = await ownerRequest(`/api/v1/loop-items/${assignedTask.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          version: issueBeforeFinalClose.version,
-          status: 'completed',
-        }),
-      })
-      assert.equal(completedIssue.status, 'completed')
-      await waitForApiValue(
-        async () => ({
-          intent: readCleanupIntent(),
-          worktreeExists: await pathExists(executionWorkspacePath),
-        }),
-        value =>
-          value.intent?.status === 'acknowledged' &&
-          Number(value.intent.version) === completedIssue.version &&
-          value.worktreeExists === false,
-        'The local Executor did not delete and acknowledge the closed Issue Worktree',
-        uiTimeoutMs
-      )
+      assert.equal(deliveredIssue.status, 'in_progress')
       const deliveredFiles = await ownerRequest(
         `/api/v1/cloud-projects/${project.id}/delivery-files`
       )
@@ -843,15 +914,99 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      const synchronizedCard = `${activeSurface} [data-testid="cloud-todo-column-completed"] [data-testid="cloud-todo-card-${assignedTask.id}"]`
-      await control.command('waitFor', synchronizedCard, { timeoutMs: uiTimeoutMs })
-      await control.command('click', synchronizedCard)
+      const workingCard = `${activeSurface} [data-testid="cloud-todo-column-in_progress"] [data-testid="cloud-todo-card-${assignedTask.id}"]`
+      await control.command('waitFor', workingCard, { timeoutMs: uiTimeoutMs })
+      await control.command('click', workingCard)
       await control.command('waitFor', `${activeSurface} [data-testid="cloud-todo-detail"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', `${activeSurface} [data-testid="human-issue-submit"]`)
+      await control.command('fill', `${activeSurface} [data-testid="human-issue-work-text"]`, {
+        value: 'Runtime artifact created and checked; ready for review.',
+      })
+      await control.command('click', `${activeSurface} [data-testid="human-issue-work-confirm"]`)
+      const submittedIssue = await waitForApiValue(
+        () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
+        value => value?.status === 'in_review',
+        'The human assignee could not submit the Issue for review',
+        uiTimeoutMs
+      )
+      const reviewerIssue = await assignerRequest(`/api/v1/loop-items/${assignedTask.id}`)
+      assert.equal(reviewerIssue.human_work.can_review, true)
+      const acceptedWork = await assignerRequest(
+        `/api/v1/loop-items/${assignedTask.id}/work/review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            version: submittedIssue.version,
+            request_id: `desktop-human-review-${Date.now()}`,
+            decision: 'accept',
+          }),
+        }
+      )
+      assert.equal(acceptedWork.issue.status, 'completed')
+      await waitForApiValue(
+        async () => ({
+          intent: readCleanupIntent(),
+          worktreeExists: await pathExists(executionWorkspacePath),
+        }),
+        value =>
+          value.intent?.status === 'acknowledged' &&
+          Number(value.intent.version) === acceptedWork.issue.version &&
+          value.worktreeExists === false,
+        'The local Executor did not delete and acknowledge the accepted Issue Worktree',
+        uiTimeoutMs
+      )
+      const acceptedInbox = await waitForApiValue(
+        () => ownerRequest('/api/v1/wework-notifications'),
+        value =>
+          value?.items?.some(
+            notification =>
+              notification.kind === 'human_work' &&
+              notification.title === 'Issue 验收通过' &&
+              notification.payload.itemId === assignedTask.id
+          ),
+        'The assignee did not receive the human review result',
+        uiTimeoutMs
+      )
+      const acceptedNotification = acceptedInbox.items.find(
+        notification =>
+          notification.kind === 'human_work' && notification.payload.itemId === assignedTask.id
+      )
+      assert.equal(
+        acceptedNotification.url,
+        `wework://boards/${project.id}/issues/${encodeURIComponent(assignedTask.id)}`
+      )
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command(
+        'waitFor',
+        `[data-testid="wework-notification-${acceptedNotification.id}"]`,
+        { text: 'Issue 验收通过', timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        `[data-testid="wework-notification-${acceptedNotification.id}"]`
+      )
+      const synchronizedCard = `${activeSurface} [data-testid="cloud-todo-column-completed"] [data-testid="cloud-todo-card-${assignedTask.id}"]`
+      await control.command('waitFor', synchronizedCard, { timeoutMs: uiTimeoutMs })
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="cloud-todo-detail-status"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
       const synchronizedDetailStatus = await waitForApiValue(
-        () =>
-          control.command('getValue', `${activeSurface} [data-testid="cloud-todo-detail-status"]`),
+        async () => {
+          try {
+            return await control.command(
+              'getValue',
+              `${activeSurface} [data-testid="cloud-todo-detail-status"]`
+            )
+          } catch (error) {
+            if (String(error).includes('Unable to find selector')) return null
+            throw error
+          }
+        },
         value => value === 'completed',
         'The completed Runtime Task status was not reflected in the open Issue detail',
         uiTimeoutMs
@@ -862,6 +1017,35 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         'The completed Runtime Task status was not reflected in the open Issue detail'
       )
       await control.command('click', `${activeSurface} [data-testid="cloud-todo-toggle-tasks"]`)
+      const executionTaskRow = `${activeSurface} [data-testid^="cloud-todo-open-task-conversation-"]`
+      const workbenchSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const devices = workbenchSnapshot.workbench?.devices ?? []
+      const executionDeviceId = executionBinding.deviceId ?? executionBinding.device_id
+      const executionDevice = devices.find(device =>
+        [
+          device.device_id,
+          device.execution_target_id,
+          device.app_device_id,
+          device.socket_device_id,
+          device.runtime_instance_id,
+          ...(device.runtime_routes ?? []).flatMap(route => [
+            route.device_id,
+            route.runtime_device_id,
+          ]),
+        ].includes(executionDeviceId)
+      )
+      assert.ok(executionDevice?.name, 'The Runtime Task device has no display name')
+      await control.command('waitFor', executionTaskRow, {
+        text: executionDevice.name,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.doesNotMatch(
+        await control.command('getText', executionTaskRow),
+        new RegExp(executionDeviceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+        'The Issue execution list exposed the device ID instead of its display name'
+      )
       await control.command('waitFor', `${activeSurface} [data-testid="todo-detail-deliveries"]`, {
         text: '1 个附件',
         timeoutMs: uiTimeoutMs,
@@ -916,7 +1100,9 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       })
       const finalInbox = await ownerRequest('/api/v1/wework-notifications')
       assert.equal(
-        finalInbox.items.filter(item => item.payload.itemId === assignedTask.id).length,
+        finalInbox.items.filter(
+          item => item.payload.itemId === assignedTask.id && item.kind === 'assignment'
+        ).length,
         1
       )
       assert.equal(

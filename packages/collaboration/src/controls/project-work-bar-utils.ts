@@ -1,18 +1,15 @@
 import type { DeviceInfo, ProjectWithTasks } from '@wegent/chat-core/execution-project'
 import type { RuntimeDeviceWorkspace } from '@wegent/chat-core/runtime-task-api-types'
 import { isLocalStandaloneDevice } from '@wegent/chat-core/device-selection'
-const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const PROJECT_MENU_VERTICAL_PADDING = 12
 const PROJECT_MENU_SEARCH_BLOCK_HEIGHT = 42
-const PROJECT_MENU_ROW_HEIGHT = 36
+const PROJECT_MENU_ROW_HEIGHT = 56
 const PROJECT_MENU_ROW_GAP = 2
 const PROJECT_MENU_VISIBLE_PROJECT_ROWS = 4
 const PROJECT_MENU_EMPTY_STATE_HEIGHT = 42
 const PROJECT_MENU_DIVIDER_BLOCK_HEIGHT = 13
 const PROJECT_MENU_ACTION_HEIGHT = 32
 const PROJECT_MENU_ACTION_GAP = 2
-
-const CLIPPING_OVERFLOW_RE = /(auto|hidden|scroll|clip)/
 
 function getStackHeight(itemCount: number, itemHeight: number, gap: number) {
   if (itemCount <= 0) return 0
@@ -97,28 +94,4 @@ export function getProjectMenuFitHeight(projectCount: number, hasCreateProjectOp
     PROJECT_MENU_DIVIDER_BLOCK_HEIGHT +
     actionHeight
   )
-}
-
-export function getMenuVisibleBounds(element: HTMLElement | null) {
-  let top = PROJECT_MENU_VIEWPORT_MARGIN
-  let bottom = window.innerHeight - PROJECT_MENU_VIEWPORT_MARGIN
-  let current = element?.parentElement ?? null
-
-  while (current && current !== document.body) {
-    const style = window.getComputedStyle(current)
-    const clipsVertically =
-      CLIPPING_OVERFLOW_RE.test(style.overflowY) || CLIPPING_OVERFLOW_RE.test(style.overflow)
-
-    if (clipsVertically) {
-      const rect = current.getBoundingClientRect()
-      if (rect.height > 0) {
-        top = Math.max(top, rect.top + PROJECT_MENU_VIEWPORT_MARGIN)
-        bottom = Math.min(bottom, rect.bottom - PROJECT_MENU_VIEWPORT_MARGIN)
-      }
-    }
-
-    current = current.parentElement
-  }
-
-  return { top, bottom }
 }
