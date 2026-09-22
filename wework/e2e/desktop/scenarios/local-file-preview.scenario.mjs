@@ -5,6 +5,8 @@ import { join } from 'node:path'
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const FILE_TREE_ITEM_SELECTOR = 'button[data-type="item"]'
+const DIRECTORY_MENU_SELECTOR = '[data-testid="workspace-file-directory-menu"]'
+const SIBLINGS_MENU_SELECTOR = '[data-testid="workspace-file-siblings-menu"]'
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
   await control.command('waitFor', '[data-testid="project-work-button"]', { timeoutMs })
@@ -32,9 +34,21 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
 }
 
 async function findTreeItem(control, name, timeoutMs, rootSelector = '') {
-  const selector = `${rootSelector ? `${rootSelector} ` : ''}${FILE_TREE_ITEM_SELECTOR}[aria-label="${name}"]`
-  await control.command('waitFor', selector, { timeoutMs })
+  const selector = `${FILE_TREE_ITEM_SELECTOR}[aria-label="${name}"]`
+  await control.command('waitFor', selector, {
+    ...(rootSelector ? { target: rootSelector } : {}),
+    timeoutMs,
+  })
   return selector
+}
+
+async function clickTreeItem(control, name, timeoutMs, rootSelector = '') {
+  const selector = await findTreeItem(control, name, timeoutMs, rootSelector)
+  if (rootSelector) {
+    await control.command('click', selector, { target: rootSelector })
+    return
+  }
+  await control.command('click', selector)
 }
 
 async function waitForMissing(control, selector, timeoutMs) {
@@ -177,10 +191,8 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('waitFor', '[data-testid="workspace-file-directory-menu"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const directorySelector = await findTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs)
-      await control.command('click', directorySelector)
-      const firstFileSelector = await findTreeItem(control, 'first.ts', uiTimeoutMs)
-      await control.command('click', firstFileSelector)
+      await clickTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
+      await clickTreeItem(control, 'first.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const first = 1',
         timeoutMs: uiTimeoutMs,
@@ -210,7 +222,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Selecting a dropdown file must retain the previous file tab'
       )
       await control.command('click', '[data-testid="workspace-file-name-button"]')
-      await control.command('click', await findTreeItem(control, 'second.ts', uiTimeoutMs))
+      await clickTreeItem(control, 'second.ts', uiTimeoutMs, SIBLINGS_MENU_SELECTOR)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const second = 2',
         timeoutMs: uiTimeoutMs,
@@ -221,7 +233,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Selecting another file must open another file tab'
       )
       await control.command('click', rootBreadcrumb)
-      await control.command('click', await findTreeItem(control, 'auth.ts', uiTimeoutMs))
+      await clickTreeItem(control, 'auth.ts', uiTimeoutMs, DIRECTORY_MENU_SELECTOR)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const authenticated = false',
         timeoutMs: uiTimeoutMs,

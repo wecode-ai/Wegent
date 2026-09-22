@@ -514,6 +514,29 @@ function findDesktopControlElements(selector: string): HTMLElement[] {
   return elements
 }
 
+function isWithinDesktopControlElement(element: HTMLElement, ancestorSelector: string): boolean {
+  let current: Node | null = element
+  while (current) {
+    if (current instanceof HTMLElement && current.matches(ancestorSelector)) return true
+    if (current.parentNode) {
+      current = current.parentNode
+      continue
+    }
+    const root = current.getRootNode()
+    current = root instanceof ShadowRoot ? root.host : null
+  }
+  return false
+}
+
+function findDesktopControlElementsWithin(
+  selector: string,
+  ancestorSelector?: string
+): HTMLElement[] {
+  const elements = findDesktopControlElements(selector)
+  if (!ancestorSelector) return elements
+  return elements.filter(element => isWithinDesktopControlElement(element, ancestorSelector))
+}
+
 function desktopControlElementText(selector: string, visible = false): string {
   const elements = findDesktopControlElements(selector)
   return (visible ? elements.filter(desktopControlElementVisible) : elements)
@@ -1115,7 +1138,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
   let matchedAt: number | null = null
 
   while (Date.now() - startedAt < timeoutMs) {
-    const elements = findDesktopControlElements(command.selector)
+    const elements = findDesktopControlElementsWithin(command.selector, command.target)
     if (command.visible === false) {
       const visibleElements = elements.filter(desktopControlElementVisible)
       if (visibleElements.length === 0) {
@@ -1145,19 +1168,21 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
     await waitForDesktopControlTick()
   }
 
-  const diagnostics = findDesktopControlElements(command.selector).map(element => ({
-    className: element.className,
-    dataPresentation: element.dataset.presentation ?? null,
-    hidden: element.hidden,
-    ariaHidden: element.getAttribute('aria-hidden'),
-    rendered: desktopControlElementRendered(element),
-    visible: desktopControlElementVisible(element),
-    rect: element.getBoundingClientRect().toJSON(),
-  }))
+  const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
+    element => ({
+      className: element.className,
+      dataPresentation: element.dataset.presentation ?? null,
+      hidden: element.hidden,
+      ariaHidden: element.getAttribute('aria-hidden'),
+      rendered: desktopControlElementRendered(element),
+      visible: desktopControlElementVisible(element),
+      rect: element.getBoundingClientRect().toJSON(),
+    })
+  )
   throw new Error(
     `Timed out waiting for selector "${command.selector}"${
-      command.text ? ` containing "${command.text}"` : ''
-    }; matches=${JSON.stringify(diagnostics)}`
+      command.target ? ` within "${command.target}"` : ''
+    }${command.text ? ` containing "${command.text}"` : ''}; matches=${JSON.stringify(diagnostics)}`
   )
 }
 
@@ -2365,9 +2390,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(samples)
     }
     case 'click': {
-      const elements = findDesktopControlElements(command.selector)
+      const elements = findDesktopControlElementsWithin(command.selector, command.target)
       const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
-      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!element)
+        throw new Error(
+          `Unable to find selector "${command.selector}"${
+            command.target ? ` within "${command.target}"` : ''
+          }`
+        )
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
