@@ -7,6 +7,7 @@ import {
   getPluginMarketplaceCache,
   marketplaceItemsSignature,
   pluginMarketplaceCacheKey,
+  removePluginMarketplaceInstallation,
   resetPluginMarketplaceCacheMemory,
   sameInstalledPlugins,
   sameMarketplaceItems,
@@ -72,6 +73,30 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache('other')).toBeNull()
   })
 
+  test('drops legacy marketplace snapshots instead of migrating installed state', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-legacy')
+    window.localStorage.setItem(
+      'wework.plugins.marketplaceCache.v2',
+      JSON.stringify({
+        entries: {
+          [key]: {
+            cacheKey: key,
+            marketplaceItems: [item({ id: 1, name: 'legacy', installed: true })],
+            installedPlugins: [],
+            marketplaces: [],
+            selectedMarketplaceKey: '',
+            deviceId: 'old-device',
+            fetchedAt: Date.now(),
+          },
+        },
+      })
+    )
+    resetPluginMarketplaceCacheMemory()
+
+    expect(getPluginMarketplaceCache(key)).toBeNull()
+    expect(window.localStorage.getItem('wework.plugins.marketplaceCache.v2')).toBeNull()
+  })
+
   test('keeps full logos in memory but strips oversized data URLs from durable storage', () => {
     const key = pluginMarketplaceCacheKey('http://api', 'token-logos')
     const logo = `data:image/png;base64,${'A'.repeat(5000)}`
@@ -101,8 +126,8 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.logosStripped).toBe(true)
   })
 
-  test('compacts an existing heavy v2 snapshot before returning it', () => {
-    const storageKey = 'wework.plugins.marketplaceCache.v2'
+  test('compacts an existing heavy inventory snapshot before returning it', () => {
+    const storageKey = 'wework.plugins.inventory.v1'
     const key = pluginMarketplaceCacheKey('http://api', 'token-heavy-v2')
     const logo = `data:image/png;base64,${'A'.repeat(200_000)}`
     const heavySnapshot = {
@@ -164,7 +189,7 @@ describe('pluginMarketplaceCache', () => {
   })
 
   test('authenticated lookup releases durable snapshots from inactive accounts', () => {
-    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const storageKey = 'wework.plugins.inventory.v1'
     const activeKey = pluginMarketplaceCacheKey('http://api', 'token-active')
     const inactiveKey = pluginMarketplaceCacheKey('http://api', 'token-inactive')
     const snapshotFor = (cacheKey: string, name: string) => ({
@@ -195,7 +220,7 @@ describe('pluginMarketplaceCache', () => {
   })
 
   test('retries a compact snapshot after releasing the value WebKit counts toward quota', () => {
-    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const storageKey = 'wework.plugins.inventory.v1'
     const key = pluginMarketplaceCacheKey('http://api', 'token-quota-retry')
     window.localStorage.setItem(storageKey, JSON.stringify({ entries: { old: {} } }))
     const nativeSetItem = Storage.prototype.setItem
@@ -278,6 +303,21 @@ describe('pluginMarketplaceCache', () => {
     resetPluginMarketplaceCacheMemory()
     expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([
       expect.objectContaining({ id: '59', name: 'Dev Tools' }),
+    ])
+
+    const next = removePluginMarketplaceInstallation(key, {
+      installedIds: ['59'],
+      marketplaceItemIds: [1],
+      pluginKeys: ['dev-tools'],
+    })
+    expect(next?.installedPlugins).toEqual([])
+    expect(next?.marketplaceItems).toEqual([
+      expect.objectContaining({
+        id: 1,
+        installed: false,
+        installedPluginId: null,
+        enabled: false,
+      }),
     ])
   })
 
@@ -412,7 +452,7 @@ describe('pluginMarketplaceCache', () => {
   test('keeps memory and listeners immediate while delaying durable persist', () => {
     vi.useFakeTimers()
     const key = pluginMarketplaceCacheKey('http://api', 'token-debounce')
-    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const storageKey = 'wework.plugins.inventory.v1'
     const heard: Array<string | undefined> = []
     const unsubscribe = subscribePluginMarketplaceCache(next => {
       heard.push(next?.deviceId)
@@ -503,7 +543,7 @@ describe('pluginMarketplaceCache', () => {
   test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {
     vi.useFakeTimers()
     const key = pluginMarketplaceCacheKey('http://api', 'token-flush')
-    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const storageKey = 'wework.plugins.inventory.v1'
     setPluginMarketplaceCache({
       cacheKey: key,
       marketplaceItems: [item({ id: 2, name: 'b' })],

@@ -25,8 +25,12 @@ export interface PluginMarketplaceCacheSnapshot {
   logosStripped?: boolean
 }
 
-/** v2 durable snapshots are compacted in place to preserve existing warm catalogs. */
-const STORAGE_KEY = 'wework.plugins.marketplaceCache.v2'
+/** Canonical renderer inventory. Older marketplace snapshots are rebuildable and not migrated. */
+const STORAGE_KEY = 'wework.plugins.inventory.v1'
+const LEGACY_STORAGE_KEYS = [
+  'wework.plugins.marketplaceCache.v2',
+  'wework.plugins.marketplaceCache.v1',
+] as const
 /** Keep a warm catalog / installed strip across app restarts. */
 const DURABLE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** Never let one inlined package logo consume a material share of WebView storage. */
@@ -152,10 +156,9 @@ function forgetLegacyMarketplaceCache(): void {
   if (forgotLegacyCache || typeof window === 'undefined') return
   forgotLegacyCache = true
   try {
-    // v1 always stripped large data-URL logos and painted initials after restart.
-    window.localStorage.removeItem('wework.plugins.marketplaceCache.v1')
+    for (const key of LEGACY_STORAGE_KEYS) window.localStorage.removeItem(key)
   } catch {
-    // Ignore storage failures while migrating cache versions.
+    // Ignore storage failures. Live inventory loading remains authoritative.
   }
 }
 
@@ -178,8 +181,8 @@ function readPersistedStore(): PersistedMarketplaceCacheStore {
     }
     const compactedRaw = JSON.stringify(compacted)
     if (compactedRaw.length < raw.length) {
-      // Older v2 builds persisted complete plugin details and large data-URL logos.
-      // Rewrite them on first read so the Codex catalog cache has quota to persist.
+      // Early inventory builds could persist complete plugin details and large
+      // data-URL logos. Rewrite the current format without importing legacy keys.
       try {
         window.localStorage.setItem(STORAGE_KEY, compactedRaw)
       } catch {
@@ -385,16 +388,109 @@ export function setPluginMarketplaceCache(
   for (const listener of listeners) listener(snapshot)
 }
 
+export interface PluginInventoryUninstallIdentity {
+  installedIds: Array<string | number | null | undefined>
+  marketplaceItemIds: Array<string | number | null | undefined>
+  pluginKeys: Array<string | null | undefined>
+}
+
+function normalizedInventoryIdentities(
+  values: Array<string | number | null | undefined>
+): Set<string> {
+  return new Set(
+    values
+      .map(value =>
+        String(value ?? '')
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean)
+  )
+}
+
+function intersects(left: Set<string>, right: Set<string>): boolean {
+  for (const value of left) {
+    if (right.has(value)) return true
+  }
+  return false
+}
+
+/** Commit one uninstall to the canonical renderer inventory before background revalidation. */
+export function removePluginMarketplaceInstallation(
+  cacheKey: string,
+  identity: PluginInventoryUninstallIdentity
+): PluginMarketplaceCacheSnapshot | null {
+  const current = getPluginMarketplaceCache(cacheKey)
+  if (!current) return null
+
+  const installedIds = normalizedInventoryIdentities(identity.installedIds)
+  const marketplaceItemIds = normalizedInventoryIdentities(identity.marketplaceItemIds)
+  const pluginKeys = normalizedInventoryIdentities(identity.pluginKeys)
+  const installedPlugins = current.installedPlugins.filter(item => {
+    const labels = item.raw.metadata.labels
+    const labelId =
+      labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
+    const payload = item.raw.spec.sourcePayload
+    const itemIds = normalizedInventoryIdentities([
+      item.id,
+      labelId as string | number | null,
+      item.raw.spec.pluginId,
+      payload?.cloudInstalledPluginId as string | number | null,
+      payload?.cloudPluginId as string | number | null,
+      payload?.remotePluginId as string | number | null,
+    ])
+    const itemKeys = normalizedInventoryIdentities([
+      item.raw.spec.source.pluginKey,
+      typeof item.raw.metadata.name === 'string' ? item.raw.metadata.name : null,
+      item.name,
+    ])
+    return !intersects(itemIds, installedIds) && !intersects(itemKeys, pluginKeys)
+  })
+  const marketplaceItems = current.marketplaceItems.map(item => {
+    const itemIds = normalizedInventoryIdentities([
+      item.id,
+      item.installedPluginId,
+      item.remotePluginId,
+    ])
+    const itemKeys = normalizedInventoryIdentities([item.name, item.displayName])
+    if (
+      !intersects(itemIds, installedIds) &&
+      !intersects(itemIds, marketplaceItemIds) &&
+      !intersects(itemKeys, pluginKeys)
+    ) {
+      return item
+    }
+    return {
+      ...item,
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+      installedVersion: null,
+      enabled: false,
+      updateAvailable: false,
+      currentDeviceInstallation: null,
+    }
+  })
+  const next = {
+    ...current,
+    installedPlugins,
+    marketplaceItems,
+    fetchedAt: Date.now(),
+  }
+  setPluginMarketplaceCache(next, { persistImmediately: true })
+  return next
+}
+
 export function clearPluginMarketplaceCache(): void {
   clearPersistTimer()
   pendingPersist = null
   lastPersistedSignature = ''
   snapshot = null
+  forgotLegacyCache = false
   if (typeof window !== 'undefined') {
     try {
       window.localStorage.removeItem(STORAGE_KEY)
-      // Drop the poisoned v1 cache that always stripped large data-URL logos.
-      window.localStorage.removeItem('wework.plugins.marketplaceCache.v1')
+      for (const key of LEGACY_STORAGE_KEYS) window.localStorage.removeItem(key)
     } catch {
       // Ignore storage failures during logout / reset.
     }
