@@ -103,7 +103,7 @@ export const getPublicModelAllowedUsersEnabledFromConfig = (value: string): bool
 
 export const parseAllowedUsersInput = (value: string): string[] => {
   const names = value
-    .split(/[\s,]+/)
+    .split(/[\s,，]+/)
     .map(name => name.trim())
     .filter(Boolean)
   return Array.from(new Set(names))

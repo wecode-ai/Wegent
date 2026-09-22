@@ -34,6 +34,11 @@ describe('PublicModelList user whitelist config synchronization', () => {
     expect(parseAllowedUsersInput('')).toEqual([])
   })
 
+  test('parses full-width and half-width commas as separators', () => {
+    expect(parseAllowedUsersInput('alice，bob，carol')).toEqual(['alice', 'bob', 'carol'])
+    expect(parseAllowedUsersInput('alice， bob, carol')).toEqual(['alice', 'bob', 'carol'])
+  })
+
   test('writes the whitelist into spec.allowedUsers and clears it when empty', () => {
     const updated = setPublicModelAllowedUsersInConfig(
       JSON.stringify({ kind: 'Model', spec: { modelType: 'llm' } }),
