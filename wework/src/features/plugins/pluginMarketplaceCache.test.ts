@@ -411,6 +411,49 @@ describe('pluginMarketplaceCache', () => {
     ])
   })
 
+  test('preserves case-distinct marketplace IDs when uninstalling by plugin key', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-marketplace-case')
+    const first = installedItem('59', 'market-a', 'shared-name')
+    const second = installedItem('60', 'Market-A', 'shared-name')
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [
+        item({
+          id: 1,
+          name: 'shared-name',
+          installed: true,
+          installedPluginId: '59',
+          manifest: { marketplaceId: 'market-a' },
+        }),
+        item({
+          id: 2,
+          name: 'shared-name',
+          installed: true,
+          installedPluginId: '60',
+          manifest: { marketplaceId: 'Market-A' },
+        }),
+      ],
+      installedPlugins: [first, second],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+
+    const next = removePluginMarketplaceInstallation(key, {
+      installedIds: ['59'],
+      marketplaceItemIds: [1],
+      pluginKeys: ['shared-name'],
+      marketplaceId: 'market-a',
+    })
+
+    expect(next?.installedPlugins).toEqual([second])
+    expect(next?.marketplaceItems).toEqual([
+      expect.objectContaining({ id: 1, installed: false, installedPluginId: null }),
+      expect.objectContaining({ id: 2, installed: true, installedPluginId: '60' }),
+    ])
+  })
+
   test('detects marketplace item changes via signature', () => {
     const left = [item({ id: 1, name: 'a', version: '1.0.0', installed: false })]
     const right = [item({ id: 1, name: 'a', version: '1.0.0', installed: true })]

@@ -396,7 +396,7 @@ export interface PluginInventoryUninstallIdentity {
 }
 
 function normalizedMarketplaceIdentity(value: string | null | undefined): string {
-  return (value ?? '').trim().toLowerCase()
+  return (value ?? '').trim()
 }
 
 function normalizedInventoryIdentities(
