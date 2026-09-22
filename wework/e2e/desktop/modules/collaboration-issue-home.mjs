@@ -57,6 +57,27 @@ export async function verifyCollaborationIssueHome(
     'The trailing action must not add a second line to the project row'
   )
 
+  await openComposer()
+  const environmentNotice = scoped('[data-testid="issue-execution-environment-notice"]')
+  await control.command('waitFor', environmentNotice, { text: 'Issue 仍可创建' })
+  await control.command(
+    'click',
+    scoped('[data-testid="issue-execution-environment-notice-action"]')
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-project-settings-environments"]')
+  )
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      scoped('[data-testid="collaboration-project-settings-environments"]'),
+      { value: 'aria-current' }
+    ),
+    'page',
+    'The environment notice action did not open project execution environment settings'
+  )
+
   const cases = [
     { kind: 'member', id: String(owner.id), field: 'assignee_user_id', icon: 'member' },
     { kind: 'agent', id: String(agent.id), field: 'assignee_agent_id', icon: 'agent' },

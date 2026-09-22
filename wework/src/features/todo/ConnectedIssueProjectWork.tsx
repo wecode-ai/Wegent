@@ -7,11 +7,12 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { ProjectExecutionMode, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 
 interface ConnectedIssueProjectWorkProps {
-  project: ProjectWithTasks
+  project: ProjectWithTasks | null
   selectedDeviceWorkspaceId: number | null
   executionMode?: ProjectExecutionMode
   executionModeLocked?: boolean
   worktreeBranch?: string | null
+  showProjectSelector?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
   onExecutionModeChange?: (mode: ProjectExecutionMode) => void
@@ -26,6 +27,7 @@ export function ConnectedIssueProjectWork({
   executionMode,
   executionModeLocked = false,
   worktreeBranch,
+  showProjectSelector = true,
   onSelectProject,
   onSelectProjectWorkspace,
   onExecutionModeChange,
@@ -34,7 +36,8 @@ export function ConnectedIssueProjectWork({
   children,
 }: ConnectedIssueProjectWorkProps) {
   const { state } = useWorkbenchPaneContext()
-  const resolvedProject = useMemo<ProjectWithTasks>(() => {
+  const resolvedProject = useMemo<ProjectWithTasks | null>(() => {
+    if (!project) return null
     const stateProject = state.projects.find(candidate => candidate.id === project.id) ?? project
     if (stateProject.config?.mode === 'workspace') return stateProject
     const runtimeProject = state.runtimeWork?.projects.find(
@@ -78,15 +81,20 @@ export function ConnectedIssueProjectWork({
     () => ({
       ...projectWork,
       currentProject: resolvedProject,
-      currentProjectId: resolvedProject.id,
+      currentProjectId: resolvedProject?.id,
       selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: null,
       executionMode: executionMode ?? projectWork.executionMode,
       executionModeLocked,
       worktreeBranch: worktreeBranch ?? projectWork.worktreeBranch,
       showProjectClearButton: false,
+      showProjectSelector,
       onSelectProject,
       onSelectProjectWorkspace,
+      onBindProjectWorkspace: projectId => {
+        onSelectProject(projectId)
+        projectWork.onBindProjectWorkspace?.(projectId)
+      },
       onExecutionModeChange: onExecutionModeChange ?? projectWork.onExecutionModeChange,
       onWorktreeBranchChange: onWorktreeBranchChange ?? projectWork.onWorktreeBranchChange,
     }),
@@ -100,6 +108,7 @@ export function ConnectedIssueProjectWork({
       projectWork,
       resolvedProject,
       selectedDeviceWorkspaceId,
+      showProjectSelector,
       worktreeBranch,
     ]
   )

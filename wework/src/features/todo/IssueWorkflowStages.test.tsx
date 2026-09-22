@@ -131,6 +131,7 @@ describe('IssueWorkflowStages', () => {
             workflow_node_id: '设计',
           },
         ]}
+        deviceNamesById={{ 'device-1': '设计工作站' }}
         onCreateTask={onCreateTask}
       />
     )
@@ -141,6 +142,10 @@ describe('IssueWorkflowStages', () => {
     fireEvent.click(screen.getByTestId('cloud-todo-workflow-node-设计'))
 
     expect(screen.getByTestId('cloud-todo-workflow-action-设计')).toHaveTextContent('设计任务')
+    expect(screen.getByTestId('cloud-todo-workflow-action-设计')).toHaveTextContent(
+      '设计工作站 · 成功'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-action-设计')).not.toHaveTextContent('device-1')
     expect(screen.queryByTestId('cloud-todo-workflow-action-开发')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-create-workflow-task-设计')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-node-设计')).toHaveAttribute(

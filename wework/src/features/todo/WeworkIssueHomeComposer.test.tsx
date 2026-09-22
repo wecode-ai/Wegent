@@ -32,6 +32,17 @@ const createProps = (): IssueHomeTaskComposerProps => ({
 })
 
 describe('Wework Issue home task composer', () => {
+  test('renders the shared execution environment notice above the editor', () => {
+    const props = createProps()
+    props.environmentNotice = <div data-testid="environment-notice">环境提示</div>
+
+    render(<WeworkIssueHomeComposer {...props} />)
+
+    const notice = screen.getByTestId('environment-notice')
+    const input = screen.getByTestId('collaboration-home-issue-content')
+    expect(notice.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   test('distinguishes same-name local and cloud projects and retains the selected space', async () => {
     const props = createProps()
     props.projects = props.projects.map(project => ({ ...project, name: '同名项目' }))

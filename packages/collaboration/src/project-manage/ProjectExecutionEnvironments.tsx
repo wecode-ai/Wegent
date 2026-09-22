@@ -44,7 +44,20 @@ function repositoryKey(repository: WorkspaceGitRepositoryRef) {
 
 // Device errors embed the executor's absolute paths and the whole git stderr;
 // keep the stage prefix and git's decisive line, the full text stays in title.
-function executionEnvironmentErrorSummary(message: string): string {
+const LEGACY_REPOSITORY_FREE_ERROR =
+  "Execution environment must have exactly one primary repository";
+
+function executionEnvironmentErrorSummary(
+  message: string,
+  repositoryFree: boolean,
+  translate: CollaborationTranslate,
+): string {
+  if (repositoryFree && message.includes(LEGACY_REPOSITORY_FREE_ERROR)) {
+    return translate(
+      "todo.execution_environment_blank_workspace_upgrade_required",
+      "当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试；也可以先添加一个主代码仓库。",
+    );
+  }
   const fatalLines = message.match(/fatal: [^\n]+/g);
   if (!fatalLines?.length) {
     return message;
@@ -102,11 +115,15 @@ type ExecutionEnvironmentScope =
 
 export function ProjectExecutionEnvironments({
   api,
+  onManageDevices,
+  onProjectChange,
   project,
   translate,
   workspace,
 }: {
   api: SharedWorkspaceApi;
+  onManageDevices?(): void;
+  onProjectChange?(project: CollaborationProject): void;
   translate: CollaborationTranslate;
 } & ExecutionEnvironmentScope) {
   const isWorkspaceScope = workspace != null;
@@ -128,21 +145,10 @@ export function ProjectExecutionEnvironments({
     workspace?.execution_environment ?? project?.execution_environment;
   const [repositories, setRepositories] = useState<RepositoryDraft[]>(() => {
     const configured = initialConfig?.repositories ?? [];
-    return configured.length > 0
-      ? configured.map((repository) => ({
-          ...repository,
-          id: draftId("repository"),
-        }))
-      : [
-          {
-            id: draftId("repository"),
-            name: "",
-            url: "",
-            ref: "",
-            path: "",
-            primary: true,
-          },
-        ];
+    return configured.map((repository) => ({
+      ...repository,
+      id: draftId("repository"),
+    }));
   });
   const [setupSteps, setSetupSteps] = useState<SetupStepDraft[]>(() =>
     (initialConfig?.setup_steps ?? []).map((step) => ({
@@ -153,7 +159,9 @@ export function ProjectExecutionEnvironments({
   const [configVersion, setConfigVersion] = useState(
     workspace?.version ?? project!.version,
   );
-  const [configSaved, setConfigSaved] = useState(false);
+  const [configurationDirty, setConfigurationDirty] = useState(false);
+  const [configurationSaved, setConfigurationSaved] = useState(false);
+  const [configurationError, setConfigurationError] = useState("");
   const [deviceStates, setDeviceStates] = useState<DeviceStateMap>(
     initialConfig?.devices ?? NO_DEVICE_STATES,
   );
@@ -170,24 +178,26 @@ export function ProjectExecutionEnvironments({
     number | null
   >(null);
   const [error, setError] = useState("");
-  // Rows without a selected Git repository are kept in the form as drafts but
-  // are dropped from the payload, so initialization must not start until the
-  // primary row is fully configured.
   const configuredRepositories = useMemo(
     () =>
-      repositories
-        .map(({ id: _id, ...repository }) => ({
-          ...repository,
-          name: repository.name.trim(),
-          url: repository.url.trim(),
-          ref: repository.ref.trim(),
-          path: repository.path.trim(),
-        }))
-        .filter((repository) => repository.url && repository.path),
+      repositories.map(({ id: _id, ...repository }) => ({
+        ...repository,
+        name: repository.name.trim(),
+        url: repository.url.trim(),
+        ref: repository.ref.trim(),
+        path: repository.path.trim(),
+      })),
     [repositories],
   );
-  const primaryRepositoryReady = configuredRepositories.some(
-    (repository) => repository.primary,
+  const configuredSetupSteps = useMemo(
+    () =>
+      setupSteps
+        .map(({ id: _id, ...step }) => ({
+          command: step.command.trim(),
+          workingDirectory: step.working_directory.trim(),
+        }))
+        .filter((step) => step.command),
+    [setupSteps],
   );
   const accessRole = workspace?.access_role ?? project!.access_role;
   const canManage =
@@ -216,6 +226,7 @@ export function ProjectExecutionEnvironments({
   // would both pass a state-based guard; the ref flips synchronously and also
   // blocks a second device's button while one initialization is in flight.
   const initializationInFlight = useRef(false);
+  const configurationSaveInFlight = useRef(false);
 
   const incomingVersion = workspace?.version ?? project!.version;
   const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES;
@@ -343,7 +354,9 @@ export function ProjectExecutionEnvironments({
         return { ...draft, url: option.cloneUrl, name, path, ref };
       }),
     );
-    setConfigSaved(false);
+    setConfigurationDirty(true);
+    setConfigurationSaved(false);
+    setConfigurationError("");
     void loadBranches(option);
   }
 
@@ -421,6 +434,16 @@ export function ProjectExecutionEnvironments({
   const matchesStatus = (environment: CollaborationExecutionEnvironment) =>
     statusFilter === "all" || environment.status === statusFilter;
   const visibleAssignedItems = assignedItems.filter(matchesStatus);
+  const hasReadyDevice = assignedItems.some((environment) => {
+    if (environment.status !== "online") return false;
+    const deviceKey =
+      environment.device_key ?? String(environment.device_id ?? "");
+    const deviceState = deviceStates[deviceKey];
+    return (
+      deviceState?.status === "ready" &&
+      Boolean(deviceState.workspace_path?.trim())
+    );
+  });
 
   function updateRepository(
     id: string,
@@ -438,7 +461,9 @@ export function ProjectExecutionEnvironments({
         return repository.id === id ? { ...repository, ...patch } : repository;
       }),
     );
-    setConfigSaved(false);
+    setConfigurationDirty(true);
+    setConfigurationSaved(false);
+    setConfigurationError("");
   }
 
   function addRepository() {
@@ -453,7 +478,9 @@ export function ProjectExecutionEnvironments({
         primary: current.length === 0,
       },
     ]);
-    setConfigSaved(false);
+    setConfigurationDirty(true);
+    setConfigurationSaved(false);
+    setConfigurationError("");
   }
 
   function removeRepository(id: string) {
@@ -467,7 +494,9 @@ export function ProjectExecutionEnvironments({
       }
       return remaining;
     });
-    setConfigSaved(false);
+    setConfigurationDirty(true);
+    setConfigurationSaved(false);
+    setConfigurationError("");
   }
 
   function updateSetupStep(
@@ -477,7 +506,86 @@ export function ProjectExecutionEnvironments({
     setSetupSteps((current) =>
       current.map((step) => (step.id === id ? { ...step, ...patch } : step)),
     );
-    setConfigSaved(false);
+    setConfigurationDirty(true);
+    setConfigurationSaved(false);
+    setConfigurationError("");
+  }
+
+  async function saveConfiguration() {
+    if (
+      !canManage ||
+      !configurationDirty ||
+      saving ||
+      configurationSaveInFlight.current
+    )
+      return;
+    if (
+      configuredRepositories.some(
+        (repository) => !repository.name || !repository.url || !repository.path,
+      )
+    ) {
+      setConfigurationError(
+        translate(
+          "todo.execution_environment_repository_incomplete",
+          "请补全仓库的名称、Git 仓库和目录，或移除该仓库。",
+        ),
+      );
+      return;
+    }
+    if (
+      configuredRepositories.length > 0 &&
+      configuredRepositories.filter((repository) => repository.primary)
+        .length !== 1
+    ) {
+      setConfigurationError(
+        translate(
+          "todo.execution_environment_primary_repository_required",
+          "请为已添加的代码仓库设置一个主仓库。",
+        ),
+      );
+      return;
+    }
+
+    configurationSaveInFlight.current = true;
+    setSaving(true);
+    setError("");
+    setConfigurationError("");
+    setConfigurationSaved(false);
+    try {
+      const executionEnvironment = {
+        repositories: configuredRepositories,
+        setupSteps: configuredSetupSteps,
+      };
+      const updated = isWorkspaceScope
+        ? await api.workspaces!.update(scopeId, {
+            version: configVersion,
+            executionEnvironment,
+          })
+        : await api.projects
+            .update(scopeId, {
+              version: configVersion,
+              executionEnvironment,
+            })
+            .then((updatedProject) => {
+              onProjectChange?.(updatedProject);
+              return updatedProject;
+            });
+      setConfigVersion(updated.version);
+      setDeviceStates(
+        updated.execution_environment?.devices ?? NO_DEVICE_STATES,
+      );
+      setConfigurationDirty(false);
+      setConfigurationSaved(true);
+      setEnvironmentError("");
+      environmentErrorDeviceKey.current = "";
+    } catch (saveError) {
+      setConfigurationError(
+        saveError instanceof Error ? saveError.message : String(saveError),
+      );
+    } finally {
+      configurationSaveInFlight.current = false;
+      setSaving(false);
+    }
   }
 
   async function addEnvironment(
@@ -549,11 +657,11 @@ export function ProjectExecutionEnvironments({
       device.status !== "online"
     )
       return;
-    if (!primaryRepositoryReady) {
+    if (configurationDirty) {
       setEnvironmentError(
         translate(
-          "todo.execution_environment_primary_repository_required",
-          "请先为主仓库选择 Git 仓库，再初始化环境。",
+          "todo.execution_environment_save_before_initialization",
+          "配置有未保存的修改，请先保存配置再初始化环境。",
         ),
       );
       return;
@@ -562,39 +670,25 @@ export function ProjectExecutionEnvironments({
     setSaving(true);
     setInitializingDeviceId(device.device_id);
     setError("");
-    setConfigSaved(false);
     const deviceKey = device.device_key ?? String(device.device_id);
-    const executionEnvironment = {
-      repositories: configuredRepositories,
-      setupSteps: setupSteps
-        .map(({ id: _id, ...step }) => ({
-          command: step.command.trim(),
-          workingDirectory: step.working_directory.trim(),
-        }))
-        .filter((step) => step.command),
-    };
     try {
       // The in-flight state belongs to the clicked device (initializingDeviceId);
       // other devices keep showing their own persisted per-device state.
       setEnvironmentError("");
-      const updated = isWorkspaceScope
-        ? await api.workspaces!.update(scopeId, {
-            version: configVersion,
-            executionEnvironment,
-          })
-        : await api.projects.update(scopeId, {
-            version: configVersion,
-            executionEnvironment,
-          });
       const initialized = isWorkspaceScope
         ? await api.workspaces!.initializeExecutionEnvironment(scopeId, {
             deviceId: device.device_id,
-            version: updated.version,
+            version: configVersion,
           })
-        : await api.projects.initializeExecutionEnvironment(scopeId, {
-            deviceId: device.device_id,
-            version: updated.version,
-          });
+        : await api.projects
+            .initializeExecutionEnvironment(scopeId, {
+              deviceId: device.device_id,
+              version: configVersion,
+            })
+            .then((initializedProject) => {
+              onProjectChange?.(initializedProject);
+              return initializedProject;
+            });
       const initializedConfig = initialized.execution_environment;
       const nextDeviceStates = initializedConfig?.devices ?? NO_DEVICE_STATES;
       const deviceState = nextDeviceStates[deviceKey];
@@ -611,7 +705,6 @@ export function ProjectExecutionEnvironments({
             ),
         );
       }
-      setConfigSaved(true);
     } catch (saveError) {
       environmentErrorDeviceKey.current = deviceKey;
       setEnvironmentError(
@@ -663,11 +756,14 @@ export function ProjectExecutionEnvironments({
 
             <div className="mt-5">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-medium">
+                <h3 className="flex items-center gap-2 text-sm font-medium">
                   {translate(
                     "todo.execution_environment_repositories",
                     "代码仓库",
                   )}
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+                    {translate("common.optional", "可选")}
+                  </span>
                 </h3>
                 {canManage ? (
                   <button
@@ -684,10 +780,10 @@ export function ProjectExecutionEnvironments({
               <p className="mt-1 text-xs text-text-muted">
                 {translate(
                   "todo.execution_environment_repositories_description",
-                  "主仓库是智能体默认工作目录；其他仓库会克隆到同一环境下的独立目录。",
+                  "添加仓库后，主仓库是智能体默认工作目录；不添加则创建空白工作目录。",
                 )}
               </p>
-              {repositoriesLoadFailed ? (
+              {repositories.length > 0 && repositoriesLoadFailed ? (
                 <p className="mt-2 text-xs text-red-600" role="alert">
                   {translate(
                     "todo.repositories_load_failed",
@@ -705,6 +801,17 @@ export function ProjectExecutionEnvironments({
               ) : null}
 
               <div className="mt-3 space-y-3">
+                {repositories.length === 0 ? (
+                  <p
+                    className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted"
+                    data-testid={`${testIdPrefix}-repositories-empty`}
+                  >
+                    {translate(
+                      "todo.execution_environment_no_repositories",
+                      "未添加代码仓库。初始化时会创建一个空白工作目录。",
+                    )}
+                  </p>
+                ) : null}
                 {repositories.map((repository, index) => {
                   const matchedOption = repositoriesByUrl.get(repository.url);
                   const branchState = matchedOption
@@ -754,7 +861,7 @@ export function ProjectExecutionEnvironments({
                                 "依赖仓库",
                               )}
                         </label>
-                        {canManage && repositories.length > 1 ? (
+                        {canManage ? (
                           <button
                             className="text-sm text-text-secondary hover:text-text-primary"
                             data-testid={`${testIdPrefix}-remove-repository-${index}`}
@@ -965,7 +1072,9 @@ export function ProjectExecutionEnvironments({
                           working_directory: "",
                         },
                       ]);
-                      setConfigSaved(false);
+                      setConfigurationDirty(true);
+                      setConfigurationSaved(false);
+                      setConfigurationError("");
                     }}
                   >
                     ＋ {translate("todo.add_setup_step", "添加步骤")}
@@ -974,8 +1083,12 @@ export function ProjectExecutionEnvironments({
               </div>
               <p className="mt-1 text-xs text-text-muted">
                 {translate(
-                  "todo.execution_environment_setup_description",
-                  "步骤按顺序执行；工作目录为空时在主仓库执行，也可以指定任一仓库目录。",
+                  repositories.length > 0
+                    ? "todo.execution_environment_setup_description"
+                    : "todo.execution_environment_setup_without_repository_description",
+                  repositories.length > 0
+                    ? "步骤按顺序执行；工作目录为空时在主仓库执行，也可以指定任一仓库目录。"
+                    : "步骤按顺序在空白环境中执行；工作目录为空时使用环境根目录。",
                 )}
               </p>
               <div className="mt-3 space-y-2">
@@ -1020,7 +1133,9 @@ export function ProjectExecutionEnvironments({
                               (candidate) => candidate.id !== step.id,
                             ),
                           );
-                          setConfigSaved(false);
+                          setConfigurationDirty(true);
+                          setConfigurationSaved(false);
+                          setConfigurationError("");
                         }}
                       >
                         {translate("common.remove", "移除")}
@@ -1031,29 +1146,118 @@ export function ProjectExecutionEnvironments({
                 {setupSteps.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted">
                     {translate(
-                      "todo.no_setup_steps",
-                      "没有初始化步骤，仓库克隆完成后即可使用。",
+                      repositories.length > 0
+                        ? "todo.no_setup_steps"
+                        : "todo.no_setup_steps_without_repository",
+                      repositories.length > 0
+                        ? "没有初始化步骤，仓库克隆完成后即可使用。"
+                        : "没有初始化步骤，空白工作目录创建后即可使用。",
                     )}
                   </p>
                 ) : null}
               </div>
             </div>
+
+            {canManage ? (
+              <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+                {configurationError ? (
+                  <p
+                    className="mr-auto text-sm text-red-600"
+                    data-testid={`${testIdPrefix}-configuration-error`}
+                    role="alert"
+                  >
+                    {configurationError}
+                  </p>
+                ) : configurationSaved ? (
+                  <span
+                    className="mr-auto text-sm text-green-600"
+                    data-testid={`${testIdPrefix}-configuration-status`}
+                    role="status"
+                  >
+                    {translate(
+                      "todo.execution_environment_configuration_saved",
+                      "配置已保存",
+                    )}
+                  </span>
+                ) : configurationDirty ? (
+                  <span className="mr-auto text-sm text-text-muted">
+                    {translate(
+                      "todo.execution_environment_configuration_unsaved",
+                      "配置有未保存的修改",
+                    )}
+                  </span>
+                ) : null}
+                <button
+                  className="collaboration-primary-button"
+                  data-testid={`${testIdPrefix}-save-configuration`}
+                  disabled={saving || !configurationDirty}
+                  type="button"
+                  onClick={() => void saveConfiguration()}
+                >
+                  {translate(
+                    "todo.execution_environment_save_configuration",
+                    "保存配置",
+                  )}
+                </button>
+              </div>
+            ) : null}
           </div>
 
-          <div className="border-t border-border px-5 py-4">
+          <div className="border-t border-border px-5 py-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-medium">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-sm font-medium">
+                    {translate(
+                      isWorkspaceScope
+                        ? "todo.configured_workspace_execution_environments"
+                        : "todo.project_environment_initialization",
+                      isWorkspaceScope ? "运行设备" : "设备环境初始化",
+                    )}
+                  </h2>
+                  {!isWorkspaceScope ? (
+                    <span
+                      className="rounded bg-text-primary px-1.5 py-0.5 text-xs font-medium text-background"
+                      data-testid={`${testIdPrefix}-required`}
+                    >
+                      {translate("todo.execution_environment_required", "必需")}
+                    </span>
+                  ) : null}
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-text-muted">
+                    {assignedItems.length}
+                  </span>
+                  {!isWorkspaceScope ? (
+                    <span
+                      className={
+                        hasReadyDevice
+                          ? "text-xs font-medium text-green-600"
+                          : "text-xs font-medium text-text-secondary"
+                      }
+                      data-testid={`${testIdPrefix}-readiness`}
+                      role="status"
+                    >
+                      {hasReadyDevice
+                        ? translate(
+                            "todo.execution_environment_readiness_ready",
+                            "已完成",
+                          )
+                        : translate(
+                            "todo.execution_environment_readiness_pending",
+                            "待完成",
+                          )}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-xs text-text-muted">
                   {translate(
                     isWorkspaceScope
-                      ? "todo.configured_workspace_execution_environments"
-                      : "todo.configured_project_execution_environments",
-                    "运行设备",
+                      ? "todo.workspace_execution_devices_description"
+                      : "todo.execution_environment_required_description",
+                    isWorkspaceScope
+                      ? "空间内项目可以使用这里的在线设备执行任务。"
+                      : "至少在一台在线设备上完成初始化，项目任务才能使用此环境运行。",
                   )}
-                </h2>
-                <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-text-muted">
-                  {assignedItems.length}
-                </span>
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 {assignedItems.length > 1 ? (
@@ -1089,7 +1293,11 @@ export function ProjectExecutionEnvironments({
                 {canManage ? (
                   <button
                     type="button"
-                    className="collaboration-secondary-button"
+                    className={
+                      assignedItems.length === 0
+                        ? "collaboration-primary-button"
+                        : "collaboration-secondary-button"
+                    }
                     data-testid={`${testIdPrefix}-add`}
                     disabled={loading || saving}
                     onClick={() => setPickerOpen((current) => !current)}
@@ -1101,16 +1309,6 @@ export function ProjectExecutionEnvironments({
                 ) : null}
               </div>
             </div>
-            <p className="mt-1 text-xs text-text-muted">
-              {translate(
-                isWorkspaceScope
-                  ? "todo.workspace_execution_devices_description"
-                  : "todo.project_execution_devices_description",
-                isWorkspaceScope
-                  ? "空间内项目可以使用这里的在线设备执行任务。"
-                  : "初始化和后续任务会从这里的在线设备中选择。",
-              )}
-            </p>
 
             <div className="pt-3">
               {loading ? (
@@ -1136,7 +1334,7 @@ export function ProjectExecutionEnvironments({
                     )}
                   </p>
                   <p className="mt-0.5 text-xs text-text-muted">
-                    {availableItems.length === 0
+                    {candidates.length === 0
                       ? translate(
                           isWorkspaceScope
                             ? "todo.configure_workspace_environment"
@@ -1150,6 +1348,19 @@ export function ProjectExecutionEnvironments({
                           "添加一台在线设备，用于完成环境初始化和运行任务。",
                         )}
                   </p>
+                  {candidates.length === 0 && canManage && onManageDevices ? (
+                    <button
+                      className="collaboration-secondary-button mt-3"
+                      data-testid={`${testIdPrefix}-manage-devices`}
+                      type="button"
+                      onClick={onManageDevices}
+                    >
+                      {translate(
+                        "todo.manage_execution_devices",
+                        "添加或启动设备",
+                      )}
+                    </button>
+                  ) : null}
                 </div>
               ) : visibleAssignedItems.length === 0 ? (
                 <p className="text-sm text-text-muted" role="status">
@@ -1232,9 +1443,13 @@ export function ProjectExecutionEnvironments({
                         {canManage && environment.status === "online" ? (
                           <button
                             type="button"
-                            className="collaboration-link-button"
+                            className={
+                              instanceStatus === "ready"
+                                ? "collaboration-secondary-button shrink-0"
+                                : "collaboration-primary-button shrink-0"
+                            }
                             data-testid={`${testIdPrefix}-initialize-${environment.device_id}`}
-                            disabled={saving}
+                            disabled={saving || configurationDirty}
                             onClick={() =>
                               void createEnvironmentOnDevice(environment)
                             }
@@ -1295,15 +1510,27 @@ export function ProjectExecutionEnvironments({
                       </p>
                     </div>
                     {candidates.length === 0 ? (
-                      <p
-                        className="px-4 py-5 text-sm text-text-muted"
-                        role="status"
-                      >
-                        {translate(
-                          "todo.no_available_execution_environments",
-                          "没有可添加的在线执行环境",
-                        )}
-                      </p>
+                      <div className="px-4 py-5">
+                        <p className="text-sm text-text-muted" role="status">
+                          {translate(
+                            "todo.no_available_execution_environments",
+                            "没有可添加的在线执行环境",
+                          )}
+                        </p>
+                        {canManage && onManageDevices ? (
+                          <button
+                            className="collaboration-secondary-button mt-3"
+                            data-testid={`${testIdPrefix}-manage-devices-picker`}
+                            type="button"
+                            onClick={onManageDevices}
+                          >
+                            {translate(
+                              "todo.manage_execution_devices",
+                              "添加或启动设备",
+                            )}
+                          </button>
+                        ) : null}
+                      </div>
                     ) : (
                       <div className="divide-y divide-border">
                         {candidates.map((environment) => (
@@ -1364,19 +1591,39 @@ export function ProjectExecutionEnvironments({
                 role="alert"
                 title={environmentError}
               >
-                {executionEnvironmentErrorSummary(environmentError)}
+                {executionEnvironmentErrorSummary(
+                  environmentError,
+                  configuredRepositories.length === 0,
+                  translate,
+                )}
               </p>
             ) : null}
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-text-muted">
                 {translate(
                   "todo.execution_environment_create_hint",
-                  "填写配置后，在一台在线设备上点击“初始化环境”；初始化过程会同时保存配置。",
+                  "先保存配置，再在一台在线设备上初始化环境；未添加代码仓库时会创建空白工作目录。",
                 )}
               </p>
-              {configSaved ? (
-                <span className="shrink-0 text-sm text-green-600" role="status">
-                  {translate("common.saved", "环境已初始化")}
+              {!isWorkspaceScope ? (
+                <span
+                  className={
+                    hasReadyDevice
+                      ? "shrink-0 text-sm font-medium text-green-600"
+                      : "shrink-0 text-sm font-medium text-text-primary"
+                  }
+                  data-testid={`${testIdPrefix}-completion-status`}
+                  role="status"
+                >
+                  {hasReadyDevice
+                    ? translate(
+                        "todo.execution_environment_initialized",
+                        "环境已初始化",
+                      )
+                    : translate(
+                        "todo.execution_environment_readiness_pending",
+                        "待完成",
+                      )}
                 </span>
               ) : null}
             </div>

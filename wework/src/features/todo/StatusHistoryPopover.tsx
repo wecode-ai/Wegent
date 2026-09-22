@@ -23,6 +23,12 @@ const STATUS_ACTION_KEYS: Record<StatusHistoryEntry['trigger'], string> = {
   workflow_replanned: 'todo.status_action_workflow_replanned',
   workflow_paused: 'todo.status_action_workflow_paused',
   workflow_resumed: 'todo.status_action_workflow_resumed',
+  human_started: 'todo.status_action_human_started',
+  human_submitted: 'todo.status_action_human_submitted',
+  human_accepted: 'todo.status_action_human_accepted',
+  human_changes_requested: 'todo.status_action_human_changes_requested',
+  reassignment: 'todo.status_action_reassignment',
+  unassigned: 'todo.status_action_unassigned',
 }
 
 interface StatusHistoryPopoverProps {

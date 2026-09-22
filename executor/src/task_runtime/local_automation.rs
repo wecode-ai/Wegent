@@ -71,6 +71,12 @@ pub(super) fn on_event(
     event: &str,
     added_tags: &[String],
 ) -> Result<(), TaskRuntimeError> {
+    if event == "task.created"
+        && get_item_from(connection, task_id, "task")?
+            .is_some_and(|task| task.assignee_user_id.is_some())
+    {
+        return Ok(());
+    }
     let project = get_item_from(connection, project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
     for rule in rules(&project) {

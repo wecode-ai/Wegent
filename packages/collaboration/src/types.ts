@@ -68,6 +68,18 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole | 'RestrictedAnalyst'
 }
 
+export interface CollaborationHumanWork {
+  assignment_id: string
+  assignee_user_id: number
+  reviewer_user_id: number | null
+  submission_message_id: string | null
+  submitted_by_user_id: number | null
+  state: 'none' | 'submitted' | 'accepted' | 'changes_requested'
+  can_start: boolean
+  can_submit: boolean
+  can_review: boolean
+}
+
 export interface CollaborationIssue {
   id: string
   cloud_project_id: CollaborationProjectId
@@ -87,6 +99,7 @@ export interface CollaborationIssue {
   execution_state?: string | null
   execution_note?: string | null
   can_approve?: boolean
+  human_work?: CollaborationHumanWork | null
   ai_state?: { status?: string | null; last_error?: string | null } | null
   title: string
   description: string
@@ -203,6 +216,7 @@ export interface CollaborationExecutionEnvironment {
   id: string
   device_id?: number
   device_key?: string
+  is_current_device?: boolean
   name: string
   kind: 'local_device' | 'cloud_host'
   coding_tools: string[]
@@ -408,12 +422,18 @@ export interface CollaborationDefaultAssistant {
 
 export type CollaborationView = 'board' | 'table' | 'files' | 'manage'
 export type CollaborationRootView = 'home' | 'my-work'
+export type ProjectSettingsSectionId =
+  | 'project'
+  | 'collaboration-participants'
+  | 'environments'
+  | 'automatic-processing'
 
 export interface CollaborationLocation {
   projectId: string | null
   issueId: string | null
   view: CollaborationView
   rootView?: CollaborationRootView
+  projectSettingsSection?: ProjectSettingsSectionId | null
 }
 
 export interface CollaborationHostAdapter {

@@ -189,9 +189,9 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           refresh: true,
         })
         if (disposed) return
-        if (runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))) return
         const transcript = projectRuntimePaneTranscript(transcriptResponse)
         reconcileRuntimeConversationSnapshot(address, transcript.turns)
+        if (runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))) return
         store.syncTranscript(address, transcript)
         if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
           store.turnSettled(address, null, outcome)

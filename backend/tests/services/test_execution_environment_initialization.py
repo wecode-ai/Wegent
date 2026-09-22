@@ -492,7 +492,61 @@ async def test_initialization_failure_returns_error_state(
 
 
 @pytest.mark.asyncio
-async def test_initialization_rejects_definition_without_primary_repository(
+async def test_initialization_prepares_definition_without_repositories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"workspacePath": "/workspace/environment-workspace-1"},
+        }
+    )
+    sync = AsyncMock()
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "execute_configured_device_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        execution_environment_initialization,
+        "_sync_device_git_credentials",
+        sync,
+    )
+    device = Kind(
+        kind="Device",
+        name="device-runtime-id",
+        namespace="default",
+        user_id=7,
+        json={},
+    )
+
+    result = (
+        await execution_environment_initialization.initialize_execution_environment(
+            db=object(),
+            device=device,
+            environment_id="workspace-1",
+            definition={
+                "repositories": [],
+                "setup_steps": [
+                    {"command": "corepack enable", "working_directory": ""}
+                ],
+            },
+        )
+    )
+
+    assert result["status"] == "ready"
+    assert result["workspace_path"] == "/workspace/environment-workspace-1"
+    sync.assert_not_awaited()
+    payload = json.loads(execute.await_args.kwargs["args"][0])
+    assert payload["repositories"] == []
+    assert payload["setupSteps"] == [
+        {"command": "corepack enable", "working_directory": ""}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_initialization_rejects_nonempty_definition_without_primary_repository(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execute = AsyncMock()
@@ -514,7 +568,7 @@ async def test_initialization_rejects_definition_without_primary_repository(
             db=object(),
             device=device,
             environment_id="workspace-1",
-            definition={"repositories": []},
+            definition={"repositories": [{**PRIMARY_REPOSITORY, "primary": False}]},
         )
 
     assert excinfo.value.status_code == 422
@@ -807,6 +861,21 @@ def test_definition_accepts_multiple_repositories_and_repository_scoped_steps() 
     assert len(definition.repositories) == 2
     assert definition.repositories[0].primary is True
     assert definition.setup_steps[1].working_directory == "dependencies/shared-sdk"
+
+
+def test_definition_accepts_setup_steps_without_repositories() -> None:
+    definition = ExecutionEnvironmentDefinition.model_validate(
+        {
+            "repositories": [],
+            "setup_steps": [
+                {"command": "mkdir -p generated", "working_directory": ""},
+                {"command": "touch output.txt", "working_directory": "generated"},
+            ],
+        }
+    )
+
+    assert definition.repositories == []
+    assert definition.setup_steps[1].working_directory == "generated"
 
 
 @pytest.mark.parametrize(

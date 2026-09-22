@@ -43,6 +43,7 @@ export interface IssueWorkflowStagesProps {
   translate: IssueWorkflowTranslate;
   nodes: SharedWorkflowNode[];
   tasks: SharedWorkflowTaskBinding[];
+  deviceNamesById?: Readonly<Record<string, string>>;
   deliveries?: SharedWorkflowDelivery[];
   executionError?: string | null;
   selectedTaskId?: string | null;
@@ -98,6 +99,7 @@ export function IssueWorkflowStages({
   translate,
   nodes,
   tasks,
+  deviceNamesById,
   deliveries = [],
   executionError,
   selectedTaskId,
@@ -596,8 +598,9 @@ export function IssueWorkflowStages({
                                 data-status={taskStatus ?? "pending"}
                                 className="issue-workflow-task-sub"
                               >
-                                {task.device_id} ·{" "}
-                                {workflowTaskStatusLabel(t, taskStatus)}
+                                {deviceNamesById?.[task.device_id]?.trim() ||
+                                  task.device_id}{" "}
+                                · {workflowTaskStatusLabel(t, taskStatus)}
                               </span>
                             </span>
                             {onOpenTask ? (

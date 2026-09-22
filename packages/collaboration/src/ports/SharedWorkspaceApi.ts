@@ -126,6 +126,8 @@ export interface WorkspaceIssueCreateInput {
   workflow?: Record<string, unknown> | null
   executionConfig?: Record<string, unknown> | null
   automationRuleId?: string | null
+  assigneeUserId?: number | null
+  notifyAssignee?: boolean
 }
 
 export interface WorkspaceIssueUpdateInput {

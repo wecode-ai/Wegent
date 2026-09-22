@@ -1015,6 +1015,19 @@ def _project_bound_runtime_event_status(
             return None
         binding_metadata["runtime_status_event_seq"] = event_seq
         binding.metadata_json = binding_metadata
+        from app.services.human_issue_work import human_issue_work_service
+
+        if human_issue_work_service.is_direct_human_assignment(db, item_before):
+            logger.info(
+                "[IssueTaskRuntimeSync] kept human Issue status "
+                "user=%s device=%s task=%s event=%s item=%s",
+                user_id,
+                device_id,
+                task_id,
+                event_name,
+                item_before.id,
+            )
+            return None
         next_status = (
             "in_progress"
             if projected_status == "running"
