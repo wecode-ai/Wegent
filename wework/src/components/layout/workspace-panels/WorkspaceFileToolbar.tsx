@@ -114,11 +114,18 @@ export function WorkspaceFileToolbar({
   } | null>(null)
   const [opening, setOpening] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [context, setContext] = useState<{ position: MenuPosition; path: string } | null>(null)
+  const [context, setContext] = useState<{
+    isDirectory: boolean
+    position: MenuPosition
+    path: string
+  } | null>(null)
   const contextPath = context?.path ?? path
+  const contextIsDirectory = context?.isDirectory ?? isDirectory
   const local = target.workspaceSource !== 'remote' && isLocalTerminalAvailable()
   const contextHostedFileTarget =
-    local && !isDirectory && hostedFileTarget?.path === contextPath ? hostedFileTarget.target : null
+    local && !contextIsDirectory && hostedFileTarget?.path === contextPath
+      ? hostedFileTarget.target
+      : null
   const normalizedPath = path.replace(/\\/g, '/')
   const separator = normalizedPath.lastIndexOf('/')
   const name = normalizedPath.slice(separator + 1) || path
@@ -195,9 +202,9 @@ export function WorkspaceFileToolbar({
   )
 
   const openContextMenu = useCallback(
-    async (filePath: string, position: MenuPosition) => {
-      await fetchHostedFileTarget(filePath)
-      setContext({ path: filePath, position })
+    async (filePath: string, isDirectory: boolean, position: MenuPosition) => {
+      if (!isDirectory) await fetchHostedFileTarget(filePath)
+      setContext({ isDirectory, path: filePath, position })
     },
     [fetchHostedFileTarget]
   )
@@ -274,12 +281,16 @@ export function WorkspaceFileToolbar({
           ...(activeOpener || contextHostedFileTarget
             ? [{ testId: 'workspace-file-action-separator', label: '', separator: true }]
             : []),
-          {
-            testId: 'workspace-file-save-as',
-            label: t('workbench.workspace_file_save_as'),
-            onSelect: () =>
-              run(() => invokeDesktopHost('workspace.saveFileAs', { path: contextPath })),
-          },
+          ...(!contextIsDirectory
+            ? [
+                {
+                  testId: 'workspace-file-save-as',
+                  label: t('workbench.workspace_file_save_as'),
+                  onSelect: () =>
+                    run(() => invokeDesktopHost('workspace.saveFileAs', { path: contextPath })),
+                },
+              ]
+            : []),
         ]
       : []),
     {
@@ -287,20 +298,24 @@ export function WorkspaceFileToolbar({
       label: t('workbench.workspace_file_copy_path'),
       onSelect: () => run(() => copyTextToClipboard(contextPath)),
     },
-    {
-      testId: 'workspace-file-copy-contents',
-      label: t('workbench.workspace_file_copy_contents'),
-      disabled:
-        contextPath === path
-          ? !canCopyContents || (!local && textContent === undefined)
-          : !local || workspaceFilePreviewKind(contextPath) !== 'text',
-      onSelect: () =>
-        run(() =>
-          contextPath === path && textContent !== undefined
-            ? copyTextToClipboard(textContent)
-            : invokeDesktopHost('workspace.copyFileContents', { path: contextPath })
-        ),
-    },
+    ...(!contextIsDirectory
+      ? [
+          {
+            testId: 'workspace-file-copy-contents',
+            label: t('workbench.workspace_file_copy_contents'),
+            disabled:
+              contextPath === path
+                ? !canCopyContents || (!local && textContent === undefined)
+                : !local || workspaceFilePreviewKind(contextPath) !== 'text',
+            onSelect: () =>
+              run(() =>
+                contextPath === path && textContent !== undefined
+                  ? copyTextToClipboard(textContent)
+                  : invokeDesktopHost('workspace.copyFileContents', { path: contextPath })
+              ),
+          },
+        ]
+      : []),
     ...(local
       ? [
           {
@@ -322,20 +337,15 @@ export function WorkspaceFileToolbar({
           className="flex min-w-0 items-center text-sm text-text-secondary"
           title={path}
           onContextMenu={event => {
-            if (isDirectory) return
             event.preventDefault()
             event.stopPropagation()
-            void openContextMenu(path, { left: event.clientX, top: event.clientY })
+            void openContextMenu(path, isDirectory, { left: event.clientX, top: event.clientY })
           }}
           onKeyDown={event => {
-            if (
-              isDirectory ||
-              !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
-            )
-              return
+            if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
             event.preventDefault()
             const rect = event.currentTarget.getBoundingClientRect()
-            void openContextMenu(path, { left: rect.left, top: rect.bottom })
+            void openContextMenu(path, isDirectory, { left: rect.left, top: rect.bottom })
           }}
         >
           <WorkspaceFileBreadcrumbs
@@ -344,8 +354,8 @@ export function WorkspaceFileToolbar({
             target={target}
             api={api}
             onSelect={onSelect}
-            onFileContextMenu={(filePath, position) => {
-              void openContextMenu(filePath, position)
+            onPathContextMenu={(filePath, directory, position) => {
+              void openContextMenu(filePath, directory, position)
             }}
           />
         </div>

@@ -12,14 +12,14 @@ export function WorkspaceFileBreadcrumbs({
   target,
   api,
   onSelect,
-  onFileContextMenu,
+  onPathContextMenu,
 }: {
   path: string
   isDirectory: boolean
   target: WorkspaceTarget
   api: WorkspaceFileApi
   onSelect: (entry: WorkspaceFileEntry) => void
-  onFileContextMenu: (path: string, position: MenuPosition) => void
+  onPathContextMenu: (path: string, isDirectory: boolean, position: MenuPosition) => void
 }) {
   const { prefix, crumbs } = workspaceFileBreadcrumbs(path, target.path, isDirectory)
   const [openPath, setOpenPath] = useState<string | null>(null)
@@ -55,19 +55,20 @@ export function WorkspaceFileBreadcrumbs({
                     }
                     title={crumb.path}
                     onContextMenu={event => {
-                      if (!file) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                      }
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onPathContextMenu(crumb.path, !file, {
+                        left: event.clientX,
+                        top: event.clientY,
+                      })
                     }}
                     onKeyDown={event => {
-                      if (
-                        !file &&
-                        (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
-                      ) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                      }
+                      if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')))
+                        return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      onPathContextMenu(crumb.path, !file, { left: rect.left, top: rect.bottom })
                     }}
                     className="flex h-7 shrink-0 items-center whitespace-nowrap rounded px-1 text-sm hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                   >
@@ -114,7 +115,7 @@ export function WorkspaceFileBreadcrumbs({
                         setOpenPath(null)
                         onSelect(entry)
                       }}
-                      onFileContextMenu={onFileContextMenu}
+                      onPathContextMenu={onPathContextMenu}
                     />
                   </Popover.Content>
                 </Popover.Portal>

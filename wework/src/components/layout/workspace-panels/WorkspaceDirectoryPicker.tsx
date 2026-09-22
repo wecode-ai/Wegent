@@ -13,7 +13,7 @@ interface PickerProps {
   target: WorkspaceTarget
   api: WorkspaceFileApi
   onSelect: (entry: WorkspaceFileEntry) => void
-  onFileContextMenu: (path: string, position: MenuPosition) => void
+  onPathContextMenu: (path: string, isDirectory: boolean, position: MenuPosition) => void
 }
 
 export function WorkspaceDirectoryPicker(props: PickerProps) {
@@ -100,7 +100,7 @@ function DirectoryTree({
   entries,
   load,
   onSelect,
-  onFileContextMenu,
+  onPathContextMenu,
 }: PickerProps & {
   entries: Record<string, WorkspaceFileEntry[]>
   load: (path: string) => Promise<void>
@@ -199,8 +199,11 @@ function DirectoryTree({
           row.dataset.itemPath,
           tree.caseInsensitivePaths
         )
-        if (entry && !entry.isDirectory)
-          onFileContextMenu(entry.path, { left: event.clientX, top: event.clientY })
+        if (entry)
+          onPathContextMenu(entry.path, entry.isDirectory, {
+            left: event.clientX,
+            top: event.clientY,
+          })
       }}
       onKeyDown={event => {
         if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
@@ -209,9 +212,9 @@ function DirectoryTree({
         const focused = model.getFocusedPath()
         const entry =
           focused && getEntryByTreePath(tree.entryByTreePath, focused, tree.caseInsensitivePaths)
-        if (!entry || entry.isDirectory) return
+        if (!entry) return
         const rect = event.currentTarget.getBoundingClientRect()
-        onFileContextMenu(entry.path, { left: rect.left, top: rect.top })
+        onPathContextMenu(entry.path, entry.isDirectory, { left: rect.left, top: rect.top })
       }}
     />
   )

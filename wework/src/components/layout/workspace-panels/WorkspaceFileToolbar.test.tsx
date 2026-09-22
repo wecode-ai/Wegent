@@ -30,6 +30,7 @@ const target: WorkspaceTarget = {
 }
 const file = { path: '/fixture/repo/a.ts', name: 'a.ts', isDirectory: false, size: 12 }
 const sibling = { ...file, path: '/fixture/repo/b.ts', name: 'b.ts' }
+const directory = { path: '/fixture/repo/src', name: 'src', isDirectory: true, size: 0 }
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -71,6 +72,25 @@ function setup(remote = false, textContent: string | undefined = 'edited content
       api={{ listWorkspaceEntries: mocks.list, readWorkspaceTextFile: vi.fn() }}
       canCopyContents
       textContent={textContent}
+      onSelect={onSelect}
+    >
+      {null}
+    </WorkspaceFileToolbar>
+  )
+  return onSelect
+}
+
+function setupPath(path: string, isDirectory = false) {
+  const onSelect = vi.fn()
+  render(
+    <WorkspaceFileToolbar
+      key={path}
+      path={path}
+      isDirectory={isDirectory}
+      target={target}
+      api={{ listWorkspaceEntries: mocks.list, readWorkspaceTextFile: vi.fn() }}
+      canCopyContents={!isDirectory}
+      textContent={isDirectory ? undefined : 'edited contents'}
       onSelect={onSelect}
     >
       {null}
@@ -126,6 +146,59 @@ test('right click exposes the file actions and copies the currently displayed te
   expect(screen.queryByTestId('workspace-file-github')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('workspace-file-copy-contents'))
   await waitFor(() => expect(mocks.copy).toHaveBeenCalledWith('edited contents'))
+})
+
+test('right click menu closes on outside pointer down', async () => {
+  setup()
+  await waitFor(() => expect(mocks.applications).toHaveBeenCalled())
+  fireEvent.contextMenu(screen.getByTestId('workspace-file-path'), { clientX: 100, clientY: 40 })
+  expect(await screen.findByTestId('workspace-file-context-menu')).toBeInTheDocument()
+
+  fireEvent.pointerDown(document.body)
+
+  await waitFor(() =>
+    expect(screen.queryByTestId('workspace-file-context-menu')).not.toBeInTheDocument()
+  )
+})
+
+test('right click exposes folder actions without file-only commands', async () => {
+  setupPath(directory.path, true)
+  await waitFor(() => expect(mocks.applications).toHaveBeenCalled())
+  fireEvent.contextMenu(screen.getByTestId('workspace-file-path'), { clientX: 100, clientY: 40 })
+  expect(await screen.findByTestId('workspace-file-context-menu')).toBeInTheDocument()
+  expect(screen.getByTestId('workspace-file-open-preferred')).toHaveTextContent('VS Code')
+  expect(screen.getByTestId('workspace-file-open-with')).toBeInTheDocument()
+  expect(screen.getByTestId('workspace-file-copy-path')).toBeInTheDocument()
+  expect(screen.getByTestId('workspace-file-reveal-location-button')).toBeInTheDocument()
+  expect(screen.queryByTestId('workspace-file-save-as')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('workspace-file-copy-contents')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('workspace-file-github')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('workspace-file-open-preferred'))
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('workspace.openFile', {
+      path: directory.path,
+      opener: 'vscode',
+    })
+  )
+})
+
+test('right click on a breadcrumb folder opens the folder context menu', async () => {
+  setupPath('/fixture/repo/src/a.ts')
+  await waitFor(() => expect(mocks.applications).toHaveBeenCalled())
+  fireEvent.contextMenu(screen.getByTestId('workspace-file-breadcrumb-/fixture/repo/src'), {
+    clientX: 100,
+    clientY: 40,
+  })
+  expect(await screen.findByTestId('workspace-file-context-menu')).toBeInTheDocument()
+  expect(screen.getByTestId('workspace-file-open-with')).toBeInTheDocument()
+  expect(screen.queryByTestId('workspace-file-copy-contents')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('workspace-file-open-preferred'))
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('workspace.openFile', {
+      path: directory.path,
+      opener: 'vscode',
+    })
+  )
 })
 
 test('shows a GitHub action when the host returns a legacy source URL string', async () => {
