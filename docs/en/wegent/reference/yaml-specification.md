@@ -188,6 +188,7 @@ metadata:
   namespace: default
 spec:
   isVisible: true
+  allowedUsers: ["alice", "bob"]
   modelGroup: "Primary"
   modelSubGroup: "Fast"
   modelCapabilities:
@@ -208,6 +209,7 @@ spec:
 | `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
 | `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
 | `spec.isVisible`       | boolean | No      | Whether a public model appears in regular users' model selectors. Defaults to `true`; `false` preserves existing references and runtime resolution. |
+| `spec.allowedUsers`    | array   | No      | User-name whitelist of a public model; when non-empty, only listed users can see and use the model. Omit or leave empty to allow everyone. |
 | `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
 | `spec.modelCapabilities` | object | No | Multimodal understanding capabilities declared by an LLM chat model |

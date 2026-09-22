@@ -185,6 +185,7 @@ metadata:
   namespace: default
 spec:
   isVisible: true
+  allowedUsers: ["alice", "bob"]
   modelGroup: "主分组"
   modelSubGroup: "快速"
   modelCapabilities:
@@ -205,6 +206,7 @@ spec:
 | `metadata.name`        | string | 是   | Model 的唯一标识符                 |
 | `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
 | `spec.isVisible`       | boolean | 否  | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析 |
+| `spec.allowedUsers`    | array   | 否  | 公共模型的用户名白名单；非空时仅名单内的用户可以在列表中看到并使用该模型，省略或为空表示所有用户可用 |
 | `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelCapabilities` | object | 否 | LLM 聊天模型声明的多模态理解能力 |
