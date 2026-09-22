@@ -108,26 +108,30 @@ function createKnowledgeBase(
 }
 
 describe('KnowledgeGroupListPage category filter', () => {
-  it('hides code wikis and the code category by default', () => {
+  it('shows the advanced toggle and forwards changes', async () => {
+    const user = userEvent.setup()
+    const onShowAdvancedKnowledgeChange = jest.fn()
     render(
       <KnowledgeGroupListPage
-        groupId="personal"
-        groupName="Personal"
-        knowledgeBases={[
-          createKnowledgeBase(1, 'Notebook', 'notebook'),
-          createKnowledgeBase(2, 'Code Wiki', 'code_wiki'),
-        ]}
+        groupId="engineering"
+        groupName="Engineering"
+        knowledgeBases={[createKnowledgeBase(1, 'Notebook', 'notebook')]}
         isLoading={false}
         onSelectKb={jest.fn()}
+        hasAdvancedKnowledge
+        onShowAdvancedKnowledgeChange={onShowAdvancedKnowledgeChange}
       />
     )
 
-    expect(screen.getByTestId('kb-row-1')).toBeInTheDocument()
-    expect(screen.queryByTestId('kb-row-2')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('knowledge-category-code-filter')).not.toBeInTheDocument()
+    const toggle = screen.getByTestId('show-advanced-knowledge-toggle')
+    expect(toggle).toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(onShowAdvancedKnowledgeChange).toHaveBeenCalledWith(true)
   })
 
-  it('shows the advanced toggle for users without create permission', () => {
+  it('does not show the advanced toggle when no advanced knowledge is available', () => {
     render(
       <KnowledgeGroupListPage
         groupId="engineering"
@@ -139,7 +143,7 @@ describe('KnowledgeGroupListPage category filter', () => {
       />
     )
 
-    expect(screen.getByTestId('show-advanced-knowledge-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('show-advanced-knowledge-toggle')).not.toBeInTheDocument()
   })
 
   it('groups notebook and classic bases as documents, separately from code wikis', async () => {

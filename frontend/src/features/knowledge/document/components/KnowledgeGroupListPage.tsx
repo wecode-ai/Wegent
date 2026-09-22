@@ -32,9 +32,9 @@ import {
   KnowledgeBaseCategoryFilter,
   type KnowledgeBaseCategory,
 } from './KnowledgeBaseCategoryFilter'
+import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   Table,
@@ -53,6 +53,7 @@ import type {
   MemberRole,
 } from '@/types/knowledge'
 import { ROLE_DISPLAY_NAMES } from '@/types/base-role'
+import { hasAdvancedKnowledgeBases } from '../hooks/useAdvancedKnowledgeMode'
 
 /** Union type for KB data that can be either KnowledgeBase or KnowledgeBaseWithGroupInfo */
 export type KbDataItem = KnowledgeBase | KnowledgeBaseWithGroupInfo
@@ -74,6 +75,8 @@ export interface KnowledgeGroupListPageProps {
   onSelectKb: (kb: KbDataItem) => void
   /** Create a new knowledge base */
   onCreateKb?: (kbType: KnowledgeBaseType) => void
+  /** Whether advanced knowledge bases exist or are enabled by runtime config */
+  hasAdvancedKnowledge?: boolean
   /** Whether advanced knowledge bases (code wikis) are visible */
   showAdvancedKnowledge?: boolean
   /** Update advanced knowledge base visibility */
@@ -170,6 +173,7 @@ export function KnowledgeGroupListPage({
   onBack,
   onSelectKb,
   onCreateKb,
+  hasAdvancedKnowledge = false,
   showAdvancedKnowledge = false,
   onShowAdvancedKnowledgeChange,
   onEditKb,
@@ -208,13 +212,13 @@ export function KnowledgeGroupListPage({
     () =>
       showAdvancedKnowledge &&
       (getRuntimeConfigSync().enableCodeWiki ||
-        [
+        hasAdvancedKnowledgeBases([
           ...dataSource,
           ...personalCreatedByMe,
           ...personalSharedWithMe,
           ...groupNativeKbs,
           ...groupSharedKbs,
-        ].some(kb => kb.kb_type === 'code_wiki')),
+        ])),
     [
       dataSource,
       groupNativeKbs,
@@ -232,13 +236,8 @@ export function KnowledgeGroupListPage({
   }, [category, showCodeCategory])
 
   const filterByCategory = useCallback(
-    (kbs: KbDataItem[]) =>
-      kbs.filter(
-        kb =>
-          (showAdvancedKnowledge || kb.kb_type !== 'code_wiki') &&
-          isInKnowledgeBaseCategory(kb.kb_type, category)
-      ),
-    [category, showAdvancedKnowledge]
+    (kbs: KbDataItem[]) => kbs.filter(kb => isInKnowledgeBaseCategory(kb.kb_type, category)),
+    [category]
   )
 
   // Helper function to get my_role from KB
@@ -616,20 +615,13 @@ export function KnowledgeGroupListPage({
           onValueChange={setCategory}
           showCode={showCodeCategory}
         />
-        {onShowAdvancedKnowledgeChange && (
-          <label
-            htmlFor="show-advanced-knowledge"
-            className="flex cursor-pointer items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-hover"
-            title={t('document.knowledgeBase.advancedModeDescription', '显示代码 Wiki')}
-          >
-            <Switch
-              id="show-advanced-knowledge"
-              data-testid="show-advanced-knowledge-toggle"
-              checked={showAdvancedKnowledge}
-              onCheckedChange={onShowAdvancedKnowledgeChange}
-            />
-            <span>{t('document.knowledgeBase.advancedMode', '高级')}</span>
-          </label>
+        {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
+          <AdvancedKnowledgeToggle
+            id="show-advanced-knowledge"
+            testId="show-advanced-knowledge-toggle"
+            checked={showAdvancedKnowledge}
+            onCheckedChange={onShowAdvancedKnowledgeChange}
+          />
         )}
         {onCreateKb && (
           <Button

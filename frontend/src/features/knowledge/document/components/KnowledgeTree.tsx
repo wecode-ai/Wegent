@@ -30,8 +30,8 @@ import {
   KnowledgeBaseCategoryFilter,
   type KnowledgeBaseCategory,
 } from './KnowledgeBaseCategoryFilter'
+import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -97,9 +97,13 @@ export function KnowledgeTree({
   const [searchQuery, setSearchQuery] = useState('')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
 
+  const hasAdvancedKnowledge = useMemo(
+    () => getRuntimeConfigSync().enableCodeWiki || hasCodeWiki(nodes),
+    [nodes]
+  )
   const showCodeCategory = useMemo(
-    () => showAdvancedKnowledge && (getRuntimeConfigSync().enableCodeWiki || hasCodeWiki(nodes)),
-    [nodes, showAdvancedKnowledge]
+    () => showAdvancedKnowledge && hasAdvancedKnowledge,
+    [hasAdvancedKnowledge, showAdvancedKnowledge]
   )
 
   useEffect(() => {
@@ -113,6 +117,8 @@ export function KnowledgeTree({
     const query = searchQuery.toLowerCase()
     const hasSearchQuery = Boolean(query.trim())
     if (!hasSearchQuery && category === 'all' && showAdvancedKnowledge) return nodes
+
+    const shouldPruneEmptyBranches = hasSearchQuery || category !== 'all'
 
     const filterNode = (node: TreeNode): TreeNode | null => {
       if (node.type === 'kb-leaf') {
@@ -135,16 +141,16 @@ export function KnowledgeTree({
           .map(child => filterNode(child))
           .filter((child): child is TreeNode => child !== null)
 
-        if (filteredChildren.length > 0) {
+        if (filteredChildren.length > 0 || !shouldPruneEmptyBranches) {
           return {
             ...node,
             children: filteredChildren,
-            expanded: true,
+            ...(shouldPruneEmptyBranches ? { expanded: true } : {}),
           }
         }
       }
 
-      return null
+      return shouldPruneEmptyBranches ? null : node
     }
 
     return nodes.map(node => filterNode(node)).filter((node): node is TreeNode => node !== null)
@@ -158,21 +164,36 @@ export function KnowledgeTree({
         ? t('document.knowledgeBase.categoryFilter.emptyDocument')
         : t('document.knowledgeBase.empty', '暂无知识库')
 
+  const categoryControls = (
+    <div
+      className="flex items-center gap-2 overflow-x-auto"
+      data-testid="knowledge-tree-category-controls"
+    >
+      <div className="shrink-0">
+        <KnowledgeBaseCategoryFilter
+          value={category}
+          onValueChange={setCategory}
+          showCode={showCodeCategory}
+        />
+      </div>
+      {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
+        <div className="shrink-0">
+          <AdvancedKnowledgeToggle
+            id="show-advanced-knowledge-mobile"
+            testId="show-advanced-knowledge-toggle-mobile"
+            checked={showAdvancedKnowledge}
+            onCheckedChange={onShowAdvancedKnowledgeChange}
+          />
+        </div>
+      )}
+    </div>
+  )
+
   if (loading) {
     return (
       <div className="flex flex-col h-full">
         <div className="flex flex-col gap-2 p-3">
-          <KnowledgeBaseCategoryFilter
-            value={category}
-            onValueChange={setCategory}
-            showCode={showCodeCategory}
-          />
-          {onShowAdvancedKnowledgeChange && (
-            <AdvancedKnowledgeToggle
-              checked={showAdvancedKnowledge}
-              onCheckedChange={onShowAdvancedKnowledgeChange}
-            />
-          )}
+          {categoryControls}
           <SearchInput value={searchQuery} onChange={setSearchQuery} />
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -185,17 +206,7 @@ export function KnowledgeTree({
   return (
     <div className="flex flex-col h-full" data-testid="knowledge-tree">
       <div className="flex flex-col gap-2 p-3 border-b border-border">
-        <KnowledgeBaseCategoryFilter
-          value={category}
-          onValueChange={setCategory}
-          showCode={showCodeCategory}
-        />
-        {onShowAdvancedKnowledgeChange && (
-          <AdvancedKnowledgeToggle
-            checked={showAdvancedKnowledge}
-            onCheckedChange={onShowAdvancedKnowledgeChange}
-          />
-        )}
+        {categoryControls}
         <SearchInput value={searchQuery} onChange={setSearchQuery} />
       </div>
 
@@ -227,36 +238,11 @@ export function KnowledgeTree({
   )
 }
 
-function AdvancedKnowledgeToggle({
-  checked,
-  onCheckedChange,
-}: {
-  checked: boolean
-  onCheckedChange: (show: boolean) => void
-}) {
-  const { t } = useTranslation('knowledge')
-
-  return (
-    <label
-      htmlFor="show-advanced-knowledge-mobile"
-      className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-hover"
-      title={t('document.knowledgeBase.advancedModeDescription')}
-    >
-      <Switch
-        id="show-advanced-knowledge-mobile"
-        data-testid="show-advanced-knowledge-toggle-mobile"
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-      />
-      <span>{t('document.knowledgeBase.advancedMode')}</span>
-    </label>
-  )
-}
-
 function hasCodeWiki(nodes: TreeNode[]): boolean {
   return nodes.some(
     node =>
-      (node.type === 'kb-leaf' && (node.knowledgeBase?.kb_type ?? node.kbType) === 'code_wiki') ||
+      (node.type === 'kb-leaf' &&
+        isAdvancedKnowledgeBase(node.knowledgeBase?.kb_type ?? node.kbType)) ||
       (node.children ? hasCodeWiki(node.children) : false)
   )
 }

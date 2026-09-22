@@ -12,6 +12,12 @@ export function isAdvancedKnowledgeBase(kbType: KnowledgeBaseType | null | undef
   return kbType === 'code_wiki'
 }
 
+export function hasAdvancedKnowledgeBases<T extends { kb_type?: KnowledgeBaseType }>(
+  knowledgeBases: T[]
+): boolean {
+  return knowledgeBases.some(kb => isAdvancedKnowledgeBase(kb.kb_type))
+}
+
 export function filterKnowledgeBasesByAdvancedMode<T extends { kb_type?: KnowledgeBaseType }>(
   knowledgeBases: T[],
   showAdvancedKnowledge: boolean
@@ -28,11 +34,9 @@ export function filterKnowledgeBasesByAdvancedMode<T extends { kb_type?: Knowled
  */
 export function useAdvancedKnowledgeMode() {
   const [showAdvancedKnowledge, setShowAdvancedKnowledgeState] = useState(false)
-  const [isAdvancedKnowledgeModeReady, setIsAdvancedKnowledgeModeReady] = useState(false)
 
   useEffect(() => {
     setShowAdvancedKnowledgeState(getShowAdvancedKnowledge())
-    setIsAdvancedKnowledgeModeReady(true)
   }, [])
 
   const setShowAdvancedKnowledge = useCallback((show: boolean) => {
@@ -43,6 +47,5 @@ export function useAdvancedKnowledgeMode() {
   return {
     showAdvancedKnowledge,
     setShowAdvancedKnowledge,
-    isAdvancedKnowledgeModeReady,
   }
 }
