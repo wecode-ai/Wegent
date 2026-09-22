@@ -12,11 +12,13 @@ export interface TTSConfig {
   voice?: string
   speed?: number
   output_format?: 'mp3' | 'wav'
+  [key: string]: unknown
 }
 
 export interface STTConfig {
   language?: string
   transcription_format?: 'text' | 'srt' | 'vtt'
+  [key: string]: unknown
 }
 
 export interface EmbeddingConfig {
@@ -25,16 +27,19 @@ export interface EmbeddingConfig {
   // Additional modalities beyond the implicit text default. Omit or use []
   // for text-only models.
   additional_input_modalities?: string[]
+  [key: string]: unknown
 }
 
 export interface RerankConfig {
   top_n?: number
   return_documents?: boolean
+  [key: string]: unknown
 }
 
 export interface ModelCapabilities {
   supportsImage?: boolean
   supportsVideo?: boolean
+  [key: string]: unknown
 }
 
 export interface VisionSidecarModelRef {
@@ -110,6 +115,7 @@ export interface VideoCapabilities {
   audio_min_duration_sec?: number
   audio_max_duration_sec?: number
   generation_modes?: VideoGenerationMode[]
+  [key: string]: unknown
 }
 
 export interface VideoGenerationConfig {
@@ -126,6 +132,7 @@ export interface VideoGenerationConfig {
   priority?: number
   max_reference_images?: number // Legacy image-only reference limit
   capabilities?: VideoCapabilities // Model-declared capabilities
+  [key: string]: unknown
 }
 
 export interface ImageCapabilities {
@@ -137,6 +144,7 @@ export interface ImageCapabilities {
   image_max_dimension?: number
   image_min_aspect_ratio?: number
   image_max_aspect_ratio?: number
+  [key: string]: unknown
 }
 
 // Image generation specific configuration
@@ -154,6 +162,7 @@ export interface ImageGenerationConfig {
   watermark?: boolean
   optimize_prompt_mode?: 'standard' | 'fast'
   max_reference_images?: number // Maximum number of reference images that can be uploaded
+  [key: string]: unknown
 }
 
 export interface ModelEnvConfig {
@@ -167,6 +176,36 @@ export interface ModelEnvConfig {
   [key: string]: unknown
 }
 
+export interface ModelRuntimeConfig {
+  env: ModelEnvConfig
+  context_window?: number
+  max_output_tokens?: number
+  visionSidecarModel?: VisionSidecarModelRef
+  [key: string]: unknown
+}
+
+export interface ModelSpecConfig {
+  modelConfig: ModelRuntimeConfig
+  protocol?: string
+  apiFormat?: string
+  isCustomConfig?: boolean
+  isAdvanced?: boolean
+  isVisible?: boolean
+  isWeworkAvailable?: boolean
+  costIndex?: string
+  modelType?: ModelCategoryType
+  modelGroup?: string
+  modelSubGroup?: string
+  ttsConfig?: TTSConfig
+  sttConfig?: STTConfig
+  embeddingConfig?: EmbeddingConfig
+  rerankConfig?: RerankConfig
+  modelCapabilities?: ModelCapabilities
+  videoConfig?: VideoGenerationConfig
+  imageConfig?: ImageGenerationConfig
+  [key: string]: unknown
+}
+
 // Model CRD Types
 export interface ModelCRD {
   apiVersion?: string
@@ -176,30 +215,7 @@ export interface ModelCRD {
     namespace: string
     displayName?: string // Human-readable display name
   }
-  spec: {
-    modelConfig: {
-      env: ModelEnvConfig
-      context_window?: number // Maximum context window size in tokens
-      max_output_tokens?: number // Maximum output tokens the model can generate per response
-      visionSidecarModel?: VisionSidecarModelRef
-    }
-    protocol?: string
-    apiFormat?: string
-    isCustomConfig?: boolean
-    isWeworkAvailable?: boolean
-    costIndex?: string // Relative usage cost compared with the baseline model
-    // New fields for multi-type model support
-    modelType?: ModelCategoryType
-    modelGroup?: string
-    modelSubGroup?: string
-    ttsConfig?: TTSConfig
-    sttConfig?: STTConfig
-    embeddingConfig?: EmbeddingConfig
-    rerankConfig?: RerankConfig
-    modelCapabilities?: ModelCapabilities
-    videoConfig?: VideoGenerationConfig
-    imageConfig?: ImageGenerationConfig
-  }
+  spec: ModelSpecConfig
   status?: {
     state: string
   }

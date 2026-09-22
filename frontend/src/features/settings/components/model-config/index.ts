@@ -12,16 +12,13 @@ export {
 } from './ImageConfigSection'
 
 export {
-  AdvancedModelEnvConfigSection,
-  type AdvancedModelEnvConfigSectionProps,
-} from './AdvancedModelEnvConfigSection'
-
-export {
-  countAdvancedModelEnvFields,
-  extractAdvancedModelEnv,
+  canEditModelSpecWithForm,
+  extractUnmanagedModelEnv,
   extractThinkingConfig,
-  formatAdvancedModelEnv,
-  validateAdvancedModelEnv,
-  type AdvancedModelEnvValidationError,
-  type AdvancedModelEnvValidationResult,
-} from './advancedModelEnvConfig'
+  formatModelSpec,
+  isModelConfigObject,
+  mergeFormManagedSpec,
+  validateModelSpecJson,
+  type ModelSpecValidationError,
+  type ModelSpecValidationResult,
+} from './modelSpecConfig'

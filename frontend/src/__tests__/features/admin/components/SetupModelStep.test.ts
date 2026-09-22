@@ -6,7 +6,7 @@ import type { AdminPublicModel } from '@/apis/admin'
 import { convertAdminModelToInitialData } from '@/features/admin/components/SetupModelStep'
 
 describe('SetupModelStep model editing', () => {
-  it('preserves advanced and wrapped thinking configuration', () => {
+  it('preserves the complete spec and wrapped thinking configuration', () => {
     const model: AdminPublicModel = {
       id: 1,
       name: 'qwen-compatible',
@@ -21,6 +21,8 @@ describe('SetupModelStep model editing', () => {
         metadata: { displayName: 'Qwen Compatible' },
         spec: {
           modelType: 'llm',
+          isVisible: false,
+          futureSpecOption: { mode: 'strict' },
           modelConfig: {
             env: {
               model: 'openai',
@@ -37,7 +39,13 @@ describe('SetupModelStep model editing', () => {
 
     expect(convertAdminModelToInitialData(model)).toMatchObject({
       thinkingConfig: { effort: 'high', enabled: false },
-      advancedEnvConfig: { supports_developer_role: false },
+      spec: {
+        isVisible: false,
+        futureSpecOption: { mode: 'strict' },
+        modelConfig: {
+          env: { supports_developer_role: false },
+        },
+      },
     })
   })
 })
