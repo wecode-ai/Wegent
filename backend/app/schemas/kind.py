@@ -349,6 +349,12 @@ class ModelSpec(BaseModel):
         description="Whether this public model is visible in user model selectors. "
         "Hidden models remain available to existing bindings.",
     )
+    allowedUsers: Optional[List[str]] = Field(
+        None,
+        description="User-name whitelist for a public model. When the list is "
+        "non-empty, only the listed users can see and use the model. "
+        "Absent or empty means the model is available to everyone.",
+    )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared multimodal capabilities (supportsImage / supportsVideo). "
