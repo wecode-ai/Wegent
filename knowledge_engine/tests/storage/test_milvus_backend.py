@@ -720,7 +720,37 @@ class TestDeleteDocument:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
         )
-        mock_client.close.assert_called_once()
+        # One client reads the collection snapshot, one deletes the parent nodes.
+        assert mock_client.close.call_count == 2
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_delete_document_without_collection_reports_nothing_deleted(
+        self,
+        mock_client_class,
+        mock_milvus_vs,
+    ):
+        """Test deleting a document whose collection was never created."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.has_collection.return_value = False
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        result = backend.delete_document(knowledge_id="kb_1", doc_ref="doc_123")
+
+        assert result == {
+            "doc_ref": "doc_123",
+            "knowledge_id": "kb_1",
+            "deleted_chunks": 0,
+            "status": "deleted",
+        }
+        mock_milvus_vs.assert_not_called()
+        mock_client.create_collection.assert_not_called()
 
 
 class TestDeleteKnowledge:
@@ -851,8 +881,10 @@ class TestGetDocument:
     """Tests for get_document method."""
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_get_document(self, mock_milvus_vs):
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_document(self, mock_client_class, mock_milvus_vs):
         """Test getting document details."""
+        mock_client_class.return_value.has_collection.return_value = True
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
@@ -880,8 +912,10 @@ class TestGetDocument:
         assert result["chunks"][1]["chunk_index"] == 1
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_get_document_not_found(self, mock_milvus_vs):
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_document_not_found(self, mock_client_class, mock_milvus_vs):
         """Test getting a document that doesn't exist."""
+        mock_client_class.return_value.has_collection.return_value = True
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
         mock_store.get_nodes.return_value = []
@@ -894,6 +928,27 @@ class TestGetDocument:
 
         with pytest.raises(ValueError, match="not found"):
             backend.get_document(knowledge_id="kb_1", doc_ref="doc_nonexistent")
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_document_without_collection_raises_not_found(
+        self,
+        mock_client_class,
+        mock_milvus_vs,
+    ):
+        """Test reading a document whose collection was never created."""
+        mock_client_class.return_value.has_collection.return_value = False
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        with pytest.raises(ValueError, match="not found"):
+            backend.get_document(knowledge_id="kb_1", doc_ref="doc_123")
+
+        mock_milvus_vs.assert_not_called()
 
 
 class TestListDocuments:

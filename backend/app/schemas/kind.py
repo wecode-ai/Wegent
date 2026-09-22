@@ -295,6 +295,25 @@ class ModelSpec(BaseModel):
         description="Legacy maximum output tokens per response.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _adopt_legacy_model_type(cls, data: Any) -> Any:
+        """Adopt a nested ``modelConfig.modelType`` when the field is absent.
+
+        Legacy payloads put the category inside ``modelConfig``. Without this,
+        the ``llm`` default hides the nested category from every consumer that
+        reads the parsed resource.
+        """
+        if not isinstance(data, Mapping) or data.get("modelType") is not None:
+            return data
+        model_config = data.get("modelConfig") or {}
+        if (
+            isinstance(model_config, Mapping)
+            and model_config.get("modelType") is not None
+        ):
+            return {**data, "modelType": model_config["modelType"]}
+        return data
+
     @staticmethod
     def _model_config_token_limit(value: Any) -> Optional[int]:
         """Return a numeric token limit from the runtime model config."""
@@ -329,7 +348,9 @@ class ModelSpec(BaseModel):
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(
         ModelCategoryType.LLM,
-        description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
+        description="Model category type (llm, tts, stt, embedding, rerank). "
+        "Defaults to 'llm' for backward compatibility, unless the payload nests "
+        "the category in modelConfig.modelType.",
     )
     modelGroup: Optional[str] = Field(
         None,

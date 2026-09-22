@@ -33,9 +33,10 @@ def validate_embedding_dimension_declaration(
 
     Embedding models must declare a stable positive integer dimension. An
     existing model may only gain a dimension it never declared; a declared
-    dimension is immutable, and a declared dimension cannot be dropped by
-    omitting it. A model stored without a dimension therefore keeps working
-    until it is written again, when it must declare one.
+    dimension is immutable, even when the write reports another category, and a
+    declared dimension cannot be dropped by omitting it. A model stored without
+    a dimension therefore keeps working until it is written again, when it must
+    declare one.
     """
     if not _declares_embedding(spec, stored_spec):
         return
@@ -65,9 +66,12 @@ def _declares_embedding(
     """Return whether the write concerns an embedding model.
 
     The stored resource decides as well, so an update cannot silence the
-    contract by omitting or changing the declared category.
+    contract by omitting or changing the declared category, and a dimension the
+    stored resource already declared stays immutable.
     """
     if resolve_model_category(spec) == ModelCategoryType.EMBEDDING.value:
+        return True
+    if is_positive_int(declared_embedding_dimension(stored_spec)):
         return True
     return (
         stored_spec is not None

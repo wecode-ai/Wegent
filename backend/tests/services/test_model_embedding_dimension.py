@@ -152,6 +152,22 @@ def test_create_legacy_format_embedding_model_requires_dimension(
         model_service.create_resource(test_user.id, resource)
 
 
+def test_create_api_parsed_legacy_model_keeps_the_nested_category(
+    model_service: ModelKindService,
+    test_user: User,
+) -> None:
+    """The API parses the CRD, so a nested legacy category must survive it."""
+    resource = _model_resource(name="nested-api-model", dimensions=None)
+    resource["spec"].pop("modelType")
+    resource["spec"]["modelConfig"]["modelType"] = "embedding"
+
+    prepared = validate_and_prepare_resource("Model", resource, "default")
+
+    assert prepared["spec"]["modelType"] == "embedding"
+    with pytest.raises(ValidationException, match="dimensions"):
+        model_service.create_resource(test_user.id, prepared)
+
+
 def test_update_legacy_embedding_model_may_declare_its_dimension(
     model_service: ModelKindService,
     test_user: User,
@@ -256,6 +272,42 @@ def test_update_cannot_silence_the_contract_by_omitting_the_model_type(
             "default",
             "stable-model",
             update,
+        )
+
+
+def test_update_cannot_change_a_dimension_declared_by_a_non_embedding_model(
+    model_service: ModelKindService,
+    test_user: User,
+) -> None:
+    model_service.create_resource(
+        test_user.id,
+        _model_resource(name="dual-model", model_type="llm", dimensions=1024),
+    )
+
+    with pytest.raises(ValidationException, match="immutable"):
+        model_service.update_resource(
+            test_user.id,
+            "default",
+            "dual-model",
+            _model_resource(name="dual-model", model_type="llm", dimensions=768),
+        )
+
+
+def test_update_cannot_drop_a_dimension_declared_by_a_non_embedding_model(
+    model_service: ModelKindService,
+    test_user: User,
+) -> None:
+    model_service.create_resource(
+        test_user.id,
+        _model_resource(name="dual-model", model_type="llm", dimensions=1024),
+    )
+
+    with pytest.raises(ValidationException, match="must declare"):
+        model_service.update_resource(
+            test_user.id,
+            "default",
+            "dual-model",
+            _model_resource(name="dual-model", model_type="llm", dimensions=None),
         )
 
 

@@ -912,6 +912,18 @@ class MilvusBackend(BaseStorageBackend):
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+        if not self._collection_snapshot(collection_name).exists:
+            # Constructing a vector store would create the collection with the
+            # configured default dimension, so a missing collection only has
+            # parent nodes left to delete.
+            self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+            return {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "deleted_chunks": 0,
+                "status": "deleted",
+            }
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document
@@ -1013,6 +1025,11 @@ class MilvusBackend(BaseStorageBackend):
             Document details dict with chunks
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+        if not self._collection_snapshot(collection_name).exists:
+            # Constructing a vector store would create the collection with the
+            # configured default dimension, so report the document as missing.
+            raise ValueError(f"Document {doc_ref} not found")
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document
