@@ -485,7 +485,13 @@ class MilvusBackend(BaseStorageBackend):
             EmbeddingDimensionMismatchError: When a returned vector breaks the
                 dimension the model declares.
         """
-        batch = nodes[: self._first_batch_size(nodes, embed_model)]
+        # Only nodes with content reach the provider; the rest are dropped by the
+        # index write anyway, and their placeholder responses must not decide the
+        # dimension of the collection.
+        embeddable = [
+            node for node in nodes if node.get_content(metadata_mode=MetadataMode.EMBED)
+        ]
+        batch = embeddable[: self._first_batch_size(embeddable, embed_model)]
         if not batch:
             return None
 

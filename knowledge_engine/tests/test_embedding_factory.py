@@ -354,6 +354,26 @@ def test_vector_contract_rejects_non_finite_values_without_a_declaration(
         )
 
 
+@pytest.mark.parametrize(
+    "vector",
+    [
+        "0.1,0.2,0.3",
+        [0.1, True, 0.3],
+        [0.1, "0.2", 0.3],
+        [0.0, 0.0, 0.0],
+    ],
+)
+def test_vector_contract_rejects_values_that_are_not_real_vectors(
+    vector: object,
+) -> None:
+    with pytest.raises(EmbeddingResponseFormatError):
+        ensure_vector_contract(
+            model="any-model",
+            declared=3,
+            vectors=[vector],
+        )
+
+
 def test_vector_contract_accepts_a_declared_legacy_vector() -> None:
     ensure_vector_contract(
         model="any-model",

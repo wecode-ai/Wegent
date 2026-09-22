@@ -41,17 +41,38 @@ def ensure_vector_contract(
 ) -> None:
     """Raise when a provider returns a vector that breaks the vector contract.
 
-    Every returned value must be finite; when the model declares a dimension,
-    every vector must also carry exactly that dimension.
+    Every vector must hold real numbers only, carry at least one non-zero value
+    and stay finite; when the model declares a dimension, every vector must also
+    carry exactly that dimension.
     """
     for vector in vectors:
-        if any(not math.isfinite(value) for value in vector):
+        if isinstance(vector, (str, bytes)):
             raise EmbeddingResponseFormatError(
-                f"Embedding model '{model}' returned a non-finite vector value"
+                f"Embedding model '{model}' did not return a numeric vector"
             )
-        if declared is not None and len(vector) != declared:
+        try:
+            values = list(vector)
+        except TypeError as exc:
+            raise EmbeddingResponseFormatError(
+                f"Embedding model '{model}' did not return a numeric vector"
+            ) from exc
+
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise EmbeddingResponseFormatError(
+                    f"Embedding model '{model}' returned a non-numeric vector value"
+                )
+            if not math.isfinite(value):
+                raise EmbeddingResponseFormatError(
+                    f"Embedding model '{model}' returned a non-finite vector value"
+                )
+        if values and not any(values):
+            raise EmbeddingResponseFormatError(
+                f"Embedding model '{model}' returned an all-zero vector"
+            )
+        if declared is not None and len(values) != declared:
             raise EmbeddingDimensionMismatchError(
                 model=model,
                 expected=declared,
-                actual=len(vector),
+                actual=len(values),
             )
