@@ -375,7 +375,7 @@ const sharedMessages: Record<
     "todo.private_project_description": "仅项目成员可以进入。",
     "todo.related_tasks_project": "仅看相关任务",
     "todo.related_tasks_project_description":
-      "所有人可进入，普通用户只看到自己创建、负责或参与的任务。",
+      "所有人可进入；普通用户只能看到自己创建、负责、参与或关联的任务，以及自己创建机器人负责的任务。",
     "todo.public_project": "公开项目",
     "todo.public_project_description": "所有登录用户都可以进入并查看全部任务。",
     "todo.project_tags": "标签",
@@ -839,7 +839,7 @@ const sharedMessages: Record<
     "todo.private_project_description": "Only project members can enter.",
     "todo.related_tasks_project": "Related tasks only",
     "todo.related_tasks_project_description":
-      "Everyone can enter; regular users only see tasks they created, own, or participate in.",
+      "Everyone can enter; regular users only see tasks they created, own, participate in, are linked to, or that are assigned to robots they created.",
     "todo.public_project": "Public project",
     "todo.public_project_description":
       "All signed-in users can enter and view every task.",

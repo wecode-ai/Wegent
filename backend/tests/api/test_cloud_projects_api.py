@@ -1041,6 +1041,31 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
     assert related_detail.json()["description"] == "owner-only details"
     assert related_detail.json()["can_edit"] is False
 
+    executions = [
+        LoopItemExecution(
+            loop_item_id=item_id,
+            cloud_project_id=str(project["id"]),
+            executor_owner_user_id=visitor.id,
+            agent_id=f"related-agent-{index}",
+            status="queued",
+        )
+        for index, item_id in enumerate(
+            [owner_item["id"], visitor_item["id"], assigned_item["id"]],
+            start=1,
+        )
+    ]
+    test_db.add_all(executions)
+    test_db.commit()
+    execution_list = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(visitor_token),
+    )
+    assert execution_list.status_code == 200
+    assert {item["loopItemId"] for item in execution_list.json()["items"]} == {
+        owner_item["id"],
+        visitor_item["id"],
+    }
+
     add_maintainer = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),

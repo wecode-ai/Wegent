@@ -21,7 +21,7 @@ from app.core.security import get_current_user
 from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.project_chat import (
     LoopItemExecutionCancel,
     LoopItemExecutionClaim,
@@ -230,8 +230,12 @@ def list_executions(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemExecutionListResponse:
     access = require_cloud_project_role(
-        db, project_id, current_user.id, BaseRole.Reporter
+        db, project_id, current_user.id, BaseRole.RestrictedAnalyst
     )
+    if not access.restricts_unrelated_issues and not has_permission(
+        access.role, BaseRole.Reporter
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
     project = access.project
     rows = loop_item_execution_service.list_queue(
         db,

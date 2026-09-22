@@ -27,7 +27,7 @@ from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import Bot, Shell, Team
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
@@ -2074,9 +2074,15 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
-        access = require_cloud_project_role(db, project_id, user_id, required_role)
+        access = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        )
         project = access.project
         if task_id is None:
+            if not has_permission(access.role, required_role):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                )
             return project
         task = (
             db.query(LoopItem)
@@ -2096,6 +2102,10 @@ class ProjectChatService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        if not (
+            required_role == BaseRole.Reporter and access.restricts_unrelated_issues
+        ) and not has_permission(access.role, required_role):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project
 
     def _validate_agent_mentions(
