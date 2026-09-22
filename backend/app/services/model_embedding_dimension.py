@@ -44,8 +44,9 @@ def validate_embedding_dimension_declaration(
     declared = declared_embedding_dimension(spec)
     if not is_positive_int(declared):
         raise ValidationException(
-            f"Embedding model '{name}' must declare a positive integer "
-            "embeddingConfig.dimensions"
+            f"Embedding model '{name}' must declare the positive integer "
+            "embeddingConfig.dimensions that matches the existing collection; "
+            "the value is immutable once declared"
         )
 
     stored = declared_embedding_dimension(stored_spec)
