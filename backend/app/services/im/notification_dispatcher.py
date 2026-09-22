@@ -6,17 +6,19 @@
 
 import logging
 from contextlib import contextmanager
-from typing import Any, Generator, Sequence
+from typing import TYPE_CHECKING, Any, Generator, Sequence
 
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
+from app.schemas.dingtalk_card import BUILTIN_AI_CARD_TEMPLATE_ID
 from app.services.im.session_service import im_session_service
 from app.services.notification_copy import (
     RUNTIME_REPLY_HINT,
     NotificationLink,
+    PushNotification,
     notification_message,
     runtime_message,
 )
@@ -24,6 +26,9 @@ from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
 from shared.utils.crypto import decrypt_sensitive_data
+
+if TYPE_CHECKING:
+    from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
 logger = logging.getLogger(__name__)
 
@@ -173,22 +178,24 @@ class IMNotificationDispatcher:
         self,
         db: Session,
         session: IMPrivateSession,
-        text: str,
+        push: PushNotification,
         *,
-        title: str = "",
         links: Sequence[NotificationLink] = (),
     ) -> dict[str, Any]:
         """Send one inbox notification, linking it when the channel supports it.
 
-        The headline is kept with the body so a pushed notification mirrors the
-        inbox row it came from: DingTalk bolds it above the links, other channels
-        receive the text followed by the addresses. A notification can offer more
-        than one destination — the web board and the Wework deep link — so the
-        links travel as a list.
+        Each channel renders the notification its own way: DingTalk bolds the
+        headline above the links, or draws a card when the channel asked for
+        one, while other channels receive the text followed by the addresses. A
+        notification can offer more than one destination — the web board and the
+        Wework deep link — so the links travel as a list.
         """
 
+        text = push.plain_text()
         if not links:
-            return await self.send_text(db, session, notification_message(title, text))
+            return await self.send_text(
+                db, session, notification_message(push.headline, text)
+            )
         try:
             channel = self._get_channel(db, session.channel_id)
             if channel is None:
@@ -208,12 +215,13 @@ class IMNotificationDispatcher:
                     text,
                     markdown=True,
                     links=links,
-                    headline=title,
+                    headline=push.headline,
+                    push=push,
                 )
             return await self.send_text(
                 db,
                 session,
-                f"{notification_message(title, text)}\n\n{_plain_links(links)}",
+                f"{notification_message(push.headline, text)}\n\n{_plain_links(links)}",
             )
         except Exception as exc:
             logger.exception(
@@ -323,7 +331,9 @@ class IMNotificationDispatcher:
         markdown: bool = False,
         links: Sequence[NotificationLink] = (),
         headline: str = "",
+        push: PushNotification | None = None,
     ) -> dict[str, Any]:
+        from app.services.channels.dingtalk.markdown import escape_markdown
         from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
         client_id = _config_value(config, "client_id", "clientId")
@@ -346,11 +356,23 @@ class IMNotificationDispatcher:
             }
 
         sender = DingTalkRobotSender(client_id, client_secret)
+        card_template_id = _notification_card_template(config)
+        if push is not None and card_template_id:
+            result = await self._send_dingtalk_card(
+                sender,
+                session,
+                recipient_id=recipient_id,
+                card_template_id=card_template_id,
+                push=push,
+                links=links,
+            )
+            if result is not None:
+                return result
         if markdown:
             content = (
-                f"**{_escape_markdown(headline)}**\n\n{_escape_markdown(text)}"
+                f"**{escape_markdown(headline)}**\n\n{escape_markdown(text)}"
                 if headline
-                else _escape_markdown(text)
+                else escape_markdown(text)
             )
             if links:
                 content = f"{content}\n\n{_markdown_links(links)}"
@@ -364,6 +386,45 @@ class IMNotificationDispatcher:
                 user_ids=[recipient_id],
                 content=text,
             )
+        return {
+            "channel_id": session.channel_id,
+            "channel_type": session.channel_type,
+            **result,
+        }
+
+    async def _send_dingtalk_card(
+        self,
+        sender: "DingTalkRobotSender",
+        session: IMPrivateSession,
+        *,
+        recipient_id: str,
+        card_template_id: str,
+        push: PushNotification,
+        links: Sequence[NotificationLink],
+    ) -> dict[str, Any] | None:
+        """Deliver one notification as an AI card, or nothing when that fails.
+
+        A channel that never opted into cards keeps its markdown push, and so
+        does one whose card the tenant cannot deliver — the notification itself
+        matters more than its shape.
+        """
+
+        from app.services.channels.dingtalk.notification_card import card_param_map
+
+        result = await sender.send_card(
+            user_id=recipient_id,
+            card_template_id=card_template_id,
+            card_param_map=card_param_map(push=push, links=links),
+            preview=push.card_headline,
+        )
+        if not result.get("success"):
+            logger.warning(
+                "[IMNotificationDispatcher] DingTalk AI card push failed, "
+                "falling back to markdown: channel_id=%s error=%s",
+                session.channel_id,
+                result.get("error"),
+            )
+            return None
         return {
             "channel_id": session.channel_id,
             "channel_type": session.channel_type,
@@ -486,6 +547,20 @@ def _config_value(config: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
+def _notification_card_template(config: dict[str, Any]) -> str | None:
+    """The AI card template this channel pushes notifications with, if any.
+
+    The channel opts in by carrying a ``notification_card`` block; a missing
+    template inside it means the DingTalk-provided card.
+    """
+
+    card = config.get("notification_card")
+    if not isinstance(card, dict):
+        return None
+    template_id = str(card.get("template_id") or "").strip()
+    return template_id or BUILTIN_AI_CARD_TEMPLATE_ID
+
+
 def _dedupe_sessions(
     sessions: Sequence[IMPrivateSession],
 ) -> list[IMPrivateSession]:
@@ -503,19 +578,6 @@ def _markdown_links(links: Sequence[NotificationLink]) -> str:
     """Render every destination as one clickable DingTalk markdown line."""
 
     return " · ".join(f"[{link.label}]({link.url})" for link in links)
-
-
-# Markdown control characters that could turn a member's own words into a link,
-# an image or emphasis inside the bot's message. Links need their brackets and
-# the rest carry the markup, so escaping these characters disarms the text
-# while ordinary punctuation — parentheses, dates, dashes — stays readable.
-_MARKDOWN_ESCAPES = str.maketrans({char: f"\\{char}" for char in "\\`*_~[]!<>"})
-
-
-def _escape_markdown(text: str) -> str:
-    """Neutralise Markdown syntax in text the recipient's peer controls."""
-
-    return text.translate(_MARKDOWN_ESCAPES)
 
 
 def _plain_links(links: Sequence[NotificationLink]) -> str:

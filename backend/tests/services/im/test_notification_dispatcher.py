@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock
@@ -11,9 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
+from app.schemas.dingtalk_card import BUILTIN_AI_CARD_TEMPLATE_ID
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
-from app.services.notification_copy import NotificationLink
+from app.services.notification_copy import NotificationLink, PushNotification
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -449,8 +451,11 @@ async def test_dingtalk_notification_pushes_the_inbox_headline_above_a_link(
     result = await im_notification_dispatcher.send_notification(
         test_db,
         session,
-        "看板：test-pro",
-        title="hajimi 在「修复登录」提到了你",
+        PushNotification(
+            headline="hajimi 在「修复登录」提到了你",
+            card_headline="🔔 hajimi 在评论中提到了你",
+            facts=(("看板", "test-pro"),),
+        ),
         links=[
             NotificationLink(
                 label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
@@ -517,8 +522,12 @@ async def test_dingtalk_markdown_escapes_link_syntax_from_a_comment(
     result = await im_notification_dispatcher.send_notification(
         test_db,
         session,
-        "评论内容：[点这里](https://tracker.example/login)",
-        title="hajimi 在「修复登录」提到了你",
+        PushNotification(
+            headline="hajimi 在「修复登录」提到了你",
+            card_headline="🔔 hajimi 在评论中提到了你",
+            detail_label="评论内容",
+            detail="[点这里](https://tracker.example/login)",
+        ),
         links=[
             NotificationLink(
                 label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
@@ -532,6 +541,175 @@ async def test_dingtalk_markdown_escapes_link_syntax_from_a_comment(
         "评论内容：\\[点这里\\](https://tracker.example/login)\n\n"
         "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
     )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_notification_card_uses_the_builtin_template(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A channel that opted into cards gets a finished card instead of markdown."""
+
+    _create_channel(
+        test_db,
+        channel_id=9425,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+            "notification_card": {},
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9425,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            calls.append({"client_id": client_id})
+
+        async def send_card(
+            self,
+            user_id: str,
+            card_template_id: str,
+            card_param_map: dict[str, str],
+            preview: str = "",
+        ):
+            calls.append(
+                {
+                    "user_id": user_id,
+                    "card_template_id": card_template_id,
+                    "card_param_map": card_param_map,
+                    "preview": preview,
+                }
+            )
+            return {"success": True, "outTrackId": "track-1"}
+
+        async def send_markdown_message(self, user_ids, title, text):
+            raise AssertionError("a delivered card must replace the markdown push")
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+
+    result = await im_notification_dispatcher.send_notification(
+        test_db,
+        session,
+        PushNotification(
+            headline="hajimi 在「修复登录」提到了你",
+            card_headline="🔔 hajimi 在评论中提到了你",
+            facts=(("任务编号", "WORK-582"),),
+        ),
+        links=[
+            NotificationLink(
+                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+            ),
+        ],
+    )
+
+    assert result["success"] is True
+    assert result["outTrackId"] == "track-1"
+    assert calls[1]["user_id"] == "staff-1"
+    assert calls[1]["card_template_id"] == BUILTIN_AI_CARD_TEMPLATE_ID
+    assert calls[1]["preview"] == "🔔 hajimi 在评论中提到了你"
+    card_param_map = calls[1]["card_param_map"]
+    assert card_param_map["msgTitle"] == "🔔 hajimi 在评论中提到了你"
+    assert card_param_map["staticMsgContent"] == "**任务编号**：WORK-582"
+    assert card_param_map["flowStatus"] == "3"
+    assert json.loads(card_param_map["sys_full_json_obj"])["msgButtons"] == [
+        {
+            "text": "在 Wework 打开",
+            "url": "wework://boards/12/issues/ISSUE-1",
+            "color": "blue",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tenant that cannot deliver the card still receives the notification."""
+
+    _create_channel(
+        test_db,
+        channel_id=9426,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+            "notification_card": {"template_id": "card-template-1"},
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9426,
+        channel_type="dingtalk",
+        sender_id="sender-union-2",
+        proactive_recipient_id="staff-2",
+    )
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            pass
+
+        async def send_card(
+            self,
+            user_id: str,
+            card_template_id: str,
+            card_param_map: dict[str, str],
+            preview: str = "",
+        ):
+            calls.append({"template_id": card_template_id})
+            return {"success": False, "error": "Card.Instance.Write forbid"}
+
+        async def send_markdown_message(self, user_ids, title, text):
+            calls.append({"user_ids": user_ids, "title": title, "text": text})
+            return {"success": True, "result": {"processQueryKey": "query-md"}}
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+
+    result = await im_notification_dispatcher.send_notification(
+        test_db,
+        session,
+        PushNotification(
+            headline="hajimi 在「修复登录」提到了你",
+            card_headline="🔔 hajimi 在评论中提到了你",
+            facts=(("任务编号", "WORK-582"),),
+        ),
+        links=[
+            NotificationLink(
+                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+            ),
+        ],
+    )
+
+    assert result["success"] is True
+    assert calls[0] == {"template_id": "card-template-1"}
+    assert calls[1] == {
+        "user_ids": ["staff-2"],
+        "title": "hajimi 在「修复登录」提到了你",
+        "text": (
+            "**hajimi 在「修复登录」提到了你**\n\n"
+            "任务编号：WORK-582\n\n"
+            "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
+        ),
+    }
 
 
 @pytest.mark.asyncio

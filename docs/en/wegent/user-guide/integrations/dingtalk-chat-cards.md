@@ -45,6 +45,28 @@ Send `{"chat_card": null}` to remove this configuration through the API. Omittin
 
 `flowStatus` is reserved by DingTalk's AI-card protocol and cannot be the content field. DingTalk templates own styling and layout; field mapping does not turn an ordinary card into a streaming AI card.
 
+## Notification cards (optional)
+
+The same DingTalk channel can push its in-app notifications as AI cards. Turn on "Send task notifications as AI cards" and mentions, assignments and run completion/failure/cancellation go out as cards; with the option off, or when the card cannot be delivered, the markdown notification is sent instead. In-app notifications and stored records are unaffected.
+
+The template defaults to DingTalk's built-in AI card, so no card of your own is required. A custom template must expose title, body and button fields (`msgTitle`, `msgContent`, `staticMsgContent`, `msgButtons`) and list the body field in `sys_full_json_obj.order`; DingTalk hides any field the order omits, body included.
+
+A proactively pushed card only appears in the chat once it reaches a terminal `flowStatus` (`3`), so notification cards always arrive as a finished result rather than moving from "running" to an outcome in place. Making a card advance in place needs the streaming API and an extra permission.
+
+The card draws on the same content as the markdown notification: the header states the action ("✅ 你的任务已完成", "🔔 hajimi 在评论中提到了你") while the item title moves into the body so a long one cannot wrap the header; every fact in the body bolds its label (`**任务编号**：WORK-582`), and the comment, run result, failure reason or cancellation reason follows as a quote of its own. Two buttons at the bottom open the item in Wework and in the browser. Quotable local run notifications stay text messages so they can still be quoted to continue the task.
+
+The configuration lives in the channel's `config.notification_card`, for example:
+
+```json
+{
+  "notification_card": {
+    "template_id": "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+  }
+}
+```
+
+Send `{"notification_card": null}` to turn it off through the API. Omitting the field leaves it unchanged.
+
 ## Follow-ups and history
 
 Group quoted replies can use the same follow-up flow. Delivery records map `carrierId` to `outTrackId`; a quoted reply mentioning the bot resolves its `originalProcessQueryKey` through that mapping. Only mapped cards from this bot, in their original group and company, qualify. Ordinary messages, unmatched quotes and slash commands keep their existing routing. The index expires after 7 days and is not automatically available for cards delivered before this change.

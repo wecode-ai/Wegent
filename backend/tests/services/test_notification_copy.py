@@ -137,15 +137,24 @@ def test_push_copy_restates_the_facts_an_inbox_summary_already_shows() -> None:
         target=TARGET, status="completed", detail="实现完成，已通过自测。"
     )
 
-    headline, text = push_copy(
+    push = push_copy(
         kind=message.kind,
         title=message.title,
         body=message.body,
         payload=message.payload,
     )
 
-    assert headline == "你的任务已完成"
-    assert text == "\n\n".join(
+    assert push.headline == "你的任务已完成"
+    assert push.facts == (
+        ("任务标题", "修复登录"),
+        ("任务编号", "WEG-12"),
+        ("任务状态", "已完成"),
+        ("当前负责人", "崔嘉琪"),
+        ("看板", "test-pro"),
+    )
+    assert push.detail_label == "任务结果"
+    assert push.detail == "实现完成，已通过自测。"
+    assert push.plain_text() == "\n\n".join(
         (
             "任务标题：修复登录",
             "任务编号：WEG-12",
@@ -165,15 +174,16 @@ def test_push_copy_leads_with_the_actor_for_a_mention() -> None:
         target=TARGET,
     )
 
-    headline, text = push_copy(
+    push = push_copy(
         kind=message.kind,
         title=message.title,
         body=message.body,
         payload=message.payload,
     )
 
-    assert headline == "hajimi 在评论中提到了你"
-    assert text.endswith("评论内容：麻烦看下这个改动")
+    assert push.headline == "hajimi 在评论中提到了你"
+    assert push.card_headline == "🔔 hajimi 在评论中提到了你"
+    assert push.plain_text().endswith("评论内容：麻烦看下这个改动")
 
 
 def test_push_copy_skips_the_facts_a_notification_does_not_have() -> None:
@@ -182,12 +192,45 @@ def test_push_copy_skips_the_facts_a_notification_does_not_have() -> None:
         target=NotificationTarget(project_id="12", project_name="test-pro"),
     )
 
-    headline, text = push_copy(
+    push = push_copy(
         kind=message.kind,
         title=message.title,
         body=message.body,
         payload=message.payload,
     )
 
-    assert headline == "admin 把任务分配给了你"
-    assert text == "看板：test-pro"
+    assert push.headline == "admin 把任务分配给了你"
+    assert push.card_headline == "📌 admin 把任务分配给了你"
+    assert push.plain_text() == "看板：test-pro"
+
+
+def test_card_headlines_state_the_outcome_without_the_item_title() -> None:
+    """A card header stays one line; the item is named in the card's facts."""
+
+    for status, expected in (
+        ("completed", "✅ 你的任务已完成"),
+        ("failed", "⚠️ 你的任务执行未成功"),
+        ("cancelled", "🚫 你的任务已取消"),
+    ):
+        message = execution_message(target=TARGET, status=status)
+
+        push = push_copy(
+            kind=message.kind,
+            title=message.title,
+            body=message.body,
+            payload=message.payload,
+        )
+
+        assert push.card_headline == expected
+        assert "修复登录" not in push.card_headline
+
+
+def test_a_notification_without_context_keeps_its_headline_and_body() -> None:
+    """Nothing to restate: the card shows the stored body as its detail."""
+
+    push = push_copy(kind="message", title="hajimi 给你留了言", body="看下这个")
+
+    assert push.headline == "hajimi 给你留了言"
+    assert push.card_headline == "hajimi 给你留了言"
+    assert push.facts == ()
+    assert push.plain_text() == "看下这个"

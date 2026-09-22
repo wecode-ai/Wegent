@@ -108,19 +108,50 @@ def notification_message(title: str, body: str) -> str:
     return f"{title}\n\n{body}" if body else title
 
 
+@dataclass(frozen=True)
+class PushNotification:
+    """One notification as a push shows it.
+
+    A push has no summary line, so the facts the inbox row only implies travel
+    as labelled lines; a card renders the same facts under a header of its own.
+    """
+
+    headline: str
+    card_headline: str
+    facts: tuple[tuple[str, str], ...] = ()
+    detail_label: str = ""
+    detail: str = ""
+
+    def plain_text(self) -> str:
+        """The body a plain push carries.
+
+        DingTalk collapses a single newline inside a markdown message, so the
+        lines are separated by blank ones to stay readable on a phone.
+        """
+
+        lines = [f"{label}：{value}" for label, value in self.facts]
+        if self.detail:
+            lines.append(
+                f"{self.detail_label}：{self.detail}"
+                if self.detail_label
+                else self.detail
+            )
+        return "\n\n".join(lines)
+
+
 def push_copy(
     *,
     kind: str,
     title: str,
     body: str = "",
     payload: dict[str, Any] | None = None,
-) -> tuple[str, str]:
-    """The headline and detail block an IM push shows for a stored notification.
+) -> PushNotification:
+    """The push form of a stored notification.
 
     The inbox renders ``title`` above ``body`` next to its own summary line, so
     the stored copy stays short. A push has no summary line, so it restates the
-    facts the recipient needs as ``标签：值`` lines and drops the item name from
-    the headline those facts already carry.
+    facts the recipient needs, and a channel whose cards have a header of their
+    own gets a headline that stays readable there.
     """
 
     data = payload or {}
@@ -133,13 +164,21 @@ def push_copy(
         ),
     )
     headline = _push_headline(kind, title, data)
+    detail = body.strip()
     if not facts:
-        # A notification without structured context keeps its own body.
-        return headline, body.strip()
-    return headline, fact_block(
-        facts=facts,
-        detail=body.strip(),
+        # A notification without structured context keeps its own body, and has
+        # nothing a card header could be shortened against either.
+        return PushNotification(
+            headline=headline,
+            card_headline=headline,
+            detail=detail,
+        )
+    return PushNotification(
+        headline=headline,
+        card_headline=_card_headline(kind, title, data),
+        facts=tuple((label, str(value)) for label, value in facts),
         detail_label=_detail_label(kind, data),
+        detail=detail,
     )
 
 
@@ -150,6 +189,37 @@ def _push_headline(kind: str, title: str, payload: dict[str, Any]) -> str:
     if kind == "mention":
         actor = payload.get("actorName")
         return f"{actor} 在评论中提到了你" if actor else title
+    return title
+
+
+# A card leads with the action; the item it is about is named in the body
+# already, so repeating it in a header only wraps it onto a second line.
+_CARD_STATUS_EMOJI = {
+    "completed": "✅",
+    "failed": "⚠️",
+    "FAILED": "⚠️",
+    "cancelled": "🚫",
+    "CANCELLED": "🚫",
+    "queued": "🚀",
+    "claimed": "🚀",
+    "running": "🚀",
+    "pending_approval": "⏳",
+    "waiting_user_input": "💬",
+    "waiting_runtime": "🖥️",
+}
+
+
+def _card_headline(kind: str, title: str, payload: dict[str, Any]) -> str:
+    if kind == "execution":
+        status = str(payload.get("status"))
+        tail = _EXECUTION_TAILS.get(status, "有新的进展")
+        return f"{_CARD_STATUS_EMOJI.get(status, 'ℹ️')} 你的任务{tail}"
+    if kind == "mention":
+        actor = payload.get("actorName")
+        return f"🔔 {actor} 在评论中提到了你" if actor else f"🔔 {title}"
+    if kind == "assignment":
+        actor = payload.get("actorName")
+        return f"📌 {actor} 把任务分配给了你" if actor else f"📌 {title}"
     return title
 
 

@@ -268,8 +268,10 @@ async def test_im_receives_message_even_when_live_push_fails(
         ) as send,
     ):
         await deliver_notification(row.id)
-    assert send.call_args.args[2] == "Review failed"
-    assert send.call_args.kwargs["title"] == "Review"
+    push = send.call_args.args[2]
+    assert push.headline == "Review"
+    assert push.card_headline == "Review"
+    assert push.plain_text() == "Review failed"
     assert send.call_args.kwargs["links"] == notification_links(row)
 
 
@@ -303,7 +305,11 @@ async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_
         ) as send,
     ):
         await deliver_notification(row.id)
-    assert send.call_args.args[2] == "看板：test-pro\n\n评论内容：麻烦看下这个改动"
+    push = send.call_args.args[2]
+    assert push.headline == "hajimi 在「修复登录」提到了你"
+    assert push.facts == (("看板", "test-pro"),)
+    assert push.detail_label == "评论内容"
+    assert push.plain_text() == "看板：test-pro\n\n评论内容：麻烦看下这个改动"
 
 
 def test_push_offers_the_desktop_deep_link_and_the_web_page(test_db, test_user):

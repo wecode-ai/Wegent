@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import { teamApis } from '@/apis/team'
+import { BUILTIN_AI_CARD_TEMPLATE_ID } from '@/features/admin/components/DingTalkNotificationCardFields'
 import IMChannelList from '@/features/admin/components/IMChannelList'
 
 const mockToast = jest.fn()
@@ -406,5 +407,74 @@ describe('IMChannelList channel config', () => {
         })
       )
     })
+  })
+
+  test('creates a DingTalk channel without a notification card by default', async () => {
+    render(<IMChannelList />)
+
+    await waitFor(() => {
+      expect(mockedTeamApis.getAllTeams).toHaveBeenCalledWith('all')
+    })
+    fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.name *'), {
+      target: { value: 'dingtalk-main' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_id *'), {
+      target: { value: 'ding-client-id' },
+    })
+    fireEvent.change(
+      screen.getByLabelText('admin:im_channels.form.client_secret *'),
+      {
+        target: { value: 'ding-client-secret' },
+      }
+    )
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '10' } })
+    fireEvent.change(screen.getAllByRole('combobox')[4], { target: { value: '20' } })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createIMChannel).toHaveBeenCalled()
+    })
+
+    const payload = mockedAdminApis.createIMChannel.mock.calls[0][0]
+    expect(payload.config).toEqual(
+      expect.objectContaining({ notification_card: null })
+    )
+  })
+
+  test('creates a DingTalk channel that pushes notifications as AI cards', async () => {
+    render(<IMChannelList />)
+
+    await waitFor(() => {
+      expect(mockedTeamApis.getAllTeams).toHaveBeenCalledWith('all')
+    })
+    fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.name *'), {
+      target: { value: 'dingtalk-cards' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_id *'), {
+      target: { value: 'ding-client-id' },
+    })
+    fireEvent.change(
+      screen.getByLabelText('admin:im_channels.form.client_secret *'),
+      {
+        target: { value: 'ding-client-secret' },
+      }
+    )
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '10' } })
+    fireEvent.change(screen.getAllByRole('combobox')[4], { target: { value: '20' } })
+    fireEvent.click(screen.getByTestId('create-im-notification-card-enabled'))
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createIMChannel).toHaveBeenCalled()
+    })
+
+    const payload = mockedAdminApis.createIMChannel.mock.calls[0][0]
+    expect(payload.config).toEqual(
+      expect.objectContaining({
+        notification_card: { template_id: BUILTIN_AI_CARD_TEMPLATE_ID },
+      })
+    )
   })
 })

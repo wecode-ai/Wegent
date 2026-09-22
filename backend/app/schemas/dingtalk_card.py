@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Optional chat-card contract, independent of notification templates."""
+"""Card contracts for the DingTalk channel, each optional and independent."""
 
 from typing import Annotated, Any
 
@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 CardField = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
 ]
+
+# DingTalk ships this AI markdown card template with its streaming SDK. It
+# renders a title, a markdown body and buttons, so a bot can push a card without
+# first drawing one on the card platform.
+BUILTIN_AI_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
 
 
 class DingTalkChatCardConfig(BaseModel):
@@ -40,11 +45,31 @@ class DingTalkChatCardConfig(BaseModel):
         return self
 
 
-def validate_chat_card_config(config: dict[str, Any]) -> dict[str, Any]:
-    """An omitted or null chat_card preserves the built-in response behavior."""
+class DingTalkNotificationCardConfig(BaseModel):
+    """The AI card a DingTalk channel pushes task notifications as.
+
+    The block is only present when the channel opted into cards; the template
+    defaults to DingTalk's built-in one so enabling cards needs no card of the
+    operator's own.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: CardField = BUILTIN_AI_CARD_TEMPLATE_ID
+
+
+def validate_card_config(config: dict[str, Any]) -> dict[str, Any]:
+    """An omitted or null card block preserves the channel's default behavior."""
+
+    if config.get("chat_card") is None and config.get("notification_card") is None:
+        return config
+    config = dict(config)
     if config.get("chat_card") is not None:
-        config = dict(config)
         config["chat_card"] = DingTalkChatCardConfig.model_validate(
             config["chat_card"]
+        ).model_dump()
+    if config.get("notification_card") is not None:
+        config["notification_card"] = DingTalkNotificationCardConfig.model_validate(
+            config["notification_card"]
         ).model_dump()
     return config

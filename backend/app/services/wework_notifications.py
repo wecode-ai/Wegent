@@ -167,7 +167,7 @@ async def deliver_notification(notification_id: str) -> None:
             payload = (
                 notification.payload if isinstance(notification.payload, dict) else {}
             )
-            headline, text = push_copy(
+            push = push_copy(
                 kind=notification.kind,
                 title=notification.title,
                 body=notification.body,
@@ -179,8 +179,7 @@ async def deliver_notification(notification_id: str) -> None:
                 result = await im_notification_dispatcher.send_notification(
                     db,
                     session,
-                    text,
-                    title=headline,
+                    push,
                     links=notification_links(notification),
                 )
                 if not result.get("success"):
