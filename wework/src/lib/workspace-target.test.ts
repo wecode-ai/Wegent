@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
-import type { ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   createLocalAttachmentWorkspaceTarget,
   createLocalFileWorkspaceTarget,
@@ -16,6 +17,79 @@ function createApi() {
 }
 
 describe('resolveWorkspaceTarget', () => {
+  const localDevices: DeviceInfo[] = [
+    {
+      id: 1,
+      device_id: 'fixture-local',
+      name: 'Fixture',
+      status: 'online',
+      is_default: true,
+      device_type: 'local',
+    },
+  ]
+  const root: WorkspaceTarget = {
+    deviceId: 'fixture-local',
+    path: '/fixture/repo',
+    source: 'runtime',
+    workspaceSource: 'local',
+  }
+
+  test.each([false, true])(
+    'keeps the known workspace root when opening a nested path (directory=%s)',
+    isDirectory => {
+      expect(
+        createLocalFileWorkspaceTarget(
+          '/fixture/repo/backend/app/schemas' + (isDirectory ? '' : '/quick_launch.py'),
+          localDevices,
+          { workspaceTargets: [root], isDirectory }
+        )
+      ).toEqual(root)
+    }
+  )
+
+  test('uses the most specific owning worktree and keeps its metadata', () => {
+    const worktree = { ...root, path: '/fixture/repo/worktrees/task', taskId: 'fixture-task' }
+    expect(
+      createLocalFileWorkspaceTarget('/fixture/repo/worktrees/task/src/a.ts', localDevices, {
+        workspaceTargets: [root, worktree],
+      })
+    ).toEqual(worktree)
+  })
+
+  test('skips invalid candidate roots before matching a local file target', () => {
+    expect(
+      createLocalFileWorkspaceTarget('/fixture/repo/src/a.ts', localDevices, {
+        workspaceTargets: [{ ...root, path: '' }, { ...root, path: 'relative/repo' }, root],
+      })
+    ).toEqual(root)
+  })
+
+  test('does not confuse path prefixes, other devices, or remote filesystem roots', () => {
+    expect(
+      createLocalFileWorkspaceTarget('/fixture/repository/src/a.ts', localDevices, {
+        workspaceTargets: [
+          root,
+          { ...root, path: '/fixture', deviceId: 'other-device' },
+          { ...root, path: '/fixture', workspaceSource: 'remote' },
+        ],
+      })?.path
+    ).toBe('/fixture/repository/src')
+    expect(
+      createLocalFileWorkspaceTarget('/fixture/repo/../external/a.ts', localDevices, {
+        workspaceTargets: [root],
+      })?.path
+    ).toBe('/fixture/external')
+  })
+
+  test('matches Windows roots case-insensitively without rewriting their identity', () => {
+    const windowsRoot = { ...root, path: 'C:\\Fixture\\Repo' }
+    expect(
+      createLocalFileWorkspaceTarget('c:\\fixture\\repo\\src\\a.ts', localDevices, {
+        workspaceTargets: [windowsRoot],
+      })
+    ).toEqual(windowsRoot)
+  })
+
   test('creates a local file target with the real local device id', () => {
     expect(
       createLocalFileWorkspaceTarget('/Users/me/.agents/skills/gmail/SKILL.md', [

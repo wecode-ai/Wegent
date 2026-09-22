@@ -78,7 +78,7 @@ export function IssueActivityFeed({
         {compact ? (
           <span className="task-detail-activity-order flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-secondary">
             <ArrowDownUp className="h-3.5 w-3.5" />
-            {t("activity.task_activity_latest")}
+            {t("activity.task_activity_chronological")}
           </span>
         ) : null}
         <div className="task-detail-activity-tools">{tools}</div>

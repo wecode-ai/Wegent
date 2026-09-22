@@ -85,7 +85,7 @@ export function useProjectCreateController({
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
-  const [agentTeamIds, setAgentTeamIds] = useState<number[]>([]);
+  const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
   const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
     useState<number[]>(() =>
       defaultExecutionEnvironmentDeviceIds(
@@ -93,6 +93,7 @@ export function useProjectCreateController({
       ),
     );
   const executionEnvironmentSelectionChanged = useRef(false);
+  const [leaderId, setLeaderId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -153,8 +154,9 @@ export function useProjectCreateController({
       if (resourceSetup) {
         await resourceSetup.configure(project, {
           memberUserIds,
-          agentTeamIds,
+          agentResourceIds,
           executionEnvironmentDeviceIds,
+          leaderId,
         });
       }
       host?.track?.("created");
@@ -184,8 +186,9 @@ export function useProjectCreateController({
       error,
       canSubmit,
       memberUserIds,
-      agentTeamIds,
+      agentResourceIds,
       executionEnvironmentDeviceIds,
+      leaderId,
     },
     commands: {
       setName,
@@ -197,11 +200,12 @@ export function useProjectCreateController({
       setToken,
       setAitableUrl,
       setMemberUserIds,
-      setAgentTeamIds,
+      setAgentResourceIds,
       setExecutionEnvironmentDeviceIds: (deviceIds: number[]) => {
         executionEnvironmentSelectionChanged.current = true;
         setExecutionEnvironmentDeviceIds(deviceIds);
       },
+      setLeaderId,
       clearError: () => setError(null),
       submit,
     },

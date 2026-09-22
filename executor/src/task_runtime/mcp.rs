@@ -1021,11 +1021,50 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates"
-        | "submit_workflow_plan"
-        | "report_workflow_outcome"
-        | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed orchestration requires a backend project space".to_owned(),
+        "get_assignment_candidates" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            let run_id = grant
+                .as_ref()
+                .and_then(|value| value.automation_run_id.as_deref())
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "assignment candidates require an active collaboration workflow".to_owned(),
+                    )
+                });
+            match (project_id, task_id, run_id) {
+                (Ok(project_id), Ok(task_id), Ok(run_id)) => {
+                    runtime.local_automation_assignment_candidates(project_id, task_id, run_id)
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "submit_workflow_plan" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            let run_id = grant
+                .as_ref()
+                .and_then(|value| value.automation_run_id.as_deref())
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "workflow planning requires an active collaboration workflow".to_owned(),
+                    )
+                });
+            let plan = arguments.get("plan").ok_or_else(|| {
+                super::TaskRuntimeError::Invalid("workflow plan is required".to_owned())
+            });
+            match (project_id, task_id, run_id, plan) {
+                (Ok(project_id), Ok(task_id), Ok(run_id), Ok(plan)) => {
+                    runtime.submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
+                }
+                (Err(error), _, _, _)
+                | (_, Err(error), _, _)
+                | (_, _, Err(error), _)
+                | (_, _, _, Err(error)) => Err(error),
+            }
+        }
+        "report_workflow_outcome" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+            "This orchestration operation requires a backend project space".to_owned(),
         )),
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");

@@ -58,6 +58,7 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_LOG_DIR",
     "WEGENT_EXECUTOR_PROJECTS_DIR",
     "WEGENT_EXECUTOR_SOURCE_DIR",
+    "WEWORK_CODEX_SUBSCRIPTION_ENABLED",
     "WEWORK_EXECUTOR_SIDECAR",
 ];
 const WEWORK_COMPUTER_USE_MCP_SERVER_NAME: &str = "wework_computer";
@@ -146,6 +147,8 @@ use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
+#[cfg(test)]
+use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
     executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
 };

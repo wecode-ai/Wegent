@@ -296,13 +296,16 @@ export async function openFileInWorkspaceApp(
     reveal: (path: string) => void
   }
 ): Promise<void> {
-  if (!(await stat(path)).isFile()) throw new Error('File path is not a regular file')
+  const fileStat = await stat(path)
+  if (!fileStat.isFile() && !fileStat.isDirectory()) {
+    throw new Error('Path is not a regular file or directory')
+  }
   if (opener === 'file-manager') {
     services.reveal(path)
     return
   }
   const terminal = ['terminal', 'iterm2', 'ghostty', 'warp', 'cmd', 'powershell'].includes(opener)
-  await services.open(opener, terminal ? dirname(path) : path)
+  await services.open(opener, terminal && fileStat.isFile() ? dirname(path) : path)
 }
 
 export async function saveCustomWorkspaceOpener(

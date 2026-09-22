@@ -530,9 +530,14 @@ describe("CollaborationApp API boundary", () => {
         status: "pending",
       }).action,
     ).toBeUndefined();
-    board?.props.renderIssueCard({ issue, taskBindings: [binding] });
+    board?.props.renderIssueCard({
+      issue,
+      previewDisabled: false,
+      taskBindings: [binding],
+    });
     expect(renderBoardIssueCard).toHaveBeenCalledWith({
       issue,
+      previewDisabled: false,
       taskBindings: [binding],
       onMarkRead: expect.any(Function),
     });

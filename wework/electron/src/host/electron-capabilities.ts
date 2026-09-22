@@ -30,6 +30,7 @@ import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-m
 import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
+import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
@@ -110,6 +111,7 @@ export interface ElectronDesktopServices {
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   quitApplication: () => void
+  relaunchApplication: () => void
   openRuntimeTask: (taskAddressId: string) => void
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
@@ -302,6 +304,9 @@ export function createElectronCapabilityRouter(
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('app.quit', (_params, context) => {
     context.deferUntilResponseSent(desktopServices.quitApplication)
+  })
+  router.register('app.relaunch', (_params, context) => {
+    context.deferUntilResponseSent(desktopServices.relaunchApplication)
   })
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
@@ -830,6 +835,7 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  registerWorkspaceFileActions(router, () => requiredWindow(window))
   router.register('workspace.openFile', params =>
     openFileInWorkspaceApp(stringParam(params, 'opener'), stringParam(params, 'path'), {
       open: (opener, path) => openLocalWorkspace(opener, path, app.getPath('userData')),

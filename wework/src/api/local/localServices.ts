@@ -19,6 +19,7 @@ import {
 import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
@@ -3627,11 +3628,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   let rememberedCodexAuthConfigured: boolean | null = null
   const modelApi = {
     listModels: async () => {
+      // Always reconcile pending local model catalogs (custom model interfaces)
+      // so they appear in the picker even when the Codex subscription is off.
+      await ensureStatus()
+      const { localCodexSubscriptionEnabled } = await getAppPreferences()
+      if (!localCodexSubscriptionEnabled) {
+        return { data: localRuntimeModels([], null, false) }
+      }
       let codexOfficialModels: CodexOfficialModel[]
       let codexOfficialError: string | null
       let codexAuthConfigured: boolean
       try {
-        await ensureStatus()
         const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
           requestLocalCodexOfficialModels(request).then(
             value => ({ value, error: null }),
