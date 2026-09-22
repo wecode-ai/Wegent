@@ -604,7 +604,7 @@ const PublicModelList: React.FC = () => {
 
       {/* Create Model Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('admin:public_models.create_model')}</DialogTitle>
             <DialogDescription>{t('admin:public_models.description')}</DialogDescription>
@@ -727,7 +727,7 @@ const PublicModelList: React.FC = () => {
 
       {/* Edit Model Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('admin:public_models.edit_model')}</DialogTitle>
           </DialogHeader>
