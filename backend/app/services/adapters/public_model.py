@@ -29,6 +29,19 @@ def is_public_model_visible(json_data: Optional[Dict[str, Any]]) -> bool:
     return value if isinstance(value, bool) else True
 
 
+def explicit_public_model_visibility(
+    json_data: Optional[Dict[str, Any]],
+) -> Optional[bool]:
+    """Return an explicitly configured visibility value, if present."""
+    if not isinstance(json_data, dict):
+        return None
+    spec = json_data.get("spec")
+    if not isinstance(spec, dict):
+        return None
+    value = spec.get("isVisible")
+    return value if isinstance(value, bool) else None
+
+
 def with_public_model_visibility(
     json_data: Optional[Dict[str, Any]], is_visible: bool
 ) -> Dict[str, Any]:
