@@ -326,10 +326,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             A Kind object (for both user and public models),
             or None if not found.
 
-        NOTE: This is a read/assembly path (bot CRUD and component rendering).
-        Public-model whitelist enforcement intentionally lives in the runtime
-        model resolver, not here, so a non-whitelisted user can still view a
-        bot that references a restricted model but is blocked from using it.
+        This lookup also enforces the public-model whitelist. When the supplied
+        user_id is not allowed, it returns None for a restricted public model.
+        Runtime model resolution enforces access separately.
         """
         import logging
 
