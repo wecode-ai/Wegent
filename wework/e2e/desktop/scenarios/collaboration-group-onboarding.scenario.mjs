@@ -59,6 +59,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       const localWorkspaceTree = sidebarScoped(
         `[data-testid="collaboration-workspace-tree-${LOCAL_WORKSPACE_ID}"]`
       )
+      await control.command('waitFor', localWorkspaceTree, {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', `${localWorkspaceTree} .collaboration-workspace-identity`)
       assert.equal(
         Number(
