@@ -21,6 +21,7 @@ import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
 import type { PluginMarketplaceItem, PluginPublicationRequestItem } from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
+import { toInstalledPluginItem } from './workspace/marketplaceWorkspaceHelpers'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 
 const telemetryMocks = vi.hoisted(() => ({
@@ -83,6 +84,10 @@ type CodexPluginMock = {
   availability?: string
   disabledReason?: string | null
   installPolicy?: string
+  connectors?: Array<{
+    slug: string
+    authPolicy: 'on_use'
+  }>
 }
 
 const defaultCodexPlugin: CodexPluginMock = {
@@ -178,6 +183,7 @@ function codexPluginDetail(marketplaceName: string, plugin: CodexPluginMock) {
     ],
     appTemplates: [],
     mcpServers: [],
+    connectors: plugin.connectors ?? [],
   }
 }
 
@@ -1367,6 +1373,7 @@ function githubConnectorComponent() {
 function seedDurableOpenAiGithubPeek(options?: {
   includeGmailInstall?: boolean
   includeGithubConnector?: boolean
+  seedInventory?: boolean
 }) {
   mockKnownExecutorDevice('local-device')
   const githubComponents = options?.includeGithubConnector
@@ -1467,8 +1474,31 @@ function seedDurableOpenAiGithubPeek(options?: {
       interface: { displayName: 'Gmail' },
     },
   }
+  if (options?.seedInventory) {
+    setPluginMarketplaceCache({
+      cacheKey: '|anon',
+      marketplaceItems: (options.includeGmailInstall
+        ? [githubItem, gmailItem]
+        : [githubItem]) as PluginMarketplaceItem[],
+      installedPlugins: (options.includeGmailInstall
+        ? [githubInstalled, gmailInstalled]
+        : [githubInstalled]
+      ).map(plugin => toInstalledPluginItem(plugin)),
+      marketplaces: [
+        {
+          key: 'cloud:default',
+          id: 'default',
+          name: 'Wework 云端市场',
+          kind: 'cloud',
+        },
+      ],
+      selectedMarketplaceKey: 'cloud:default',
+      deviceId: 'local-device',
+      fetchedAt: Date.now(),
+    })
+  }
   window.localStorage.setItem(
-    'wework.plugins.codexReadState.v2',
+    'wework.plugins.codexCatalog.v1',
     JSON.stringify({
       version: 2,
       entries: {
@@ -2093,7 +2123,7 @@ describe('PluginsWorkspace', () => {
   test('shows OpenAI loading while a fresh non-official cache is being completed', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     window.localStorage.setItem(
-      'wework.plugins.codexReadState.v2',
+      'wework.plugins.codexCatalog.v1',
       JSON.stringify({
         version: 2,
         entries: {
@@ -2226,7 +2256,7 @@ describe('PluginsWorkspace', () => {
       fetchedAt: Date.now(),
     })
     window.localStorage.setItem(
-      'wework.plugins.codexReadState.v2',
+      'wework.plugins.codexCatalog.v1',
       JSON.stringify({
         version: 1,
         entries: {
@@ -2357,125 +2387,9 @@ describe('PluginsWorkspace', () => {
     expect(unrestrictedPluginListStarted).toBe(false)
   })
 
-  test('keeps OpenAI official installed strip from durable peek when plugin/installed omits it', async () => {
+  test('replaces canonical inventory membership when live plugin/installed confirms absence', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    mockKnownExecutorDevice('local-device')
-    setPluginMarketplaceCache({
-      cacheKey: '|anon',
-      marketplaceItems: [],
-      installedPlugins: [],
-      marketplaces: [
-        {
-          key: 'cloud:default',
-          id: 'default',
-          name: 'Wework 云端市场',
-          kind: 'cloud',
-        },
-      ],
-      selectedMarketplaceKey: 'cloud:default',
-      deviceId: 'local-device',
-      fetchedAt: Date.now(),
-    })
-    window.localStorage.setItem(
-      'wework.plugins.codexReadState.v2',
-      JSON.stringify({
-        version: 2,
-        entries: {
-          '|all': {
-            paramsKey: '|all',
-            cachedAt: Date.now() - 120_000,
-            state: {
-              marketplaceItems: [
-                {
-                  id: 'github@openai-curated-remote',
-                  remotePluginId: 'plugin_connector_1p_github',
-                  name: 'github',
-                  displayName: 'GitHub',
-                  description: 'Connect GitHub',
-                  visibility: 'public',
-                  featured: false,
-                  installed: true,
-                  installedPluginId: 'github@openai-curated-remote',
-                  installedLocally: true,
-                  enabled: true,
-                  sourceType: 'marketplace',
-                  sourceProvider: 'codex',
-                  sourceLabel: 'OpenAI 官方',
-                  components: {
-                    skills: [],
-                    commands: [],
-                    agents: [],
-                    hooks: [],
-                    mcps: [],
-                    lsps: [],
-                    monitors: [],
-                    bins: [],
-                  },
-                  manifest: { marketplaceId: 'openai-curated-remote' },
-                  ownerUserId: 0,
-                  latestReleaseId: null,
-                  interface: {
-                    displayName: 'GitHub',
-                    shortDescription: 'Connect GitHub',
-                    category: 'Developer Tools',
-                  },
-                },
-              ],
-              installedPlugins: [
-                {
-                  apiVersion: 'agent.wecode.io/v1',
-                  kind: 'InstalledPlugin',
-                  metadata: {
-                    name: 'github',
-                    namespace: 'openai-curated-remote',
-                    labels: { id: 'github@openai-curated-remote' },
-                  },
-                  spec: {
-                    source: {
-                      type: 'marketplace',
-                      providerKey: 'openai-curated-remote',
-                      pluginKey: 'github',
-                      catalogItemId: 'plugin_connector_1p_github',
-                      marketplace: 'openai-curated-remote',
-                    },
-                    origin: 'market',
-                    sourceProvider: 'codex',
-                    sourceLabel: 'OpenAI 官方',
-                    visibility: 'public',
-                    displayName: 'GitHub',
-                    description: 'Connect GitHub',
-                    version: '0.1.8',
-                    installState: 'installed',
-                    enabled: true,
-                    componentStates: {},
-                    manifest: {},
-                    components: {
-                      skills: [],
-                      commands: [],
-                      agents: [],
-                      hooks: [],
-                      mcps: [],
-                      lsps: [],
-                      monitors: [],
-                      bins: [],
-                    },
-                    interface: { displayName: 'GitHub' },
-                    packageRef: null,
-                    sourcePayload: { marketplaceName: 'openai-curated-remote' },
-                  },
-                  status: { state: 'enabled' },
-                },
-              ],
-              marketplaces: [{ id: 'openai-curated-remote', name: 'OpenAI', path: null }],
-              selectedMarketplaceId: 'openai-curated-remote',
-              marketplacePath: '',
-              installRegistryPath: '',
-              deviceId: 'local-device',
-            },
-          },
-        },
-      })
-    )
+    seedDurableOpenAiGithubPeek({ seedInventory: true })
 
     vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
       if (command === 'local_executor_ensure_started') {
@@ -2518,19 +2432,18 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
     expect(await screen.findByText('GitHub')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('plugins-installed-strip-item-github@openai-curated-remote')
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('plugins-installed-strip-empty')).toBeInTheDocument()
     expect(
-      await screen.findByTestId('plugins-installed-strip-item-github@openai-curated-remote')
+      screen.getByTestId('plugin-marketplace-install-github@openai-curated-remote')
     ).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-installed-strip-empty')).not.toBeInTheDocument()
-    expect(
-      screen.getByTestId('plugin-marketplace-actions-github@openai-curated-remote')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('plugin-marketplace-install-github@openai-curated-remote')
-    ).not.toBeInTheDocument()
   })
 
-  test('keeps OpenAI official installed strip when live plugin/installed only returns bundled', async () => {
+  test('removes stale OpenAI installed membership when live plugin/installed only returns bundled', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     setPluginMarketplaceCache({
       cacheKey: '|anon',
@@ -2548,7 +2461,7 @@ describe('PluginsWorkspace', () => {
       deviceId: 'local-device',
       fetchedAt: Date.now(),
     })
-    seedDurableOpenAiGithubPeek()
+    seedDurableOpenAiGithubPeek({ seedInventory: true })
 
     const githubCatalog = officialCodexPluginSummary({
       id: 'github@openai-curated-remote',
@@ -2619,15 +2532,11 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
     await waitFor(() => {
       expect(
-        screen.getByTestId('plugins-installed-strip-item-github@openai-curated-remote')
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByTestId('plugin-marketplace-install-github@openai-curated-remote')
+        screen.queryByTestId('plugins-installed-strip-item-github@openai-curated-remote')
       ).not.toBeInTheDocument()
     })
-    expect(screen.queryByTestId('plugins-installed-strip-empty')).not.toBeInTheDocument()
     expect(
-      screen.getByTestId('plugin-marketplace-actions-github@openai-curated-remote')
+      screen.getByTestId('plugin-marketplace-install-github@openai-curated-remote')
     ).toBeInTheDocument()
   })
 
@@ -2739,7 +2648,7 @@ describe('PluginsWorkspace', () => {
       fetchedAt: Date.now(),
     })
     window.localStorage.setItem(
-      'wework.plugins.codexReadState.v2',
+      'wework.plugins.codexCatalog.v1',
       JSON.stringify({
         version: 1,
         entries: {
@@ -3240,8 +3149,41 @@ describe('PluginsWorkspace', () => {
       deviceId: 'local-device',
       fetchedAt: Date.now(),
     })
-    seedDurableOpenAiGithubPeek({ includeGithubConnector: true, includeGmailInstall: true })
-    mockCodexAppServerInvoke({ deviceId: 'local-device' })
+    seedDurableOpenAiGithubPeek({
+      includeGithubConnector: true,
+      includeGmailInstall: true,
+      seedInventory: true,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'local-device',
+      marketplaces: [
+        {
+          name: 'openai-curated-remote',
+          path: 'openai-curated-remote',
+          displayName: 'OpenAI',
+          plugins: [
+            {
+              id: 'github@openai-curated-remote',
+              remotePluginId: 'plugin_connector_1p_github',
+              name: 'github',
+              displayName: 'GitHub',
+              description: 'Connect GitHub',
+              category: 'Developer Tools',
+              connectors: [githubConnectorComponent()],
+            },
+            {
+              id: 'gmail@openai-curated-remote',
+              remotePluginId: 'plugin_connector_1p_gmail',
+              name: 'gmail',
+              displayName: 'Gmail',
+              description: 'Connect Gmail',
+              category: 'Communication',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['github', 'gmail'],
+    })
     mockEmptyCloudPluginApis()
     const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
     vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
@@ -3250,7 +3192,7 @@ describe('PluginsWorkspace', () => {
           method?: string
           params?: { method?: string }
         }
-        if (request.method === 'plugin/read' || request.method === 'plugin/list') {
+        if (request.method === 'plugin/list') {
           return new Promise(() => undefined)
         }
       }
@@ -6498,7 +6440,7 @@ describe('PluginsWorkspace', () => {
       marketplaceSourceProvider: 'wegent',
     })
     window.localStorage.setItem(
-      'wework.plugins.codexReadState.v2',
+      'wework.plugins.codexCatalog.v1',
       JSON.stringify({
         version: 2,
         entries: {

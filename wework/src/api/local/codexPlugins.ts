@@ -313,16 +313,15 @@ const emptyState: LocalCodexPluginsState = {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
-/**
- * Durable across app restarts so OpenAI/local tabs can paint before plugin/list (~10s).
- * v2 keeps installed connector/localAuth stubs so composer send preflight can skip
- * plugin/read after a cache hit (v1 stripped all components and forced a cold detail).
- */
-const READ_STATE_LOCAL_STORAGE_KEY = 'wework.plugins.codexReadState.v2'
+/** Durable catalog metadata only; installed membership always reloads from live inventory. */
+const READ_STATE_LOCAL_STORAGE_KEY = 'wework.plugins.codexCatalog.v1'
 /** Same-session fallback for the current durable key. */
-const READ_STATE_SESSION_STORAGE_KEY = 'wework.plugins.codexReadState.v2'
-/** Previous durable keys — read once for migration, then remove. */
-const READ_STATE_LEGACY_STORAGE_KEYS = ['wework.plugins.codexReadState.v1'] as const
+const READ_STATE_SESSION_STORAGE_KEY = 'wework.plugins.codexCatalog.v1'
+/** Previous durable keys contain stale installed membership and are deleted, not migrated. */
+const READ_STATE_LEGACY_STORAGE_KEYS = [
+  'wework.plugins.codexReadState.v2',
+  'wework.plugins.codexReadState.v1',
+] as const
 /** Serve memory/local cache without hitting Codex while fresher than this. */
 const READ_STATE_FRESH_TTL_MS = 60_000
 /** Keep a durable snapshot so cold app launches can paint before plugin/list (~10s). */
@@ -404,7 +403,7 @@ function parsePersistedReadStateStore(raw: string | null): PersistedReadStateSto
     ) {
       return null
     }
-    // Accept v1 snapshots written before connector stubs were kept in durable cache.
+    // The current catalog schema still accepts both envelope versions.
     return { version: 2, entries: parsed.entries }
   } catch {
     return null
@@ -449,32 +448,17 @@ function readPersistedReadStateStore(): PersistedReadStateStore {
     return compacted
   }
 
-  // Migrate yesterday's v1 durable peek / session snapshot into v2 once.
+  // Installed membership in the old snapshots may be stale. Drop them and rebuild.
   for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
-    const migrated = parsePersistedReadStateStore(window.localStorage.getItem(legacyKey))
-    if (migrated) {
-      writePersistedReadStateStore(migrated)
-      try {
-        window.localStorage.removeItem(legacyKey)
-        window.sessionStorage.removeItem(legacyKey)
-      } catch {
-        // Ignore storage failures; memory cache still works for the session.
-      }
-      return migrated
-    }
-    const migratedSession = parsePersistedReadStateStore(window.sessionStorage.getItem(legacyKey))
-    if (migratedSession) {
-      writePersistedReadStateStore(migratedSession)
-      try {
-        window.sessionStorage.removeItem(legacyKey)
-      } catch {
-        // Ignore storage failures; memory cache still works for the session.
-      }
-      return migratedSession
+    try {
+      window.localStorage.removeItem(legacyKey)
+      window.sessionStorage.removeItem(legacyKey)
+    } catch {
+      // Live reads remain authoritative when storage cleanup is unavailable.
     }
   }
 
-  // One-time migration from the previous same-session snapshot.
+  // Promote the current schema's same-session fallback when durable storage was unavailable.
   const fromSession = parsePersistedReadStateStore(
     window.sessionStorage.getItem(READ_STATE_SESSION_STORAGE_KEY)
   )
@@ -597,12 +581,6 @@ function slimPluginManifestForDurableCache(
   )
 }
 
-function slimConnectorsForDurableCache(
-  plugin: InstalledPlugin
-): InstalledPlugin['spec']['components'] {
-  return slimPluginComponentsForCache(plugin.spec.components)
-}
-
 /**
  * Persist a compact catalog snapshot so cold launches can paint OpenAI/local tabs
  * before plugin/list (~10s). Drop screenshots and keep skill/app/connector names
@@ -613,6 +591,13 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
     ...state,
     marketplaceItems: state.marketplaceItems.map(item => ({
       ...item,
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+      installedVersion: null,
+      enabled: false,
+      updateAvailable: false,
+      currentDeviceInstallation: null,
       description:
         item.interface?.shortDescription?.trim() ||
         (item.description.length > 240 ? `${item.description.slice(0, 240)}…` : item.description),
@@ -620,19 +605,9 @@ function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsSta
       interface: slimPluginInterfaceForDurableCache(item.interface),
       manifest: slimPluginManifestForDurableCache(item.manifest),
     })),
-    installedPlugins: state.installedPlugins.map(plugin => ({
-      ...plugin,
-      spec: {
-        ...plugin.spec,
-        description:
-          typeof plugin.spec.description === 'string' && plugin.spec.description.length > 240
-            ? `${plugin.spec.description.slice(0, 240)}…`
-            : plugin.spec.description,
-        components: slimConnectorsForDurableCache(plugin),
-        interface: slimPluginInterfaceForDurableCache(plugin.spec.interface),
-        manifest: slimPluginManifestForDurableCache(plugin.spec.manifest),
-      },
-    })),
+    // Installed membership belongs to the renderer inventory and live plugin/installed.
+    // Persisting it here created a second seven-day source that survived uninstall.
+    installedPlugins: [],
   }
 }
 
@@ -3024,33 +2999,22 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           }
         }
       }
-      const after = await readState({ mergeAllMarketplaces: true, refresh: true })
-      const stillInstalled =
-        after.installedPlugins.some(plugin => {
-          if (plugin.spec.installState !== 'installed') return false
-          const marketplace =
-            plugin.spec.source.marketplace ||
-            plugin.spec.source.providerKey ||
-            (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
-              ? plugin.spec.sourcePayload.marketplaceName
-              : plugin.metadata.namespace)
-          return (
-            plugin.spec.source.pluginKey === pluginName &&
-            (!marketplaceName ||
-              pluginMarketplaceIdentity(pluginName, String(marketplace || '')) ===
-                pluginMarketplaceIdentity(pluginName, marketplaceName))
-          )
-        }) ||
-        after.marketplaceItems.some(
-          item =>
-            item.installed &&
-            item.name === pluginName &&
-            (!marketplaceName ||
-              pluginMarketplaceIdentity(
-                item.name,
-                typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
-              ) === pluginMarketplaceIdentity(pluginName, marketplaceName))
+      const after = await loadInstalledPluginsOnly({ requireComplete: true })
+      const stillInstalled = after.installedPlugins.some(plugin => {
+        if (plugin.spec.installState !== 'installed') return false
+        const marketplace =
+          plugin.spec.source.marketplace ||
+          plugin.spec.source.providerKey ||
+          (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+            ? plugin.spec.sourcePayload.marketplaceName
+            : plugin.metadata.namespace)
+        return (
+          plugin.spec.source.pluginKey === pluginName &&
+          (!marketplaceName ||
+            pluginMarketplaceIdentity(pluginName, String(marketplace || '')) ===
+              pluginMarketplaceIdentity(pluginName, marketplaceName))
         )
+      })
       if (stillInstalled) {
         throw new Error(
           `Plugin "${pluginName}" is still installed after uninstall; tried ids: ${pluginIds.join(', ')}`
