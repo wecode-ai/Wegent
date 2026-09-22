@@ -179,10 +179,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       const directorySelector = await findTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs)
       await control.command('click', directorySelector)
       const firstFileSelector = await findTreeItem(control, 'first.ts', uiTimeoutMs)
-      await control.command('click', directorySelector)
-      await waitForMissing(control, firstFileSelector, uiTimeoutMs)
-      await control.command('click', directorySelector)
-      await control.command('waitFor', firstFileSelector, { timeoutMs: uiTimeoutMs })
       await control.command('click', firstFileSelector)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const first = 1',
