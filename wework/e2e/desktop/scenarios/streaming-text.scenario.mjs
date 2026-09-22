@@ -10,6 +10,13 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+// The disclosure regression needs a conversation with scroll range, so the tool answer keeps
+// several paragraphs below the process section.
+const TOOL_COMPLETION_BODY = Array.from(
+  { length: 20 },
+  (_, index) =>
+    `第 ${index + 1} 段复核：本地分支落后于 main，先同步远端再重跑 CI，确认修复提交已在流水线里生效。`
+).join('\n\n')
 const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITIAL'
 const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
 const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
@@ -1558,7 +1565,8 @@ export function createDesktopScenario({
         toolRegressionStage = 'awaiting-completion-release'
         resolveToolFollowUp()
         await toolCompletionRelease
-        const stream = streamingEvents(responseId, TOOL_COMPLETION, null)
+        const toolCompletionText = `${TOOL_COMPLETION}\n\n${TOOL_COMPLETION_BODY}`
+        const stream = streamingEvents(responseId, toolCompletionText, null)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
@@ -1566,7 +1574,7 @@ export function createDesktopScenario({
         })
         response.flushHeaders()
         response.write(sse(stream.start))
-        await writeSseEvents(response, textDeltaEvents(stream.itemId, TOOL_COMPLETION))
+        await writeSseEvents(response, textDeltaEvents(stream.itemId, toolCompletionText))
         resolveToolFinalTextStarted()
         await toolFinalCompletionRelease
         toolRegressionStage = 'complete'
@@ -1636,7 +1644,7 @@ export function createDesktopScenario({
 
       if (requestContainsToolRegressionPrompt(body)) {
         if (toolRegressionStage === 'initial') {
-          const tool = selectShellTool(body, workspacePath)
+          const tool = selectShellTool(body, workspacePath, 'seq 1 200', 5_000)
           toolRegressionStage = 'awaiting-tool-output'
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
           response.end(
@@ -2082,21 +2090,7 @@ export function createDesktopScenario({
       const scrollerBeforeDetail = await getSingleElementMetrics(
         control,
         SCROLLER_SELECTOR,
-        'The conversation before the reader opened the tool detail'
-      )
-      // Park the reader above the bottom, where the follow engine would otherwise pull the
-      // viewport to the content they just revealed.
-      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
-        value: String(distanceFromBottom(scrollerBeforeDetail) + 320),
-      })
-      const scrollerBeforeToggle = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The conversation parked above the tool detail'
-      )
-      assert.ok(
-        distanceFromBottom(scrollerBeforeToggle) > 8,
-        'The tool detail regression did not park the conversation above the bottom'
+        'The conversation before opening the tool detail'
       )
       const toolRowBeforeDetail = await getSingleElementMetrics(
         control,
@@ -2124,10 +2118,9 @@ export function createDesktopScenario({
         'The conversation after opening the tool detail'
       )
       assert.ok(
-        distanceFromBottom(scrollerAfterDetail) > distanceFromBottom(scrollerBeforeToggle),
+        distanceFromBottom(scrollerAfterDetail) > 8,
         'Opening the tool detail pulled the conversation back to the bottom'
       )
-      await capture(control, 'streaming-text-04b-tool-detail-open.png')
       // A small nudge must move the reader by the nudge alone: the expansion height cannot be
       // replayed on their next input.
       await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
@@ -2143,11 +2136,9 @@ export function createDesktopScenario({
         `A 12px nudge moved the tool row by ${toolRowAfterNudge.top - toolRowAfterDetail.top}px`
       )
       // Scrolling away and back keeps the detail the reader opened.
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '0' })
       await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
-        value: String(distanceFromBottom(scrollerAfterDetail) + 480),
-      })
-      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
-        value: String(distanceFromBottom(scrollerAfterDetail) - 12),
+        value: String(distanceFromBottom(scrollerAfterDetail) + 12),
       })
       await control.command('waitFor', shellOutputSelector, {
         stableMs: 250,
@@ -2160,6 +2151,7 @@ export function createDesktopScenario({
         'true',
         'The tool detail collapsed while the reader scrolled'
       )
+      await capture(control, 'streaming-text-04b-tool-detail-open.png')
       // A disclosure never takes the reader back to the bottom, so returning there is their
       // own scroll from here on.
       await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '0' })
