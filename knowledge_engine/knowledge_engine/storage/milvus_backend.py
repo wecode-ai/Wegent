@@ -399,7 +399,8 @@ class MilvusBackend(BaseStorageBackend):
         collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
         nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
-        if not self._embeddable_nodes(nodes_for_embedding):
+        embeddable_nodes = self._embeddable_nodes(nodes_for_embedding)
+        if not embeddable_nodes:
             # No vector can decide the collection dimension, so this write must
             # not create a collection from the configured default dimension.
             logger.info(
@@ -415,7 +416,7 @@ class MilvusBackend(BaseStorageBackend):
 
         # Resolve the contract before this adapter writes anything.
         embed_dim = self._resolve_write_dimension(
-            nodes_for_embedding,
+            embeddable_nodes,
             embed_model,
             collection_name,
         )
@@ -430,7 +431,8 @@ class MilvusBackend(BaseStorageBackend):
 
         logger.info(
             f"[Milvus] index_with_metadata: collection={collection_name}, "
-            f"dimension={embed_dim}"
+            f"dimension={embed_dim}, embeddable_nodes={len(embeddable_nodes)}, "
+            f"prepared_nodes={len(nodes_for_embedding)}"
         )
 
         # Create vector store with the resolved dimension
@@ -440,14 +442,14 @@ class MilvusBackend(BaseStorageBackend):
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         VectorStoreIndex(
-            nodes_for_embedding,
+            embeddable_nodes,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
         )
 
         return {
-            "indexed_count": len(nodes),
+            "indexed_count": len(embeddable_nodes),
             "index_name": collection_name,
             "status": "success",
         }

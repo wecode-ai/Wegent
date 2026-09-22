@@ -397,6 +397,38 @@ class TestEmbeddingDimensionContract:
         mock_milvus_vs.assert_not_called()
         mock_vs_index.assert_not_called()
 
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_mixed_write_embeds_and_stores_only_nodes_with_retrieval_text(
+        self,
+        mock_milvus_vs,
+        mock_client_cls,
+    ):
+        """A metadata-only node must not reach the provider or the write."""
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = False
+        vector_store = SimpleVectorStore()
+        mock_milvus_vs.return_value = vector_store
+
+        chunk_metadata = self._chunk_metadata()
+        nodes = chunk_metadata.apply_to_nodes(
+            [TextNode(text="chunk one"), TextNode(text="")]
+        )
+        embed_model = StubEmbeddingModel(declared_dimension=None, vector_dimension=4)
+
+        result = self._backend().index_with_metadata(
+            nodes=nodes,
+            chunk_metadata=chunk_metadata,
+            embed_model=embed_model,
+        )
+
+        assert result["indexed_count"] == 1
+        sent_texts = [text for batch in embed_model.text_batches for text in batch]
+        assert sent_texts
+        assert all("chunk one" in text for text in sent_texts)
+        assert len(vector_store.data.embedding_dict) == 1
+
     @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
     @patch("knowledge_engine.storage.milvus_backend.StorageContext")
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
