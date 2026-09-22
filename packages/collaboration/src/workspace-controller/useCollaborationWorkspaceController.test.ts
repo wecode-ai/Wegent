@@ -1228,6 +1228,49 @@ describe("collaboration workspace controller", () => {
     expect(state.projectItems[project.id]).toEqual(state.issues);
   });
 
+  it("merges queued reorder responses against reducer state", () => {
+    const secondIssue: CollaborationIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Second issue",
+      sort_order: 1,
+    };
+    const acknowledgedIssue = {
+      ...issue,
+      title: "Server acknowledged",
+      status: "completed",
+      version: 3,
+    };
+    const staleIssue = {
+      ...issue,
+      status: "completed",
+      version: 2,
+    };
+    state = {
+      ...state,
+      project,
+      projects: [project],
+      issues: [issue, secondIssue],
+      projectItems: { [project.id]: [issue, secondIssue] },
+    };
+
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "merge-reorder-issues",
+      issues: [acknowledgedIssue, secondIssue],
+    });
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "merge-reorder-issues",
+      issues: [staleIssue, { ...secondIssue, status: "completed", version: 2 }],
+    });
+
+    expect(state.issues).toEqual([
+      acknowledgedIssue,
+      { ...secondIssue, status: "completed", version: 2 },
+    ]);
+    expect(state.projectItems[project.id]).toEqual(state.issues);
+  });
+
   it("keeps the mutated project in the catalog used by background refreshes", async () => {
     const statusProject = {
       ...project,

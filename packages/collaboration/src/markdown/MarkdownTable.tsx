@@ -28,7 +28,9 @@ export function MarkdownTable({
   const handleCopy = async () => {
     clearTimeout(resetTimer.current);
     try {
-      const text = node?.data?.tableMarkdown;
+      const data = node?.data;
+      const text =
+        data && "tableMarkdown" in data ? data.tableMarkdown : undefined;
       if (typeof text !== "string")
         throw new Error("Table Markdown source is unavailable");
       await copyTextToClipboard(text);

@@ -5105,11 +5105,15 @@ export function CloudTodoWorkspace({
                             }}
                             previewPinned={pinnedBoardPreviewItemId === item.id}
                             onPreviewPinnedChange={pinned =>
-                              setPinnedBoardPreview(
-                                pinned
-                                  ? { contextKey: boardPreviewContextKey, itemId: item.id }
-                                  : null
-                              )
+                              setPinnedBoardPreview(current => {
+                                if (pinned) {
+                                  return { contextKey: boardPreviewContextKey, itemId: item.id }
+                                }
+                                return current?.contextKey === boardPreviewContextKey &&
+                                  current.itemId === item.id
+                                  ? null
+                                  : current
+                              })
                             }
                             onMarkRead={isMyTasksBoard ? markTaskBoardItemRead : undefined}
                             onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}

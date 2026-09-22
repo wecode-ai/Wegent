@@ -185,6 +185,7 @@ class Settings(BaseSettings):
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
+    WORKTREE_CLEANUP_RETENTION_DAYS: int = Field(default=7, ge=0)
 
     # Group entity member configuration
     # Maximum number of entity members (departments, etc.) per group

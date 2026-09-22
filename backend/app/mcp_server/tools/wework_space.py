@@ -1153,10 +1153,12 @@ async def finalize_delivery(
 ) -> dict[str, Any]:
     """Finalize a Delivery with typed requirement fulfillments."""
 
+    issue_status_changed = False
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         item = _read_item(db, project, resolved_item_id, token_info.user_id)
+        issue_status_changed = item.status != "completed"
         ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
         _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
         delivery = delivery_service.finalize(
@@ -1178,7 +1180,12 @@ async def finalize_delivery(
             )
             if started:
                 db.refresh(delivery)
-        return _delivery_view(db, delivery)
+        result = _delivery_view(db, delivery)
+    if issue_status_changed:
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        await consume_queues_background()
+    return result
 
 
 @mcp_tool(server="wework_space")

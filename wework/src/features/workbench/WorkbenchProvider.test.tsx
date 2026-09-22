@@ -1514,6 +1514,26 @@ function ProjectSendProbe({
             workbench.state.currentProject ??
             workbench.state.projects.find(candidate => candidate.id === 7)
           if (!project) return
+          void workbench.createProjectRuntimeTask('继承前序工作区', {
+            project,
+            workspaceSource: {
+              deviceId: 'device-1',
+              taskId: 'predecessor-task',
+              workspacePath: '/workspace/worktrees/predecessor',
+            },
+            runtime: 'codex',
+          })
+        }}
+      >
+        send with inherited workspace
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const project =
+            workbench.state.currentProject ??
+            workbench.state.projects.find(candidate => candidate.id === 7)
+          if (!project) return
           void workbench.createTemporaryRuntimeTask('临时侧边对话', {
             project,
             source: {
@@ -6715,6 +6735,61 @@ describe('WorkbenchProvider runtime tasks', () => {
         }),
       })
     )
+    expect(request.execution).toBeUndefined()
+    expect(prepareWorktree).not.toHaveBeenCalled()
+  })
+
+  test('reuses a predecessor workspace without creating another worktree', async () => {
+    const prepareWorktree = vi.fn()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      prepareWorktree,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with inherited workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    expect(request.workspaceSourceTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'predecessor-task',
+      workspacePath: '/workspace/worktrees/predecessor',
+    })
     expect(request.execution).toBeUndefined()
     expect(prepareWorktree).not.toHaveBeenCalled()
   })

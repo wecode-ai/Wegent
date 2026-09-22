@@ -1165,6 +1165,7 @@ async function main() {
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
@@ -3747,7 +3748,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
@@ -3788,16 +3788,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        value: 'file-panel-anchor',
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,

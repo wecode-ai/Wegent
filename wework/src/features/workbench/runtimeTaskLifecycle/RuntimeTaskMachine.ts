@@ -8,6 +8,7 @@ import type {
 
 export class RuntimeTaskMachine {
   private state: RuntimeTaskLifecycleState
+  private revision = 0
 
   constructor(address: RuntimeTaskAddress, unread = false) {
     this.state = {
@@ -28,11 +29,17 @@ export class RuntimeTaskMachine {
   dispatch(event: RuntimeTaskLifecycleEvent): boolean {
     const previous = this.state
     this.state = reduceRuntimeTaskLifecycle(previous, event)
-    return this.state !== previous
+    const changed = this.state !== previous
+    if (changed) this.revision += 1
+    return changed
   }
 
   getState(): RuntimeTaskLifecycleState {
     return this.state
+  }
+
+  getRevision(): number {
+    return this.revision
   }
 
   getSnapshot(): RuntimeTaskLifecycleSnapshot {

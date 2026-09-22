@@ -232,6 +232,9 @@ const platformMessages = {
     basicInformation: "基本信息",
     projects: "项目",
     workspaceManagement: "空间管理",
+    addProject: "添加项目",
+    addFolder: "添加文件夹",
+    importExistingProject: "导入已有项目",
     createProject: "创建项目",
     createCollaborationProject: "创建项目",
     firstProjectHomeTitle: "开始第一个协作项目",
@@ -266,6 +269,9 @@ const platformMessages = {
     firstProjectTitle: "创建第一个项目",
     firstProjectHint:
       "项目负责组织 Issue、成员和分配方式；智能体与执行环境可以稍后配置。",
+    firstLocalProjectTitle: "导入第一个本地项目",
+    firstLocalProjectHint:
+      "选择当前设备上的项目文件夹，在本地空间中组织 Issue 和智能体协作。",
     configureAgents: "配置智能体",
     inviteMembers: "邀请成员",
     workspaceResources: "空间资源",
@@ -455,6 +461,9 @@ const platformMessages = {
     basicInformation: "Basic information",
     projects: "Projects",
     workspaceManagement: "Space management",
+    addProject: "Add project",
+    addFolder: "Add folder",
+    importExistingProject: "Import existing project",
     createProject: "Create project",
     createCollaborationProject: "Create project",
     firstProjectHomeTitle: "Start your first collaboration project",
@@ -495,6 +504,9 @@ const platformMessages = {
     firstProjectTitle: "Create your first project",
     firstProjectHint:
       "Projects organize issues, members, and assignments. Agents and execution environments can be configured later.",
+    firstLocalProjectTitle: "Import your first local project",
+    firstLocalProjectHint:
+      "Choose a project folder on this device to organize issues and agent collaboration in the local space.",
     configureAgents: "Configure agents",
     inviteMembers: "Invite members",
     workspaceResources: "Workspace resources",
@@ -609,6 +621,8 @@ function CollaborationPlatformNavigation({
   navigationIncomplete,
   onRetryNavigation,
   onCreateWorkspace,
+  onImportExistingProject,
+  onAddFolder,
   onNewConversation,
   onArchiveProject,
   footer,
@@ -621,6 +635,8 @@ function CollaborationPlatformNavigation({
   navigationIncomplete: boolean;
   onRetryNavigation(): Promise<void>;
   onCreateWorkspace(): void;
+  onImportExistingProject(workspaceId: string): void;
+  onAddFolder(workspaceId: string): void;
   onNewConversation(projectId: string): void;
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
@@ -634,11 +650,16 @@ function CollaborationPlatformNavigation({
       ),
     [workspaces, projects, workspaceNavigationContext],
   );
+  const selectedProjectWorkspaceId = projects.find(
+    (project) => project.id === host.location.projectId,
+  )?.workspace_id;
+  const selectedWorkspaceId =
+    host.location.workspaceId ?? selectedProjectWorkspaceId ?? null;
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () =>
       new Set(
-        host.location.workspaceId
-          ? [host.location.workspaceId]
+        selectedWorkspaceId
+          ? [selectedWorkspaceId]
           : navigationWorkspaces
               .slice(0, 1)
               .map(({ workspace }) => workspace.id),
@@ -651,13 +672,13 @@ function CollaborationPlatformNavigation({
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const workspaceId =
-      host.location.workspaceId ?? navigationWorkspaces[0]?.workspace.id;
+      selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id;
     if (!workspaceId) return;
     setExpandedWorkspaceIds((current) => {
       if (current.has(workspaceId)) return current;
       return new Set([...current, workspaceId]);
     });
-  }, [host.location.workspaceId, navigationWorkspaces]);
+  }, [navigationWorkspaces, selectedWorkspaceId]);
   useEffect(() => {
     if (!workspaceMenuId) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -1000,6 +1021,35 @@ function CollaborationPlatformNavigation({
                       </button>
                       {menuOpen ? (
                         <div role="menu">
+                          {candidate.location === "local" &&
+                          host.renderProjectImporter ? (
+                            <>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                data-testid="collaboration-workspace-nav-import-existing-project"
+                                onClick={() => {
+                                  setWorkspaceMenuId(null);
+                                  onImportExistingProject(candidate.id);
+                                }}
+                              >
+                                <FolderOpen aria-hidden="true" />
+                                {messages.importExistingProject}
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                data-testid="collaboration-workspace-nav-add-folder"
+                                onClick={() => {
+                                  setWorkspaceMenuId(null);
+                                  onAddFolder(candidate.id);
+                                }}
+                              >
+                                <FolderPlus aria-hidden="true" />
+                                {messages.addFolder}
+                              </button>
+                            </>
+                          ) : null}
                           <button
                             type="button"
                             role="menuitem"
@@ -3095,6 +3145,10 @@ export function CollaborationPlatformApp({
   const [archiveProject, setArchiveProject] =
     useState<CollaborationProject | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectImporter, setProjectImporter] = useState<{
+    workspaceId: string;
+    mode: "folder" | "existing";
+  } | null>(null);
   const [projectWorkspaceId, setProjectWorkspaceId] = useState<string | null>(
     null,
   );
@@ -3129,6 +3183,15 @@ export function CollaborationPlatformApp({
           (workspace) => workspace.id === projectWorkspaceId,
         ) ??
         (state.workspace?.id === projectWorkspaceId ? state.workspace : null));
+  const projectImporterWorkspace =
+    projectImporter == null
+      ? null
+      : (state.workspaces.find(
+          (workspace) => workspace.id === projectImporter.workspaceId,
+        ) ??
+        (state.workspace?.id === projectImporter.workspaceId
+          ? state.workspace
+          : null));
   const projectWorkspaceOwnerLabel =
     projectWorkspace == null
       ? null
@@ -3216,10 +3279,23 @@ export function CollaborationPlatformApp({
       projectView: "board",
       issueId: null,
     });
+  const openWorkspaceProjectCreator = (
+    workspaceId: string,
+    mode: "folder" | "existing" = "folder",
+  ) => {
+    const targetWorkspace =
+      state.workspaces.find((workspace) => workspace.id === workspaceId) ??
+      (state.workspace?.id === workspaceId ? state.workspace : null);
+    if (targetWorkspace?.location === "local" && host.renderProjectImporter) {
+      setProjectImporter({ workspaceId, mode });
+      return;
+    }
+    setProjectWorkspaceId(workspaceId);
+    setProjectDialogOpen(true);
+  };
   const startProjectCreation = () => {
     if (host.location.workspaceId && state.workspace) {
-      setProjectWorkspaceId(state.workspace.id);
-      setProjectDialogOpen(true);
+      openWorkspaceProjectCreator(state.workspace.id);
       return;
     }
     const availableWorkspaceLocations = new Set(
@@ -3229,8 +3305,7 @@ export function CollaborationPlatformApp({
       availableWorkspaceLocations.has(location),
     );
     if (state.workspaces.length === 1 && allLocationsRepresented) {
-      setProjectWorkspaceId(state.workspaces[0].id);
-      setProjectDialogOpen(true);
+      openWorkspaceProjectCreator(state.workspaces[0].id);
       return;
     }
     setWorkspacePickerOpen(true);
@@ -3666,7 +3741,35 @@ export function CollaborationPlatformApp({
         : requestedWorkspaceSettingsView === "collaboration-groups"
           ? "groups"
           : "agents";
-    const createProjectAction = (
+    const usesProjectImporter =
+      workspace.location === "local" && Boolean(host.renderProjectImporter);
+    const createProjectAction = usesProjectImporter ? (
+      <ActionMenu
+        ariaLabel={messages.addProject}
+        icon={Plus}
+        items={[
+          {
+            label: messages.addFolder,
+            icon: FolderPlus,
+            testId: "collaboration-workspace-project-import-folder",
+            onSelect: startProjectCreation,
+          },
+          {
+            label: messages.importExistingProject,
+            icon: FolderOpen,
+            testId: "collaboration-workspace-project-open-existing",
+            onSelect: () =>
+              openWorkspaceProjectCreator(workspace.id, "existing"),
+          },
+        ]}
+        menuTestId="collaboration-workspace-project-add-menu"
+        placement="bottom-end"
+        showTriggerTooltip={false}
+        testId="collaboration-workspace-project-create"
+        triggerClassName="collaboration-primary-button inline-flex items-center gap-1.5"
+        triggerLabel={messages.addProject}
+      />
+    ) : (
       <button
         type="button"
         className="collaboration-primary-button"
@@ -3837,8 +3940,16 @@ export function CollaborationPlatformApp({
                 data-testid="collaboration-workspace-starter"
               >
                 <small>{messages.firstUseProgress}</small>
-                <h2>{messages.firstProjectTitle}</h2>
-                <p>{messages.firstProjectHint}</p>
+                <h2>
+                  {usesProjectImporter
+                    ? messages.firstLocalProjectTitle
+                    : messages.firstProjectTitle}
+                </h2>
+                <p>
+                  {usesProjectImporter
+                    ? messages.firstLocalProjectHint
+                    : messages.firstProjectHint}
+                </p>
                 <div>
                   <button
                     type="button"
@@ -3846,7 +3957,9 @@ export function CollaborationPlatformApp({
                     data-testid="collaboration-workspace-starter-create-project"
                     onClick={startProjectCreation}
                   >
-                    {messages.createProject}
+                    {usesProjectImporter
+                      ? messages.addFolder
+                      : messages.createProject}
                   </button>
                   <button
                     type="button"
@@ -3929,6 +4042,12 @@ export function CollaborationPlatformApp({
         setCreateProjectAfterWorkspace(false);
         setWorkspaceDialogOpen(true);
       }}
+      onImportExistingProject={(workspaceId) =>
+        openWorkspaceProjectCreator(workspaceId, "existing")
+      }
+      onAddFolder={(workspaceId) =>
+        openWorkspaceProjectCreator(workspaceId, "folder")
+      }
       onArchiveProject={setArchiveProject}
       onNewConversation={(projectId) => {
         setRootIssueProjectId(projectId);
@@ -4024,11 +4143,25 @@ export function CollaborationPlatformApp({
           }}
           onSelect={(workspaceId) => {
             setWorkspacePickerOpen(false);
-            setProjectWorkspaceId(workspaceId);
-            setProjectDialogOpen(true);
+            openWorkspaceProjectCreator(workspaceId);
           }}
         />
       ) : null}
+      {projectImporterWorkspace && host.renderProjectImporter
+        ? host.renderProjectImporter({
+            workspace: projectImporterWorkspace,
+            mode: projectImporter?.mode ?? "folder",
+            projects: state.navigationProjects.filter(
+              (project) => project.workspace_id === projectImporterWorkspace.id,
+            ),
+            onClose: () => setProjectImporter(null),
+            onImported: async (project) => {
+              setProjectImporter(null);
+              commands.registerProject(project);
+              openProject(project);
+            },
+          })
+        : null}
       {projectDialogOpen && projectWorkspaceId ? (
         <ProjectCreateDialog
           targets={[

@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from 'react'
 import {
@@ -58,6 +59,7 @@ import type {
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import {
   isRuntimeTaskExecutionRunning,
@@ -140,6 +142,34 @@ export interface WeworkCollaborationPlatformProps {
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
+  renderLocalProjectImporter?: (input: {
+    mode: 'folder' | 'existing'
+    projects: ProjectWithTasks[]
+    onClose: () => void
+    onCreated: (
+      runtimeProjectKey: string,
+      projectName: string,
+      workspaceRoots: string[]
+    ) => Promise<void>
+  }) => ReactNode
+}
+
+function normalizeWorkspaceRoot(root: string): string {
+  const trimmed = root.trim()
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(trimmed) || /^\\\\/.test(trimmed)
+  const normalized = isWindowsPath ? trimmed.replaceAll('\\', '/').toLowerCase() : trimmed
+  if (normalized === '/' || /^[a-z]:\/$/i.test(normalized)) return normalized
+  return normalized.replace(isWindowsPath ? /\/+$/ : /[\\/]+$/, '')
+}
+
+function projectWorkspaceRoots(project: CollaborationProject): string[] {
+  const roots = project.metadata?.workspace_roots
+  return Array.isArray(roots)
+    ? roots
+        .filter((root): root is string => typeof root === 'string')
+        .map(normalizeWorkspaceRoot)
+        .filter(Boolean)
+    : []
 }
 
 export function WeworkSharedProject({
@@ -909,10 +939,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       )}
       <CollaborationPlatformApp
         api={platformApi}
-        refreshKey={JSON.stringify([
-          props.startupActive,
-          props.localProjects.map(project => [project.id, project.name]),
-        ])}
+        refreshKey={String(Boolean(props.startupActive))}
         navigationApis={navigationApis}
         locale={locale}
         onReady={handleReady}
@@ -1016,6 +1043,77 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                 </section>
               </div>
             ),
+          renderProjectImporter: props.renderLocalProjectImporter
+            ? ({ mode, projects: collaborationProjects, onClose, onImported }) => {
+                const importedRuntimeProjectKeys = new Set(
+                  collaborationProjects.flatMap(project => {
+                    const key = project.metadata?.code_project_key
+                    return typeof key === 'string' ? [key] : []
+                  })
+                )
+                const importedWorkspaceRoots = new Set(
+                  collaborationProjects.flatMap(projectWorkspaceRoots)
+                )
+                const runtimeProjectIdentitiesById = new Map(
+                  (props.runtimeWork?.projects ?? []).map(projectWork => [
+                    runtimeProjectUiId(projectWork.project),
+                    {
+                      key: projectWork.project.key,
+                      roots: Array.from(
+                        new Set([
+                          ...(projectWork.project.roots ?? []).map(root => root.path),
+                          ...projectWork.deviceWorkspaces
+                            .filter(workspace => workspace.workspaceKind !== 'chat')
+                            .map(workspace => workspace.workspacePath),
+                        ])
+                      )
+                        .map(normalizeWorkspaceRoot)
+                        .filter(Boolean),
+                    },
+                  ])
+                )
+                const availableProjects = props.localProjects.filter(project => {
+                  const runtimeProject = runtimeProjectIdentitiesById.get(project.id)
+                  if (runtimeProject && importedRuntimeProjectKeys.has(runtimeProject.key)) {
+                    return false
+                  }
+                  const workspacePath =
+                    project.config?.workspace?.source === 'local_path' &&
+                    typeof project.config.workspace.localPath === 'string'
+                      ? normalizeWorkspaceRoot(project.config.workspace.localPath)
+                      : null
+                  const workspaceRoots = new Set([
+                    ...(runtimeProject?.roots ?? []),
+                    ...(workspacePath ? [workspacePath] : []),
+                  ])
+                  return ![...workspaceRoots].some(root => importedWorkspaceRoots.has(root))
+                })
+                return props.renderLocalProjectImporter!({
+                  mode,
+                  projects: availableProjects,
+                  onClose,
+                  onCreated: async (runtimeProjectKey, projectName, workspaceRoots) => {
+                    const localDeliveryApi = props.services.projectSpaceApis?.local
+                    if (!localDeliveryApi?.importLocalCodeProject) {
+                      throw new Error(
+                        locale === 'zh-CN'
+                          ? '本地协作服务当前不可用'
+                          : 'The local collaboration service is unavailable'
+                      )
+                    }
+                    const importedProject = await localDeliveryApi.importLocalCodeProject({
+                      runtimeProjectKey,
+                      name: projectName,
+                      roots: workspaceRoots,
+                    })
+                    await onImported({
+                      ...importedProject,
+                      workspace_id: LOCAL_WORKSPACE_ID,
+                    })
+                  },
+                })
+              }
+            : undefined,
           workspaceOwnerOptions,
           projectAgentConfiguration,
         }}

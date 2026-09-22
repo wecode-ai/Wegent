@@ -259,6 +259,7 @@ export type CollaborationWorkspaceControllerAction =
     }
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
+  | { type: "merge-reorder-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
   | { type: "replace-issue"; issue: CollaborationIssue }
   | { type: "remove-issue"; issueId: string }
@@ -571,6 +572,16 @@ export function collaborationWorkspaceControllerReducer(
           ? { ...state.projectItems, [state.project.id]: action.issues }
           : state.projectItems,
       };
+    case "merge-reorder-issues": {
+      const issues = mergeReorderIssues(state.issues, action.issues);
+      return {
+        ...state,
+        issues,
+        projectItems: state.project
+          ? { ...state.projectItems, [state.project.id]: issues }
+          : state.projectItems,
+      };
+    }
     case "append-issue":
       return {
         ...state,
@@ -1373,11 +1384,8 @@ export function createCollaborationWorkspaceControllerCommands({
           return reordered.version < item.version ? item : reordered;
         });
         dispatch({
-          type: "replace-issues",
-          issues: mergeReorderIssues(
-            getExternalBoardState().issues,
-            reorderedItems,
-          ),
+          type: "merge-reorder-issues",
+          issues: reorderedItems,
         });
       } catch (error) {
         if (isVersionConflict(error)) {

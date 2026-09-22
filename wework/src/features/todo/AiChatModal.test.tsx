@@ -3,7 +3,7 @@ import '@/i18n'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CloudProject } from '@/api/deliveries'
 import type {
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   chatPanelMounts: 0,
   createProjectRuntimeTask: vi.fn(async () => false),
   lastOnAddressChange: null as null | ((address: RuntimeTaskAddress | null) => void),
+  worktreeAvailable: true,
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -46,6 +47,7 @@ vi.mock('./ConnectedIssueProjectWork', () => ({
     children: (projectWork: {
       currentProject: ProjectWithTasks
       selectedDeviceWorkspaceId: number | null
+      worktreeAvailability: { available: boolean }
     }) => React.ReactNode
   }) => (
     <>
@@ -56,7 +58,11 @@ vi.mock('./ConnectedIssueProjectWork', () => ({
       >
         select workspace
       </button>
-      {children({ currentProject: project, selectedDeviceWorkspaceId })}
+      {children({
+        currentProject: project,
+        selectedDeviceWorkspaceId,
+        worktreeAvailability: { available: mocks.worktreeAvailable },
+      })}
     </>
   ),
 }))
@@ -216,6 +222,10 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  beforeEach(() => {
+    mocks.worktreeAvailable = true
+  })
+
   it('handles Escape inside an embedded conversation without a global keyboard listener', async () => {
     const onClose = vi.fn()
     const user = userEvent.setup()
@@ -318,6 +328,11 @@ describe('AiChatModal', () => {
           modelType: 'user',
           modelOptions: { reasoningEffort: 'high' },
         },
+        workspaceExecution: {
+          workspace: {
+            source: 'git_worktree',
+          },
+        },
         cloudProjectId: '11',
         origin: {
           type: 'board_task',
@@ -330,6 +345,29 @@ describe('AiChatModal', () => {
             value: expect.stringContaining('"description":"Use the shared workspace"'),
           }),
         }),
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('uses the current workspace when the executor cannot create a worktree', async () => {
+    mocks.worktreeAvailable = false
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        workspaceExecution: null,
       })
     )
     mocks.createProjectRuntimeTask.mockClear()
@@ -455,7 +493,11 @@ describe('AiChatModal', () => {
       '给出任务列表',
       expect.objectContaining({
         workspaceSource: inheritFromTask,
+        taskRequest: null,
       })
+    )
+    expect(mocks.createProjectRuntimeTask.mock.calls[0]?.[1]).not.toHaveProperty(
+      'workspaceExecution'
     )
     mocks.createProjectRuntimeTask.mockClear()
   })

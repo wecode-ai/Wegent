@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => ({
   lifecycleOwnerEpoch: 0,
   interruptAndSendRuntimePaneMessage: vi.fn(async () => true),
   sendRuntimePaneMessage: vi.fn(async () => true),
+  sendRuntimePaneGuidance: vi.fn(),
   createTask: vi.fn(),
   loadRuntimeTranscriptForPane: vi.fn(),
   loadTurnFileChangesDiff: vi.fn(),
@@ -200,12 +201,14 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onCancelGoalDraft,
     projectChat,
     queuedMessages,
+    onSendQueuedAsGuidance,
   }: {
     onSubmit: (
       valueOverride?: string,
       options?: { interruptWhenBusy?: boolean }
     ) => Promise<boolean>
     queuedMessages?: Array<{ id: string; content: string }>
+    onSendQueuedAsGuidance?: (id: string) => void
     disabled?: boolean
     error?: string | null
     collapseWhenIdle?: boolean
@@ -276,6 +279,9 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
       {queuedMessages?.map(message => (
         <span key={message.id} data-testid="mock-queue-row">
           {message.content}
+          <button data-testid="mock-guide" onClick={() => onSendQueuedAsGuidance?.(message.id)}>
+            Guide
+          </button>
         </span>
       ))}
       {error ? <span data-testid="mock-error">{error}</span> : null}
@@ -325,7 +331,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
     createTemporaryRuntimeTask: vi.fn(),
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
     interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
-    sendRuntimePaneGuidance: vi.fn(),
+    sendRuntimePaneGuidance: mocks.sendRuntimePaneGuidance,
     cancelRuntimePaneTask: mocks.cancelRuntimePaneTask,
     subscribeRuntimeTaskStream: (
       _address: RuntimeTaskAddress,
@@ -390,14 +396,33 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
   let epoch = -1
-  let store = { getTask: () => mocks.lifecycleSnapshot, syncTranscript: mocks.syncTranscript }
+  let revision = 0
+  let previousSnapshot = mocks.lifecycleSnapshot
+  const taskRevision = () => {
+    if (previousSnapshot !== mocks.lifecycleSnapshot) {
+      previousSnapshot = mocks.lifecycleSnapshot
+      revision += 1
+    }
+    return revision
+  }
+  let store = {
+    getTask: () => mocks.lifecycleSnapshot,
+    getTaskRevision: taskRevision,
+    syncTranscript: mocks.syncTranscript,
+  }
   return {
     runtimeTaskLifecycleTransitionChanged: (a: unknown, b: unknown) => a !== b,
     useRuntimeTaskLifecycle: () => mocks.lifecycleSnapshot,
     useRuntimeTaskLifecycleStore: () => {
       if (epoch !== mocks.lifecycleOwnerEpoch) {
         epoch = mocks.lifecycleOwnerEpoch
-        store = { getTask: () => mocks.lifecycleSnapshot, syncTranscript: mocks.syncTranscript }
+        revision = 0
+        previousSnapshot = mocks.lifecycleSnapshot
+        store = {
+          getTask: () => mocks.lifecycleSnapshot,
+          getTaskRevision: taskRevision,
+          syncTranscript: mocks.syncTranscript,
+        }
       }
       return store
     },
@@ -424,7 +449,9 @@ describe('TemporaryChatPanel', () => {
     mocks.busy = false
     mocks.interruptAndSendRuntimePaneMessage.mockClear()
     mocks.resetAttachments.mockReset()
-    mocks.sendRuntimePaneMessage.mockClear()
+    mocks.sendRuntimePaneMessage.mockReset()
+    mocks.sendRuntimePaneMessage.mockResolvedValue(true)
+    mocks.sendRuntimePaneGuidance.mockReset()
     mocks.createTask.mockReset()
     mocks.loadRuntimeTranscriptForPane.mockReset()
     mocks.loadRuntimeTranscriptForPane.mockResolvedValue({
@@ -1032,6 +1059,95 @@ describe('TemporaryChatPanel', () => {
       expect.any(Object)
     )
   })
+  it('drains after lifecycle settlement without a per-panel stream callback', async () => {
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    const panel = (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="settlement"
+        initialAddress={address}
+      />
+    )
+    const { rerender } = render(panel)
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    mocks.busy = true
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: true, isTurnActive: true },
+      turn: { id: 'active-turn' },
+    }
+    rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="settlement"
+        initialAddress={address}
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    expect(screen.getByTestId('mock-queue-row')).toBeInTheDocument()
+    mocks.busy = false
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: false, isTurnActive: false },
+      turn: { id: null },
+    }
+    rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="settlement"
+        initialAddress={address}
+      />
+    )
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
+  })
+
+  it.each([false, true])(
+    'sends a failed guidance row without an active turn (executor running: %s)',
+    async executorRunning => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.busy = true
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: true, isTurnActive: true },
+        turn: { id: 'active-turn' },
+      }
+      mocks.sendRuntimePaneGuidance.mockResolvedValue({
+        sent: false,
+        error: 'no active turn to guide',
+      })
+      const { rerender } = render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          instanceId="idle-guidance"
+          initialAddress={address}
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await userEvent.click(screen.getByTestId('mock-guide'))
+      await waitFor(() => expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledTimes(1))
+      mocks.busy = executorRunning
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: executorRunning, isTurnActive: false },
+        turn: { id: null },
+      }
+      rerender(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          instanceId="idle-guidance"
+          initialAddress={address}
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-guide'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+      expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
+    }
+  )
+
   it('uses the addressed interrupt endpoint when the composer requests immediate send', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }

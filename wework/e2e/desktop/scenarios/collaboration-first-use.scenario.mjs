@@ -9,7 +9,10 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import {
+  completeLocalCollaborationFolderImport,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -122,17 +125,7 @@ export function createDesktopScenario({
         'click',
         scoped(`[data-testid="collaboration-project-workspace-${LOCAL_WORKSPACE_ID}"]`)
       )
-      await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
+      await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
         timeoutMs: uiTimeoutMs,
       })

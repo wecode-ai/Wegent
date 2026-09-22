@@ -34,6 +34,68 @@ const applied = (id: string) => ({
 })
 
 describe('shared PC and Web conversation queue', () => {
+  it.each(['before', 'after'])(
+    'drains successive replies when each turn returns to the same idle state (%s send acknowledgement)',
+    async acknowledgement => {
+      let phase = 'idle'
+      const queue = new RuntimeConversationQueue<string>()
+      const port: RuntimeConversationQueuePort<string> = {
+        ...setup().port,
+        lifecycle: () => phase,
+        lifecycleChanged: previous => previous !== phase,
+      }
+      for (const id of ['one', 'two', 'three']) queue.enqueue(message(id))
+
+      for (const [index, id] of ['one', 'two', 'three'].entries()) {
+        let accept!: (result: { sent: boolean }) => void
+        vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (accept = resolve)))
+        const sending = queue.pump(port, false)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+        expect(port.send).toHaveBeenLastCalledWith(message(id))
+        await queue.pump(port, false)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+
+        if (acknowledgement === 'before') {
+          accept({ sent: true })
+          await sending
+          await queue.pump(port, false)
+          expect(port.send).toHaveBeenCalledTimes(index + 1)
+        }
+        phase = 'running'
+        await queue.pump(port, true)
+        expect(port.send).toHaveBeenCalledTimes(index + 1)
+        phase = 'idle'
+        if (acknowledgement === 'after') {
+          await queue.pump(port, false)
+          expect(port.send).toHaveBeenCalledTimes(index + 1)
+          accept({ sent: true })
+          await sending
+        }
+      }
+      expect(queue.getSnapshot()).toEqual([])
+    }
+  )
+
+  it('rejects direct sends while waiting for the accepted turn to enter the lifecycle', async () => {
+    const { queue, port, transition } = setup()
+    let accept!: (result: { sent: boolean }) => void
+    vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (accept = resolve)))
+    queue.enqueue(message('one'))
+    queue.enqueue(message('two'))
+
+    const sending = queue.send('one', port)
+    expect(port.send).toHaveBeenCalledWith(message('one'))
+    await expect(queue.send('two', port)).resolves.toBe(false)
+    expect(port.send).toHaveBeenCalledTimes(1)
+
+    accept({ sent: true })
+    await sending
+    await expect(queue.send('two', port)).resolves.toBe(false)
+    transition()
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenLastCalledWith(message('two'))
+  })
+
   it('waits while busy and dispatches FIFO once per confirmed lifecycle transition', async () => {
     const { queue, port, transition } = setup()
     queue.enqueue(message('one'))
@@ -66,6 +128,25 @@ describe('shared PC and Web conversation queue', () => {
       expect(queue.getSnapshot()).toEqual([])
     }
   )
+  it('retries a busy send when the lifecycle settled before the rejection arrived', async () => {
+    const { queue, port, transition } = setup()
+    let rejectBusy!: (result: { sent: boolean; error: string }) => void
+    vi.mocked(port.send).mockReturnValueOnce(new Promise(resolve => (rejectBusy = resolve)))
+    queue.enqueue(message('one'))
+
+    const sending = queue.pump(port, false)
+    transition()
+    rejectBusy({ sent: false, error: 'busy' })
+    await sending
+
+    expect(queue.getSnapshot()[0]).toMatchObject({
+      status: 'queued',
+      error: undefined,
+    })
+    await queue.pump(port, false)
+    expect(port.send).toHaveBeenCalledTimes(2)
+    expect(queue.getSnapshot()).toEqual([])
+  })
   it('prevents duplicate dispatch and editing or removing an in-flight message', async () => {
     const { queue, port } = setup()
     let finish!: (result: { sent: boolean }) => void

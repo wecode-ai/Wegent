@@ -326,6 +326,12 @@ class LoopItemTaskBinding(LoopNode):
         super().__init__(**kwargs)
 
 
+class WorkspaceCleanupIntent(LoopNode):
+    """Durable Issue lifecycle intent addressed to one Executor."""
+
+    __mapper_args__ = {"polymorphic_identity": "workspace_cleanup"}
+
+
 class CloudProjectFile(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "file"}
 

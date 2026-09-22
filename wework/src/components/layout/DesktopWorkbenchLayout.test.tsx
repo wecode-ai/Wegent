@@ -58,7 +58,11 @@ import { navigateTo } from '@/lib/navigation'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
+import type {
+  RuntimePaneTranscript,
+  RuntimeSubagentStatus,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import '@/i18n'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
@@ -733,6 +737,7 @@ const startCodeServerSessionMock = vi.fn()
 const startDeviceTerminalSessionMock = vi.fn()
 const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
+let sideChatLifecycleStore: RuntimeTaskLifecycleStore
 const createTemporaryRuntimeTaskMock = vi.fn()
 const sendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
 const sendRuntimePaneGuidanceMock = vi.fn().mockResolvedValue({
@@ -1278,6 +1283,7 @@ describe('DesktopWorkbenchLayout', () => {
       workbenchValue.state.runtimeWork,
     ])
 
+    sideChatLifecycleStore = lifecycleStore
     return (
       <RuntimeTaskLifecycleProvider store={lifecycleStore}>
         <AppearanceProvider>
@@ -3225,6 +3231,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-runtime:device-1:local-board-task'))
+    expect(
+      screen.getByTestId('cloud-todo-card-progress-popup-runtime:device-1:local-board-task')
+    ).toBeInTheDocument()
+    expect(markRuntimeTaskRead).not.toHaveBeenCalled()
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+
+    await userEvent.click(
+      screen.getByTestId('cloud-todo-card-open-task-runtime:device-1:local-board-task')
+    )
     expect(markRuntimeTaskRead).toHaveBeenCalledWith({
       deviceId: 'device-1',
       taskId: 'local-board-task',
@@ -7005,6 +7020,32 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
+  test('restores remembered right workspace panel width for side chat', async () => {
+    localStorage.setItem('wework.desktop.right-workspace.panel-width-ratio', String(220 / 380))
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    const contentFrame = screen.getByTestId('desktop-workbench-content').parentElement
+    const panelShell = screen.getByTestId('right-workspace-panel-shell')
+    await waitFor(() => {
+      expect(contentFrame).toHaveStyle({ width: '520px' })
+      expect(panelShell).toHaveStyle({ width: 'calc(100% - 520px)' })
+    })
+
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    expect(panelShell).toHaveStyle({ width: 'calc(100% - 520px)' })
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-chat-option'
+      )
+    )
+
+    expect(panelShell).toHaveStyle({ width: 'calc(100% - 520px)' })
+  })
+
   test('restores the environment after closing subagents while another tab remains', async () => {
     const loadRuntimeTranscriptForPane = vi.fn().mockResolvedValue({
       messages: [
@@ -8014,7 +8055,19 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    const panelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
+    fireEvent.pointerMove(document, { clientX: 522 })
+    fireEvent.pointerUp(document)
+    expect(
+      Number(localStorage.getItem('wework.desktop.right-workspace.panel-width-ratio'))
+    ).toBeCloseTo(220 / 380)
+    expect(panelShell).toHaveStyle({ width: 'calc(100% - 520px)' })
+
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    expect(panelShell).toHaveStyle({ width: 'calc(100% - 520px)' })
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
@@ -8028,10 +8081,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
     await waitFor(() => {
       expect(screen.getByTestId('desktop-workbench-content').parentElement).toHaveStyle({
-        width: '580px',
+        width: '520px',
       })
       expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
-        width: 'calc(100% - 580px)',
+        width: 'calc(100% - 520px)',
       })
     })
 
@@ -8056,6 +8109,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(2)
     expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
+    expect(panelShell).toHaveStyle({ width: 'calc(100% - 520px)' })
   })
 
   test('temporary chat subscribes before its runtime create request settles', async () => {
@@ -8081,6 +8135,10 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(sideChatInput).toHaveValue('')
 
+    expect(screen.getByTestId('right-workspace-chat-scroll-area-content')).toHaveClass(
+      'min-h-full',
+      'shrink-0'
+    )
     expect(
       screen.getByTestId('right-workspace-chat-scroll-area-content').lastElementChild
     ).toHaveClass(
@@ -8146,6 +8204,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      sideChatLifecycleStore.sendRequested(address)
       await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
@@ -8168,10 +8227,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
-    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
-      | { onAssistantSettled?: () => void }
-      | undefined
-    act(() => streamHandlers?.onAssistantSettled?.())
+    act(() => {
+      sideChatLifecycleStore.syncTranscript(address, {
+        running: false,
+        turns: [],
+      } as RuntimePaneTranscript)
+    })
 
     await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -8234,6 +8295,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      sideChatLifecycleStore.sendRequested(address)
       await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
@@ -8304,6 +8366,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      sideChatLifecycleStore.sendRequested(address)
       await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
@@ -8400,6 +8463,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      sideChatLifecycleStore.sendRequested(address)
       await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
@@ -8421,10 +8485,12 @@ describe('DesktopWorkbenchLayout', () => {
       'queued follow-up'
     )
 
-    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
-      | { onAssistantStart?: () => void }
-      | undefined
-    act(() => streamHandlers?.onAssistantStart?.())
+    act(() => {
+      sideChatLifecycleStore.syncTranscript(address, {
+        running: false,
+        turns: [],
+      } as RuntimePaneTranscript)
+    })
 
     await waitFor(() =>
       expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(

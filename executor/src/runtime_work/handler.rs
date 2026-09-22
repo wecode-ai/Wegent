@@ -1161,6 +1161,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
             "runtime.worktrees.list" => self.list_worktrees().await,
             "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.apply_issue_cleanup" => {
+                self.apply_issue_worktree_cleanup(payload).await
+            }
             "runtime.worktrees.restore" => self.restore_worktree(payload).await,
             "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
