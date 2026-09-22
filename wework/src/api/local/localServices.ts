@@ -3630,7 +3630,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     listModels: async () => {
       // Always reconcile pending local model catalogs (custom model interfaces)
       // so they appear in the picker even when the Codex subscription is off.
-      await ensureStatus().catch(() => undefined)
+      await ensureStatus()
       const { localCodexSubscriptionEnabled } = await getAppPreferences()
       if (!localCodexSubscriptionEnabled) {
         return { data: localRuntimeModels([], null, false) }

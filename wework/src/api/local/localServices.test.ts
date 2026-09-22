@@ -200,8 +200,6 @@ describe('createLocalAppServices', () => {
   })
 
   test('returns local bootstrap data without backend', async () => {
-    // Opt into the local Codex subscription so the codex model branch runs.
-    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
@@ -769,7 +767,6 @@ describe('createLocalAppServices', () => {
   })
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
-    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     saveLocalModelConfig({
       id: 'pending-model',
       displayName: 'Pending model',
@@ -1026,7 +1023,6 @@ describe('createLocalAppServices', () => {
   })
 
   test('accepts an already loaded catalog model when an idle restart is unavailable', async () => {
-    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'loaded-model',
       displayName: 'Loaded model',
@@ -1067,7 +1063,6 @@ describe('createLocalAppServices', () => {
   })
 
   test('retries an idle catalog restart after startup requests drain', async () => {
-    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'startup-pending-model',
       displayName: 'Startup pending model',
@@ -1116,7 +1111,6 @@ describe('createLocalAppServices', () => {
   })
 
   test('hides official Codex models without auth while keeping provider models', async () => {
-    await updateAppPreferences({ localCodexSubscriptionEnabled: true })
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'device.execute_command') {
         return {

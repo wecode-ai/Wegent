@@ -18,8 +18,8 @@ pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUB
 /// preference threaded through the executor environment.
 fn codex_subscription_enabled() -> bool {
     env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
-        .map(|value| value == "true")
-        .unwrap_or(false)
+        .map(|value| value != "false")
+        .unwrap_or(true)
 }
 
 /// Resolves the isolated Codex home owned by the Wework executor.
@@ -190,30 +190,32 @@ fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
 
 fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
     let target = codex_home.join("auth.json");
-    let native_source = user_codex_auth_path().filter(|path| path.is_file());
+    let native_source = user_codex_auth_path();
 
     if !codex_subscription_enabled() {
-        // Subscription disabled: remove a previously-created auth link/copy that
-        // points at the native auth. Never touch a user-managed real file. The
-        // native source may be absent (e.g. deleted after linking), in which case
-        // a stale/dangling link is still cleaned up below.
         if let Ok(metadata) = fs::symlink_metadata(&target) {
             if metadata.file_type().is_symlink() {
-                // Remove any symlink at the target. It was either created by the
-                // enabled path (pointing at native auth) or is now dangling; both
-                // should be cleared so the managed home no longer carries auth.
-                fs::remove_file(&target).map_err(|error| {
-                    format!(
-                        "failed to remove disabled Codex auth link {}: {error}",
-                        target.display()
-                    )
-                })?;
-                // Clear the marker so a later user-managed auth file is not
-                // mistaken for a wework-managed one.
-                remove_managed_auth_marker(codex_home)?;
+                let linked_source = fs::read_link(&target).ok().map(|path| {
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        codex_home.join(path)
+                    }
+                });
+                let managed = has_managed_auth_marker(codex_home)
+                    || native_source
+                        .as_ref()
+                        .is_some_and(|source| linked_source.as_ref() == Some(source));
+                if managed {
+                    fs::remove_file(&target).map_err(|error| {
+                        format!(
+                            "failed to remove disabled Codex auth link {}: {error}",
+                            target.display()
+                        )
+                    })?;
+                    remove_managed_auth_marker(codex_home)?;
+                }
             } else if has_managed_auth_marker(codex_home) {
-                // Real file copied by the enabled path on Windows; remove only the
-                // copy wework created, leaving user-managed files untouched.
                 fs::remove_file(&target).map_err(|error| {
                     format!(
                         "failed to remove disabled Codex auth copy {}: {error}",
@@ -226,8 +228,7 @@ fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let Some(source) = native_source else {
-        // No native auth to link; leave any existing target untouched.
+    let Some(source) = native_source.filter(|path| path.is_file()) else {
         return Ok(());
     };
 

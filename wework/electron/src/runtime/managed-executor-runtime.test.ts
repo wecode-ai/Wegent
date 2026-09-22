@@ -68,7 +68,6 @@ describe('managed executor runtime', () => {
         WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
         WEGENT_CODEX_HOME: managedCodexHome,
         WEGENT_EXECUTOR_HOME: join(directory.path, 'executor'),
-        WEWORK_CODEX_SUBSCRIPTION_ENABLED: 'true',
       },
     })
 

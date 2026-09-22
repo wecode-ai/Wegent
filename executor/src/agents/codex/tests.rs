@@ -854,13 +854,11 @@ fn prepare_wework_codex_home_links_user_auth() {
     let codex_home = root.join("wework-codex");
     let source_auth = user_codex_home.join("auth.json");
     let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
 
     fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
         .expect("user Codex home should be created");
     fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
     env::set_var(CODEX_HOME_ENV, &user_codex_home);
-    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
@@ -886,7 +884,6 @@ fn prepare_wework_codex_home_replaces_stale_auth_link() {
     let stale_source = root.join("missing-auth.json");
     let linked_auth = codex_home.join("auth.json");
     let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
 
     fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
         .expect("user Codex home should be created");
@@ -895,7 +892,6 @@ fn prepare_wework_codex_home_replaces_stale_auth_link() {
     std::os::unix::fs::symlink(&stale_source, &linked_auth)
         .expect("stale auth link should be created");
     env::set_var(CODEX_HOME_ENV, &user_codex_home);
-    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
@@ -921,7 +917,7 @@ fn prepare_wework_codex_home_skips_auth_link_when_subscription_disabled() {
         .expect("user Codex home should be created");
     fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
     env::set_var(CODEX_HOME_ENV, &user_codex_home);
-    env::remove_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
@@ -948,7 +944,7 @@ fn prepare_wework_codex_home_removes_existing_link_when_subscription_disabled() 
     std::os::unix::fs::symlink(&source_auth, &linked_auth)
         .expect("existing auth link should be created");
     env::set_var(CODEX_HOME_ENV, &user_codex_home);
-    env::remove_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
@@ -967,7 +963,7 @@ fn prepare_wework_codex_home_preserves_user_auth_file_when_subscription_disabled
     fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
     fs::write(&managed_auth, br#"{"token":"user-managed"}"#)
         .expect("user auth file should be written");
-    env::remove_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
@@ -998,7 +994,7 @@ fn prepare_wework_codex_home_removes_copied_auth_when_subscription_disabled() {
     fs::write(codex_home.join(".wework-managed-auth"), [])
         .expect("managed auth marker should be written");
     env::set_var(CODEX_HOME_ENV, &user_codex_home);
-    env::remove_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
@@ -1015,16 +1011,50 @@ fn prepare_wework_codex_home_removes_dangling_link_when_subscription_disabled() 
     let codex_home = root.join("wework-codex");
     let missing_native_auth = root.join("missing-codex").join("auth.json");
     let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
     let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
 
     fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
     std::os::unix::fs::symlink(&missing_native_auth, &linked_auth)
         .expect("dangling auth link should be created");
-    env::remove_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(
+        CODEX_HOME_ENV,
+        missing_native_auth
+            .parent()
+            .expect("missing auth should have a parent"),
+    );
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
     assert!(!linked_auth.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_wework_codex_home_preserves_user_symlink_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-user-symlink");
+    let codex_home = root.join("wework-codex");
+    let user_auth = root.join("user-managed-auth.json");
+    let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+    fs::write(&user_auth, br#"{"token":"user-managed"}"#).expect("user auth should be written");
+    std::os::unix::fs::symlink(&user_auth, &linked_auth)
+        .expect("user-managed auth link should be created");
+    env::set_var(CODEX_HOME_ENV, root.join("native-codex"));
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert_eq!(
+        fs::read_link(&linked_auth).expect("user-managed auth link should be preserved"),
+        user_auth
+    );
     let _ = fs::remove_dir_all(root);
 }
 

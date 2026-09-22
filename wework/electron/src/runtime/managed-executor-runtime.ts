@@ -250,7 +250,7 @@ function resolveNativeCodexHome(
 }
 
 function isCodexSubscriptionEnabled(environment: NodeJS.ProcessEnv): boolean {
-  return environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED === 'true'
+  return environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED !== 'false'
 }
 
 // Marker file written alongside a wework-managed Codex auth so the disable
