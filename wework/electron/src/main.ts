@@ -1389,6 +1389,18 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  const codexSubscriptionPreferences = await preferences.read()
+  // The Electron PreferencesStore returns raw JSON without normalization, so an
+  // absent field (e.g. a fresh install or a user who never toggled it) must fall
+  // back to the default (enabled) rather than being treated as disabled.
+  const hasCodexSubscriptionField = Object.prototype.hasOwnProperty.call(
+    codexSubscriptionPreferences,
+    'localCodexSubscriptionEnabled'
+  )
+  const codexSubscriptionEnabled = hasCodexSubscriptionField
+    ? codexSubscriptionPreferences.localCodexSubscriptionEnabled === true
+    : true
+  environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED = codexSubscriptionEnabled ? 'true' : 'false'
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
@@ -1506,6 +1518,10 @@ async function configureDesktopRuntime(): Promise<void> {
           events: desktopHostEvents,
           feedback,
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
+          relaunchApplication: () => {
+            app.relaunch()
+            requestApplicationShutdown(() => app.quit())
+          },
           openRuntimeTask: taskAddressId =>
             dispatchTrayAction({
               type: 'open-task',
