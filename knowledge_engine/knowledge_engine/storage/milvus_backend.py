@@ -422,12 +422,17 @@ class MilvusBackend(BaseStorageBackend):
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-        VectorStoreIndex(
-            nodes_for_embedding,
-            storage_context=storage_context,
-            embed_model=embed_model,
-            show_progress=True,
-        )
+        try:
+            VectorStoreIndex(
+                nodes_for_embedding,
+                storage_context=storage_context,
+                embed_model=embed_model,
+                show_progress=True,
+            )
+        except Exception:
+            # A partial write must not leave new chunks beside the old index.
+            self.discard_failed_write(vector_store, nodes_for_embedding)
+            raise
 
         # Only an accepted write may replace the document's previous chunks.
         self.replace_stale_chunks(

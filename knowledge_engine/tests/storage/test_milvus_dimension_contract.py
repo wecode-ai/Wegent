@@ -700,10 +700,11 @@ class TestEmbeddingDimensionContract:
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
         mock_vs_index.side_effect = RuntimeError("later batch failed")
+        node = TextNode(text="chunk one")
 
         with pytest.raises(RuntimeError, match="later batch failed"):
             self._backend().index_with_metadata(
-                nodes=[TextNode(text="chunk one")],
+                nodes=[node],
                 chunk_metadata=self._chunk_metadata(),
                 embed_model=StubEmbeddingModel(
                     declared_dimension=1536,
@@ -711,7 +712,43 @@ class TestEmbeddingDimensionContract:
                 ),
             )
 
-        mock_store.delete_nodes.assert_not_called()
+        # Only the chunks of the failed attempt go; the previous index stays.
+        mock_store.delete_nodes.assert_called_once_with(node_ids=[node.node_id])
+        mock_store.get_nodes.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_drains_every_page_of_stale_chunks(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = collection_description(1536)
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        first_page = TextNode(text="stale first page")
+        second_page = TextNode(text="stale second page")
+        mock_store.get_nodes.side_effect = [[first_page], [second_page], []]
+
+        self._backend().index_with_metadata(
+            nodes=[TextNode(text="chunk one")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=StubEmbeddingModel(
+                declared_dimension=1536,
+                vector_dimension=1536,
+            ),
+        )
+
+        assert [
+            call.kwargs["node_ids"] for call in mock_store.delete_nodes.call_args_list
+        ] == [[first_page.node_id], [second_page.node_id]]
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf")])
     @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
