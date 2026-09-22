@@ -2066,6 +2066,103 @@ export function createDesktopScenario({
         'The completed response retained its reasoning summary'
       )
       await capture(control, 'streaming-text-04-reasoning-removed.png')
+      // Opening a process disclosure is the reader's own action: the row they opened stands
+      // still, a later nudge moves them by the nudge alone, and the detail stays open while
+      // they scroll. Regression for the tool detail that jumped half a screen open and then
+      // collapsed on the next scroll.
+      await expandCompletedProcessing(control, uiTimeoutMs)
+      const toolDetailToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-tool-detail-toggle]`
+      await control.command('waitFor', toolDetailToggleSelector, { timeoutMs: uiTimeoutMs })
+      const toolDetailAnchorId = 'streaming-text-tool-detail-row'
+      await control.command('markElementWithText', toolDetailToggleSelector, {
+        text: '运行',
+        value: toolDetailAnchorId,
+      })
+      const toolDetailAnchorSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${toolDetailAnchorId}"]`
+      const scrollerBeforeDetail = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The conversation before the reader opened the tool detail'
+      )
+      // Park the reader above the bottom, where the follow engine would otherwise pull the
+      // viewport to the content they just revealed.
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+        value: String(distanceFromBottom(scrollerBeforeDetail) + 320),
+      })
+      const scrollerBeforeToggle = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The conversation parked above the tool detail'
+      )
+      assert.ok(
+        distanceFromBottom(scrollerBeforeToggle) > 8,
+        'The tool detail regression did not park the conversation above the bottom'
+      )
+      const toolRowBeforeDetail = await getSingleElementMetrics(
+        control,
+        toolDetailAnchorSelector,
+        'The tool row before opening its detail'
+      )
+      await control.command('click', toolDetailAnchorSelector)
+      const shellOutputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="shell-tool-output"]`
+      await control.command('waitFor', shellOutputSelector, {
+        stableMs: 400,
+        timeoutMs: uiTimeoutMs,
+      })
+      const toolRowAfterDetail = await getSingleElementMetrics(
+        control,
+        toolDetailAnchorSelector,
+        'The tool row after opening its detail'
+      )
+      assert.ok(
+        Math.abs(toolRowAfterDetail.top - toolRowBeforeDetail.top) <= 8,
+        `Opening the tool detail moved its row by ${toolRowAfterDetail.top - toolRowBeforeDetail.top}px instead of keeping the reader in place`
+      )
+      const scrollerAfterDetail = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The conversation after opening the tool detail'
+      )
+      assert.ok(
+        distanceFromBottom(scrollerAfterDetail) > distanceFromBottom(scrollerBeforeToggle),
+        'Opening the tool detail pulled the conversation back to the bottom'
+      )
+      await capture(control, 'streaming-text-04b-tool-detail-open.png')
+      // A small nudge must move the reader by the nudge alone: the expansion height cannot be
+      // replayed on their next input.
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+        value: String(distanceFromBottom(scrollerAfterDetail) + 12),
+      })
+      const toolRowAfterNudge = await getSingleElementMetrics(
+        control,
+        toolDetailAnchorSelector,
+        'The tool row after a 12px nudge'
+      )
+      assert.ok(
+        Math.abs(toolRowAfterNudge.top - toolRowAfterDetail.top - 12) <= 8,
+        `A 12px nudge moved the tool row by ${toolRowAfterNudge.top - toolRowAfterDetail.top}px`
+      )
+      // Scrolling away and back keeps the detail the reader opened.
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+        value: String(distanceFromBottom(scrollerAfterDetail) + 480),
+      })
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+        value: String(distanceFromBottom(scrollerAfterDetail) - 12),
+      })
+      await control.command('waitFor', shellOutputSelector, {
+        stableMs: 250,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getAttribute', toolDetailAnchorSelector, {
+          value: 'aria-expanded',
+        }),
+        'true',
+        'The tool detail collapsed while the reader scrolled'
+      )
+      // A disclosure never takes the reader back to the bottom, so returning there is their
+      // own scroll from here on.
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '0' })
       const shortConversationScroller = await waitForBottom(
         control,
         'The short control conversation',

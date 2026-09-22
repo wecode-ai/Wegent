@@ -5037,6 +5037,17 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(getDistanceFromBottom(scroller, true)).toBe(600)
+
+    // The nudge after the disclosure moves the reader by the nudge alone: the clamped layout
+    // correction of the expansion must not be replayed on their next input.
+    fireEvent.wheel(scroller, { deltaY: 12 })
+    scroller.scrollTop = -588
+    fireEvent.scroll(scroller)
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(getDistanceFromBottom(scroller, true)).toBe(588)
   })
 
   test('brings a message the reader sends into view even while they are parked in history', () => {

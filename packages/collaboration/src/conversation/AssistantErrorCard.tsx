@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronDown } from "lucide-react";
 import type { WorkbenchMessage } from "@wegent/chat-core/runtime-conversation";
 import { parseChatError } from "@wegent/chat-core/chat-error";
 import { useConversationTranslation } from "./ConversationTranslation";
+import { useReaderDisclosure } from "./ReaderDisclosure";
 
 export function AssistantErrorCard({
   error,
@@ -20,6 +21,7 @@ export function AssistantErrorCard({
   onSwitchModel?: (message: WorkbenchMessage) => void;
 }) {
   const { t } = useConversationTranslation();
+  const reportReaderDisclosure = useReaderDisclosure();
   const [isDetailExpanded, setIsDetailExpanded] = useState(false);
   const displayError = rawError || error;
   const hasErrorDetails = Boolean(displayError);
@@ -92,7 +94,10 @@ export function AssistantErrorCard({
               type="button"
               data-testid="assistant-error-details-toggle"
               aria-expanded={isDetailExpanded}
-              onClick={() => setIsDetailExpanded((value) => !value)}
+              onClick={() => {
+                reportReaderDisclosure();
+                setIsDetailExpanded((value) => !value);
+              }}
               className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
             >
               <ChevronDown

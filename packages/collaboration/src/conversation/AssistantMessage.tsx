@@ -20,6 +20,7 @@ import {
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../markdown/MarkdownServices";
 import type { AttachmentImageServices } from "../issue-detail/AttachmentImageView";
 import { useConversationTranslation } from "./ConversationTranslation";
+import { useReaderDisclosure } from "./ReaderDisclosure";
 import { AssistantThinkingIndicator } from "./AssistantThinkingIndicator";
 import { ToolBlocksDisplay } from "./blocks/ToolBlocksDisplay";
 import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
@@ -168,6 +169,7 @@ export function AssistantMessage({
     usePersistentDisclosure(
       messageDisclosureKey(processingStateKey, "final-processing"),
     );
+  const reportReaderDisclosure = useReaderDisclosure();
   const isProcessingOnlyBeforeGuidance =
     Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent;
   const hasPlanResponse = displayBlocks.some(
@@ -404,7 +406,10 @@ export function AssistantMessage({
                 data-testid="final-processing-toggle"
                 aria-expanded={finalProcessingExpanded}
                 className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
-                onClick={() => setFinalProcessingExpanded((value) => !value)}
+                onClick={() => {
+                  reportReaderDisclosure();
+                  setFinalProcessingExpanded((value) => !value);
+                }}
               >
                 {processingDurationLabel}
                 <ChevronDown
