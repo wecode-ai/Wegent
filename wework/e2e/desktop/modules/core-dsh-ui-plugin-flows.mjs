@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import JSZip from 'jszip'
 
 import {
   DEFAULT_STEP_TIMEOUT_MS,
@@ -368,11 +367,11 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
     'The conversation export completed at an unexpected path'
   )
 
-  const archive = await JSZip.loadAsync(await readFile(exportedPath))
-  const attachment = archive.file('attachments/outside-workspace.txt')
+  const archive = readStoredZipEntries(await readFile(exportedPath))
+  const attachment = archive.get('attachments/outside-workspace.txt')
   assert.ok(attachment, 'The exported ZIP omitted the outside-workspace conversation attachment')
   assert.equal(
-    await attachment.async('string'),
+    attachment.toString('utf8'),
     content,
     'The exported outside-workspace attachment content changed'
   )
@@ -400,24 +399,69 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
     'The HTML conversation export completed at an unexpected path'
   )
 
-  const htmlArchive = await JSZip.loadAsync(await readFile(exportedPath))
-  const htmlDocument = Object.values(htmlArchive.files).find(entry => entry.name.endsWith('.html'))
+  const htmlArchive = readStoredZipEntries(await readFile(exportedPath))
+  const htmlDocument = [...htmlArchive].find(([name]) => name.endsWith('.html'))?.[1]
   assert.ok(htmlDocument, 'The exported ZIP omitted the HTML conversation document')
   assert.match(
-    await htmlDocument.async('string'),
+    htmlDocument.toString('utf8'),
     new RegExp(`data:image/png;base64,${imageBase64}`),
     'The HTML export did not inline the outside-workspace conversation image'
   )
-  const htmlAttachment = htmlArchive.file('attachments/outside-workspace.txt')
+  const htmlAttachment = htmlArchive.get('attachments/outside-workspace.txt')
   assert.ok(
     htmlAttachment,
     'The HTML export ZIP omitted the outside-workspace conversation attachment'
   )
   assert.equal(
-    await htmlAttachment.async('string'),
+    htmlAttachment.toString('utf8'),
     content,
     'The HTML export changed the outside-workspace attachment content'
   )
+}
+
+function readStoredZipEntries(archive) {
+  const endOffset = archive.byteLength - 22
+  assert.ok(endOffset >= 0, 'The exported ZIP is missing its end record')
+  assert.equal(
+    archive.readUInt32LE(endOffset),
+    0x06054b50,
+    'The exported ZIP end record is invalid'
+  )
+  const entryCount = archive.readUInt16LE(endOffset + 10)
+  let offset = archive.readUInt32LE(endOffset + 16)
+  const entries = new Map()
+
+  for (let index = 0; index < entryCount; index += 1) {
+    assert.equal(
+      archive.readUInt32LE(offset),
+      0x02014b50,
+      'The exported ZIP central directory is invalid'
+    )
+    assert.equal(
+      archive.readUInt16LE(offset + 10),
+      0,
+      'The exported ZIP unexpectedly compressed an entry'
+    )
+    const size = archive.readUInt32LE(offset + 24)
+    const nameLength = archive.readUInt16LE(offset + 28)
+    const extraLength = archive.readUInt16LE(offset + 30)
+    const commentLength = archive.readUInt16LE(offset + 32)
+    const localOffset = archive.readUInt32LE(offset + 42)
+    const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
+
+    assert.equal(
+      archive.readUInt32LE(localOffset),
+      0x04034b50,
+      `The exported ZIP local header is invalid: ${name}`
+    )
+    const localNameLength = archive.readUInt16LE(localOffset + 26)
+    const localExtraLength = archive.readUInt16LE(localOffset + 28)
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength
+    entries.set(name, archive.subarray(dataOffset, dataOffset + size))
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+
+  return entries
 }
 
 async function installDemoPlugin({ control, pluginSource, rendererOrigin, restartDesktopApp }) {
