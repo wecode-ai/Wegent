@@ -51,6 +51,16 @@ async function clickTreeItem(control, name, timeoutMs, rootSelector = '') {
   await control.command('click', selector)
 }
 
+async function showFileTree(control) {
+  if (
+    Number(
+      await control.command('getElementCount', '[data-testid="workspace-file-tree-pierre"]')
+    ) === 0
+  ) {
+    await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
+  }
+}
+
 async function waitForMissing(control, selector, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -243,18 +253,12 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         4,
         'Selecting an already-open file must reuse its existing tab'
       )
-      if (
-        Number(
-          await control.command('getElementCount', '[data-testid="workspace-file-tree-pierre"]')
-        ) === 0
-      ) {
-        await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
-      }
       await control.command('click', `${fileTabsSelector}[title$="first.ts"]`)
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'export const first = 1',
         timeoutMs: uiTimeoutMs,
       })
+      await showFileTree(control)
       await control.command(
         'waitFor',
         `${FILE_TREE_ITEM_SELECTOR}[aria-label="first.ts"][data-item-selected="true"]`,
@@ -265,6 +269,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         text: 'export const second = 2',
         timeoutMs: uiTimeoutMs,
       })
+      await showFileTree(control)
       await control.command(
         'waitFor',
         `${FILE_TREE_ITEM_SELECTOR}[aria-label="second.ts"][data-item-selected="true"]`,
