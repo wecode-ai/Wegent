@@ -1,8 +1,9 @@
 import type {
   WeworkConversationAttachment,
   WeworkConversationItem,
+  WeworkConversationReference,
+  WeworkConversationService,
   WeworkConversationSnapshot,
-  WeworkPluginBackendClient,
 } from '../../app-wework/client'
 
 const MARKDOWN_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
@@ -110,7 +111,7 @@ export async function prepareConversationExport(
   snapshot: WeworkConversationSnapshot,
   format: 'markdown' | 'html',
   selection: ConversationExportSelection,
-  backend: WeworkPluginBackendClient
+  conversations: WeworkConversationService
 ): Promise<PreparedConversationExport> {
   const assets: ConversationExportAsset[] = []
   const reservedPaths = new Set<string>()
@@ -118,11 +119,12 @@ export async function prepareConversationExport(
   const prepareMarkdown = (content: string) =>
     prepareMarkdownImages({
       assets,
-      backend,
+      conversations,
       content,
       format,
       imageCache,
       includeImages: selection.images,
+      reference: snapshot.reference,
       reservedPaths,
       workspacePath: snapshot.reference.workspacePath ?? null,
     })
@@ -135,8 +137,9 @@ export async function prepareConversationExport(
           turn.items.map(item =>
             prepareItem(item, format, selection, prepareMarkdown, {
               assets,
-              backend,
+              conversations,
               imageCache,
+              reference: snapshot.reference,
               reservedPaths,
               workspacePath: snapshot.reference.workspacePath ?? null,
             })
@@ -159,8 +162,9 @@ async function prepareItem(
   prepareMarkdown: (content: string) => Promise<string>,
   context: {
     assets: ConversationExportAsset[]
-    backend: WeworkPluginBackendClient
+    conversations: WeworkConversationService
     imageCache: Map<string, Promise<string>>
+    reference: WeworkConversationReference
     reservedPaths: Set<string>
     workspacePath: string | null
   }
@@ -199,8 +203,9 @@ async function prepareAttachment(
   selection: ConversationExportSelection,
   context: {
     assets: ConversationExportAsset[]
-    backend: WeworkPluginBackendClient
+    conversations: WeworkConversationService
     imageCache: Map<string, Promise<string>>
+    reference: WeworkConversationReference
     reservedPaths: Set<string>
     workspacePath: string | null
   }
@@ -212,7 +217,13 @@ async function prepareAttachment(
   if (image && format === 'html') {
     return {
       ...attachment,
-      dataUrl: await attachmentDataUrl(attachment, context.backend, context.imageCache),
+      dataUrl: await attachmentDataUrl(
+        attachment,
+        context.workspacePath,
+        context.reference,
+        context.conversations,
+        context.imageCache
+      ),
     }
   }
 
@@ -227,11 +238,12 @@ async function prepareAttachment(
 
 async function prepareMarkdownImages(options: {
   assets: ConversationExportAsset[]
-  backend: WeworkPluginBackendClient
+  conversations: WeworkConversationService
   content: string
   format: 'markdown' | 'html'
   imageCache: Map<string, Promise<string>>
   includeImages: boolean
+  reference: WeworkConversationReference
   reservedPaths: Set<string>
   workspacePath: string | null
 }): Promise<string> {
@@ -249,7 +261,8 @@ async function prepareMarkdownImages(options: {
           destination,
           mimeType,
           options.workspacePath,
-          options.backend,
+          options.reference,
+          options.conversations,
           options.imageCache
         )
         return `![${match[1]}](${dataUrl}${titleSuffix})`
@@ -294,6 +307,10 @@ async function attachmentAsset(
         contentBase64: dataUrlBase64(previewUrl, attachment.mimeType),
       }
     }
+    const previewPath = localAssetPath(previewUrl)
+    if (previewPath) {
+      return { archivePath, kind: 'local', path: previewPath, workspacePath }
+    }
     return { archivePath, kind: 'remote', url: previewUrl, label: attachment.filename }
   }
   throw new Error(`Unable to include attachment ${attachment.filename} in the export`)
@@ -305,7 +322,7 @@ async function sourceAsset(
   workspacePath: string | null,
   mimeType: string
 ): Promise<ConversationExportAsset> {
-  const localPath = localImagePath(source)
+  const localPath = localAssetPath(source)
   if (localPath) return { archivePath, kind: 'local', path: localPath, workspacePath }
   if (source.startsWith('data:')) {
     return { archivePath, kind: 'base64', contentBase64: dataUrlBase64(source, mimeType) }
@@ -315,15 +332,37 @@ async function sourceAsset(
 
 async function attachmentDataUrl(
   attachment: WeworkConversationAttachment,
-  backend: WeworkPluginBackendClient,
+  workspacePath: string | null,
+  reference: WeworkConversationReference,
+  conversations: WeworkConversationService,
   imageCache: Map<string, Promise<string>>
 ): Promise<string> {
   const mimeType = normalizedImageMimeType(attachment.mimeType)
   const localPath = attachment.localPath?.trim()
-  if (localPath) return cachedLocalDataUrl(localPath, mimeType, null, backend, imageCache)
+  if (localPath) {
+    return cachedLocalDataUrl(
+      localPath,
+      mimeType,
+      workspacePath,
+      reference,
+      conversations,
+      imageCache
+    )
+  }
   const previewUrl = attachment.previewUrl?.trim()
   if (previewUrl) {
     if (previewUrl.startsWith(`data:${mimeType};base64,`)) return previewUrl
+    const previewPath = localAssetPath(previewUrl)
+    if (previewPath) {
+      return cachedLocalDataUrl(
+        previewPath,
+        mimeType,
+        workspacePath,
+        reference,
+        conversations,
+        imageCache
+      )
+    }
     return `data:${mimeType};base64,${await fetchBase64(previewUrl, attachment.filename)}`
   }
   throw new Error(`Unable to include image ${attachment.filename} in the HTML export`)
@@ -333,12 +372,22 @@ async function sourceDataUrl(
   source: string,
   mimeType: string,
   workspacePath: string | null,
-  backend: WeworkPluginBackendClient,
+  reference: WeworkConversationReference,
+  conversations: WeworkConversationService,
   imageCache: Map<string, Promise<string>>
 ): Promise<string> {
   if (source.startsWith(`data:${mimeType};base64,`)) return source
-  const localPath = localImagePath(source)
-  if (localPath) return cachedLocalDataUrl(localPath, mimeType, workspacePath, backend, imageCache)
+  const localPath = localAssetPath(source)
+  if (localPath) {
+    return cachedLocalDataUrl(
+      localPath,
+      mimeType,
+      workspacePath,
+      reference,
+      conversations,
+      imageCache
+    )
+  }
   return `data:${mimeType};base64,${await fetchBase64(source, source)}`
 }
 
@@ -346,44 +395,54 @@ function cachedLocalDataUrl(
   path: string,
   mimeType: string,
   workspacePath: string | null,
-  backend: WeworkPluginBackendClient,
+  reference: WeworkConversationReference,
+  conversations: WeworkConversationService,
   imageCache: Map<string, Promise<string>>
 ): Promise<string> {
   const key = `${workspacePath ?? ''}:${path}`
   const cached = imageCache.get(key)
   if (cached) return cached
-  const dataUrl = readLocalImageBase64(path, mimeType, workspacePath, backend).then(
-    base64 => `data:${mimeType};base64,${base64}`
-  )
+  const dataUrl = readConversationImageBase64(
+    path,
+    mimeType,
+    workspacePath,
+    reference,
+    conversations
+  ).then(base64 => `data:${mimeType};base64,${base64}`)
   imageCache.set(key, dataUrl)
   return dataUrl
 }
 
-async function readLocalImageBase64(
+async function readConversationImageBase64(
   path: string,
   mimeType: string,
   workspacePath: string | null,
-  backend: WeworkPluginBackendClient
+  reference: WeworkConversationReference,
+  conversations: WeworkConversationService
 ): Promise<string> {
   const chunks: string[] = []
   let offset = 0
   let expectedSize: number | null = null
   while (expectedSize === null || offset < expectedSize) {
-    const chunk = await backend.request<{
-      chunkBase64: string
-      bytesRead: number
-      eof: boolean
-      size: number
-    }>('readImageChunk', { path, offset, workspacePath, mimeType })
+    const chunk = await conversations.readAssetChunk(reference, {
+      path,
+      offset,
+      length: 192 * 1024,
+      workspacePath,
+    })
     if (
       !Number.isSafeInteger(chunk.bytesRead) ||
       chunk.bytesRead < 0 ||
+      chunk.bytesRead > 192 * 1024 ||
       !Number.isSafeInteger(chunk.size) ||
       chunk.size < 0 ||
       offset + chunk.bytesRead > chunk.size ||
       (chunk.bytesRead === 0 && !chunk.eof)
     ) {
       throw new Error('Conversation export received an invalid image chunk')
+    }
+    if (chunk.size > REMOTE_IMAGE_MAX_BYTES) {
+      throw new Error('Image exceeds the 50 MB conversation export limit')
     }
     if (expectedSize !== null && chunk.size !== expectedSize) {
       throw new Error('Image changed while the conversation export was reading it')
@@ -398,6 +457,9 @@ async function readLocalImageBase64(
   }
   if (expectedSize === null || offset !== expectedSize) {
     throw new Error('Conversation export could not read the complete image')
+  }
+  if (!matchesImageSignature(mimeType, decodeBase64(chunks[0] ?? '').subarray(0, 4096))) {
+    throw new Error('Image source content does not match its declared type')
   }
   return chunks.join('')
 }
@@ -534,7 +596,7 @@ function splitMarkdownImageDestination(rawHref: string): {
     : { destination: href, titleSuffix: '' }
 }
 
-function localImagePath(value: string): string | null {
+function localAssetPath(value: string): string | null {
   if (
     /^(?:blob:|data:|https?:)/i.test(value) ||
     /^\/(?:api\/)?attachments\/\d+\/download(?:[?#].*)?$/i.test(value)
@@ -551,6 +613,39 @@ function localImagePath(value: string): string | null {
     }
   }
   return decodePath(value)
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const decoded = atob(value)
+  return Uint8Array.from(decoded, character => character.charCodeAt(0))
+}
+
+function matchesImageSignature(mimeType: string, bytes: Uint8Array): boolean {
+  if (mimeType === 'image/png') {
+    return [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte)
+  }
+  if (mimeType === 'image/jpeg') {
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  }
+  if (mimeType === 'image/gif') {
+    const signature = ascii(bytes.subarray(0, 6))
+    return signature === 'GIF87a' || signature === 'GIF89a'
+  }
+  if (mimeType === 'image/webp') {
+    return ascii(bytes.subarray(0, 4)) === 'RIFF' && ascii(bytes.subarray(8, 12)) === 'WEBP'
+  }
+  if (mimeType === 'image/bmp') return bytes[0] === 0x42 && bytes[1] === 0x4d
+  if (mimeType === 'image/avif') {
+    return ascii(bytes.subarray(4, 8)) === 'ftyp' && ascii(bytes.subarray(8)).includes('avif')
+  }
+  if (mimeType === 'image/svg+xml') {
+    return /<svg(?:\s|>)/i.test(new TextDecoder().decode(bytes).replace(/^\uFEFF/, ''))
+  }
+  return false
+}
+
+function ascii(bytes: Uint8Array): string {
+  return String.fromCharCode(...bytes)
 }
 
 function decodePath(value: string): string {

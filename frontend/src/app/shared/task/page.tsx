@@ -193,6 +193,8 @@ function SharedTaskContent() {
         }
         if (resultObj.value !== null && resultObj.value !== undefined && resultObj.value !== '') {
           resultContent = String(resultObj.value)
+        } else if (subtask.status === 'CANCELLED') {
+          resultContent = t('shared-task:status_cancelled')
         } else {
           resultContent = JSON.stringify(subtask.result)
         }
@@ -203,6 +205,8 @@ function SharedTaskContent() {
       resultContent = 'Task completed'
     } else if (subtask.status === 'FAILED') {
       resultContent = 'Task failed'
+    } else if (subtask.status === 'CANCELLED') {
+      resultContent = t('shared-task:status_cancelled')
     } else {
       resultContent = 'Processing...'
     }

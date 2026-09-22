@@ -51,6 +51,12 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
+import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
+import type {
+  WeworkConversationAssetChunk,
+  WeworkConversationSnapshot,
+} from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
@@ -1818,6 +1824,87 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getRuntimeConversationMessages': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
       return JSON.stringify(getRuntimeConversationMessagesForLogicalAddress(address))
+    }
+    case 'openConversationExportFixture': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        assetPath?: string
+        fileSize?: number
+        filename?: string
+        imagePath?: string
+        imageSize?: number
+      }
+      if (
+        !input.assetPath ||
+        !input.filename ||
+        typeof input.fileSize !== 'number' ||
+        !input.imagePath ||
+        typeof input.imageSize !== 'number'
+      ) {
+        throw new Error(
+          'openConversationExportFixture requires assetPath, filename, fileSize, imagePath, and imageSize'
+        )
+      }
+      const snapshot: WeworkConversationSnapshot = {
+        reference: {
+          deviceId: 'desktop-e2e-device',
+          taskId: 'conversation-export-fixture',
+          workspacePath: '/conversation/workspace',
+        },
+        title: 'Conversation export fixture',
+        complete: true,
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'done',
+            items: [
+              {
+                id: 'user-1',
+                type: 'user_message',
+                content: 'Export the attached evidence.',
+                status: 'done',
+                attachments: [
+                  {
+                    id: 1,
+                    filename: input.filename,
+                    fileSize: input.fileSize,
+                    mimeType: 'text/plain',
+                    localPath: input.assetPath,
+                  },
+                  {
+                    id: 2,
+                    filename: 'outside-workspace.png',
+                    fileSize: input.imageSize,
+                    mimeType: 'image/png',
+                    localPath: input.imagePath,
+                  },
+                ],
+              },
+              {
+                id: 'assistant-1',
+                type: 'assistant_text',
+                content: 'The evidence is attached.',
+              },
+            ],
+          },
+        ],
+      }
+      bindDshConversationController({
+        getTranscript: async () => snapshot,
+        readAssetChunk: async (_reference, request) =>
+          readConversationAssetChunk(snapshot, request, chunkRequest =>
+            invokeDesktopHost<WeworkConversationAssetChunk>(
+              'filesystem.readFileChunk',
+              chunkRequest
+            )
+          ),
+      })
+      window.dispatchEvent(
+        new CustomEvent('wework:conversation-export:open', {
+          detail: snapshot.reference,
+        })
+      )
+      await waitForDesktopControlTick()
+      return ''
     }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))

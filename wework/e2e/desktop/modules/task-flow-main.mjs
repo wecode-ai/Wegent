@@ -1279,6 +1279,7 @@ async function main() {
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+      WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
       WEWORK_E2E_STARTUP_SPLASH_CAPTURE: join(resultDir, 'startup-splash.png'),
       WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
@@ -1450,6 +1451,7 @@ async function main() {
         initialRendererLocation: ready.location,
         pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
+        resultDir,
         runtimeRoot: electronCoreRuntimeRoot,
       })
       if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {

@@ -6,6 +6,15 @@ import {
   prepareConversationExport,
 } from './prepareConversationExport'
 
+const PNG_BASE64 = 'iVBORw0KGgoBAgME'
+
+function conversationService(readAssetChunk = vi.fn()) {
+  return {
+    getTranscript: vi.fn(),
+    readAssetChunk,
+  }
+}
+
 const snapshot = {
   reference: {
     deviceId: 'device-1',
@@ -98,7 +107,7 @@ describe('prepareConversationExport', () => {
       snapshot,
       'markdown',
       defaultConversationExportSelection('markdown'),
-      { request: vi.fn() }
+      conversationService()
     )
 
     expect(result.assets).toEqual([])
@@ -120,7 +129,7 @@ describe('prepareConversationExport', () => {
         images: true,
         attachments: true,
       },
-      { request: vi.fn() }
+      conversationService()
     )
 
     expect(result.assets).toEqual([
@@ -149,44 +158,44 @@ describe('prepareConversationExport', () => {
   })
 
   test('embeds HTML images without creating archive assets', async () => {
-    const request = vi.fn().mockResolvedValue({
-      chunkBase64: 'AQIDBA==',
-      bytesRead: 4,
+    const readAssetChunk = vi.fn().mockResolvedValue({
+      chunkBase64: PNG_BASE64,
+      bytesRead: 12,
       eof: true,
-      size: 4,
+      size: 12,
     })
 
     const result = await prepareConversationExport(
       snapshot,
       'html',
       defaultConversationExportSelection('html'),
-      { request }
+      conversationService(readAssetChunk)
     )
 
     expect(result.assets).toEqual([])
-    expect(request).toHaveBeenCalledTimes(2)
-    expect(request).toHaveBeenCalledWith('readImageChunk', {
+    expect(readAssetChunk).toHaveBeenCalledTimes(2)
+    expect(readAssetChunk).toHaveBeenCalledWith(snapshot.reference, {
       path: '/tmp/image.png',
       offset: 0,
-      workspacePath: null,
-      mimeType: 'image/png',
+      length: 192 * 1024,
+      workspacePath: '/workspace',
     })
-    expect(request).toHaveBeenCalledWith('readImageChunk', {
+    expect(readAssetChunk).toHaveBeenCalledWith(snapshot.reference, {
       path: 'evidence/screenshot.png',
       offset: 0,
+      length: 192 * 1024,
       workspacePath: '/workspace',
-      mimeType: 'image/png',
     })
     expect(result.snapshot.turns[0].items[0]).toMatchObject({
-      attachments: [{ dataUrl: 'data:image/png;base64,AQIDBA==' }],
+      attachments: [{ dataUrl: `data:image/png;base64,${PNG_BASE64}` }],
     })
     expect(result.snapshot.turns[0].items[1]).toMatchObject({
-      content: 'Evidence:\n\n![Screenshot](data:image/png;base64,AQIDBA==)',
+      content: `Evidence:\n\n![Screenshot](data:image/png;base64,${PNG_BASE64})`,
     })
   })
 
   test('rejects non-final base64 chunks that are not aligned to three bytes', async () => {
-    const request = vi.fn().mockResolvedValue({
+    const readAssetChunk = vi.fn().mockResolvedValue({
       chunkBase64: 'AQ==',
       bytesRead: 1,
       eof: false,
@@ -194,9 +203,12 @@ describe('prepareConversationExport', () => {
     })
 
     await expect(
-      prepareConversationExport(snapshot, 'html', defaultConversationExportSelection('html'), {
-        request,
-      })
+      prepareConversationExport(
+        snapshot,
+        'html',
+        defaultConversationExportSelection('html'),
+        conversationService(readAssetChunk)
+      )
     ).rejects.toThrow('misaligned image chunk')
   })
 
@@ -229,7 +241,7 @@ describe('prepareConversationExport', () => {
         remoteSnapshot,
         'html',
         defaultConversationExportSelection('html'),
-        { request: vi.fn() }
+        conversationService()
       )
     ).rejects.toThrow('image exceeds 50 MB')
     expect(fetch).toHaveBeenCalledWith(
