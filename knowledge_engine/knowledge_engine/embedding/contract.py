@@ -57,6 +57,10 @@ def ensure_vector_contract(
                 f"Embedding model '{model}' did not return a numeric vector"
             ) from exc
 
+        if not values:
+            raise EmbeddingResponseFormatError(
+                f"Embedding model '{model}' returned an empty vector"
+            )
         for value in values:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise EmbeddingResponseFormatError(
@@ -66,7 +70,7 @@ def ensure_vector_contract(
                 raise EmbeddingResponseFormatError(
                     f"Embedding model '{model}' returned a non-finite vector value"
                 )
-        if values and not any(values):
+        if not any(values):
             raise EmbeddingResponseFormatError(
                 f"Embedding model '{model}' returned an all-zero vector"
             )

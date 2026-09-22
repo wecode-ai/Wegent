@@ -312,8 +312,6 @@ async def delete_document_index_local(
         knowledge_id=str(spec.knowledge_base_id),
         doc_ref=spec.document_ref,
         user_id=spec.index_owner_user_id,
-        expected_embedding_dimension=spec.expected_embedding_dimension,
-        expected_embedding_model=spec.expected_embedding_model,
     )
 
 

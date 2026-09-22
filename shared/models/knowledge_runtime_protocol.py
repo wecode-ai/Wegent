@@ -132,8 +132,6 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
     knowledge_base_id: int
     user_id: int
     document_ref: str
-    expected_embedding_dimension: int | None = None
-    expected_embedding_model: str | None = None
     extensions: dict[str, Any] | None = None
 
 

@@ -179,8 +179,6 @@ class RemoteRagGateway:
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
             document_ref=spec.document_ref,
-            expected_embedding_dimension=spec.expected_embedding_dimension,
-            expected_embedding_model=spec.expected_embedding_model,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
 

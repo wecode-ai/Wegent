@@ -580,32 +580,73 @@ class TestEmbeddingDimensionContract:
         assert result["deleted_chunks"] == 2
         mock_store.delete_nodes.assert_called_once()
 
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
-    def test_reindex_delete_fails_before_deleting_on_a_dimension_mismatch(
+    def test_index_replaces_previous_chunks_only_after_the_preflight(
         self,
         mock_client_cls,
         mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = collection_description(1536)
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        self._backend().index_with_metadata(
+            nodes=[TextNode(text="chunk one")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=StubEmbeddingModel(
+                declared_dimension=1536,
+                vector_dimension=1536,
+            ),
+        )
+
+        filters = mock_store.delete_nodes.call_args.kwargs["filters"]
+        assert (filters.filters[0].key, filters.filters[0].value) == (
+            "knowledge_id",
+            "kb_1",
+        )
+        assert (filters.filters[1].key, filters.filters[1].value) == (
+            "doc_ref",
+            "doc_1",
+        )
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_keeps_previous_chunks_when_the_preflight_fails(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
     ):
         client = MagicMock()
         mock_client_cls.return_value = client
         client.has_collection.return_value = True
         client.describe_collection.return_value = collection_description(5)
-
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
-        with pytest.raises(CollectionDimensionMismatchError) as exc_info:
-            self._backend().delete_document(
-                knowledge_id="kb_1",
-                doc_ref="doc_1",
-                expected_embedding_dimension=1536,
-                expected_embedding_model="embedding-model",
+        with pytest.raises(CollectionDimensionMismatchError):
+            self._backend().index_with_metadata(
+                nodes=[TextNode(text="chunk one")],
+                chunk_metadata=self._chunk_metadata(),
+                embed_model=StubEmbeddingModel(
+                    declared_dimension=1536,
+                    vector_dimension=1536,
+                ),
             )
 
-        assert exc_info.value.model == "embedding-model"
-        assert (exc_info.value.expected, exc_info.value.actual) == (1536, 5)
         mock_store.delete_nodes.assert_not_called()
+        mock_vs_index.assert_not_called()
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf")])
     @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")

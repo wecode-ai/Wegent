@@ -338,8 +338,6 @@ class RagRuntimeResolver:
         document_ref: str,
         index_owner_user_id: int | None = None,
         enabled_index_families: list[str] | None = None,
-        expected_embedding_dimension: int | None = None,
-        expected_embedding_model: str | None = None,
     ) -> DeleteRuntimeSpec:
         kb = self._get_knowledge_base_record(db=db, knowledge_base_id=knowledge_base_id)
         if kb is None:
@@ -367,8 +365,6 @@ class RagRuntimeResolver:
                 namespace=retriever_namespace,
             ),
             enabled_index_families=enabled_index_families or ["chunk_vector"],
-            expected_embedding_dimension=expected_embedding_dimension,
-            expected_embedding_model=expected_embedding_model,
         )
 
     def build_public_purge_index_runtime_spec(

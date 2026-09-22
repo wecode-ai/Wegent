@@ -185,6 +185,13 @@ class ElasticsearchBackend(BaseStorageBackend):
         )
 
         nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
+        # Indexing a document replaces the chunks its previous index left behind.
+        vector_store.delete_nodes(
+            filters=self._build_doc_ref_filters(
+                chunk_metadata.knowledge_id,
+                chunk_metadata.doc_ref,
+            )
+        )
         VectorStoreIndex(
             nodes_for_embedding,
             storage_context=storage_context,

@@ -68,16 +68,12 @@ class DocumentService:
         knowledge_id: str,
         doc_ref: str,
         user_id: int | None = None,
-        expected_embedding_dimension: int | None = None,
-        expected_embedding_model: str | None = None,
     ) -> Dict:
         return await asyncio.to_thread(
             self.storage_backend.delete_document,
             knowledge_id=knowledge_id,
             doc_ref=doc_ref,
             user_id=user_id,
-            expected_embedding_dimension=expected_embedding_dimension,
-            expected_embedding_model=expected_embedding_model,
         )
 
     async def list_documents(

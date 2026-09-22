@@ -419,6 +419,15 @@ class MilvusBackend(BaseStorageBackend):
         # Create vector store with the resolved dimension
         vector_store = self.create_vector_store(collection_name, dim=embed_dim)
 
+        # Indexing a document replaces the chunks its previous index left behind.
+        # This runs after the evidence above, so a rejected write keeps them.
+        vector_store.delete_nodes(
+            filters=self._build_doc_ref_filters(
+                chunk_metadata.knowledge_id,
+                chunk_metadata.doc_ref,
+            )
+        )
+
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
@@ -877,9 +886,6 @@ class MilvusBackend(BaseStorageBackend):
         self,
         knowledge_id: str,
         doc_ref: str,
-        *,
-        expected_embedding_dimension: Optional[int] = None,
-        expected_embedding_model: Optional[str] = None,
         **kwargs,
     ) -> Dict:
         """
@@ -891,28 +897,12 @@ class MilvusBackend(BaseStorageBackend):
         Args:
             knowledge_id: Knowledge base ID
             doc_ref: Document reference ID (doc_xxx format)
-            expected_embedding_dimension: Dimension callers expect the collection
-                to hold. Callers that replace an existing document index set it
-                so a mismatch fails before anything is deleted.
-            expected_embedding_model: Model name reported in that failure
             **kwargs: Additional parameters
 
         Returns:
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
-
-        # A re-index delete happens before the write, so it compares the stored
-        # dimension first and leaves the old data untouched on a mismatch.
-        if is_positive_int(expected_embedding_dimension):
-            snapshot = self._collection_snapshot(collection_name)
-            if snapshot.exists:
-                raise_on_dimension_mismatch(
-                    stored_dim=snapshot.dimension,
-                    expected_dim=expected_embedding_dimension,
-                    model=expected_embedding_model or "unknown",
-                )
-
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document

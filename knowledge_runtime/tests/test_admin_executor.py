@@ -50,8 +50,6 @@ class TestAdminExecutor:
             knowledge_base_id=1,
             user_id=42,
             document_ref="doc_123",
-            expected_embedding_dimension=1536,
-            expected_embedding_model="embedding-model",
         )
 
         mock_storage_backend = MagicMock()
@@ -78,8 +76,6 @@ class TestAdminExecutor:
             knowledge_id="1",
             doc_ref="doc_123",
             user_id=7,
-            expected_embedding_dimension=1536,
-            expected_embedding_model="embedding-model",
         )
 
     @pytest.mark.asyncio

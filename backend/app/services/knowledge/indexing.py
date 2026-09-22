@@ -46,7 +46,6 @@ from app.services.knowledge.splitter_config import (
 )
 from app.services.rag.gateway_factory import get_index_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
-from knowledge_engine.embedding.contract import is_positive_int
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -77,7 +76,6 @@ class RAGIndexingParams:
 @dataclass
 class _IndexingPreparation:
     runtime_spec: Any | None
-    delete_spec: Any | None
     kb_info: KnowledgeBaseIndexInfo | None
     skip_result: dict | None
 
@@ -273,7 +271,6 @@ def _prepare_indexing_runtime(
         )
         return _IndexingPreparation(
             runtime_spec=None,
-            delete_spec=None,
             kb_info=None,
             skip_result={
                 "status": "skipped",
@@ -318,66 +315,16 @@ def _prepare_indexing_runtime(
         kb_index_info=kb_info,
     )
 
-    delete_spec = None
-    if document_id is not None:
-        try:
-            delete_spec = runtime_resolver.build_delete_runtime_spec(
-                db=db,
-                knowledge_base_id=int(knowledge_base_id),
-                document_ref=str(document_id),
-                index_owner_user_id=kb_info.index_owner_user_id,
-                expected_embedding_dimension=_declared_embedding_dimension(
-                    runtime_spec
-                ),
-                expected_embedding_model=embedding_model_name,
-            )
-        except ValueError as e:
-            logger.warning(
-                f"[Indexing] Cannot delete old index for document {document_id}: {e}"
-            )
-            add_span_event(
-                "rag.indexing.old_index_delete_skipped",
-                {
-                    "kb_id": str(knowledge_base_id),
-                    "document_id": str(document_id),
-                    "reason": str(e),
-                },
-            )
-        except Exception as e:
-            logger.error(
-                f"[Indexing] Error preparing old index delete for document {document_id}: "
-                f"{type(e).__name__}: {e}"
-            )
-            add_span_event(
-                "rag.indexing.old_index_delete_failed",
-                {
-                    "kb_id": str(knowledge_base_id),
-                    "document_id": str(document_id),
-                    "error_type": type(e).__name__,
-                    "error": str(e),
-                },
-            )
-
     return _IndexingPreparation(
         runtime_spec=runtime_spec,
-        delete_spec=delete_spec,
         kb_info=kb_info,
         skip_result=None,
     )
 
 
-def _declared_embedding_dimension(runtime_spec: Any) -> Optional[int]:
-    """Return the dimension the knowledge base's embedding model declares."""
-    embedding_config = getattr(runtime_spec, "embedding_model_config", None)
-    resolved_config = getattr(embedding_config, "resolved_config", None) or {}
-    dimensions = resolved_config.get("dimensions")
-    return dimensions if is_positive_int(dimensions) else None
-
-
 def _run_indexing_gateway_calls(
     *,
     runtime_spec: Any,
-    delete_spec: Any | None,
     document_id: Optional[int],
     knowledge_base_id: str,
     kb_info: KnowledgeBaseIndexInfo,
@@ -390,50 +337,6 @@ def _run_indexing_gateway_calls(
     # this thread (e.g. the next Celery task in a thread-pool worker).
     try:
         rag_gateway = get_index_gateway()
-
-        if delete_spec is not None:
-            try:
-                delete_result = loop.run_until_complete(
-                    rag_gateway.delete_document_index(delete_spec, db=None)
-                )
-                deleted_chunks = delete_result.get("deleted_chunks", 0)
-                if deleted_chunks > 0:
-                    logger.info(
-                        f"[Indexing] Deleted old index before re-indexing: document_id={document_id}, "
-                        f"deleted_chunks={deleted_chunks}"
-                    )
-                    add_span_event(
-                        "rag.indexing.old_index_deleted",
-                        {
-                            "kb_id": str(knowledge_base_id),
-                            "document_id": str(document_id),
-                            "deleted_chunks": deleted_chunks,
-                        },
-                    )
-                else:
-                    logger.info(
-                        f"[Indexing] No old index found for document {document_id}, proceeding with indexing"
-                    )
-                    add_span_event(
-                        "rag.indexing.old_index_not_found",
-                        {
-                            "kb_id": str(knowledge_base_id),
-                            "document_id": str(document_id),
-                        },
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[Indexing] Error deleting old index for document {document_id}: {type(e).__name__}: {e}"
-                )
-                add_span_event(
-                    "rag.indexing.old_index_delete_failed",
-                    {
-                        "kb_id": str(knowledge_base_id),
-                        "document_id": str(document_id),
-                        "error_type": type(e).__name__,
-                        "error": str(e),
-                    },
-                )
 
         logger.info(
             f"[Indexing] Starting gateway index_document: kb_id={knowledge_base_id}, "
@@ -570,7 +473,6 @@ def run_document_indexing(
     try:
         result = _run_indexing_gateway_calls(
             runtime_spec=preparation.runtime_spec,
-            delete_spec=preparation.delete_spec,
             document_id=document_id,
             knowledge_base_id=knowledge_base_id,
             kb_info=preparation.kb_info,

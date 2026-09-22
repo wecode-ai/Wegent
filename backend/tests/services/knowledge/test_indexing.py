@@ -125,15 +125,12 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
     }
 
 
-def test_run_document_indexing_passes_the_declared_dimension_to_the_delete_spec() -> (
-    None
-):
+def test_run_document_indexing_leaves_replacement_to_the_index_write() -> None:
+    """The old index must not be deleted before the new write is accepted."""
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
-    runtime_spec = SimpleNamespace(
-        embedding_model_config=SimpleNamespace(resolved_config={"dimensions": 1536})
-    )
+    runtime_spec = SimpleNamespace(embedding_model_config=None)
     gateway = MagicMock()
     gateway.index_document = AsyncMock(
         return_value={"status": "success", "indexed_count": 1, "index_name": "kb_1"}
@@ -149,10 +146,6 @@ def test_run_document_indexing_passes_the_declared_dimension_to_the_delete_spec(
             "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
             return_value=runtime_spec,
         ),
-        patch(
-            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
-            return_value=object(),
-        ) as mock_build_delete_spec,
         patch(
             "app.services.knowledge.indexing.get_index_gateway",
             return_value=gateway,
@@ -174,12 +167,7 @@ def test_run_document_indexing_passes_the_declared_dimension_to_the_delete_spec(
             db=db,
         )
 
-    assert (
-        mock_build_delete_spec.call_args.kwargs["expected_embedding_dimension"] == 1536
-    )
-    assert mock_build_delete_spec.call_args.kwargs["expected_embedding_model"] == (
-        "embedding-1"
-    )
+    gateway.delete_document_index.assert_not_awaited()
 
 
 def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec() -> (

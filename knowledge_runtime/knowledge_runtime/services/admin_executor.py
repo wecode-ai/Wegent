@@ -68,8 +68,6 @@ class AdminExecutor:
             knowledge_id=knowledge_id,
             doc_ref=request.document_ref,
             user_id=config.index_owner_user_id,
-            expected_embedding_dimension=request.expected_embedding_dimension,
-            expected_embedding_model=request.expected_embedding_model,
         )
 
         return result
