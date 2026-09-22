@@ -868,10 +868,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if codex_notification_requires_user_input(&message) {
-            self.set_interaction_status(
-                local_task_id,
-                Some(INTERACTION_WAITING_FOR_USER_INPUT),
-            );
+            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         }
 
         if let (Some(active_turn), Some(cwd)) = (active_turn.as_ref(), request.cwd()) {

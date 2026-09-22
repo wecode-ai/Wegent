@@ -5689,7 +5689,9 @@ async fn execution_mapper_persists_request_user_input_without_settling_execution
         event["event"] == "response.block.created"
             && event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
     }));
-    assert!(events.iter().any(|event| event["event"] == "runtime.work.changed"));
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "runtime.work.changed"));
 
     let _ = fs::remove_file(index_path);
 }
