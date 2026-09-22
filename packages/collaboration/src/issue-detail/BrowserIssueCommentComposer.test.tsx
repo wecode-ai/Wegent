@@ -278,7 +278,7 @@ describe('browser main comment with the PC execution pipeline', () => {
     await mount([
       { id: 3, user_id: 8, user_name: 'bob', email: null, role: 'Developer' },
     ])
-    await type('@bo')
+    await type('@')
     const option = element('collaboration-issue-mention-member-8')
     expect(option).not.toBeNull()
     await act(async () => option.click())

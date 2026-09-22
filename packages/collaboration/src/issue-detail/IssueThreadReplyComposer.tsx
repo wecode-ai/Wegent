@@ -1,12 +1,13 @@
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
+import { IssueCommentMentionPopup } from "./IssueCommentMentionPopup";
 import { IssueInlineCommentComposer } from "./IssueInlineCommentComposer";
 import type {
   IssueMentionGroup,
   IssueMentionOption,
 } from "./issueCommentMentions";
-import { IssueMentionPopup } from "./IssueMentionPopup";
-import { useIssueCommentMentions } from "./useIssueCommentMentions";
+import { insertIssueMention } from "./issueCommentMentions";
+import { useIssueMentionPicker } from "./useIssueMentionPicker";
 
 export interface IssueReplyAttachment {
   id: string | number;
@@ -85,7 +86,7 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const attachmentReady = attachments?.isAttachmentReadyToSend ?? true;
-  const mention = useIssueCommentMentions({ mentionGroups });
+  const mention = useIssueMentionPicker(mentionGroups);
 
   // Restore the caret after inserting a mention so typing continues after it.
   useLayoutEffect(() => {
@@ -96,13 +97,14 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     composerInput.current?.setSelectionRange(caret, caret);
   }, [draft]);
 
-  function insertMention(option: IssueMentionOption) {
+  function insertMention(item: IssueMentionGroup["items"][number]) {
     const start = composerInput.current?.selectionStart ?? draft.length;
     const end = composerInput.current?.selectionEnd ?? start;
-    const inserted = mention.insert(option, draft, start, end);
-    if (!inserted) return;
-    caretRef.current = inserted.cursor;
+    const inserted = insertIssueMention(draft, start, end, item.name);
+    caretRef.current = inserted.caret;
     setDraft(inserted.value);
+    mention.remember(item.mention);
+    mention.closeMenu();
   }
 
   async function submit() {
@@ -115,7 +117,7 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
-    const mentions = mention.submit(text);
+    const mentions = mention.mentionsFor(text);
     try {
       const result = await onSend(text, mentions);
       if (result.ok) {
@@ -219,18 +221,17 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           aria-expanded={mention.open}
           onChange={(event) => {
             setDraft(event.target.value);
-            mention.handleChange(
-              event.target.value,
-              event.target.selectionStart,
-            );
+            if (
+              event.target.value
+                .slice(0, event.target.selectionStart)
+                .endsWith("@")
+            ) {
+              mention.openMenu();
+            } else {
+              mention.closeMenu();
+            }
           }}
-          onKeyUp={(event) =>
-            mention.handleCaret(
-              event.currentTarget.value,
-              event.currentTarget.selectionStart,
-            )
-          }
-          onBlur={() => mention.close()}
+          onBlur={() => mention.closeMenu()}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData.files);
             if (attachments && files.length) {
@@ -242,18 +243,18 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
             if (mention.open) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
-                mention.moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+                mention.move(event.key === "ArrowDown" ? 1 : -1);
                 return;
               }
               if (event.key === "Enter" || event.key === "Tab") {
                 event.preventDefault();
-                const row = mention.highlighted;
-                if (row?.mention) insertMention(row.mention);
+                const row = mention.active();
+                if (row) insertMention(row);
                 return;
               }
               if (event.key === "Escape") {
                 event.preventDefault();
-                mention.close();
+                mention.closeMenu();
                 return;
               }
             }
@@ -269,12 +270,13 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           placeholder={labels.placeholder}
           aria-label={labels.placeholder}
         />
-        {mention.open ? (
-          <IssueMentionPopup
+        {mention.open && mention.items.length > 0 ? (
+          <IssueCommentMentionPopup
             groups={mention.groups}
-            highlightedId={mention.highlighted?.id ?? null}
+            items={mention.items}
+            activeIndex={mention.activeIndex}
             testId={`collaboration-chat-reply-mentions-${rootId}`}
-            onHighlight={mention.highlight}
+            onHover={mention.highlight}
             onPick={insertMention}
           />
         ) : null}

@@ -1,6 +1,9 @@
 import type { ProjectChatMention } from '@wegent/chat-core'
 
-/** A structured "@" target offered by the issue comment composer. */
+/**
+ * A structured "@" target: the picker shows `name`, and the comment carries the
+ * member or robot it stands for.
+ */
 export interface IssueMentionOption {
   type: 'user' | 'agent'
   id: string
@@ -19,89 +22,50 @@ export interface IssueMentionGroup {
   }[]
 }
 
-/** One mentioned target that has been inserted into the current comment. */
-export interface IssueMentionSelection {
-  mention: IssueMentionOption
-  start: number
-}
-
-export interface IssueMentionQuery {
-  start: number
-  query: string
-}
-
-const MENTION_BOUNDARY = /[\s@]/
-
-/**
- * Return the active "@query" range ending at the caret, or null.
- *
- * A completed mention is followed by a space, so text after that space can no
- * longer extend the query.
- */
-export function findIssueMentionQuery(
-  value: string,
-  caret: number | null
-): IssueMentionQuery | null {
-  if (caret === null || caret < 0 || caret > value.length) return null
-  const start = value.lastIndexOf('@', caret - 1)
-  if (start < 0) return null
-  const query = value.slice(start + 1, caret)
-  if (MENTION_BOUNDARY.test(query)) return null
-  return { start, query }
-}
-
-/** Filter the mention popup by the active query. */
-export function filterIssueMentionOptions(
-  options: IssueMentionOption[],
-  query: string,
-  exclude: IssueMentionOption[] = []
-): IssueMentionOption[] {
-  const normalized = query.trim().toLowerCase()
-  return options.filter(
-    option =>
-      !exclude.some(item => item.type === option.type && item.id === option.id) &&
-      (normalized.length === 0 || option.label.toLowerCase().includes(normalized))
-  )
+/** Whether two targets stand for the same member or robot. */
+export function sameIssueMention(
+  left: IssueMentionOption,
+  right: IssueMentionOption
+): boolean {
+  return left.type === right.type && left.id === right.id
 }
 
 /**
- * Insert "@label " over the active query range.
- *
- * The caller tracks the returned start offset so deleting the mention removes
- * the structured target with it.
+ * Write a target's "@label" over the caret, replacing the "@" that opened the
+ * picker, and return the draft with the caret that follows the mention.
  */
-export function insertIssueMentionText(
-  value: string,
-  query: IssueMentionQuery,
-  option: IssueMentionOption,
-  caret: number
-): { value: string; cursor: number; selection: IssueMentionSelection } {
-  const inserted = `@${option.label} `
-  return {
-    value: value.slice(0, query.start) + inserted + value.slice(caret),
-    cursor: query.start + inserted.length,
-    selection: { mention: option, start: query.start },
-  }
+export function insertIssueMention(
+  draft: string,
+  start: number,
+  end: number,
+  name: string
+): { value: string; caret: number } {
+  const prefix = draft.slice(0, start).replace(/@$/, '')
+  const suffix = draft.slice(end)
+  const leading = prefix && !/\s$/.test(prefix) ? ' ' : ''
+  const trailing = suffix && /^\s/.test(suffix) ? '' : ' '
+  const insertion = `${prefix}${leading}@${name}${trailing}`
+  return { value: `${insertion}${suffix}`, caret: insertion.length }
 }
 
-/** Drop selections whose "@label" text is no longer present in the draft. */
-export function pruneIssueMentionSelections(
-  value: string,
-  selections: IssueMentionSelection[]
-): IssueMentionSelection[] {
-  return selections.filter(selection => value.includes(`@${selection.mention.label}`))
-}
-
-/** Convert inserted selections into the wire payload, newest last. */
-export function issueMentionPayload(selections: IssueMentionSelection[]): ProjectChatMention[] {
+/**
+ * The mentions a submitted comment carries.
+ *
+ * A pick only counts while its "@label" is still in the draft — deleting the
+ * text removes the mention — and picking one target twice counts once.
+ */
+export function issueMentionPayload(
+  draft: string,
+  picked: IssueMentionOption[]
+): ProjectChatMention[] {
   const seen = new Set<string>()
   const mentions: ProjectChatMention[] = []
-  for (const selection of selections) {
-    const { type, id, label } = selection.mention
-    const key = `${type}:${id}`
+  for (const option of picked) {
+    if (!draft.includes(`@${option.label}`)) continue
+    const key = `${option.type}:${option.id}`
     if (seen.has(key)) continue
     seen.add(key)
-    mentions.push({ type, id, label })
+    mentions.push({ type: option.type, id: option.id, label: option.label })
   }
   return mentions
 }

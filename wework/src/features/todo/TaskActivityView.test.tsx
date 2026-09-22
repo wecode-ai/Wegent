@@ -395,7 +395,7 @@ describe('TaskActivityView', () => {
     )
 
     const input = screen.getByTestId('cloud-task-activity-composer')
-    await user.type(input, '@ha')
+    await user.type(input, '@')
     expect(await screen.findByTestId('task-comment-mention-popup')).toBeInTheDocument()
     await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
     expect(input).toHaveValue('@hajimi ')
@@ -2966,7 +2966,7 @@ describe('TaskActivityView', () => {
     const input = await screen.findByTestId(
       `cloud-task-activity-card-composer-${rootMessage.messageId}`
     )
-    await user.type(input, '@ha')
+    await user.type(input, '@')
     expect(
       await screen.findByTestId(`collaboration-chat-reply-mentions-${rootMessage.messageId}`)
     ).toBeInTheDocument()

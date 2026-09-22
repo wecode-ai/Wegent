@@ -264,16 +264,7 @@ describe("shared desktop reply composer", () => {
       ),
     );
 
-    const input = write("@bo");
-    Object.defineProperty(input, "selectionStart", {
-      value: 3,
-      configurable: true,
-    });
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keyup", { bubbles: true, key: "o" }),
-      );
-    });
+    const input = write("@");
     const option = container.querySelector<HTMLButtonElement>(
       '[data-testid="issue-comment-mention-member-8"]',
     )!;
@@ -372,16 +363,7 @@ describe("shared desktop reply composer", () => {
       ),
     );
 
-    const input = write("@bo");
-    Object.defineProperty(input, "selectionStart", {
-      value: 3,
-      configurable: true,
-    });
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keyup", { bubbles: true, key: "o" }),
-      );
-    });
+    const input = write("@");
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>(
@@ -425,7 +407,7 @@ describe("shared desktop reply composer", () => {
 
     const input = write("@");
     const highlighted = () =>
-      container.querySelector('[role="option"][aria-selected="true"]');
+      container.querySelector('[data-active="true"]');
     const bob = container.querySelector(
       '[data-testid="issue-comment-mention-member-8"]',
     );
