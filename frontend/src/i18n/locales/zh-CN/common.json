@@ -1345,6 +1345,11 @@
     "custom_model_id_placeholder": "输入自定义模型 ID",
     "custom_headers": "自定义 Headers",
     "custom_headers_hint": "输入 JSON 格式的自定义 HTTP Headers，这些 Headers 会覆盖默认值",
+    "advanced_env_config": "高级运行时配置",
+    "advanced_env_config_summary": "可选的低频配置，将保存到 modelConfig.env",
+    "advanced_env_config_count": "已配置 {{count}} 项",
+    "advanced_env_config_json": "其他 env 字段（JSON）",
+    "advanced_env_config_hint": "仅填写额外运行时字段。模型、凭证、端点、Headers 和思考配置由上方表单管理，请勿在此存放密钥。",
     "no_models": "暂无模型",
     "no_models_hint": "点击上方按钮创建第一个模型",
     "loading": "加载中...",
@@ -1478,7 +1483,12 @@
       "custom_headers_invalid_object": "自定义 Headers 必须是一个对象",
       "custom_headers_values_must_be_strings": "所有 Header 值必须是字符串",
       "thinking_config_invalid_json": "思考配置必须是有效的 JSON",
-      "thinking_config_invalid_object": "思考配置必须是 JSON 对象"
+      "thinking_config_invalid_object": "思考配置必须是 JSON 对象",
+      "advanced_env_config_invalid": "高级运行时配置格式无效",
+      "advanced_env_config_invalid_json": "高级运行时配置必须是有效的 JSON",
+      "advanced_env_config_invalid_object": "高级运行时配置必须是 JSON 对象",
+      "advanced_env_config_reserved_keys": "以下字段已由上方表单管理，不能在这里重复配置：{{keys}}",
+      "advanced_env_config_unsafe_keys": "不允许使用以下字段名：{{keys}}"
     }
   },
   "task_submit": {

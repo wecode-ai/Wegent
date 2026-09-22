@@ -10,3 +10,17 @@ export {
   type ImageConfigState,
   type ImageConfigSectionProps,
 } from './ImageConfigSection'
+
+export {
+  AdvancedModelEnvConfigSection,
+  type AdvancedModelEnvConfigSectionProps,
+} from './AdvancedModelEnvConfigSection'
+
+export {
+  countAdvancedModelEnvFields,
+  extractAdvancedModelEnv,
+  formatAdvancedModelEnv,
+  validateAdvancedModelEnv,
+  type AdvancedModelEnvValidationError,
+  type AdvancedModelEnvValidationResult,
+} from './advancedModelEnvConfig'

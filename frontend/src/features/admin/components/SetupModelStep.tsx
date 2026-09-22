@@ -29,6 +29,7 @@ import ModelEditDialog, {
   ModelFormData,
   ModelInitialData,
 } from '@/features/settings/components/ModelEditDialog'
+import { extractAdvancedModelEnv } from '@/features/settings/components/model-config'
 
 const SetupModelStep: React.FC = () => {
   const { t } = useTranslation()
@@ -86,6 +87,7 @@ const SetupModelStep: React.FC = () => {
       apiKey: (env?.api_key as string) || '',
       baseUrl: (env?.base_url as string) || '',
       customHeaders: env?.custom_headers as Record<string, string>,
+      advancedEnvConfig: extractAdvancedModelEnv(env),
       protocol: spec?.protocol as string,
       contextWindow: modelConfig?.context_window as number | undefined,
       maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,

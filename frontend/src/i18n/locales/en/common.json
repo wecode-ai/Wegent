@@ -1345,6 +1345,11 @@
     "custom_model_id_placeholder": "Enter custom model ID",
     "custom_headers": "Custom Headers",
     "custom_headers_hint": "Enter custom HTTP headers in JSON format. These headers will override default values",
+    "advanced_env_config": "Advanced Runtime Configuration",
+    "advanced_env_config_summary": "Optional low-frequency settings stored in modelConfig.env",
+    "advanced_env_config_count": "{{count}} configured",
+    "advanced_env_config_json": "Additional env fields (JSON)",
+    "advanced_env_config_hint": "Enter only additional runtime fields. Model, credentials, endpoint, headers, and thinking settings are managed above. Do not store secrets here.",
     "no_models": "No models available",
     "no_models_hint": "Click the button above to create your first model",
     "loading": "Loading...",
@@ -1478,7 +1483,12 @@
       "custom_headers_invalid_object": "Custom headers must be an object",
       "custom_headers_values_must_be_strings": "All header values must be strings",
       "thinking_config_invalid_json": "Thinking config must be valid JSON",
-      "thinking_config_invalid_object": "Thinking config must be a JSON object"
+      "thinking_config_invalid_object": "Thinking config must be a JSON object",
+      "advanced_env_config_invalid": "Advanced runtime configuration is invalid",
+      "advanced_env_config_invalid_json": "Advanced runtime configuration must be valid JSON",
+      "advanced_env_config_invalid_object": "Advanced runtime configuration must be a JSON object",
+      "advanced_env_config_reserved_keys": "These fields are managed above and cannot be configured here: {{keys}}",
+      "advanced_env_config_unsafe_keys": "These field names are not allowed: {{keys}}"
     }
   },
   "task_submit": {

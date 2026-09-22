@@ -156,6 +156,17 @@ export interface ImageGenerationConfig {
   max_reference_images?: number // Maximum number of reference images that can be uploaded
 }
 
+export interface ModelEnvConfig {
+  model: string // 'openai' | 'claude'
+  model_id: string
+  api_key: string
+  base_url?: string
+  custom_headers?: Record<string, string> // Custom HTTP headers to override defaults
+  thinking_config?: Record<string, unknown> // Provider-native thinking/reasoning config
+  thinkingConfig?: Record<string, unknown> // Legacy camelCase alias
+  [key: string]: unknown
+}
+
 // Model CRD Types
 export interface ModelCRD {
   apiVersion?: string
@@ -167,15 +178,7 @@ export interface ModelCRD {
   }
   spec: {
     modelConfig: {
-      env: {
-        model: string // 'openai' | 'claude'
-        model_id: string
-        api_key: string
-        base_url?: string
-        custom_headers?: Record<string, string> // Custom HTTP headers to override defaults
-        thinking_config?: Record<string, unknown> // Provider-native thinking/reasoning config
-        thinkingConfig?: Record<string, unknown> // Legacy camelCase alias
-      }
+      env: ModelEnvConfig
       context_window?: number // Maximum context window size in tokens
       max_output_tokens?: number // Maximum output tokens the model can generate per response
       visionSidecarModel?: VisionSidecarModelRef

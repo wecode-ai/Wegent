@@ -50,11 +50,16 @@ import {
   VisionSidecarModelRef,
 } from '@/apis/models'
 import {
+  AdvancedModelEnvConfigSection,
   ImageConfigSection,
   ImageConfigState,
+  extractAdvancedModelEnv,
+  formatAdvancedModelEnv,
   getDefaultImageConfig,
   toImageGenerationConfig,
   fromImageGenerationConfig,
+  validateAdvancedModelEnv,
+  type AdvancedModelEnvValidationResult,
 } from './model-config'
 import {
   buildEmbeddingConfig,
@@ -85,6 +90,7 @@ export interface ModelFormData {
   apiKey: string
   baseUrl: string
   customHeaders: string
+  advancedEnvConfig: Record<string, unknown>
   contextWindow?: number
   maxOutputTokens?: number
   costIndex?: string
@@ -126,6 +132,7 @@ export interface ModelInitialData {
   apiKey?: string
   baseUrl?: string
   customHeaders?: Record<string, string>
+  advancedEnvConfig?: Record<string, unknown>
   protocol?: string
   contextWindow?: number
   maxOutputTokens?: number
@@ -337,6 +344,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             apiKey: model.spec.modelConfig?.env?.api_key,
             baseUrl: model.spec.modelConfig?.env?.base_url,
             customHeaders: model.spec.modelConfig?.env?.custom_headers,
+            advancedEnvConfig: extractAdvancedModelEnv(model.spec.modelConfig?.env),
             protocol: model.spec.protocol,
             contextWindow: model.spec.modelConfig?.context_window,
             maxOutputTokens: model.spec.modelConfig?.max_output_tokens,
@@ -383,6 +391,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [baseUrl, setBaseUrl] = useState('')
   const [customHeaders, setCustomHeaders] = useState('')
   const [customHeadersError, setCustomHeadersError] = useState('')
+  const [advancedEnvConfigStr, setAdvancedEnvConfigStr] = useState('')
+  const [advancedEnvConfigError, setAdvancedEnvConfigError] = useState('')
+  const [advancedEnvConfigOpen, setAdvancedEnvConfigOpen] = useState(false)
+  const advancedEnvConfigRef = React.useRef<HTMLTextAreaElement>(null)
   const [modelIdNameError, setModelIdNameError] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -507,6 +519,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         } else {
           setCustomHeaders('')
         }
+        setAdvancedEnvConfigStr(formatAdvancedModelEnv(effectiveInitialData.advancedEnvConfig))
+        setAdvancedEnvConfigError('')
+        setAdvancedEnvConfigOpen(false)
         // Load type-specific configs
         if (effectiveInitialData.ttsConfig) {
           setTtsVoice(effectiveInitialData.ttsConfig.voice || '')
@@ -607,6 +622,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setApiKey('')
         setBaseUrl('')
         setCustomHeaders('')
+        setAdvancedEnvConfigStr('')
+        setAdvancedEnvConfigError('')
+        setAdvancedEnvConfigOpen(false)
         // Reset type-specific configs
         setTtsVoice('')
         setTtsSpeed(1.0)
@@ -1076,6 +1094,36 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     validateThinkingConfig(value)
   }
 
+  const advancedEnvValidationMessage = (result: AdvancedModelEnvValidationResult): string => {
+    switch (result.error) {
+      case 'invalid_json':
+        return t('common:models.errors.advanced_env_config_invalid_json')
+      case 'invalid_object':
+        return t('common:models.errors.advanced_env_config_invalid_object')
+      case 'reserved_keys':
+        return t('common:models.errors.advanced_env_config_reserved_keys', {
+          keys: result.keys.join(', '),
+        })
+      case 'unsafe_keys':
+        return t('common:models.errors.advanced_env_config_unsafe_keys', {
+          keys: result.keys.join(', '),
+        })
+      default:
+        return ''
+    }
+  }
+
+  const parseAdvancedEnvConfig = (value: string): Record<string, unknown> | null => {
+    const result = validateAdvancedModelEnv(value)
+    setAdvancedEnvConfigError(advancedEnvValidationMessage(result))
+    return result.value
+  }
+
+  const handleAdvancedEnvConfigChange = (value: string) => {
+    setAdvancedEnvConfigStr(value)
+    if (advancedEnvConfigError) setAdvancedEnvConfigError('')
+  }
+
   const handleModelIdNameChange = (value: string) => {
     setModelIdName(value)
     validateModelIdName(value)
@@ -1139,6 +1187,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       toast({
         variant: 'destructive',
         title: t('common:models.errors.thinking_config_invalid_json'),
+      })
+      return
+    }
+
+    const parsedAdvancedEnvConfig = parseAdvancedEnvConfig(advancedEnvConfigStr)
+    if (parsedAdvancedEnvConfig === null) {
+      setAdvancedEnvConfigOpen(true)
+      requestAnimationFrame(() => advancedEnvConfigRef.current?.focus())
+      toast({
+        variant: 'destructive',
+        title: t('common:models.errors.advanced_env_config_invalid'),
       })
       return
     }
@@ -1301,6 +1360,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         spec: {
           modelConfig: {
             env: {
+              ...parsedAdvancedEnvConfig,
               model: modelFieldValue,
               model_id: finalModelId,
               api_key: apiKey,
@@ -1370,6 +1430,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         apiKey,
         baseUrl,
         customHeaders,
+        advancedEnvConfig: parsedAdvancedEnvConfig,
         contextWindow,
         maxOutputTokens,
         costIndex,
@@ -1833,6 +1894,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
             <p className="text-xs text-text-muted">{t('common:models.custom_headers_hint')}</p>
           </div>
+
+          <AdvancedModelEnvConfigSection
+            value={advancedEnvConfigStr}
+            error={advancedEnvConfigError}
+            open={advancedEnvConfigOpen}
+            onOpenChange={setAdvancedEnvConfigOpen}
+            onChange={handleAdvancedEnvConfigChange}
+            onBlur={() => parseAdvancedEnvConfig(advancedEnvConfigStr)}
+            inputRef={advancedEnvConfigRef}
+          />
 
           {/* LLM-specific fields - Context Window and Max Output Tokens */}
           {modelCategoryType === 'llm' && (
