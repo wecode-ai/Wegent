@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { RightWorkspacePanel } from './RightWorkspacePanel'
@@ -38,6 +38,14 @@ const browserState = {
   isLoading: false,
   hasActiveDownload: false,
   openRequest: null,
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(promiseResolve => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
 }
 
 function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePanel>> = {}) {
@@ -190,4 +198,131 @@ describe('RightWorkspacePanel file tab labels', () => {
       expect(screen.getByTestId('right-workspace-file-tab')).not.toHaveAttribute('title')
     }
   )
+})
+
+describe('RightWorkspacePanel file tab loading', () => {
+  test('keeps the current file visible while an active file tab loads', async () => {
+    const target: WorkspaceTarget = {
+      deviceId: 'fixture-device',
+      path: '/fixture/repo',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    const secondFile = createDeferred<{
+      path: string
+      name: string
+      content: string
+      editable: boolean
+      revision: string
+      truncated: boolean
+      size: number
+    }>()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/fixture/repo',
+      entries: [
+        {
+          name: 'first.ts',
+          path: '/fixture/repo/first.ts',
+          isDirectory: false,
+          size: 25,
+          modifiedAt: null,
+        },
+        {
+          name: 'second.ts',
+          path: '/fixture/repo/second.ts',
+          isDirectory: false,
+          size: 26,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn((_deviceId: string, path: string) => {
+      if (path.endsWith('/second.ts')) return secondFile.promise
+      return Promise.resolve({
+        path,
+        name: 'first.ts',
+        content: 'export const first = true',
+        editable: true,
+        revision: 'revision-first',
+        truncated: false,
+        size: 25,
+      })
+    })
+    const writeWorkspaceTextFile = vi.fn()
+    const onOpenFileTab = vi.fn()
+    const { rerender } = renderPanel({
+      activeView: 'files',
+      openTabs: ['files'],
+      browserStates: {},
+      workspaceTargetError: null,
+      workspaceTarget: target,
+      fileWorkspaceTarget: target,
+      workspaceFileApi: { listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile },
+      openFileRequest: { id: 1, path: '/fixture/repo/first.ts' },
+      onOpenFileTab,
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
+        'export const first = true'
+      )
+    )
+
+    const secondTab = workspaceFileTabId(target, '/fixture/repo/second.ts')
+    rerender(
+      <RightWorkspacePanel
+        visible
+        renderTabsInAppTitlebar={false}
+        activeView={secondTab}
+        openTabs={['files', secondTab]}
+        currentProject={null}
+        canBrowseFiles
+        currentRuntimeTask={null}
+        devices={[]}
+        workspaceTarget={target}
+        fileWorkspaceTarget={target}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile }}
+        workspaceTargetError={null}
+        review={{ loading: false, diff: '' }}
+        extensionScope={{ sessionId: 'test' }}
+        browserStates={{}}
+        fileTabs={{ [secondTab]: { target, path: '/fixture/repo/second.ts' } }}
+        onBrowserStateChange={vi.fn()}
+        canOpenReview={false}
+        onAddCodeComment={vi.fn()}
+        onSelectReview={vi.fn()}
+        onSelectTerminal={vi.fn()}
+        onSelectBrowser={vi.fn()}
+        onSelectFiles={vi.fn()}
+        onSelectChat={vi.fn()}
+        onSelectPlan={vi.fn()}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onOpenFileTab={onOpenFileTab}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
+      'export const first = true'
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-preview-loading-indicator')).toBeInTheDocument()
+    )
+    expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
+
+    secondFile.resolve({
+      path: '/fixture/repo/second.ts',
+      name: 'second.ts',
+      content: 'export const second = true',
+      editable: true,
+      revision: 'revision-second',
+      truncated: false,
+      size: 26,
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
+        'export const second = true'
+      )
+    )
+  })
 })

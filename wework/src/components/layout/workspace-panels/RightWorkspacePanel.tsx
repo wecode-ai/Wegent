@@ -158,6 +158,14 @@ function getRightWorkspaceChatTabSuffix(tab: RightWorkspaceChatTab) {
   return tab.slice('chat:'.length)
 }
 
+function requestIdForWorkspaceFileTab(tab: WorkspaceFileTabId): number {
+  let hash = 0
+  for (const character of tab) {
+    hash = (hash * 31 + character.charCodeAt(0)) | 0
+  }
+  return hash >>> 0
+}
+
 function getRightWorkspaceBrowserTabSuffix(tab: RightWorkspaceBrowserTab) {
   return tab.slice('browser:'.length)
 }
@@ -593,6 +601,14 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const { t } = useTranslation('common')
   const filePanelRef = useRef<FileWorkspacePanelHandle>(null)
   const activeFileTab = isWorkspaceFileTab(activeView) ? fileTabs[activeView] : undefined
+  const activeFilePanelTarget = activeFileTab?.target ?? fileWorkspaceTarget
+  const activeFileOpenRequest =
+    activeFileTab && isWorkspaceFileTab(activeView)
+      ? {
+          id: requestIdForWorkspaceFileTab(activeView),
+          path: activeFileTab.path,
+        }
+      : null
   const fileViewActive = activeView === 'files' || Boolean(activeFileTab)
   const primaryFilePath =
     openFileRequest?.attachment?.filename ??
@@ -948,21 +964,15 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             <FileWorkspacePanel
               ref={filePanelRef}
               key={
-                activeFileTab
-                  ? activeView
-                  : fileWorkspaceTarget
-                    ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
-                    : 'empty'
+                activeFilePanelTarget
+                  ? `${activeFilePanelTarget.deviceId}:${activeFilePanelTarget.path}`
+                  : 'empty'
               }
-              target={activeFileTab?.target ?? fileWorkspaceTarget}
+              target={activeFilePanelTarget}
               workspaceTargets={fileWorkspaceTargets}
               workspaceFileApi={workspaceFileApi}
-              openFileRequest={activeFileTab ? undefined : openFileRequest}
-              initialSelection={
-                activeFileTab
-                  ? { path: activeFileTab.path, isDirectory: false }
-                  : initialFileSelection
-              }
+              openFileRequest={activeFileOpenRequest ?? openFileRequest}
+              initialSelection={activeFileTab ? null : initialFileSelection}
               onAddCodeComment={onAddCodeComment}
               onDirtyChange={onFileDirtyChange}
               onSelectionChange={activeFileTab ? undefined : onFileSelectionChange}
