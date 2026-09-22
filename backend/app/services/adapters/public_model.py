@@ -153,6 +153,7 @@ class ModelAdapter:
         model_capabilities = None
         allowed_users: List[str] = []
         if isinstance(kind.json, dict):
+            allowed_users = get_public_model_allowed_users(kind.json)
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
                 try:
@@ -198,7 +199,6 @@ class ModelAdapter:
                         model_capabilities = normalize_model_capabilities(
                             legacy_model_capabilities
                         )
-                    allowed_users = get_public_model_allowed_users(kind.json)
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -219,7 +219,6 @@ class ModelAdapter:
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
                     cost_index = spec.get("costIndex")
-                    allowed_users = get_public_model_allowed_users(kind.json)
                     model_config = spec.get("modelConfig")
                     if isinstance(model_config, dict):
                         context_window = ModelSpec._model_config_token_limit(
@@ -654,6 +653,10 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             .first()
         )
         if not model:
+            raise HTTPException(status_code=404, detail="Model not found")
+        if not is_public_model_allowed_for_user(
+            model.json, current_user.user_name if current_user else None
+        ):
             raise HTTPException(status_code=404, detail="Model not found")
         return ModelAdapter.to_model_dict(model)
 

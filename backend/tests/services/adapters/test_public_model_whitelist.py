@@ -334,3 +334,32 @@ def test_bot_lookup_treats_restricted_public_model_as_unselected(
         model_type="public",
     )
     assert resolved_for_alice is not None
+
+
+def test_public_model_detail_returns_404_for_restricted_user(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    restricted_model = _public_model(
+        "detail-restricted-model",
+        allowed_users=["alice"],
+        allowed_users_enabled=True,
+    )
+    test_db.add(restricted_model)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        public_model_service.get_by_id(
+            test_db,
+            model_id=restricted_model.id,
+            current_user=test_user,
+        )
+    assert exc_info.value.status_code == 404
+
+    alice = _make_user(test_db, "alice")
+    model = public_model_service.get_by_id(
+        test_db,
+        model_id=restricted_model.id,
+        current_user=alice,
+    )
+    assert model["name"] == "detail-restricted-model"

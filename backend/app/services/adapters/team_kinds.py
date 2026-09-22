@@ -1287,7 +1287,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             bot_dict = bot_kinds_service.get_by_id_and_user(
                 db,
                 bot_id=bot_id,
-                user_id=team_owner_id,
+                user_id=user_id,
             )
             if bot_dict:
                 detailed_bots.append(
