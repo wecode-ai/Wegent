@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
 const ISSUE_NAME = '评论 @ 成员必须弹出成员列表'
-const ACTIVE_BOARD =
-  '[data-workspace-tab-content][aria-hidden="false"] [data-testid="wework-collaboration-platform"]'
+const ACTIVE_CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const ACTIVE_BOARD = `${ACTIVE_CONTENT} [data-testid="wework-collaboration-platform"]`
 const MENTION_CANDIDATE_PREFIX = 'collaboration-issue-mention-member-'
 const CARD_COMPOSER_PREFIX = 'cloud-task-activity-card-composer-'
 const CARD_SEND_PREFIX = 'cloud-task-activity-card-send-'
@@ -63,32 +63,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('waitFor', board('[data-testid="collaboration-platform-root"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-
       await control.command(
-        'click',
-        inCollaborationSidebar('[data-testid="collaboration-workspace-wework-local-workspace"]'),
-        { visible: true }
+        'waitFor',
+        `${ACTIVE_CONTENT} [data-testid="collaboration-platform-root"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
       )
-      await control.command(
-        'click',
-        board('[data-testid="collaboration-workspace-project-create"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command('waitFor', board('[data-testid="collaboration-project-name-input"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', board('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command('click', board('[data-testid="cloud-project-task-provider-local"]'))
-      await control.command(
-        'clickWhenEnabled',
-        board('[data-testid="collaboration-project-create-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
+      await createLocalCollaborationProject(control, ACTIVE_CONTENT, PROJECT_NAME)
       await control.command('waitFor', board('[data-testid="cloud-project-header-title"]'), {
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
