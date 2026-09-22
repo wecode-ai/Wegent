@@ -436,9 +436,16 @@ async function resolveDesktopCodexBinary() {
   }
 
   const target = hostCodexTarget()
-  await runChecked('pnpm', ['run', 'prepare:codex', '--target', target], {
-    cwd: weworkDir,
-  })
+  // The desktop wire client must stay runnable without workspace tooling, so prepare the binary with
+  // the interpreter that already runs this check instead of a `pnpm` launcher, which Windows cannot
+  // spawn without a command interpreter.
+  await runChecked(
+    process.execPath,
+    [join(weworkDir, 'scripts', 'prepare-codex-binary.mjs'), '--target', target],
+    {
+      cwd: weworkDir,
+    }
+  )
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
   const entry = lock.targets?.[target]
   const binaryRelativePath = entry?.binaryPath
