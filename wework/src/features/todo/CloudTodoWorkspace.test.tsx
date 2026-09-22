@@ -2216,7 +2216,8 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('collaboration-participants-tab-agents'))
     expect(await screen.findByTestId('project-agent-config')).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('project-agent-add'))
-    expect(await screen.findByTestId('wework-agent-resource-creator')).toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-project-chat-agent-editor')).toBeInTheDocument()
+    expect(screen.queryByTestId('wework-agent-resource-creator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-dialog')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-mode-existing')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-mode-create')).not.toBeInTheDocument()
@@ -2224,7 +2225,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('project-agent-wegent-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-open-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-agent-execution-environment')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('wework-agent-resource-creator-close'))
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-cancel'))
     await userEvent.click(screen.getByTestId('cloud-project-settings-automatic-processing'))
     expect(await screen.findByTestId('automatic-processing')).toBeInTheDocument()
 
