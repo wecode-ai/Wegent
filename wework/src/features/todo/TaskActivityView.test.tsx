@@ -1190,7 +1190,7 @@ describe('TaskActivityView', () => {
     )
   }, 10_000)
 
-  it('shows the newest parent comment first without scrolling to the bottom', async () => {
+  it('shows parent comments from oldest to newest without scrolling on load', async () => {
     const older = {
       ...userMessage,
       sequenceNumber: 1,
@@ -1251,13 +1251,13 @@ describe('TaskActivityView', () => {
     await screen.findByText('最新评论')
     const cards = list.querySelectorAll('.task-detail-comment-card')
     expect(cards).toHaveLength(2)
-    expect(cards[0]).toHaveTextContent('最新评论')
-    expect(cards[1]).toHaveTextContent('较早评论')
+    expect(cards[0]).toHaveTextContent('较早评论')
+    expect(cards[1]).toHaveTextContent('最新评论')
 
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it('scrolls the comment list to the top when a new parent comment is sent', async () => {
+  it('scrolls the comment list to the bottom when a new parent comment is sent', async () => {
     const user = userEvent.setup()
     const client = {
       subscribe: vi.fn(async () => ({
@@ -1303,8 +1303,8 @@ describe('TaskActivityView', () => {
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '新评论')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
 
-    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }))
-    expect(scrollTo).not.toHaveBeenCalledWith({ top: 1200, behavior: 'auto' })
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'auto' }))
+    expect(scrollTo).not.toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
   })
 
   it('keeps linear activity auto-follow inside the comment list', async () => {

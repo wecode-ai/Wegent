@@ -95,6 +95,7 @@ export function ProjectManageView<
   );
 
   const [membersOpen, setMembersOpen] = useState(false);
+  const memberComposerRef = useRef<HTMLDivElement>(null);
   const [memberQuery, setMemberQuery] = useState("");
   const memberSearchInputRef = useRef<HTMLInputElement | null>(null);
   const memberSearchFocusRequestRef = useRef<number | null>(null);
@@ -145,6 +146,20 @@ export function ProjectManageView<
     providerRepository: false,
     providerToken: false,
   });
+
+  useEffect(() => {
+    if (!membersOpen || typeof document === "undefined") return;
+    const closeMemberComposer = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !memberComposerRef.current?.contains(event.target)
+      ) {
+        setMembersOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeMemberComposer);
+    return () => document.removeEventListener("mousedown", closeMemberComposer);
+  }, [membersOpen]);
 
   useEffect(() => {
     const projectChanged = synchronizedProjectIdRef.current !== project.id;
@@ -818,7 +833,9 @@ export function ProjectManageView<
         <section
           className={
             section === "all" || section === "members"
-              ? "border-t border-border py-6"
+              ? embedded
+                ? ""
+                : "border-t border-border py-6"
               : "hidden"
           }
         >
@@ -834,238 +851,213 @@ export function ProjectManageView<
                 )}
               </p>
             </div>
-            <button
-              type="button"
-              data-testid="cloud-project-members-toggle"
-              onClick={() => setMembersOpen((open) => !open)}
-              className="h-8 rounded-lg px-2.5 text-sm font-medium text-text-secondary hover:bg-muted"
-            >
-              {membersOpen
-                ? host.translate("todo.collapse_management", "收起管理")
-                : host.translate("todo.manage_members", "管理成员")}
-            </button>
-          </div>
-
-          {!membersOpen ? (
-            <button
-              type="button"
-              onClick={() => setMembersOpen(true)}
-              className="mt-4 flex h-12 w-full items-center rounded-xl bg-muted px-3 text-left text-sm font-normal hover:bg-muted/80"
-            >
-              <span>
-                {host.translate("todo.member_count", "{{count}} 位成员", {
-                  count: members.length,
-                })}
-              </span>
-              <span className="ml-auto flex -space-x-1.5">
-                {members.slice(0, 3).map((member) => (
-                  <span
-                    key={member.user_id}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-zinc-200 text-xs"
-                  >
-                    {member.user_name.slice(0, 1)}
-                  </span>
-                ))}
-                {members.length > 3 && (
-                  <span className="flex h-7 min-w-7 items-center justify-center rounded-full border-2 border-background bg-zinc-200 px-1 text-xs">
-                    +{members.length - 3}
-                  </span>
-                )}
-              </span>
-            </button>
-          ) : (
-            <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
-              <div className="hidden grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px] items-center gap-3 px-3 py-1.5 text-xs font-medium text-text-muted md:grid">
-                <span>{host.translate("todo.project_member", "成员")}</span>
-                <span data-testid="cloud-project-member-capability-heading">
-                  {host.translate(
-                    "todo.project_member_capability",
-                    "职责与能力",
-                  )}
-                </span>
-                <span>
-                  {host.translate("todo.project_member_role", "项目角色")}
-                </span>
-                <span className="sr-only">
-                  {host.translate("todo.project_member_actions", "成员操作")}
-                </span>
-              </div>
-              {members.map((member) => (
+            <div className="relative" ref={memberComposerRef}>
+              <button
+                type="button"
+                data-testid="cloud-project-members-toggle"
+                aria-expanded={membersOpen}
+                onClick={() => setMembersOpen((open) => !open)}
+                className="h-8 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+              >
+                {host.translate("todo.add_project_member", "添加成员")}
+              </button>
+              {membersOpen ? (
                 <div
-                  key={member.user_id}
-                  data-testid={`cloud-project-member-${member.user_id}`}
-                  className="grid grid-cols-1 items-center gap-3 rounded-lg bg-background/60 px-3 py-2 transition-colors hover:bg-background md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]"
+                  className="absolute right-0 top-10 z-50 w-80 rounded-xl border border-border bg-background p-2 shadow-lg"
+                  data-testid="cloud-project-member-picker"
                 >
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
-                      {member.user_name.slice(0, 1)}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">
-                        {member.user_name}
-                      </span>
-                      <span className="block truncate text-xs text-text-muted">
-                        {member.email}
-                      </span>
-                    </span>
-                  </span>
-                  <label className="min-w-0">
-                    <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
-                      {host.translate(
-                        "todo.project_member_capability",
-                        "职责与能力",
-                      )}
-                    </span>
+                  <label className="flex h-9 min-w-0 items-center rounded-lg border border-border bg-background px-3">
+                    <Search className="h-4 w-4 text-text-muted" />
                     <input
-                      data-testid={`cloud-project-member-capability-${member.user_id}`}
-                      defaultValue={member.capability_description}
-                      disabled={savingUserId === member.user_id}
-                      onBlur={(event) =>
-                        void updateMemberCapability(member, event.target.value)
-                      }
-                      className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-text-tertiary focus:border-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                      ref={memberSearchInputRef}
+                      data-testid="cloud-member-search"
+                      value={memberQuery}
+                      onChange={(event) => {
+                        const nextQuery = event.target.value;
+                        setMemberQuery(nextQuery);
+                        clearMemberResultsForEmptyQuery(
+                          nextQuery,
+                          setMemberResults,
+                        );
+                      }}
+                      className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
                       placeholder={host.translate(
-                        "todo.project_member_capability_placeholder",
-                        "例如：前端开发、产品验收",
-                      )}
-                      aria-label={host.translate(
-                        "todo.project_member_capability_label",
-                        "{{name}} 的职责与能力",
-                        {
-                          name: member.user_name,
-                        },
+                        "todo.member_search_placeholder",
+                        "搜索用户名或邮箱",
                       )}
                     />
                   </label>
-                  {member.role === "Owner" ? (
-                    <span className="flex h-9 items-center px-2 text-sm text-text-secondary">
-                      Owner
+                  <label className="mt-2 flex items-center justify-between gap-3 px-2 text-sm text-text-secondary">
+                    <span>
+                      {host.translate("todo.member_role", "加入角色")}
                     </span>
-                  ) : (
-                    <>
-                      <select
-                        data-testid={`cloud-project-member-role-${member.user_id}`}
-                        value={member.role}
-                        onChange={(event) =>
-                          void updateMember(
-                            member,
-                            event.target.value as Exclude<
-                              ProjectManageRole,
-                              "Owner"
-                            >,
-                          )
-                        }
-                        className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
-                        aria-label={host.translate(
-                          "todo.project_member_role_label",
-                          "{{name}} 的项目角色",
-                          { name: member.user_name },
-                        )}
+                    <select
+                      data-testid="cloud-member-role"
+                      value={memberRole}
+                      onChange={(event) =>
+                        setMemberRole(event.target.value as ProjectManageRole)
+                      }
+                      className="h-8 rounded-lg border border-border bg-background px-2 text-sm outline-none"
+                    >
+                      <option value="Maintainer">Maintainer</option>
+                      <option value="Developer">Developer</option>
+                      <option value="Reporter">Reporter</option>
+                    </select>
+                  </label>
+                  <div className="mt-2 max-h-52 overflow-y-auto">
+                    {visibleMemberResults.map((user) => (
+                      <button
+                        key={user.id}
+                        type="button"
+                        data-testid={`cloud-member-result-${user.id}`}
+                        onClick={() => void addMember(user)}
+                        className="flex min-h-10 w-full items-center rounded-lg px-2 text-left hover:bg-muted"
                       >
-                        <option value="Maintainer">Maintainer</option>
-                        <option value="Developer">Developer</option>
-                        <option value="Reporter">Reporter</option>
-                      </select>
-                      {host.renderTooltip({
-                        label: host.translate(
-                          "todo.remove_member",
-                          "移除 {{name}}",
-                          {
-                            name: member.user_name,
-                          },
-                        ),
-                        align: "end",
-                        children: (
-                          <button
-                            type="button"
-                            data-testid={`cloud-project-member-remove-${member.user_id}`}
-                            onClick={() => void removeMember(member)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-red-600"
-                            aria-label={host.translate(
-                              "todo.remove_member",
-                              "移除 {{name}}",
-                              {
-                                name: member.user_name,
-                              },
-                            )}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        ),
-                      })}
-                    </>
-                  )}
+                        <span className="min-w-0 flex-1 truncate text-sm">
+                          {user.user_name}
+                        </span>
+                        <span className="text-xs text-text-muted">
+                          {savingUserId === user.id
+                            ? host.translate("todo.adding", "添加中…")
+                            : host.translate("common.add", "添加")}
+                        </span>
+                      </button>
+                    ))}
+                    {memberQuery.trim() && !visibleMemberResults.length ? (
+                      <p className="px-2 py-3 text-sm text-text-muted">
+                        {host.translate(
+                          "todo.no_search_members",
+                          "没有匹配的成员",
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-              ))}
-              <div className="grid grid-cols-1 items-end gap-3 rounded-lg bg-background/60 px-3 py-2 md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]">
-                <label className="flex h-9 min-w-0 items-center rounded-lg border border-border bg-background px-3 md:col-span-2">
-                  <Search className="h-4 w-4 text-text-muted" />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
+            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px] items-center gap-3 px-3 py-1.5 text-xs font-medium text-text-muted md:grid">
+              <span>{host.translate("todo.project_member", "成员")}</span>
+              <span data-testid="cloud-project-member-capability-heading">
+                {host.translate("todo.project_member_capability", "职责与能力")}
+              </span>
+              <span>
+                {host.translate("todo.project_member_role", "项目角色")}
+              </span>
+              <span className="sr-only">
+                {host.translate("todo.project_member_actions", "成员操作")}
+              </span>
+            </div>
+            {members.map((member) => (
+              <div
+                key={member.user_id}
+                data-testid={`cloud-project-member-${member.user_id}`}
+                className="grid grid-cols-1 items-center gap-3 rounded-lg bg-background/60 px-3 py-2 transition-colors hover:bg-background md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
+                    {member.user_name.slice(0, 1)}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {member.user_name}
+                    </span>
+                    <span className="block truncate text-xs text-text-muted">
+                      {member.email}
+                    </span>
+                  </span>
+                </span>
+                <label className="min-w-0">
+                  <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
+                    {host.translate(
+                      "todo.project_member_capability",
+                      "职责与能力",
+                    )}
+                  </span>
                   <input
-                    ref={memberSearchInputRef}
-                    data-testid="cloud-member-search"
-                    value={memberQuery}
-                    onChange={(event) => {
-                      const nextQuery = event.target.value;
-                      setMemberQuery(nextQuery);
-                      clearMemberResultsForEmptyQuery(
-                        nextQuery,
-                        setMemberResults,
-                      );
-                    }}
-                    className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
+                    data-testid={`cloud-project-member-capability-${member.user_id}`}
+                    defaultValue={member.capability_description}
+                    disabled={savingUserId === member.user_id}
+                    onBlur={(event) =>
+                      void updateMemberCapability(member, event.target.value)
+                    }
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-text-tertiary focus:border-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     placeholder={host.translate(
-                      "todo.member_search_placeholder",
-                      "添加成员：搜索用户名或邮箱",
+                      "todo.project_member_capability_placeholder",
+                      "例如：前端开发、产品验收",
                     )}
                     aria-label={host.translate(
-                      "todo.member_search_placeholder",
-                      "添加成员：搜索用户名或邮箱",
+                      "todo.project_member_capability_label",
+                      "{{name}} 的职责与能力",
+                      {
+                        name: member.user_name,
+                      },
                     )}
                   />
                 </label>
-                <label>
-                  <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
-                    {host.translate("todo.project_member_role", "项目角色")}
+                {member.role === "Owner" ? (
+                  <span className="flex h-9 items-center px-2 text-sm text-text-secondary">
+                    Owner
                   </span>
-                  <select
-                    data-testid="cloud-member-role"
-                    value={memberRole}
-                    onChange={(event) =>
-                      setMemberRole(event.target.value as ProjectManageRole)
-                    }
-                    className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
-                    aria-label={host.translate(
-                      "todo.new_project_member_role_label",
-                      "新成员的项目角色",
-                    )}
-                  >
-                    <option value="Maintainer">Maintainer</option>
-                    <option value="Developer">Developer</option>
-                    <option value="Reporter">Reporter</option>
-                  </select>
-                </label>
-                <span aria-hidden="true" className="hidden h-7 w-7 md:block" />
+                ) : (
+                  <>
+                    <select
+                      data-testid={`cloud-project-member-role-${member.user_id}`}
+                      value={member.role}
+                      onChange={(event) =>
+                        void updateMember(
+                          member,
+                          event.target.value as Exclude<
+                            ProjectManageRole,
+                            "Owner"
+                          >,
+                        )
+                      }
+                      className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
+                      aria-label={host.translate(
+                        "todo.project_member_role_label",
+                        "{{name}} 的项目角色",
+                        { name: member.user_name },
+                      )}
+                    >
+                      <option value="Maintainer">Maintainer</option>
+                      <option value="Developer">Developer</option>
+                      <option value="Reporter">Reporter</option>
+                    </select>
+                    {host.renderTooltip({
+                      label: host.translate(
+                        "todo.remove_member",
+                        "移除 {{name}}",
+                        {
+                          name: member.user_name,
+                        },
+                      ),
+                      align: "end",
+                      children: (
+                        <button
+                          type="button"
+                          data-testid={`cloud-project-member-remove-${member.user_id}`}
+                          onClick={() => void removeMember(member)}
+                          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+                          aria-label={host.translate(
+                            "todo.remove_member",
+                            "移除 {{name}}",
+                            {
+                              name: member.user_name,
+                            },
+                          )}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ),
+                    })}
+                  </>
+                )}
               </div>
-              {visibleMemberResults.map((user) => (
-                <button
-                  key={user.id}
-                  type="button"
-                  data-testid={`cloud-member-result-${user.id}`}
-                  onClick={() => void addMember(user)}
-                  className="flex h-10 w-full items-center rounded-lg px-3 text-left hover:bg-background"
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {user.user_name}
-                  </span>
-                  <span className="text-xs text-text-muted">
-                    {savingUserId === user.id
-                      ? host.translate("todo.adding", "添加中…")
-                      : host.translate("common.add", "添加")}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
         </section>
 
         <section

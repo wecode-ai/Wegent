@@ -1,12 +1,19 @@
 import { Paperclip, SlidersHorizontal } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { IssueCommentComposer } from "./IssueActivityPresentation";
+import { IssueCommentMentionPopup } from "./IssueCommentMentionPopup";
+import { insertIssueMention } from "./issueCommentMentions";
 import type {
   IssueMentionGroup,
   IssueMentionOption,
 } from "./issueCommentMentions";
-import { IssueCommentComposer } from "./IssueActivityPresentation";
-import { IssueMentionPopup } from "./IssueMentionPopup";
-import { useIssueCommentMentions } from "./useIssueCommentMentions";
+import { useIssueMentionPicker } from "./useIssueMentionPicker";
 
 export type { IssueMentionGroup } from "./issueCommentMentions";
 
@@ -49,7 +56,7 @@ export function IssueMainCommentComposer({
 }: {
   value: string;
   onChange(value: string): void;
-  /** The structured targets still present in the draft being submitted. */
+  /** The structured targets the submitted draft still mentions. */
   onSubmit(mentions: IssueMentionOption[]): void;
   disabled: boolean;
   sending: boolean;
@@ -73,8 +80,9 @@ export function IssueMainCommentComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const caret = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const mention = useIssueCommentMentions({ mentionGroups });
   const canSend = !disabled && !sending && !uploading && Boolean(value.trim());
+  const mention = useIssueMentionPicker(mentionGroups);
+  const mentionItems = mention.items;
 
   useLayoutEffect(() => {
     if (caret.current === null) return;
@@ -83,22 +91,21 @@ export function IssueMainCommentComposer({
     caret.current = null;
   }, [value]);
 
-  function changeValue(nextValue: string, selectionStart: number) {
-    onChange(nextValue);
-    mention.handleChange(nextValue, selectionStart);
-  }
-
-  function insertMention(option: IssueMentionOption) {
+  function insertMention(item: IssueMentionGroup["items"][number]) {
     const start = input.current?.selectionStart ?? value.length;
     const end = input.current?.selectionEnd ?? start;
-    const inserted = mention.insert(option, value, start, end);
-    if (!inserted) return;
-    caret.current = inserted.cursor;
+    const inserted = insertIssueMention(value, start, end, item.name);
+    caret.current = inserted.caret;
+    mention.remember(item.mention);
     onChange(inserted.value);
+    mention.closeMenu();
   }
 
-  function submitComment() {
-    onSubmit(mention.submit(value));
+  function selectActiveMention() {
+    const item = mention.active();
+    if (!item) return false;
+    insertMention(item);
+    return true;
   }
 
   return (
@@ -106,10 +113,13 @@ export function IssueMainCommentComposer({
       data-testid={testIds.form}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-          mention.close();
+          mention.closeMenu();
       }}
       canSend={canSend}
-      onSubmit={submitComment}
+      onSubmit={() => {
+        mention.closeMenu();
+        onSubmit(mention.mentionsFor(value));
+      }}
       sendLabel={labels.send}
       sendTestId={testIds.send}
       before={attachments}
@@ -124,33 +134,53 @@ export function IssueMainCommentComposer({
             rows={2}
             disabled={disabled || sending}
             onChange={(event) => {
-              changeValue(event.target.value, event.target.selectionStart);
+              onChange(event.target.value);
+              if (
+                event.target.value
+                  .slice(0, event.target.selectionStart)
+                  .endsWith("@")
+              ) {
+                mention.openMenu();
+              } else {
+                mention.closeMenu();
+              }
             }}
-            onKeyUp={(event) =>
-              mention.handleCaret(
-                event.currentTarget.value,
-                event.currentTarget.selectionStart,
-              )
-            }
             onKeyDown={(event) => {
-              if (mention.open) {
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  mention.moveHighlight(event.key === "ArrowDown" ? 1 : -1);
-                  return;
-                }
-                if (event.key === "Enter" || event.key === "Tab") {
-                  event.preventDefault();
-                  const row = mention.highlighted;
-                  if (row?.mention) insertMention(row.mention);
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  mention.close();
-                  return;
-                }
+              if (event.key === "Escape" && mention.open) {
+                event.preventDefault();
+                event.stopPropagation();
+                mention.closeMenu();
+                return;
+              }
+              if (
+                mention.open &&
+                mentionItems.length > 0 &&
+                event.key === "ArrowDown"
+              ) {
+                event.preventDefault();
+                mention.move(1);
+                return;
+              }
+              if (
+                mention.open &&
+                mentionItems.length > 0 &&
+                event.key === "ArrowUp"
+              ) {
+                event.preventDefault();
+                mention.move(-1);
+                return;
+              }
+              if (
+                mention.open &&
+                mentionItems.length > 0 &&
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                selectActiveMention();
+                return;
               }
               if (
                 event.key === "Enter" &&
@@ -160,7 +190,8 @@ export function IssueMainCommentComposer({
               ) {
                 event.preventDefault();
                 if (canSend) {
-                  submitComment();
+                  mention.closeMenu();
+                  onSubmit(mention.mentionsFor(value));
                 }
               }
             }}
@@ -172,12 +203,13 @@ export function IssueMainCommentComposer({
               }
             }}
           />
-          {mention.open ? (
-            <IssueMentionPopup
+          {mention.open && mentionItems.length > 0 ? (
+            <IssueCommentMentionPopup
               groups={mention.groups}
-              highlightedId={mention.highlighted?.id ?? null}
+              items={mentionItems}
+              activeIndex={mention.activeIndex}
               testId={testIds.mentions}
-              onHighlight={mention.highlight}
+              onHover={mention.highlight}
               onPick={insertMention}
             />
           ) : null}

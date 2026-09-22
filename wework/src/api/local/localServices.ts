@@ -19,6 +19,7 @@ import {
 import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
@@ -692,6 +693,16 @@ function normalizeRuntimeTaskSummary(
   const goalExecutionStatus = runtimeGoalExecutionStatusValue(
     taskRecord.goalExecutionStatus ?? taskRecord.goal_execution_status
   )
+  const rawInteractionStatus = Object.hasOwn(taskRecord, 'interactionStatus')
+    ? taskRecord.interactionStatus
+    : taskRecord.interaction_status
+  const interactionStatus =
+    rawInteractionStatus === null
+      ? null
+      : rawInteractionStatus === 'waitingForUserInput'
+        ? rawInteractionStatus
+        : undefined
+  const hasInteractionStatus = rawInteractionStatus === null || interactionStatus !== undefined
   const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
@@ -722,6 +733,7 @@ function normalizeRuntimeTaskSummary(
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
+    ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),
@@ -3616,11 +3628,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   let rememberedCodexAuthConfigured: boolean | null = null
   const modelApi = {
     listModels: async () => {
+      // Always reconcile pending local model catalogs (custom model interfaces)
+      // so they appear in the picker even when the Codex subscription is off.
+      await ensureStatus()
+      const { localCodexSubscriptionEnabled } = await getAppPreferences()
+      if (!localCodexSubscriptionEnabled) {
+        return { data: localRuntimeModels([], null, false) }
+      }
       let codexOfficialModels: CodexOfficialModel[]
       let codexOfficialError: string | null
       let codexAuthConfigured: boolean
       try {
-        await ensureStatus()
         const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
           requestLocalCodexOfficialModels(request).then(
             value => ({ value, error: null }),

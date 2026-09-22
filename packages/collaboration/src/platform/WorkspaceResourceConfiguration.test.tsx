@@ -8,7 +8,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { CollaborationAgent, CollaborationGroup } from "../types";
+import type {
+  CollaborationAgent,
+  CollaborationGroup,
+  CollaborationMember,
+} from "../types";
 import {
   WorkspaceCollaborationGroupsConfiguration,
   type WorkspaceResourceCommands,
@@ -26,6 +30,14 @@ const claudeAgent: CollaborationAgent = {
   team_id: 2,
   name: "Claude Code",
   runtime: "claude_code",
+};
+
+const humanMember: CollaborationMember = {
+  id: 7,
+  user_id: 7,
+  user_name: "Alice",
+  email: "alice@example.com",
+  role: "Developer",
 };
 
 const group: CollaborationGroup = {
@@ -113,17 +125,60 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     });
   }
 
+  it("adds the current user by default and labels them as me", async () => {
+    commands.createCollaborationGroup = vi.fn(async () => group);
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[]}
+          members={[humanMember]}
+          agents={[]}
+          locale="zh-CN"
+          currentUserId={humanMember.user_id}
+          commands={commands}
+          canManage
+          initialCreateOpen
+        />,
+      ),
+    );
+
+    expect(container.textContent).toContain("我");
+    expect(container.textContent).not.toContain(humanMember.user_name);
+    expect(container.textContent).toContain(
+      "负责人接收任务并协调推进，可在成员行切换。",
+    );
+    expect(byTestId("collaboration-group-leader-human-7")).not.toBeNull();
+    expect(
+      byTestId("collaboration-group-create-responsibility-human-7"),
+    ).toBeNull();
+    await change(
+      byTestId<HTMLInputElement>("collaboration-group-name"),
+      "我的协作小组",
+    );
+    await click(byTestId("collaboration-group-create"));
+
+    expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leader: { kind: "human", id: "7", responsibility: "" },
+        members: [{ kind: "human", id: "7", responsibility: "" }],
+      }),
+    );
+  });
+
   it("only requests responsibilities from ordinary members, including after changing the leader", async () => {
     await act(async () =>
       root.render(
         <WorkspaceCollaborationGroupsConfiguration
           groups={[]}
-          members={[]}
+          members={[humanMember]}
           agents={[codexAgent, claudeAgent]}
           locale="zh-CN"
           commands={commands}
           canManage
           initialCreateOpen
+          agentActions={{
+            createDefault: vi.fn(async () => codexAgent),
+          }}
         />,
       ),
     );
@@ -132,55 +187,49 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         'select[data-testid="collaboration-group-leader"]',
       ),
     ).toBeNull();
-    expect(byTestId("collaboration-group-create-member-agent-1")).toBeNull();
-    await click(byTestId("collaboration-group-leader"));
-    await click(byTestId("collaboration-group-leader-agent-1"));
-    expect(
-      byTestId("collaboration-group-create-responsibility-agent-1"),
-    ).toBeNull();
     await click(byTestId("collaboration-group-create-add-members"));
-    expect(byTestId("collaboration-group-create-member-agent-1")).toBeNull();
-    await click(byTestId("collaboration-group-create-member-agent-2"));
-    await click(byTestId("collaboration-group-members-done"));
+    expect(
+      byTestId("collaboration-group-create-member-agent-1"),
+    ).not.toBeNull();
+    await click(byTestId("collaboration-group-create-member-human-7"));
+    await click(byTestId("collaboration-group-agent-action-create-default"));
     await change(
       byTestId<HTMLInputElement>(
-        "collaboration-group-create-responsibility-agent-2",
+        "collaboration-group-create-responsibility-agent-1",
       ),
       "审查代码",
     );
     await click(byTestId("collaboration-group-leader"));
-    await click(byTestId("collaboration-group-leader-agent-2"));
+    await click(byTestId("collaboration-group-leader-agent-1"));
     expect(
       byTestId<HTMLInputElement>(
-        "collaboration-group-create-responsibility-agent-1",
+        "collaboration-group-create-responsibility-human-7",
       ).value,
     ).toBe("");
     expect(
-      byTestId("collaboration-group-create-responsibility-agent-2"),
+      byTestId("collaboration-group-create-responsibility-agent-1"),
     ).toBeNull();
-    expect(byTestId("collaboration-group-remove-member-agent-2")).toBeNull();
+    expect(byTestId("collaboration-group-remove-member-agent-1")).toBeNull();
     expect(
-      byTestId("collaboration-group-remove-member-agent-1"),
+      byTestId("collaboration-group-remove-member-human-7"),
     ).not.toBeNull();
-    await click(byTestId("collaboration-group-remove-member-agent-1"));
+    await click(byTestId("collaboration-group-remove-member-human-7"));
     expect(
       byTestId("collaboration-group-create-responsibility-agent-1"),
     ).toBeNull();
     expect(
-      byTestId("collaboration-group-create-responsibility-agent-2"),
+      byTestId("collaboration-group-create-responsibility-human-7"),
     ).toBeNull();
     commands.createCollaborationGroup = vi.fn(async () => group);
     await change(
       byTestId<HTMLInputElement>("collaboration-group-name"),
       "单人小队",
     );
-    await click(byTestId("collaboration-group-create-next"));
-    await click(byTestId("collaboration-group-create-next"));
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "agent", id: "2", responsibility: "" },
-        members: [{ kind: "agent", id: "2", responsibility: "" }],
+        leader: { kind: "agent", id: "1", responsibility: "" },
+        members: [{ kind: "agent", id: "1", responsibility: "" }],
       }),
     );
   });
@@ -190,7 +239,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       root.render(
         <WorkspaceCollaborationGroupsConfiguration
           groups={[]}
-          members={[]}
+          members={[humanMember]}
           agents={[codexAgent, claudeAgent]}
           locale="en"
           commands={commands}
@@ -199,21 +248,21 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         />,
       ),
     );
-    await click(byTestId("collaboration-group-leader"));
+    await click(byTestId("collaboration-group-create-add-members"));
     const search = byTestId<HTMLInputElement>(
-      "collaboration-group-leader-search",
+      "collaboration-group-members-search",
     );
     await change(search, "missing");
     expect(container.textContent).toContain("No matching people or agents");
-    await change(search, "codex");
-    expect(byTestId("collaboration-group-leader-agent-2")).toBeNull();
+    await change(search, "alice");
+    expect(byTestId("collaboration-group-create-member-agent-2")).toBeNull();
     await act(async () => {
       search.dispatchEvent(
         new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
       );
     });
     expect(document.activeElement).toBe(
-      byTestId("collaboration-group-leader-agent-1"),
+      byTestId("collaboration-group-create-member-human-7"),
     );
     await act(async () => {
       document.activeElement!.dispatchEvent(
@@ -223,11 +272,55 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(byTestId("collaboration-group-leader-search")).toBeNull();
-    expect(document.activeElement).toBe(byTestId("collaboration-group-leader"));
+    expect(byTestId("collaboration-group-members-search")).toBeNull();
+    expect(document.activeElement).toBe(
+      byTestId("collaboration-group-create-add-members"),
+    );
   });
 
-  it("creates a fully configured group through the three-step dialog", async () => {
+  it("keeps the standalone creator isolated from the group collection and shows one action error", async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[humanMember]}
+          agents={[codexAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+          initialCreateOpen
+          showGroupCollection={false}
+          agentActions={{
+            createDefault: vi.fn(async () => {
+              throw new Error("Agent storage unavailable");
+            }),
+          }}
+        />,
+      ),
+    );
+
+    expect(
+      container.querySelector(
+        `[data-testid="collaboration-group-${group.id}"]`,
+      ),
+    ).toBeNull();
+    expect(container.querySelector(".collaboration-platform-panel")).toBeNull();
+    expect(
+      container.querySelector(".collaboration-group-people-editor.is-compact"),
+    ).toBeTruthy();
+    expect(byTestId("collaboration-group-create-close")).toBeTruthy();
+    expect(container.querySelector('section[aria-label="负责人"]')).toBeNull();
+    await click(byTestId("collaboration-group-create-add-members"));
+    expect(byTestId("collaboration-group-members-search")).toBeTruthy();
+    expect(
+      byTestId(`collaboration-group-create-member-agent-${codexAgent.team_id}`),
+    ).toBeTruthy();
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+    await click(byTestId("collaboration-group-agent-action-create-default"));
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+
+  it("creates a collaboration group from the lightweight form", async () => {
     commands.createCollaborationGroup = vi.fn(async (input) => ({
       ...group,
       name: input.name,
@@ -260,11 +353,14 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       root.render(
         <WorkspaceCollaborationGroupsConfiguration
           groups={[]}
-          members={[]}
+          members={[humanMember]}
           agents={[codexAgent, claudeAgent]}
           locale="zh-CN"
           commands={commands}
           canManage
+          agentActions={{
+            createDefault: vi.fn(async () => codexAgent),
+          }}
         />,
       );
     });
@@ -274,19 +370,17 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       byTestId<HTMLInputElement>("collaboration-group-name"),
       "交付小组",
     );
+    await click(byTestId("collaboration-group-create-add-members"));
+    await click(byTestId("collaboration-group-create-member-human-7"));
+    await click(byTestId("collaboration-group-agent-action-create-default"));
     await click(byTestId("collaboration-group-leader"));
     await click(byTestId("collaboration-group-leader-agent-1"));
-    await click(byTestId("collaboration-group-create-add-members"));
-    await click(
-      byTestId<HTMLInputElement>("collaboration-group-create-member-agent-2"),
-    );
-    await click(byTestId("collaboration-group-members-done"));
     expect(
       byTestId("collaboration-group-create-responsibility-agent-1"),
     ).toBeNull();
     await change(
       byTestId<HTMLInputElement>(
-        "collaboration-group-create-responsibility-agent-2",
+        "collaboration-group-create-responsibility-human-7",
       ),
       "代码审查",
     );
@@ -294,37 +388,6 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       byTestId<HTMLInputElement>("collaboration-group-description"),
       "负责产品交付",
     );
-    await click(byTestId("collaboration-group-create-next"));
-    expect(
-      byTestId("collaboration-group-create-tab-rules").getAttribute(
-        "aria-selected",
-      ),
-    ).toBe("true");
-    await change(
-      byTestId<HTMLTextAreaElement>("collaboration-group-create-instructions"),
-      "实现工作应该 @",
-    );
-    await click(byTestId("collaboration-group-create-mention-agent-1"));
-    await click(byTestId("collaboration-group-create-stage-add"));
-    const createStage = container.querySelector<HTMLElement>(
-      ".collaboration-group-stage-card",
-    )!;
-    await change(
-      createStage.querySelector<HTMLInputElement>("input")!,
-      "代码审查",
-    );
-    await change(
-      createStage.querySelector<HTMLSelectElement>("select")!,
-      "agent:2",
-    );
-    await click(byTestId("collaboration-group-create-next"));
-    await change(
-      byTestId<HTMLInputElement>(
-        "collaboration-group-create-environment-tag-input",
-      ),
-      "macos",
-    );
-    await click(byTestId("collaboration-group-create-environment-tag-add"));
     await click(byTestId("collaboration-group-create"));
 
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith({
@@ -333,24 +396,13 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       leader: { kind: "agent", id: "1", responsibility: "" },
       members: [
         { kind: "agent", id: "1", responsibility: "" },
-        { kind: "agent", id: "2", responsibility: "代码审查" },
+        { kind: "human", id: "7", responsibility: "代码审查" },
       ],
       coordinationMode: "manager",
-      instructions: "实现工作应该 @Codex",
-      stages: [
-        {
-          id: expect.any(String),
-          name: "代码审查",
-          description: "",
-          assignee: {
-            kind: "agent",
-            id: "2",
-            responsibility: "代码审查",
-          },
-        },
-      ],
+      instructions: "",
+      stages: [],
       executionRequirements: {
-        requiredTags: ["macos"],
+        requiredTags: [],
       },
     });
   });
@@ -403,9 +455,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     );
     await click(byTestId("collaboration-group-environment-tag-add"));
     await click(byTestId("collaboration-group-detail-tab-members"));
-    await click(
-      byTestId<HTMLInputElement>("collaboration-group-detail-member-agent-2"),
-    );
+    await click(byTestId("collaboration-group-remove-member-agent-2"));
     await click(byTestId("collaboration-group-detail-save"));
 
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(

@@ -166,6 +166,32 @@ class TestExceptionHandlers:
         response_body = eval(response.body.decode())
         assert response_body["errors"][0]["input"] == '{"task_id": 123}'
 
+    async def test_validation_exception_handler_redacts_model_spec_input(self):
+        """Model spec validation errors must not echo API keys."""
+        exc = RequestValidationError(
+            errors=[
+                {
+                    "type": "value_error",
+                    "loc": ("body", "json", "spec"),
+                    "msg": "Unsafe model spec key",
+                    "input": {"modelConfig": {"env": {"api_key": "secret"}}},
+                },
+                {
+                    "type": "value_error",
+                    "loc": ("body", "json"),
+                    "msg": "Model spec must be an object",
+                    "input": {"spec": "another-secret"},
+                },
+            ]
+        )
+
+        response = await validation_exception_handler(request=None, exc=exc)
+
+        response_body = eval(response.body.decode())
+        assert "input" not in response_body["errors"][0]
+        assert "input" not in response_body["errors"][1]
+        assert "secret" not in response.body.decode()
+
     async def test_python_exception_handler(self):
         """Test Python exception handler for general exceptions"""
         exc = Exception("Something went wrong")

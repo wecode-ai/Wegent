@@ -2,46 +2,46 @@ import type {
   CollaborationAssignment,
   CollaborationComment,
   CollaborationExecution,
-} from '../types'
+} from "../types";
 type ActivityEntry =
-  | { kind: 'assignment'; at: string; assignment: CollaborationAssignment }
-  | { kind: 'comment'; at: string; comment: CollaborationComment }
-  | { kind: 'run'; at: string; run: CollaborationExecution }
+  | { kind: "assignment"; at: string; assignment: CollaborationAssignment }
+  | { kind: "comment"; at: string; comment: CollaborationComment }
+  | { kind: "run"; at: string; run: CollaborationExecution };
 
 export function issueActivityEntries(
   assignments: CollaborationAssignment[],
   comments: CollaborationComment[],
-  executions: CollaborationExecution[]
+  executions: CollaborationExecution[],
 ): ActivityEntry[] {
   const assignmentEventIds = new Set(
-    assignments.flatMap(assignment => [
+    assignments.flatMap((assignment) => [
       assignment.id,
       ...(assignment.comment_id ? [assignment.comment_id] : []),
-    ])
-  )
+    ]),
+  );
   return [
     ...assignments.map(
       (assignment): ActivityEntry => ({
-        kind: 'assignment',
+        kind: "assignment",
         at: assignment.created_at,
         assignment,
-      })
+      }),
     ),
     ...comments
-      .filter(comment => !assignmentEventIds.has(comment.id))
+      .filter((comment) => !assignmentEventIds.has(comment.id))
       .map(
         (comment): ActivityEntry => ({
-          kind: 'comment',
+          kind: "comment",
           at: comment.created_at,
           comment,
-        })
+        }),
       ),
     ...executions.map(
       (run): ActivityEntry => ({
-        kind: 'run',
+        kind: "run",
         at: run.created_at,
         run,
-      })
+      }),
     ),
-  ].sort((left, right) => right.at.localeCompare(left.at))
+  ];
 }

@@ -194,7 +194,7 @@ describe('local delivery API', () => {
       { assignee_agent_id: 'LA-1' },
     ],
     [
-      'team',
+      'group',
       'squad-1',
       { assignee_group_id: 'squad-1' },
       { metadata: { collaboration_group: { id: 'squad-1', name: 'Squad' } } },

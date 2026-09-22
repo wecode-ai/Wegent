@@ -313,15 +313,14 @@ export function TaskActivityView({
     [messages, task]
   )
 
-  const { listRef, followCard, scrollTaskCommentsToTop, revealCardBottom } = useIssueActivityScroll(
-    {
+  const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
+    useIssueActivityScroll({
       messages: threadMessages,
       loading,
       linear,
       compact,
       cardTestIdPrefix: 'cloud-task-activity-card-',
-    }
-  )
+    })
 
   // A notification can point at one comment. Land on it once, flash it, and
   // then leave the list under the reader's control.
@@ -704,7 +703,7 @@ export function TaskActivityView({
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
-      scrollTaskCommentsToTop()
+      scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
       if (projectLocation !== 'local' && client.executeTaskComment) {
         const incoming = await client.executeTaskComment({

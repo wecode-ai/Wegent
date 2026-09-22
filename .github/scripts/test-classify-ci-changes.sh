@@ -430,7 +430,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-local-agent-capabilities,collaboration-agent-automation-chain"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-comment-mention,collaboration-issue-comment-notification"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-agent-automation-chain"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-comment-mention,collaboration-issue-comment-notification"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
@@ -446,7 +446,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-local-agent-capabilities,collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-agent-automation-chain"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -583,7 +583,7 @@ wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-local-agent-capabilities,collaboration-agent-automation-chain\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-agent-automation-chain\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,board-focus-view\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,collaboration-issue-comment-mention\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,collaboration-issue-comment-mention,collaboration-issue-comment-notification\"}"
@@ -754,6 +754,14 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs"
+
+assert_desktop_case "collaboration group onboarding scenario selects its core shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-group-onboarding"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
 
 assert_desktop_case "collaboration local agent capabilities scenario selects its core shard" \
   'wework_desktop_e2e=true

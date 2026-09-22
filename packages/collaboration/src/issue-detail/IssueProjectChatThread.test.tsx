@@ -63,8 +63,8 @@ describe("shared Issue threads", () => {
     };
     const latest = { ...message, messageId: "latest", sequenceNumber: 3 };
     expect(groupIssueActivityThreads([reply, latest, message])).toEqual([
-      { root: latest, replies: [] },
       { root: message, replies: [reply] },
+      { root: latest, replies: [] },
     ]);
   });
 

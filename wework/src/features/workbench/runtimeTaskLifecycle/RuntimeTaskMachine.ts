@@ -19,6 +19,7 @@ export class RuntimeTaskMachine {
       turnOutcome: null,
       activeTurnId: null,
       goalStatus: null,
+      interactionStatus: null,
       hasAuthoritativeGoalStatus: false,
       continuable: false,
       unread,
@@ -50,6 +51,7 @@ export class RuntimeTaskMachine {
       turnPhase,
       turnOutcome,
       goalStatus,
+      interactionStatus,
       continuable,
       unread,
       workspaceCreationKind,
@@ -60,7 +62,8 @@ export class RuntimeTaskMachine {
       executionPhase === 'starting' || executionPhase === 'running' || executionPhase === 'stopping'
     const isTurnActive = turnPhase !== 'idle'
     const isThinking = turnPhase === 'submitting' || turnPhase === 'awaiting'
-    const isBusy = isQueued || isRunning || isTurnActive
+    const isWaitingForUserInput = interactionStatus === 'waitingForUserInput'
+    const isBusy = isQueued || isRunning || isTurnActive || isWaitingForUserInput
 
     return {
       key: getRuntimeTaskLifecycleKey(address),
@@ -79,6 +82,7 @@ export class RuntimeTaskMachine {
         outcome: turnOutcome,
       },
       goalStatus,
+      interactionStatus,
       continuable,
       unread,
       derived: {
@@ -90,8 +94,9 @@ export class RuntimeTaskMachine {
         isBusy,
         canSend: continuable && !isBusy,
         canQueue: continuable && isBusy,
-        shouldShowSidebarRunning: isRunning,
-        shouldShowUnread: unread && !isRunning,
+        shouldShowSidebarRunning: isRunning && !isWaitingForUserInput,
+        shouldShowSidebarWaiting: isWaitingForUserInput,
+        shouldShowUnread: unread && !isRunning && !isWaitingForUserInput,
       },
     }
   }

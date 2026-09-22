@@ -1915,7 +1915,7 @@
 }
 
 .issue-comment-mention-popup section > button:hover,
-.issue-comment-mention-popup section > button.is-highlighted {
+.issue-comment-mention-popup section > button[data-active='true'] {
   background: rgb(var(--color-bg-muted));
 }
 

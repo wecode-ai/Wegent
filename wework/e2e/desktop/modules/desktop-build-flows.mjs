@@ -84,6 +84,7 @@ import {
   selectE2EModel,
   sendPromptUntilScenarioRequest,
   toolDetailsMcpServerPath,
+  waitForLogPattern,
   weworkDir,
   withTimeout,
   writeFile,
@@ -731,6 +732,39 @@ export async function verifyRemoteDockerCommandFlow(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  if (interactiveSessions?.codeServer !== false) {
+    const ideSelector = `[data-testid="connection-code-server-button-${generatedDeviceId}"]`
+    const backendLogOffset = (await readFile(cloudEnvironment.backendLogPath, 'utf8')).length
+    await control.command('clickWhenEnabled', ideSelector)
+    await waitForLogPattern(
+      cloudEnvironment.backendLogPath,
+      new RegExp(`/api/devices/${generatedDeviceId}/code-server`),
+      {
+        fromOffset: backendLogOffset,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      }
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `[data-testid="connection-ide-confirm-${generatedDeviceId}"]`
+        )
+      ),
+      0,
+      'The device IDE action still required a second confirmation'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `[data-testid="connection-session-error-${generatedDeviceId}"]`
+        )
+      ),
+      0,
+      'The device IDE action failed while opening the system browser'
+    )
+  }
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-device-online.png')
   await control.command('navigate', 'body', { value: '/' })
   return { deviceId: generatedDeviceId, ...generatedDevice }

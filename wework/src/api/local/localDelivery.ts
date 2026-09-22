@@ -1126,7 +1126,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
       itemId: string,
       data: {
         version: number
-        assigneeType: 'user' | 'agent' | 'team'
+        assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
         notifyAssignee?: boolean
       }
@@ -1136,7 +1136,9 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
           ? { assignee_user_id: Number(data.assigneeId) }
           : data.assigneeType === 'agent'
             ? { assignee_agent_id: data.assigneeId }
-            : { assignee_group_id: data.assigneeId }
+            : data.assigneeType === 'team'
+              ? { assignee_team_id: Number(data.assigneeId) }
+              : { assignee_group_id: data.assigneeId }
       const record = await request<LocalLoopItemRecord>('todos.update', {
         project_id: projectId,
         task_id: itemId,
