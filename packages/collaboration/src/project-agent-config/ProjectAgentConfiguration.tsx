@@ -60,7 +60,11 @@ export function ProjectAgentConfiguration({
 }) {
   const workspaceId = project.workspace_id;
   const usesLocalAgentCreator =
-    project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
+    project.project_store === "local" &&
+    !host?.renderAgentCreator &&
+    Boolean(host?.renderLocalAgentCreator);
+  const usesLocalAgentEditor =
+    project.project_store === "local" && Boolean(host?.renderLocalAgentEditor);
   const supportsAgentCreation = Boolean(
     usesLocalAgentCreator || host?.renderAgentCreator,
   );
@@ -475,9 +479,9 @@ export function ProjectAgentConfiguration({
     namespace: project.namespace ?? "default",
   };
   const localAgentProjectId = scope === "project" ? project.id : undefined;
-  const canEditAgentResource = usesLocalAgentCreator
-    ? Boolean(host?.renderLocalAgentEditor)
-    : Boolean(host?.renderAgentEditor);
+  const canEditAgentResource = Boolean(
+    host?.renderLocalAgentEditor || host?.renderAgentEditor,
+  );
 
   function renderCustomAgentCreator() {
     if (mode !== "create") return null;
@@ -602,7 +606,7 @@ export function ProjectAgentConfiguration({
                     <div className={styles.agentActions}>
                       {canEditAgentResource &&
                       ((agent.definitionSource === "project" &&
-                        usesLocalAgentCreator) ||
+                        usesLocalAgentEditor) ||
                         (agent.definitionSource === "shared_agent" &&
                           agent.wegentTeamId !== null)) ? (
                         <button
@@ -767,7 +771,7 @@ export function ProjectAgentConfiguration({
 
           {editingAgent &&
           editingAgent.definitionSource === "project" &&
-          usesLocalAgentCreator &&
+          usesLocalAgentEditor &&
           host?.renderLocalAgentEditor
             ? host.renderLocalAgentEditor({
                 projectId: localAgentProjectId,

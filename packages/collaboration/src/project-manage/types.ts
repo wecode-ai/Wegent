@@ -33,6 +33,7 @@ export interface ProjectManageCardDisplay {
 
 export interface ProjectManageProject {
   id: string;
+  current_user_id?: number;
   name: string;
   description: string;
   project_key: string;

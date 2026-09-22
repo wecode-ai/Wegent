@@ -3764,8 +3764,10 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-add')).toBeInTheDocument())
     await userEvent.click(screen.getByTestId('cloud-project-add'))
     expect(screen.getByTestId('cloud-project-name')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-location-cloud')).not.toHaveAttribute('aria-pressed')
+    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-task-provider-local')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     expect(screen.getByTestId('cloud-project-task-provider-local')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-github')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-gitlab')).toBeInTheDocument()
@@ -3837,6 +3839,7 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
     await userEvent.type(screen.getByTestId('cloud-project-name'), 'GitHub board')
+    await userEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     await userEvent.click(screen.getByTestId('cloud-project-task-provider-github'))
     await userEvent.type(screen.getByTestId('cloud-project-provider-repository'), 'acme/repo')
     await userEvent.type(screen.getByTestId('cloud-project-provider-token'), 'github-secret')
@@ -3866,9 +3869,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
-    expect(screen.getByTestId('cloud-project-location-cloud')).not.toHaveAttribute('aria-pressed')
+    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
     await userEvent.type(screen.getByTestId('cloud-project-name'), 'Cloud GitLab board')
+    await userEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     await userEvent.click(screen.getByTestId('cloud-project-task-provider-gitlab'))
     await userEvent.type(screen.getByTestId('cloud-project-provider-repository'), 'group/project')
     await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
@@ -3898,6 +3902,7 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
     await userEvent.type(screen.getByTestId('cloud-project-name'), '钉钉需求池')
+    await userEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     await userEvent.click(screen.getByTestId('cloud-project-task-provider-dingtalk_aitable'))
     expect(screen.getByTestId('cloud-project-create-confirm')).toBeDisabled()
     fireEvent.change(screen.getByTestId('cloud-project-aitable-url'), {
@@ -3979,8 +3984,6 @@ describe('CloudTodoWorkspace', () => {
       'true'
     )
     fireEvent.click(screen.getByTestId('collaboration-participants-tab-members'))
-    expect(await screen.findByText('2 位成员')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cloud-project-members-toggle'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-member-capability-heading')).toHaveTextContent(
       '职责与能力'

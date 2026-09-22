@@ -404,7 +404,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
 
       await control.command('scrollIntoView', cardSelector, { visible: true })
-      await control.command('click', processSelector, { visible: true })
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="cloud-todo-card-${itemId}"]`, {
+        visible: true,
+      })
       await control.command('waitFor', progressPopup, {
         visible: true,
         timeoutMs: uiTimeoutMs,

@@ -30,6 +30,7 @@ export interface ProjectAgentConfigurationHost {
    * library set it to false so the picker is never rendered.
    */
   supportsExistingAgentSelection?: boolean;
+  createDefaultLocalAgent?(projectId?: string): Promise<string>;
   renderAgentCreator?(props: {
     namespace: string;
     onClose(): void;

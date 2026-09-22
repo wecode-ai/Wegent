@@ -31,6 +31,7 @@ import {
   type IssueActivityAiState,
 } from "./activityMessageUtils";
 import { IssueActivityContent } from "./IssueActivityContent";
+import { formatIssueTimestamp } from "./issueTimestamp";
 
 export interface ExecutionTaskSummary {
   title: string;
@@ -331,7 +332,7 @@ export function IssueChatMessage({
           dateTime={message.updatedAt}
           className="task-detail-run-event-time"
         >
-          {message.updatedAt.slice(5, 16).replace("T", " ")}
+          {formatIssueTimestamp(message.updatedAt)}
         </time>
       </div>
     );
@@ -470,7 +471,7 @@ export function IssueChatMessage({
                 </span>
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                <span>{message.createdAt.slice(5, 16).replace("T", " ")}</span>
+                <span>{formatIssueTimestamp(message.createdAt)}</span>
                 {deviceName ? (
                   <span>{deviceName}</span>
                 ) : runId ? (

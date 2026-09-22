@@ -1127,7 +1127,7 @@ export function createDeliveryApi(client: HttpClient) {
       itemId: string,
       data: {
         version: number
-        assigneeType: 'user' | 'agent' | 'team'
+        assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
         notifyAssignee?: boolean
       }

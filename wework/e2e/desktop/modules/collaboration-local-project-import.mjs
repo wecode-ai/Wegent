@@ -86,6 +86,9 @@ export async function verifyCollaborationLocalProjectImport(
     const localWorkspace = inCollaborationSidebar(
       '[data-testid="collaboration-workspace-wework-local-workspace"]'
     )
+    const localWorkspaceTree = inCollaborationSidebar(
+      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]'
+    )
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
     )
@@ -95,9 +98,13 @@ export async function verifyCollaborationLocalProjectImport(
     const cloudProject = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
     )
+    const localDomain = scoped('[data-testid="collaboration-domain-local"]')
+    const cloudDomain = scoped('[data-testid="collaboration-domain-cloud"]')
     await control.command('waitFor', toggle)
     await control.command('waitFor', cloudWorkspace)
     await control.command('waitFor', cloudToggle)
+    await control.command('waitFor', localDomain)
+    await control.command('waitFor', cloudDomain)
     if (
       (await control.command('getAttribute', cloudToggle, { value: 'aria-expanded' })) !== 'true'
     ) {
@@ -126,8 +133,16 @@ export async function verifyCollaborationLocalProjectImport(
       'cloud',
       'The cloud Workspace must use the cloud icon'
     )
-    assert.match(await control.command('getText', localWorkspace), /本地/)
-    assert.match(await control.command('getText', cloudWorkspace), /云端/)
+    assert.match(await control.command('getText', localDomain), /本地协作/)
+    assert.match(await control.command('getText', cloudDomain), /云端协作/)
+    assert.ok(
+      (await control.command('getText', localWorkspace)).trim(),
+      'The local Workspace name must remain visible in the local domain'
+    )
+    assert.ok(
+      (await control.command('getText', cloudWorkspace)).trim(),
+      'The cloud Workspace name must remain visible in the cloud domain'
+    )
     const [sidebarMetrics] = JSON.parse(
       await control.command(
         'getElementMetrics',
@@ -150,13 +165,12 @@ export async function verifyCollaborationLocalProjectImport(
       await control.command('click', localWorkspace)
       await control.command(
         'click',
-        inCollaborationSidebar('[data-testid="collaboration-workspace-actions"]')
+        `${localWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
       )
+      await control.command('click', '[data-testid="collaboration-workspace-nav-create-project"]')
       await control.command(
         'click',
-        inCollaborationSidebar(
-          '[data-testid="collaboration-workspace-nav-import-existing-project"]'
-        )
+        '[data-testid="collaboration-workspace-nav-import-existing-project"]'
       )
       await control.command('waitFor', '[data-testid="existing-local-project-import-dialog"]')
       await control.command(

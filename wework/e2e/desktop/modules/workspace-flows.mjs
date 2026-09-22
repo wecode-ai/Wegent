@@ -34,6 +34,53 @@ export function inCollaborationSidebar(selector, contentSelector = '') {
   return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
 }
 
+export async function selectCollaborationDomain(control, contentSelector, domain) {
+  const selector = `${contentSelector} [data-testid="collaboration-domain-${domain}"]`
+  await control.command('waitFor', selector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if (
+    (await control.command('getAttribute', selector, {
+      value: 'aria-pressed',
+    })) !== 'true'
+  ) {
+    await control.command('clickWhenEnabled', selector, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await control.command('waitFor', `${selector}[aria-pressed="true"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+export async function waitForTestIdByText(
+  control,
+  contentSelector,
+  prefix,
+  expectedText,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const startedAt = Date.now()
+  let lastTestIds = []
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', contentSelector))
+    lastTestIds = snapshot.testIds.filter(testId => testId.startsWith(prefix))
+    for (const testId of lastTestIds) {
+      const selector = `[data-testid="${testId}"]`
+      const text = await control.command('getText', selector)
+      if (text.includes(expectedText)) return testId
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(
+    `Unable to find test id ${prefix} containing ${JSON.stringify(expectedText)}: ${lastTestIds.join(
+      ', '
+    )}`
+  )
+}
+
 async function waitForNativeCollaborationPlatform(
   control,
   contentSelector,
@@ -1526,10 +1573,7 @@ async function verifyWorkspaceTabIsolation(control) {
     'click',
     `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
   )
-  await control.command(
-    'click',
-    `${firstWorkspaceTree} [data-testid="collaboration-workspace-nav-settings"]`
-  )
+  await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(
     'waitFor',
     `${firstBoardContent} [data-testid="workspace-settings-shell"]`,

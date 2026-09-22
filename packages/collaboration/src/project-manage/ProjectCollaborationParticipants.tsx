@@ -33,8 +33,8 @@ export function CollaborationParticipantsTabs({
   groupsContent: ReactNode;
   groupsLabel: string;
   initialTab?: ParticipantTab;
-  membersContent: ReactNode;
-  membersLabel: string;
+  membersContent?: ReactNode;
+  membersLabel?: string;
   requestedTab?: ParticipantTab;
   testIdPrefix?: string;
 }) {
@@ -52,10 +52,14 @@ export function CollaborationParticipantsTabs({
       id: "agents",
       label: agentsLabel,
     },
-    {
-      id: "members",
-      label: membersLabel,
-    },
+    ...(membersContent && membersLabel
+      ? [
+          {
+            id: "members" as const,
+            label: membersLabel,
+          },
+        ]
+      : []),
     {
       id: "groups",
       label: groupsLabel,

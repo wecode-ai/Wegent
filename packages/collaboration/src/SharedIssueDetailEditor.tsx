@@ -1,6 +1,4 @@
-import {
-  collaborationIssueCardPriorityClasses as priorityBadgeClasses,
-} from './issue-card/priorityBadgeClasses'
+import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import {
   useCallback,
   useEffect,
@@ -36,6 +34,7 @@ import {
   Tag,
   Trash2,
   UserPlus,
+  UsersRound,
   Waypoints,
   X,
 } from "lucide-react";
@@ -70,6 +69,7 @@ import type {
   CollaborationAssignment,
   CollaborationAttachment,
   CollaborationDefaultAssistant,
+  CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
   CollaborationProject,
@@ -816,6 +816,9 @@ export function TodoEditor(props: TodoEditorProps) {
     [],
   );
   const [projectAgents, setProjectAgents] = useState<TodoEditorAgent[]>([]);
+  const [projectGroups, setProjectGroups] = useState<CollaborationGroup[]>(
+    () => project?.collaboration_groups ?? [],
+  );
   const [wegentTeams, setWegentTeams] = useState<SharedEditorTeam[]>([]);
   const [workflowPlanState, setWorkflowPlanState] = useState<{
     itemId: string;
@@ -1110,6 +1113,17 @@ export function TodoEditor(props: TodoEditorProps) {
     applyResult(editorPort.agents.list(String(editProjectId)), (agents) =>
       setProjectAgents(agents.filter((agent) => agent.status !== "inactive")),
     );
+    applyResult(editorPort.collaborationGroups.list(editProjectId), (groups) =>
+      setProjectGroups(
+        Array.from(
+          new Map(
+            [...(project?.collaboration_groups ?? []), ...groups].map(
+              (group) => [group.id, group],
+            ),
+          ).values(),
+        ),
+      ),
+    );
     applyResult(props.loadTeams?.() ?? Promise.resolve([]), (teams) =>
       setWegentTeams(teams.filter((team) => team.is_active !== false)),
     );
@@ -1121,6 +1135,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editorPort,
     editItemId,
     editProjectId,
+    project?.collaboration_groups,
     props.loadTeams,
     props.taskRefreshKey,
     refreshAttachments,
@@ -1184,13 +1199,26 @@ export function TodoEditor(props: TodoEditorProps) {
     void Promise.allSettled([
       editorPort.members.list(createProjectId),
       editorPort.agents.list(String(createProjectId)),
+      editorPort.collaborationGroups.list(createProjectId),
       props.loadTeams?.() ?? Promise.resolve([]),
-    ]).then(([memberResult, agentResult, teamResult]) => {
+    ]).then(([memberResult, agentResult, groupResult, teamResult]) => {
       if (memberResult.status === "fulfilled")
         setProjectMembers(memberResult.value);
       if (agentResult.status === "fulfilled") {
         setProjectAgents(
           agentResult.value.filter((agent) => agent.status !== "inactive"),
+        );
+      }
+      if (groupResult.status === "fulfilled") {
+        setProjectGroups(
+          Array.from(
+            new Map(
+              [
+                ...(project?.collaboration_groups ?? []),
+                ...groupResult.value,
+              ].map((group) => [group.id, group]),
+            ).values(),
+          ),
         );
       }
       if (teamResult.status === "fulfilled") {
@@ -1199,7 +1227,12 @@ export function TodoEditor(props: TodoEditorProps) {
         );
       }
     });
-  }, [createProjectId, editorPort, props.loadTeams]);
+  }, [
+    createProjectId,
+    editorPort,
+    project?.collaboration_groups,
+    props.loadTeams,
+  ]);
 
   // Persist the create draft on every edit; a fully cleared form removes it.
   useEffect(() => {
@@ -1375,7 +1408,11 @@ export function TodoEditor(props: TodoEditorProps) {
   const assigneeTeam = wegentTeams.find(
     (team) => assigneeTarget === `team:${team.id}`,
   );
+  const assigneeGroup = projectGroups.find(
+    (group) => assigneeTarget === `group:${group.id}`,
+  );
   const assigneeName =
+    assigneeGroup?.name ||
     assigneeTeam?.displayName ||
     assigneeTeam?.name ||
     assigneeAgent?.name ||
@@ -1473,15 +1510,20 @@ export function TodoEditor(props: TodoEditorProps) {
       // Human ownership must be part of creation so task.created automation
       // cannot start AI work before a follow-up assignment reaches the server.
       if (assigneeTarget && !hasHumanAssignee) {
-        created = await editorPort.issues.assign(props.project.id, created.id, {
-          version: created.version,
-          assigneeType: assigneeTarget.split(":", 1)[0] as
-            | "user"
-            | "agent"
-            | "team",
-          assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(":") + 1),
-          ...(assigneeTarget.startsWith("user:") ? { notifyAssignee } : {}),
-        });
+        created = assigneeTarget.startsWith("group:")
+          ? await editorPort.issues.update(created.id, {
+              version: created.version,
+              assignee_group_id: assigneeTarget.slice(6),
+            })
+          : await editorPort.issues.assign(props.project.id, created.id, {
+              version: created.version,
+              assigneeType: assigneeTarget.split(":", 1)[0] as
+                | "user"
+                | "agent"
+                | "team",
+              assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(":") + 1),
+              ...(assigneeTarget.startsWith("user:") ? { notifyAssignee } : {}),
+            });
       }
       const uploaded = await uploadAttachments(created.id, pendingFiles);
       if (uploaded.markdown) {
@@ -2095,11 +2137,31 @@ export function TodoEditor(props: TodoEditorProps) {
               ]
             : undefined
         }
+        groupLimit={5}
+        showAllLabel={(_group, count) =>
+          t("todo.view_all_count", "查看全部 {{count}} 个", { count })
+        }
         options={[
           {
             value: "",
             label: t("todo.unassigned", "未指派"),
           },
+          ...projectGroups.map((group) => ({
+            value: `group:${group.id}` as IssueAssigneeTarget,
+            label: group.name,
+            group: t("issue_creation.group", "协作小组"),
+          })),
+          ...(item?.assignee_group_id &&
+          !projectGroups.some((group) => group.id === item.assignee_group_id)
+            ? [
+                {
+                  value:
+                    `group:${item.assignee_group_id}` as IssueAssigneeTarget,
+                  label: item.assignee_group_name || item.assignee_group_id,
+                  group: t("issue_creation.group", "协作小组"),
+                },
+              ]
+            : []),
           ...projectMembers.map((member) => ({
             value: `user:${member.user_id}` as IssueAssigneeTarget,
             label: member.user_name,
@@ -2115,16 +2177,6 @@ export function TodoEditor(props: TodoEditorProps) {
             label: team.displayName || team.name,
             group: t("todo.agent_teams", "Wegent 智能体"),
           })),
-          ...(item?.assignee_group_id
-            ? [
-                {
-                  value:
-                    `group:${item.assignee_group_id}` as IssueAssigneeTarget,
-                  label: item.assignee_group_name || item.assignee_group_id,
-                  group: t("issue_creation.group", "协作小组"),
-                },
-              ]
-            : []),
         ]}
       />
     </>
@@ -2297,13 +2349,10 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusHistoryTrigger}
       {priorityChip}
       {showAssignee ? (
-        <span
-          className={cn(
-            propChipClass,
-            !assignee && !assigneeAgent && !assigneeTeam && "text-text-muted",
-          )}
-        >
-          {assigneeAgent || assigneeTeam ? (
+        <span className={cn(propChipClass, !assigneeName && "text-text-muted")}>
+          {assigneeGroup ? (
+            <UsersRound className="h-3.5 w-3.5 text-text-muted" />
+          ) : assigneeAgent || assigneeTeam ? (
             <Bot className="h-3.5 w-3.5 text-violet-600" />
           ) : (
             <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
@@ -2311,11 +2360,7 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="text-text-muted">
             {t("todo.assignee", "负责人")}
           </span>
-          {assigneeTeam?.displayName ??
-            assigneeTeam?.name ??
-            assigneeAgent?.name ??
-            assignee?.user_name ??
-            t("todo.unassigned", "未指派")}
+          {assigneeName ?? t("todo.unassigned", "未指派")}
           <ChevronDown className="h-3 w-3 text-text-muted" />
           {assigneeSelect}
         </span>
@@ -2871,18 +2916,16 @@ export function TodoEditor(props: TodoEditorProps) {
                 <div className="task-detail-meta-line">
                   {showAssignee ? (
                     <span className="task-detail-meta-item relative cursor-pointer">
-                      {assigneeAgent || assigneeTeam ? (
+                      {assigneeGroup ? (
+                        <UsersRound className="h-3.5 w-3.5" />
+                      ) : assigneeAgent || assigneeTeam ? (
                         <Bot className="h-3.5 w-3.5 text-violet-600" />
                       ) : (
                         <CircleUserRound className="h-3.5 w-3.5" />
                       )}
                       {t("todo.assignee", "负责人")}
                       <span className="text-text-primary">
-                        {assignee?.user_name ??
-                          assigneeTeam?.displayName ??
-                          assigneeTeam?.name ??
-                          assigneeAgent?.name ??
-                          t("todo.unassigned", "未指派")}
+                        {assigneeName ?? t("todo.unassigned", "未指派")}
                       </span>
                       <ChevronDown className="h-3 w-3" />
                       {assigneeSelect}
@@ -3096,8 +3139,10 @@ export function TodoEditor(props: TodoEditorProps) {
                           data-testid="cloud-todo-state-assignee"
                           title={t("todo.assignee", "负责人")}
                         >
-                          {assigneeTarget.startsWith("agent:") ||
-                          assigneeTarget.startsWith("team:") ? (
+                          {assigneeTarget.startsWith("group:") ? (
+                            <UsersRound aria-hidden="true" size={15} />
+                          ) : assigneeTarget.startsWith("agent:") ||
+                            assigneeTarget.startsWith("team:") ? (
                             <Bot aria-hidden="true" size={15} />
                           ) : (
                             <CircleUserRound aria-hidden="true" size={15} />
