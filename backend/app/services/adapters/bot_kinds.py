@@ -26,7 +26,6 @@ from app.schemas.kind import (
     SkillRefMeta,
     Team,
 )
-from app.services.adapters.public_model import is_public_model_allowed_for_user
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -244,27 +243,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             return None
         return agent_config.get("protocol")
 
-    @staticmethod
-    def _ensure_public_model_allowed(
-        db: Session, public_model: Kind, user_id: int
-    ) -> None:
-        """Enforce the public model user whitelist (allowedUsers).
-
-        Raises HTTP 403 when whitelist-only mode is active (a non-empty
-        allowedUsers list, or allowedUsersEnabled=true) and the user's
-        user_name is not listed.
-        """
-        user = db.query(User).filter(User.id == user_id).first()
-        if not is_public_model_allowed_for_user(
-            public_model.json, user.user_name if user else None
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"Model '{public_model.name}' is restricted to " "whitelisted users"
-                ),
-            )
-
     def _get_model_by_name_and_type(
         self,
         db: Session,
@@ -287,6 +265,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         Returns:
             A Kind object (for both user and public models),
             or None if not found.
+
+        NOTE: This is a read/assembly path (bot CRUD and component rendering).
+        Public-model whitelist enforcement intentionally lives in the runtime
+        model resolver, not here, so a non-whitelisted user can still view a
+        bot that references a restricted model but is blocked from using it.
         """
         import logging
 
@@ -328,7 +311,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
 
             if public_model:
-                self._ensure_public_model_allowed(db, public_model, user_id)
                 logger.info(
                     f"[DEBUG] _get_model_by_name_and_type: Found public model {model_name}"
                 )
@@ -369,7 +351,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
 
             if public_model:
-                self._ensure_public_model_allowed(db, public_model, user_id)
                 logger.info(
                     f"[DEBUG] _get_model_by_name_and_type: Found public model {model_name} (auto-detect)"
                 )
