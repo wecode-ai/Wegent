@@ -388,9 +388,15 @@ export function toWegentStoreInstalledPlugin(
     ...installed,
     spec: {
       ...installed.spec,
+      source: {
+        ...installed.spec.source,
+        type: 'marketplace',
+      },
+      origin: 'market',
       sourcePayload: {
         ...(installed.spec.sourcePayload ?? {}),
         managedByWegent: true,
+        cloudPluginId: plugin.cloudPluginId ?? null,
         cloudInstalledPluginId: plugin.installedPluginId ?? null,
       },
     },

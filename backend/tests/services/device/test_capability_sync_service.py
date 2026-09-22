@@ -115,7 +115,9 @@ def test_resolve_payload_includes_selected_installed_plugins(test_db):
                     "type": "marketplace",
                     "marketplace": "claude-plugins-official",
                     "plugin": "context7",
+                    "catalogItemId": "41",
                 },
+                "pluginId": 41,
                 "marketplace": "claude-plugins-official",
                 "version": "1057d02c5307",
                 "displayName": "Context7",
@@ -151,7 +153,9 @@ def test_resolve_payload_includes_selected_installed_plugins(test_db):
                 "type": "marketplace",
                 "marketplace": "claude-plugins-official",
                 "plugin": "context7",
+                "catalogItemId": "41",
             },
+            "cloud_plugin_id": 41,
         }
     ]
 

@@ -115,6 +115,7 @@ import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginImportDialog } from './PluginImportDialog'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+import { pluginOperationNoticeAutoDismissDelay } from './pluginOperationNoticePolicy'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginPublicationProgressDrawer } from './PluginPublicationProgressDrawer'
 import { PluginShareDialog } from './PluginShareDialog'
@@ -4219,11 +4220,12 @@ export function PluginsWorkspace({
   }, [selectedMarketplacePluginId])
 
   useEffect(() => {
-    if (pluginOperationNotice?.kind !== 'success' || pluginOperationNotice.actionLabel) return
-    const noticeId = pluginOperationNotice.id
+    const autoDismissDelay = pluginOperationNoticeAutoDismissDelay(pluginOperationNotice)
+    const noticeId = pluginOperationNotice?.id
+    if (autoDismissDelay === null || !noticeId) return
     const timeoutId = window.setTimeout(() => {
       setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
-    }, 4_000)
+    }, autoDismissDelay)
     return () => window.clearTimeout(timeoutId)
   }, [pluginOperationNotice])
 
