@@ -1003,6 +1003,7 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       await waitForDesktopControlElement({
         ...command,
         selector: command.waitForSelector,
+        target: undefined,
         visible: true,
       })
       return JSON.stringify({
