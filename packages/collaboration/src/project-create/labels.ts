@@ -22,6 +22,9 @@ export const projectCreateLabels: Record<
     visibility: "项目可见性",
     privateVisibility: "私有",
     privateVisibilityDescription: "仅项目成员可访问",
+    restrictedVisibility: "仅看相关任务",
+    restrictedVisibilityDescription:
+      "所有人可进入，普通用户只看到自己创建、负责或参与的任务",
     publicVisibility: "公开",
     publicVisibilityDescription: "所有登录用户可访问",
     publicVisibilityNotice:
@@ -87,6 +90,9 @@ export const projectCreateLabels: Record<
     visibility: "Project visibility",
     privateVisibility: "Private",
     privateVisibilityDescription: "Project members only",
+    restrictedVisibility: "Related tasks only",
+    restrictedVisibilityDescription:
+      "Everyone can enter; regular users only see tasks they created, own, or participate in",
     publicVisibility: "Public",
     publicVisibilityDescription: "All signed-in users",
     publicVisibilityNotice:

@@ -51,6 +51,7 @@ from app.services.ghost_capabilities import (
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
+from app.services.loop_items.access import can_view_item
 from app.services.project_chat.workspace_binding import (
     WORKSPACE_BINDING_METADATA_KEY,
     adapt_legacy_workspace_binding,
@@ -2073,9 +2074,8 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
-        project = require_cloud_project_role(
-            db, project_id, user_id, required_role
-        ).project
+        access = require_cloud_project_role(db, project_id, user_id, required_role)
+        project = access.project
         if task_id is None:
             return project
         task = (
@@ -2093,6 +2093,8 @@ class ProjectChatService:
                 # External provider tasks have no local task row; chat threads
                 # are keyed by the provider issue id and need no existence row.
                 return project
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         return project
 

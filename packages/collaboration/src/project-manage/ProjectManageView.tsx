@@ -116,6 +116,33 @@ export function ProjectManageView<
     project.task_provider === "github" || project.task_provider === "gitlab"
       ? project.task_provider
       : null;
+  const relatedTaskVisibilityAvailable = project.task_provider === "local";
+  const visibilityOptions: ProjectManageVisibility[] =
+    relatedTaskVisibilityAvailable
+      ? ["private", "public_restricted", "public"]
+      : ["private", "public"];
+  const visibilityLabels: Record<ProjectManageVisibility, string> = {
+    private: host.translate("todo.private_project", "私有项目"),
+    public_restricted: host.translate(
+      "todo.related_tasks_project",
+      "仅看相关任务",
+    ),
+    public: host.translate("todo.public_project", "公开项目"),
+  };
+  const visibilityDescriptions: Record<ProjectManageVisibility, string> = {
+    private: host.translate(
+      "todo.private_project_description",
+      "仅项目成员可以进入。",
+    ),
+    public_restricted: host.translate(
+      "todo.related_tasks_project_description",
+      "所有人可进入，普通用户只看到自己创建、负责或参与的任务。",
+    ),
+    public: host.translate(
+      "todo.public_project_description",
+      "所有登录用户都可以进入并查看全部任务。",
+    ),
+  };
   const [providerRepository, setProviderRepository] = useState(() =>
     repositoryAddress(project),
   );
@@ -803,15 +830,25 @@ export function ProjectManageView<
             <p className="mt-1 text-sm text-text-muted">
               {host.translate(
                 "todo.project_access_description",
-                "决定空间成员是否可以发现并进入这个项目。",
+                "决定谁能进入项目，以及普通用户可以看到哪些任务。",
               )}
             </p>
-            <div className="mt-4 grid max-w-md grid-cols-2 gap-1 rounded-lg bg-muted p-1">
-              {(["private", "public"] as const).map((value) => (
+            <div
+              className={classNames(
+                "mt-4 grid gap-1 rounded-lg bg-muted p-1",
+                relatedTaskVisibilityAvailable
+                  ? "max-w-2xl grid-cols-1 md:grid-cols-3"
+                  : "max-w-md grid-cols-2",
+              )}
+            >
+              {visibilityOptions.map((value) => (
                 <button
                   key={value}
                   type="button"
-                  data-testid={`cloud-project-manage-visibility-${value}`}
+                  data-testid={`cloud-project-manage-visibility-${value.replace(
+                    "_",
+                    "-",
+                  )}`}
                   disabled={visibilityBusy}
                   onClick={() => void saveVisibility(value)}
                   className={classNames(
@@ -821,12 +858,13 @@ export function ProjectManageView<
                       : "text-text-muted",
                   )}
                 >
-                  {value === "private"
-                    ? host.translate("todo.private_project", "私有项目")
-                    : host.translate("todo.public_project", "公开项目")}
+                  {visibilityLabels[value]}
                 </button>
               ))}
             </div>
+            <p className="mt-2 text-sm text-text-muted">
+              {visibilityDescriptions[visibility]}
+            </p>
           </section>
         )}
 

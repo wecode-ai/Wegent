@@ -27,6 +27,12 @@ class CloudProjectAccess:
     def is_public_visitor(self) -> bool:
         return self.role == BaseRole.RestrictedAnalyst
 
+    @property
+    def restricts_unrelated_issues(self) -> bool:
+        return self.project.visibility == "public_restricted" and not has_permission(
+            self.role, BaseRole.Maintainer
+        )
+
 
 class IssueAction(str, Enum):
     """Independent Issue capabilities; one action never implies another."""
