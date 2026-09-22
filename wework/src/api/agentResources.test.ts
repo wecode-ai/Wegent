@@ -20,6 +20,7 @@ describe('createAgentResourceApi', () => {
       name: 'review-agent',
       displayName: 'Review Agent',
       namespace: 'workspace-alpha',
+      capabilityMode: 'manual',
       runtime: 'ClaudeCode',
       model: {
         name: 'claude-sonnet',
@@ -33,6 +34,14 @@ describe('createAgentResourceApi', () => {
           name: 'code-review',
           namespace: 'workspace-alpha',
           isPublic: false,
+        },
+      ],
+      plugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
         },
       ],
       mcpServers: {
@@ -50,6 +59,7 @@ describe('createAgentResourceApi', () => {
         bind_model: 'claude-sonnet',
         bind_model_type: 'public',
       },
+      capability_mode: 'manual',
       system_prompt: 'Review the implementation.',
       mcp_servers: {
         browser: {
@@ -57,6 +67,14 @@ describe('createAgentResourceApi', () => {
           args: ['browser.mjs'],
         },
       },
+      plugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
       skills: ['code-review'],
       skill_refs: {
         'code-review': {
@@ -116,6 +134,7 @@ describe('createAgentResourceApi', () => {
               name: 'review-agent-bot',
               namespace: 'workspace-alpha',
               shell_name: 'ClaudeCode',
+              capability_mode: 'manual',
               agent_config: {
                 bind_model: 'claude-sonnet',
                 bind_model_type: 'public',
@@ -123,6 +142,14 @@ describe('createAgentResourceApi', () => {
               },
               system_prompt: 'Review the implementation.',
               mcp_servers: { browser: { command: 'node' } },
+              plugins: [
+                {
+                  id: 'quality-gate@team-market',
+                  pluginName: 'quality-gate',
+                  marketplaceId: 'team-market',
+                  displayName: 'Quality Gate',
+                },
+              ],
               skills: ['code-review'],
               skill_refs: {
                 'code-review': {
@@ -160,7 +187,16 @@ describe('createAgentResourceApi', () => {
           isPublic: false,
         },
       ],
+      plugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
       mcpServers: { browser: { command: 'node' } },
+      capabilityMode: 'manual',
     })
     expect(client.get).toHaveBeenCalledWith('/teams/52')
   })
@@ -200,6 +236,7 @@ describe('createAgentResourceApi', () => {
         name: 'review-agent',
         displayName: 'Reviewer',
         namespace: 'workspace-alpha',
+        capabilityMode: 'manual',
         runtime: 'Codex',
         model: { name: 'gpt-5.4', type: 'public', namespace: 'default' },
         systemPrompt: 'Review and summarize.',
@@ -209,6 +246,14 @@ describe('createAgentResourceApi', () => {
             name: 'code-review',
             namespace: 'workspace-alpha',
             isPublic: false,
+          },
+        ],
+        plugins: [
+          {
+            id: 'quality-gate@team-market',
+            pluginName: 'quality-gate',
+            marketplaceId: 'team-market',
+            displayName: 'Quality Gate',
           },
         ],
         mcpServers: { browser: { command: 'node' } },
@@ -221,6 +266,7 @@ describe('createAgentResourceApi', () => {
         bind_model: 'gpt-5.4',
         bind_model_type: 'public',
       },
+      capability_mode: 'manual',
       system_prompt: 'Review and summarize.',
       mcp_servers: { browser: { command: 'node' } },
       skills: ['code-review'],
@@ -231,6 +277,14 @@ describe('createAgentResourceApi', () => {
           is_public: false,
         },
       },
+      plugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
     })
     expect(client.put).toHaveBeenNthCalledWith(2, '/teams/52', {
       displayName: 'Reviewer',
@@ -312,6 +366,7 @@ describe('createAgentResourceApi', () => {
       name: 'codex-agent',
       displayName: '',
       namespace: 'default',
+      capabilityMode: 'follow_device',
       runtime: 'Codex',
       model: {
         name: 'gpt-5.4',
@@ -320,6 +375,7 @@ describe('createAgentResourceApi', () => {
       },
       systemPrompt: '',
       skills: [],
+      plugins: [],
       mcpServers: {},
     })
 
@@ -331,6 +387,7 @@ describe('createAgentResourceApi', () => {
           bind_model: 'gpt-5.4',
           bind_model_type: 'public',
         },
+        capability_mode: 'follow_device',
         shell_name: 'Codex',
         namespace: 'default',
         target_group_names: [],

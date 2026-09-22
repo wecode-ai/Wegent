@@ -19,6 +19,8 @@ class BotCreate(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    plugins: Optional[List[dict[str, Any]]] = None
+    capability_mode: Optional[str] = None
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
@@ -43,6 +45,8 @@ class BotUpdate(BaseModel):
     agent_config: Optional[dict[str, Any]] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    plugins: Optional[List[dict[str, Any]]] = None
+    capability_mode: Optional[str] = None
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
@@ -69,6 +73,8 @@ class BotInDB(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    plugins: Optional[List[dict[str, Any]]] = None
+    capability_mode: str = "follow_device"
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
@@ -97,6 +103,8 @@ class BotDetail(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    plugins: Optional[List[dict[str, Any]]] = None
+    capability_mode: str = "follow_device"
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None

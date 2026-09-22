@@ -139,6 +139,9 @@ const copy = {
     projectOwned: "项目资源",
     removeFromProject: "移出项目",
     deleteProjectGroup: "删除",
+    deleteGroup: "删除协作小组",
+    deleteGroupConfirm: "删除后无法恢复。确认删除这个协作小组吗？",
+    deleting: "删除中…",
     memberHint: "统一管理空间成员，方便空间内项目复用；项目仍可独立管理成员。",
     operationFailed: "操作失败，请稍后重试",
   },
@@ -193,6 +196,10 @@ const copy = {
     projectOwned: "Project resource",
     removeFromProject: "Remove from project",
     deleteProjectGroup: "Delete",
+    deleteGroup: "Delete team",
+    deleteGroupConfirm:
+      "This cannot be undone. Delete this collaboration team?",
+    deleting: "Deleting…",
     memberHint:
       "Manage shared space members for reuse. Projects can still manage members independently.",
     operationFailed: "Operation failed. Please try again.",
@@ -503,6 +510,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(
     initialSelectedGroupId,
   );
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [detailTab, setDetailTab] = useState<
     "members" | "rules" | "environment"
   >("members");
@@ -546,6 +554,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
   ];
   const selectedGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
+
+  useEffect(() => {
+    setDeleteConfirmOpen(false);
+  }, [selectedGroupId]);
 
   useEffect(() => {
     onCreateOpenChange?.(formOpen);
@@ -1326,6 +1338,49 @@ export function WorkspaceCollaborationGroupsConfiguration({
               <ErrorMessage message={error} />
               {canManage && commands.updateCollaborationGroup ? (
                 <div className="collaboration-resource-form-actions collaboration-group-save-actions">
+                  {deleteConfirmOpen ? (
+                    <>
+                      <span>{messages.deleteGroupConfirm}</span>
+                      <button
+                        type="button"
+                        className="collaboration-secondary-button"
+                        disabled={saving}
+                        onClick={() => setDeleteConfirmOpen(false)}
+                      >
+                        {messages.cancel}
+                      </button>
+                      <button
+                        type="button"
+                        className="collaboration-link-button collaboration-resource-remove"
+                        data-testid="collaboration-group-detail-delete-confirm"
+                        disabled={saving}
+                        onClick={() => {
+                          setSaving(true);
+                          setError(null);
+                          void commands
+                            .removeCollaborationGroup(selectedGroup.id)
+                            .then(() => {
+                              setSelectedGroupId(null);
+                              onDetailClose?.();
+                            })
+                            .catch(() => setError(messages.operationFailed))
+                            .finally(() => setSaving(false));
+                        }}
+                      >
+                        {saving ? messages.deleting : messages.deleteGroup}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="collaboration-link-button collaboration-resource-remove"
+                      data-testid="collaboration-group-detail-delete"
+                      disabled={saving}
+                      onClick={() => setDeleteConfirmOpen(true)}
+                    >
+                      {messages.deleteGroup}
+                    </button>
+                  )}
                   <button
                     type="submit"
                     className="collaboration-primary-button"

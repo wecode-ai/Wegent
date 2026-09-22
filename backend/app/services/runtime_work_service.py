@@ -4334,11 +4334,19 @@ def _apply_runtime_create_request(
     execution_request.runtime_project_key = request.runtime_project_key
     execution_request.runtime_project_name = request.runtime_project_name
     execution_request.runtime_workspace_roots = list(request.runtime_workspace_roots)
-    execution_request.project_plugin_ids = [
-        str(plugin["id"])
+    requested_plugin_ids = [
+        str(plugin["id"]).strip()
         for plugin in request.project_plugins
-        if plugin.get("id") is not None
+        if plugin.get("id") is not None and str(plugin["id"]).strip()
     ]
+    execution_request.project_plugin_ids = list(
+        dict.fromkeys(
+            [
+                *getattr(execution_request, "project_plugin_ids", []),
+                *requested_plugin_ids,
+            ]
+        )
+    )
     execution_request.runtime_executable_path = request.runtime_executable_path
     execution_request.claude_permission_mode = request.runtime_permission_mode
     execution_request.client_user_message_id = request.client_user_message_id

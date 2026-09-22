@@ -676,7 +676,10 @@ const sharedMessages: Record<
     "todo.current_user": "我自己",
     "todo.assignment_source": "分配来源",
     "todo.assignment_mode": "分配方式",
+    "todo.agent_executor_from_definition": "执行器由智能体定义",
     "todo.shared_agent": "共享智能体",
+    "todo.shared_agent_execution_hint":
+      "所选智能体保留自身执行器与能力配置，具体运行环境在任务开始时解析。",
     "todo.local_agent_resource_unavailable":
       "无法读取智能体资源配置，请重新登录后重试",
     "todo.local_agent_runtime_unsupported":
@@ -1133,7 +1136,10 @@ const sharedMessages: Record<
     "todo.current_user": "Me",
     "todo.assignment_source": "Assignment source",
     "todo.assignment_mode": "Assignment mode",
+    "todo.agent_executor_from_definition": "Agent-defined executor",
     "todo.shared_agent": "Shared agent",
+    "todo.shared_agent_execution_hint":
+      "The selected agent keeps its own executor and capabilities. The execution environment is resolved when the task starts.",
     "todo.local_agent_resource_unavailable":
       "The Agent resource configuration is unavailable. Sign in and try again.",
     "todo.local_agent_runtime_unsupported":

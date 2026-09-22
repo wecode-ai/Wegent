@@ -23,6 +23,7 @@ def _bot_kind_with_ghost(
     user_id: int,
     name: str = "chat-bot",
     ghost_name: str = "chat-ghost",
+    capability_mode: str = "manual",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         user_id=user_id,
@@ -36,6 +37,7 @@ def _bot_kind_with_ghost(
             "spec": {
                 "ghostRef": {"name": ghost_name, "namespace": "default"},
                 "shellRef": {"name": "Chat", "namespace": "default"},
+                "capability_mode": capability_mode,
             },
         },
     )
@@ -313,6 +315,23 @@ class TestFilterReachableMcpServers:
 
 class TestBuildMcpServers:
     """Tests for request-level MCP server merging."""
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_follow_device_excludes_ghost_mcp_servers(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp()
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1, capability_mode="follow_device"),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7),
+        )
+
+        assert result == []
 
     @patch(
         "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"

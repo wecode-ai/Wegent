@@ -44,8 +44,8 @@ flowchart LR
 
 - `localDelivery.ts`: local project, issue, agent, and execution APIs.
 - `localWorkspaceApi.ts`: shared UI adapter, including agents in board refreshes.
-- `LocalProjectAgentForm.tsx`: local runtime, model, workspace, instructions,
-  approval, Skills, MCP, and Plugin configuration.
+- `ProjectChatAgentEditor.tsx`: reuses the shared Agent form for local runtime,
+  model, prompt, capability source, Skills, MCP, and Plugin configuration.
 - `LocalTaskStore`: SQLite, optimistic versions, execution identity, claim leases,
   cancellation, and durable status updates.
 - `local_automation.rs`: compiles rules into the existing queue or sequential workflow.
