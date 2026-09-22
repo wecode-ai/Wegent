@@ -293,15 +293,14 @@ export function TaskActivityView({
     [messages, task]
   )
 
-  const { listRef, followCard, scrollTaskCommentsToTop, revealCardBottom } = useIssueActivityScroll(
-    {
+  const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
+    useIssueActivityScroll({
       messages: threadMessages,
       loading,
       linear,
       compact,
       cardTestIdPrefix: 'cloud-task-activity-card-',
-    }
-  )
+    })
 
   useWorkflowManagerActivity({
     task,
@@ -661,7 +660,7 @@ export function TaskActivityView({
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
-      scrollTaskCommentsToTop()
+      scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
       if (projectLocation !== 'local' && client.executeTaskComment) {
         const incoming = await client.executeTaskComment({

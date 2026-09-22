@@ -14,6 +14,7 @@ import type {
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
+export type CollaborationDomain = "local" | "cloud";
 export type CollaborationPlatformRootView =
   | "home"
   | "agents"
@@ -35,6 +36,7 @@ export type CollaborationWorkspaceView =
 
 export interface CollaborationPlatformLocation {
   platformView: CollaborationPlatformView;
+  collaborationDomain?: CollaborationDomain;
   rootView?: CollaborationPlatformRootView;
   workspaceId: string | null;
   workspaceView: CollaborationWorkspaceView;
@@ -45,6 +47,10 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  currentUser?: {
+    id: number;
+    name: string;
+  };
   cloudAccess?: {
     authenticated: boolean;
     requestLogin(): void;

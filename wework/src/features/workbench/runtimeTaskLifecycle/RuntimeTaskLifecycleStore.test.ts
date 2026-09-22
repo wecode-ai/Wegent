@@ -127,6 +127,76 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
   })
 
+  test('keeps execution busy while replacing the running spinner with a waiting signal', () => {
+    const store = new RuntimeTaskLifecycleStore('waiting-input-snapshot-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          interactionStatus: 'waitingForUserInput',
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.derived.isBusy).toBe(true)
+    expect(snapshot?.derived.canSend).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarWaiting).toBe(true)
+  })
+
+  test('keeps an idle execution busy when its independent interaction state awaits input', () => {
+    const store = new RuntimeTaskLifecycleStore('waiting-input-idle-execution-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'running',
+          interactionStatus: 'waitingForUserInput',
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(false)
+    expect(snapshot?.derived.isBusy).toBe(true)
+    expect(snapshot?.derived.canSend).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarWaiting).toBe(true)
+  })
+
+  test('preserves realtime waiting state until an explicit response or snapshot clears it', () => {
+    const store = new RuntimeTaskLifecycleStore('waiting-input-realtime-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+
+    store.userInputRequested(address)
+    expect(store.getTask(address)?.interactionStatus).toBe('waitingForUserInput')
+
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+    store.executorSettled(address)
+    expect(store.getTask(address)?.execution.running).toBe(false)
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+    store.userInputResponded(address)
+    expect(store.getTask(address)?.interactionStatus).toBeNull()
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.userInputRequested(address)
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: true, status: 'running', interactionStatus: null }))
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('does not publish a new store snapshot for identical executor work', () => {
     const store = new RuntimeTaskLifecycleStore('identical-executor-work-test')
     const work = runtimeWork(

@@ -1150,6 +1150,13 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: codex_catalog_model_id={codex_catalog_model_id}"
         )
 
+    supports_developer_role = env.get("supports_developer_role")
+    if supports_developer_role is not None:
+        logger.info(
+            "[model_resolver] _extract_model_config: "
+            "supports_developer_role configured"
+        )
+
     result = {
         "api_key": api_key,
         "base_url": base_url,
@@ -1171,6 +1178,9 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         # User-configured temperature override
         "temperature": temperature,
     }
+    if supports_developer_role is not None:
+        # Preserve the existing response shape unless the capability is explicit.
+        result["supports_developer_role"] = supports_developer_role
     if image_config is not None:
         result["imageConfig"] = image_config
     if model_capabilities:

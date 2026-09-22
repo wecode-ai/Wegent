@@ -592,8 +592,11 @@ vi.mock('@pierre/trees/react', async () => {
     getItem: (path: string) => {
       expand: () => void
       select: () => void
+      deselect: () => void
     }
+    getSelectedPaths: () => string[]
     scrollToPath: () => void
+    subscribe: () => () => void
     selectPath: (path: string) => void
     setSearch: (query: string | null) => void
   }
@@ -660,8 +663,15 @@ vi.mock('@pierre/trees/react', async () => {
           getItem: (path: string) => ({
             expand: vi.fn(),
             select: () => selectModelPath(modelRef.current!, path),
+            deselect: () => {
+              modelRef.current!.selectedPaths = modelRef.current!.selectedPaths.filter(
+                selected => selected !== path
+              )
+            },
           }),
+          getSelectedPaths: () => modelRef.current!.selectedPaths,
           scrollToPath: vi.fn(),
+          subscribe: () => () => {},
           selectPath: (path: string) => selectModelPath(modelRef.current!, path),
           setSearch(query: string | null) {
             this.search = query
@@ -9238,6 +9248,159 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-root-selector')).toHaveTextContent('api')
     expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/api')
   })
+
+  test('keeps project-root breadcrumbs and opens dropdown files in distinct reusable tabs', async () => {
+    const user = userEvent.setup()
+    const localDevice = createLocalSkillDevice()
+    const project = {
+      ...createCloudWorkspacePanelState().currentProject,
+      config: {
+        mode: 'workspace' as const,
+        execution: { targetType: 'local' as const, deviceId: localDevice.device_id },
+        workspace: { source: 'git' as const, checkoutPath: '/fixture/repo' },
+      },
+    }
+    const path = '/fixture/repo/backend/app/schemas/quick_launch.py'
+    const siblingPath = '/fixture/repo/backend/app/schemas/admin.py'
+    const contents = new Map([
+      [path, 'fixture = True'],
+      [siblingPath, 'admin = True'],
+    ])
+    getLocalPathKindMock.mockResolvedValue('file')
+    const fileResponse = (filePath: string) => ({
+      path: filePath,
+      name: filePath.split('/').at(-1),
+      content: contents.get(filePath),
+      editable: true,
+      revision: 'fixture-revision',
+      truncated: false,
+      size: 14,
+      modifiedAt: null,
+    })
+    const readWorkspaceTextFile = vi
+      .fn()
+      .mockImplementation((_device, path) => Promise.resolve(fileResponse(path)))
+    const writeWorkspaceTextFile = vi.fn().mockImplementation((_device, path, content) => {
+      contents.set(path, content)
+      return Promise.resolve(fileResponse(path))
+    })
+    const listWorkspaceEntries = vi.fn().mockImplementation((_device, directory) =>
+      Promise.resolve({
+        path: directory,
+        entries: directory.endsWith('/schemas')
+          ? [path, siblingPath].map(filePath => ({
+              path: filePath,
+              name: filePath.split('/').at(-1),
+              isDirectory: false,
+              size: 14,
+            }))
+          : [],
+      })
+    )
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile }}
+        state={{
+          ...baseProps.state,
+          currentProject: project,
+          projects: [project],
+          devices: [localDevice],
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [project],
+          devices: [localDevice],
+          currentProjectId: project.id,
+        }}
+        messages={[
+          {
+            id: 'nested-file-link',
+            role: 'assistant',
+            content: `[quick_launch.py](${path})`,
+            status: 'done',
+            createdAt: '2026-09-22T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+    await screen.findByTestId('assistant-markdown-link')
+    await waitFor(() =>
+      expect(screen.getByTestId('toggle-right-workspace-panel-button')).not.toBeDisabled()
+    )
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+    await waitFor(() =>
+      expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+        localDevice.device_id,
+        path,
+        '/fixture/repo'
+      )
+    )
+    expect(await screen.findByTestId('workspace-file-name-button')).toHaveTextContent(
+      'quick_launch.py'
+    )
+    expect(screen.getByTestId('workspace-file-breadcrumb-/fixture/repo')).toHaveTextContent('repo')
+    expect(screen.getByTestId('workspace-file-breadcrumb-/fixture/repo/backend')).toHaveTextContent(
+      'backend'
+    )
+    expect(
+      screen.getByTestId('workspace-file-breadcrumb-/fixture/repo/backend/app/schemas')
+    ).toHaveTextContent('schemas')
+
+    const clickPickerEntry = async (name: string) => {
+      const tree = await screen.findByTestId('workspace-file-picker-tree')
+      const row = await waitFor(() => {
+        const root = tree.shadowRoot ?? tree
+        const candidate = Array.from(
+          root.querySelectorAll<HTMLElement>('[data-item-path], button')
+        ).find(
+          item =>
+            item.dataset.itemPath === name ||
+            item.dataset.itemPath?.endsWith(`/${name}`) ||
+            item.textContent === name
+        )
+        expect(candidate).toBeDefined()
+        return candidate!
+      })
+      fireEvent.click(row)
+    }
+
+    await user.click(screen.getByTestId('workspace-file-name-button'))
+    await clickPickerEntry('admin.py')
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('admin.py')
+    )
+    expect(screen.getByRole('tab', { name: /quick_launch.py/ })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    expect(screen.getByRole('tab', { name: /admin.py/ })).toHaveAttribute('aria-selected', 'true')
+
+    await user.click(screen.getByTestId('workspace-file-name-button'))
+    await clickPickerEntry('quick_launch.py')
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
+    )
+    expect(screen.getAllByRole('tab', { name: /quick_launch.py|admin.py/ })).toHaveLength(2)
+
+    await user.click(screen.getByRole('tab', { name: /admin.py/ }))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent('admin = True')
+    )
+    await user.click(screen.getByRole('tab', { name: /quick_launch.py/ }))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-name-button')).toHaveTextContent('quick_launch.py')
+    )
+    expect(screen.getByRole('tab', { name: /admin.py/ })).toHaveAttribute('aria-selected', 'false')
+    await user.click(
+      within(screen.getByRole('tab', { name: /admin.py/ })).getByTestId(/-close-button$/)
+    )
+    expect(screen.queryByRole('tab', { name: /admin.py/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /quick_launch.py/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  }, 15000)
 
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
     const workspacePanelState = createCloudWorkspacePanelState()

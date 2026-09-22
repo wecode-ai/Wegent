@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import type { WorkspaceProjectCreateInput } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationGroup,
   CollaborationExecutionEnvironment,
   CollaborationMember,
   CollaborationOwnedAgent,
@@ -24,15 +25,22 @@ export interface ProjectCreateTarget {
 
 export interface ProjectCreateResourceSelection {
   memberUserIds: number[];
-  agentTeamIds: number[];
+  agentResourceIds: string[];
   executionEnvironmentDeviceIds: number[];
+  leaderId: string;
 }
 
 export interface ProjectCreateResourceSetup {
-  workspaceName: string;
+  location: ProjectCreateLocation;
+  currentUser: {
+    id: number;
+    name: string;
+  };
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
-  executionEnvironments: CollaborationExecutionEnvironment[];
+  groups: CollaborationGroup[];
+  executionEnvironments?: CollaborationExecutionEnvironment[];
+  createDefaultAgent?(): Promise<string>;
   configure(
     project: CollaborationProject,
     selection: ProjectCreateResourceSelection,
@@ -76,6 +84,7 @@ export interface ProjectCreateLabels {
   publicVisibilityDescription: string;
   publicVisibilityNotice: string;
   taskProvider: string;
+  advancedSettings: string;
   builtInProvider: string;
   builtInLocalDescription: string;
   builtInCloudDescription: string;
@@ -97,13 +106,16 @@ export interface ProjectCreateLabels {
   aitableRuntimeHint: string;
   description: string;
   descriptionPlaceholder: string;
-  projectResources: string;
-  projectResourcesDescription: string;
-  members: string;
-  agents: string;
-  executionEnvironments: string;
-  creatorIncluded: string;
-  noSpaceResources: string;
+  collaborators: string;
+  currentUser: string;
+  addCollaborator: string;
+  createDefaultAgent: string;
+  defaultGroupName: string;
+  createDefaultAgentDescription: string;
+  importGroupDescription: string;
+  availableAgents: string;
+  availableGroups: string;
+  noAvailableCollaborators: string;
   cancel: string;
   create: string;
   creating: string;

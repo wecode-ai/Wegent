@@ -613,6 +613,12 @@ impl LocalTaskStore {
         let status = input.status.or(current.status);
         let priority = input.priority.clone().or_else(|| current.priority.clone());
         let parent_id = input.parent_id.unwrap_or(current.parent_id);
+        let previous_group_id = current.metadata["collaboration_group"]["id"]
+            .as_str()
+            .map(ToOwned::to_owned);
+        let requested_group_id = input.assignee_group_id.as_ref().cloned().flatten();
+        let collaboration_group_changed = input.assignee_group_id.is_some()
+            && previous_group_id.as_deref() != requested_group_id.as_deref();
         let mut metadata = current.metadata;
         if let Some(group_id) = &input.assignee_group_id {
             metadata["collaboration_group"] = if let Some(group_id) = group_id {
@@ -715,9 +721,16 @@ impl LocalTaskStore {
                 refresh_runtime_projection_additional_context(&transaction, parent_id)?;
             }
         }
-        if assignee_changed {
+        if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
-            if let Some(agent_id) = assignee_agent_id {
+            if let Some(group_id) = requested_group_id.as_deref() {
+                local_automation::run_collaboration_group(
+                    &transaction,
+                    project_id,
+                    task_id,
+                    group_id,
+                )?;
+            } else if let Some(agent_id) = assignee_agent_id {
                 let agent =
                     get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
                         TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
@@ -4229,8 +4242,12 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         task_title: row.get(38)?,
         task_status: row.get(39)?,
         task_priority: row.get(40)?,
-        agent_name: row
-            .get::<_, Option<String>>(41)?
+        agent_name: agent_metadata
+            .get("display_name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or(row.get::<_, Option<String>>(41)?)
             .or(row.get::<_, Option<String>>(42)?)
             .unwrap_or_else(|| "AI".to_owned()),
         agent_system_prompt: row
@@ -4409,6 +4426,8 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| execution.task_title.clone());
     let workflow_node_id = stored.get("workflow_node_id").cloned();
+    let automation_run_id = stored.get("automation_run_id").cloned();
+    let automation_role = stored.get("automation_role").cloned();
     let mut additional_context = json!({
         "task": {
             "kind": "application",
@@ -4458,6 +4477,8 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             "cloudProjectId": execution.cloud_project_id,
             "loopItemId": execution.loop_item_id,
             "workflowNodeId": workflow_node_id,
+            "run_id": automation_run_id,
+            "automationRole": automation_role,
         },
         "additionalContext": additional_context,
     });
@@ -4510,11 +4531,23 @@ fn enqueue_ready_local_workflow_stages(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            (index, node_id, prompt, assignee_type, assignee_id)
+            let automation_role = node
+                .get("automation_role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            (
+                index,
+                node_id,
+                prompt,
+                assignee_type,
+                assignee_id,
+                automation_role,
+            )
         })
         .collect::<Vec<_>>();
     let mut queued = 0;
-    for (index, node_id, prompt, assignee_type, assignee_id) in ready {
+    for (index, node_id, prompt, assignee_type, assignee_id, automation_role) in ready {
         if assignee_type != "agent" || assignee_id.is_empty() {
             return Err(TaskRuntimeError::Invalid(format!(
                 "automated workflow stage '{node_id}' requires an agent assignee"
@@ -4548,6 +4581,7 @@ fn enqueue_ready_local_workflow_stages(
                 "message": message,
                 "workflow_node_id": node_id,
                 "automation_run_id": automation_run_id,
+                "automation_role": automation_role,
             }),
         )?;
         let execution = execution_row(connection, execution_id)?;
@@ -5031,6 +5065,156 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn assigning_a_local_issue_to_a_collaboration_group_starts_its_leader() {
+        let (_directory, store, project) = chat_agent_store();
+        let leader = make_local_agent(&store, &project.id, "auto");
+        let inactive = make_local_agent(&store, &project.id, "auto");
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items
+                 SET metadata=json_set(metadata,'$.display_name','当前设备智能体')
+                 WHERE id=?1",
+                [&leader.id],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET status='disabled' WHERE id=?1",
+                [&inactive.id],
+            )
+            .unwrap();
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([
+                        {
+                            "id": "group-1",
+                            "name": "Delivery team",
+                            "instructions": "Coordinate the work.",
+                            "leader": {"kind": "agent", "id": leader.id},
+                            "members": [
+                                {"kind": "agent", "id": leader.id},
+                                {"kind": "agent", "id": inactive.id}
+                            ],
+                            "stages": []
+                        }
+                    ])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Ship the feature".to_owned(),
+                    description: "Implement and verify it.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let assigned = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    assignee_group_id: Some(Some("group-1".to_owned())),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(assigned.metadata["collaboration_group"]["id"], "group-1");
+        assert_eq!(assigned.status.as_deref(), Some("in_progress"));
+        assert_eq!(
+            assigned.metadata["workflow"]["nodes"][0]["required_assignee_id"],
+            leader.id
+        );
+        assert_eq!(
+            assigned.metadata["workflow"]["nodes"][0]["status"],
+            "queued"
+        );
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the collaboration group leader must be queued");
+        assert_eq!(claimed.agent_id, leader.id);
+        assert_eq!(claimed.agent_name, "当前设备智能体");
+        let payload = claimed.execution_payload.as_ref().unwrap();
+        assert_eq!(
+            payload["origin"]["automationRole"],
+            Value::String("manager".to_owned())
+        );
+        let run_id = payload["origin"]["run_id"].as_str().unwrap();
+        let candidates = store
+            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
+            .unwrap();
+        assert_eq!(candidates["robots"].as_array().unwrap().len(), 1);
+        assert_eq!(candidates["robots"][0]["name"], "当前设备智能体");
+        store
+            .submit_local_automation_workflow_plan(
+                &project.id,
+                &task.id,
+                run_id,
+                &json!({
+                    "summary": "Implement the feature.",
+                    "items": [{
+                        "client_key": "implement",
+                        "title": "Implement",
+                        "description": "Make the requested change.",
+                        "assignee_type": "agent",
+                        "assignee_id": leader.id,
+                        "assignee_name": "当前设备智能体",
+                        "rationale": "Uses the current device."
+                    }]
+                }),
+            )
+            .unwrap();
+        store
+            .complete_execution(claimed.id, Some("Plan submitted"))
+            .unwrap();
+        assert!(store
+            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
+            .is_err());
+        let planned = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the submitted plan must queue its assigned Agent");
+        assert_eq!(planned.agent_id, leader.id);
+        assert_eq!(
+            planned.execution_payload.as_ref().unwrap()["message"],
+            "Implement\n\nMake the requested change.\n\nUses the current device."
         );
     }
 

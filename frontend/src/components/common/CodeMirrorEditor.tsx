@@ -97,6 +97,8 @@ interface CodeMirrorEditorProps {
   value: string
   /** Callback when content changes */
   onChange?: (value: string) => void
+  /** Callback when focus leaves the editor */
+  onBlur?: () => void
   /** Callback for :w (save) command */
   onSave?: () => void
   /** Callback for :q (close) command */
@@ -115,6 +117,14 @@ interface CodeMirrorEditorProps {
   onVimModeChange?: (mode: VimMode) => void
   /** Language mode for syntax highlighting */
   language?: EditorLanguage
+  /** Accessible name applied to the editable CodeMirror content */
+  ariaLabel?: string
+  /** IDs describing the editor and its current validation state */
+  ariaDescribedBy?: string
+  /** Whether the editor currently contains invalid content */
+  ariaInvalid?: boolean
+  /** Stable selector applied to the editor container */
+  dataTestId?: string
 }
 
 /**
@@ -251,6 +261,7 @@ const darkThemeOverrides = EditorView.theme(
 export function CodeMirrorEditor({
   value,
   onChange,
+  onBlur,
   onSave,
   onClose,
   theme = 'light',
@@ -260,6 +271,10 @@ export function CodeMirrorEditor({
   placeholder,
   onVimModeChange,
   language = 'markdown',
+  ariaLabel,
+  ariaDescribedBy,
+  ariaInvalid = false,
+  dataTestId,
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<EditorView | null>(null)
@@ -350,6 +365,11 @@ export function CodeMirrorEditor({
       theme === 'dark' ? [oneDark, darkThemeOverrides] : lightTheme,
       // Basic settings
       EditorView.lineWrapping,
+      EditorView.contentAttributes.of({
+        ...(ariaLabel && { 'aria-label': ariaLabel }),
+        ...(ariaDescribedBy && { 'aria-describedby': ariaDescribedBy }),
+        'aria-invalid': String(ariaInvalid),
+      }),
       // Custom selection drawing - required for Vim visual mode selection to be visible
       drawSelection(),
     ]
@@ -456,7 +476,7 @@ export function CodeMirrorEditor({
       view.destroy()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vimEnabled, theme, readOnly, handleChange, language])
+  }, [vimEnabled, theme, readOnly, handleChange, language, ariaLabel, ariaDescribedBy, ariaInvalid])
 
   // Update content when value prop changes
   useEffect(() => {
@@ -517,6 +537,8 @@ export function CodeMirrorEditor({
         className
       )}
       data-placeholder={placeholder}
+      data-testid={dataTestId}
+      onBlur={onBlur}
     />
   )
 }

@@ -481,6 +481,42 @@ flowchart TB
     style EX fill:#14B8A6,color:#fff
 ```
 
+### Local collaboration group orchestration
+
+Wework manages local projects, agents, and collaboration groups through the
+local Executor and persists them in the Executor's local SQLite database.
+Cloud projects and their members, agents, and collaboration groups remain
+Backend-owned. The Local and Cloud UI domains select the active resource
+boundary; they must not merge both domains into one resource list or expose
+cloud-only actions, such as inviting members, for local resources.
+
+When a local Issue is assigned to a collaboration group, the Executor reads the
+leader, members, and coordination rules from the owning project's
+`collaboration_groups` configuration. A group without a leader does not start
+automated orchestration. A group with explicit stages creates workflow nodes in
+stage order. In manager coordination mode without explicit stages, the Executor
+first creates a manager node and lets the leader plan the remaining work from
+the Issue context.
+
+The manager runtime receives only task-scoped `wework_space` tools for reading
+the current Issue, listing candidates allowed by the current collaboration
+group, and submitting one plan through `submit_workflow_plan`. The plan is
+validated in one transaction:
+
+- the caller belongs to the active collaboration workflow for the current
+  Issue;
+- every `client_key` is unique, and every item has a title and assignee;
+- every assignee is a member of the current collaboration group;
+- every agent is active in the current project;
+- a workflow can accept only one successful plan submission.
+
+After validation, the Executor expands the plan into persisted workflow nodes
+and creates or advances child tasks in dependency order. A rejected plan does
+not leave partially written nodes, keeping the Issue and workflow consistent
+for diagnostics. Local workflows do not call cloud project-space assignment or
+outcome-reporting APIs; cloud collaboration continues to use Backend-owned
+project-space workflows.
+
 ### Task State Transitions
 
 ```mermaid

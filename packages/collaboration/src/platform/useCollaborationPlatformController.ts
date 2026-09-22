@@ -362,6 +362,17 @@ export function useCollaborationPlatformController({
           };
           if (successfulNavigationLoads > 0) publish();
         };
+        const mergeCollaborationGroups = (
+          index: number,
+          groups: CollaborationGroup[],
+        ) => {
+          updateSnapshot(index, {
+            collaborationGroups: mergeByKey(
+              [snapshots[index].collaborationGroups, groups],
+              (group) => group.id,
+            ),
+          });
+        };
         for (const [index, source] of sources.entries()) {
           if (rootView === "my-work" || rootView === "inbox") {
             void loadRootMyWork(source).then((myWork) => {
@@ -389,6 +400,28 @@ export function useCollaborationPlatformController({
                 if (revision !== loadRevisionRef.current) return;
                 successfulNavigationLoads += 1;
                 updateSnapshot(index, { projects });
+                if (
+                  rootView === "teams" &&
+                  source.projects.listCollaborationGroups
+                ) {
+                  void Promise.all(
+                    projects.map(async (project) => {
+                      try {
+                        const groups = await source.projects
+                          .listCollaborationGroups!(project.id);
+                        return groups.filter(
+                          (group) =>
+                            group.owner_type === "project" &&
+                            group.owner_id === project.id,
+                        );
+                      } catch {
+                        return [];
+                      }
+                    }),
+                  ).then((groups) => {
+                    mergeCollaborationGroups(index, groups.flat());
+                  });
+                }
                 if (location.rootView === "runs") {
                   void loadRootExecutions(source, projects).then(
                     (executions) => {
@@ -412,9 +445,7 @@ export function useCollaborationPlatformController({
                           .catch(() => []),
                       ),
                     ).then((groups) => {
-                      updateSnapshot(index, {
-                        collaborationGroups: groups.flat(),
-                      });
+                      mergeCollaborationGroups(index, groups.flat());
                     });
                   }
                 }),
@@ -826,20 +857,23 @@ export function useCollaborationPlatformController({
         }));
         return workspace;
       },
-      async createProject(input: {
-        name: string;
-        description?: string;
-        projectKey?: string;
-        taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
-        visibility?: "private" | "public";
-        providerConfig?: Record<string, unknown>;
-      }) {
-        if (!location.workspaceId) {
+      async createProject(
+        input: {
+          name: string;
+          description?: string;
+          projectKey?: string;
+          taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
+          visibility?: "private" | "public";
+          providerConfig?: Record<string, unknown>;
+        },
+        workspaceId = location.workspaceId,
+      ) {
+        if (!workspaceId) {
           throw new Error("Workspace is unavailable");
         }
         const project = await api.projects.create({
           ...input,
-          workspaceId: location.workspaceId,
+          workspaceId,
         });
         registerProject(project);
         return project;

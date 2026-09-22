@@ -705,12 +705,20 @@ export function CloudTodoWorkspace({
     () =>
       createWeworkProjectAgentConfigurationHost(
         services.agentResourceApi,
-        undefined,
-        undefined,
+        services.localProjectChatAgentApi,
+        services.modelApi,
         services.pluginApi,
-        services.deviceApi
+        services.deviceApi,
+        i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
       ),
-    [services.agentResourceApi, services.deviceApi, services.pluginApi]
+    [
+      i18n.language,
+      services.agentResourceApi,
+      services.deviceApi,
+      services.localProjectChatAgentApi,
+      services.modelApi,
+      services.pluginApi,
+    ]
   )
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)
@@ -4749,6 +4757,7 @@ export function CloudTodoWorkspace({
                                         : null
                                     }
                                     locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                                    currentUserId={Number(user.id)}
                                     members={
                                       collaborationProjectMembers[selectedProjectKey ?? ''] ?? []
                                     }
@@ -4763,6 +4772,12 @@ export function CloudTodoWorkspace({
                                     canManage={['Owner', 'Maintainer'].includes(
                                       selectedProject.access_role ?? 'Owner'
                                     )}
+                                    location={selectedProject.location}
+                                    agentConfiguration={projectAgentConfigurationHost}
+                                    agentResourceContext={{
+                                      name: selectedProject.name,
+                                      namespace: 'default',
+                                    }}
                                   />
                                 ) : (
                                   <div

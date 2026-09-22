@@ -527,6 +527,78 @@ describe('IssueActivityPanel', () => {
     ).toBe('发送消息')
   })
 
+  it('confirms the active mention with Enter instead of submitting the comment', async () => {
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: { create: vi.fn() },
+    } as unknown as Pick<SharedWorkspaceApi, 'assignments' | 'comments'>
+    render(issue, { api })
+
+    typeMentionTrigger()
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="collaboration-issue-comment"]'
+    )!
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+      await Promise.resolve()
+    })
+
+    expect(textarea.value).toBe('@李明 ')
+    expect(api.comments.create).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="collaboration-issue-mention-popup"]')).toBeNull()
+  })
+
+  it('uses arrow keys to choose a mention before confirming it with Enter', async () => {
+    render(issue, {
+      members: [
+        {
+          id: 1,
+          user_id: 7,
+          user_name: '李明',
+          email: null,
+          role: 'Developer',
+        },
+        {
+          id: 2,
+          user_id: 8,
+          user_name: '王芳',
+          email: null,
+          role: 'Developer',
+        },
+      ],
+    })
+
+    typeMentionTrigger()
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="collaboration-issue-comment"]'
+    )!
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+      await Promise.resolve()
+    })
+
+    expect(textarea.value).toBe('@王芳 ')
+  })
+
   it('places the caret after a mention before the next input can arrive', async () => {
     render(issue)
     change('collaboration-issue-comment', 'Keep this suffix')

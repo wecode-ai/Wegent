@@ -557,8 +557,10 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
     ACTIVE_WORKBENCH_SELECTOR
   )
 
-  const runningDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const runningDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    'The busy Goal handoff did not expose its runtime task ID'
   )
   const goalTaskId = runningDebugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(goalTaskId, 'The busy Goal handoff did not expose its runtime task ID')

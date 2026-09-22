@@ -2988,6 +2988,7 @@ mod tests {
             turn_status: None,
             goal_status: None,
             goal_execution_status: None,
+            interaction_status: None,
             supervisor: None,
             git_info: None,
             created_at: 0,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { inCollaborationSidebar, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 
 const WORKSPACE = {
   id: 'workspace-task-attachments',
@@ -209,6 +209,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         }
       )
+      await selectCollaborationDomain(control, activeBoard, 'cloud')
       const workspaceSelector = inCollaborationSidebar(
         `[data-testid="collaboration-workspace-${WORKSPACE.id}"]`
       )
