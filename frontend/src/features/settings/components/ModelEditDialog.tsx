@@ -26,7 +26,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Loader2, RefreshCw, ChevronDown, Check } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, Loader2, RefreshCw } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -48,14 +48,24 @@ import {
   AvailableModel,
   UnifiedModel,
   VisionSidecarModelRef,
+  ModelSpecConfig,
 } from '@/apis/models'
 import {
   ImageConfigSection,
   ImageConfigState,
+  canEditModelSpecWithForm,
+  extractThinkingConfig,
+  formatModelSpec,
   getDefaultImageConfig,
+  isModelConfigObject,
+  mergeFormManagedSpec,
   toImageGenerationConfig,
   fromImageGenerationConfig,
+  validateModelSpecJson,
+  type ModelSpecValidationResult,
 } from './model-config'
+import { CodeMirrorEditor } from '@/components/common/CodeMirrorEditor'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import {
   buildEmbeddingConfig,
   hasImageInputCapability,
@@ -141,31 +151,7 @@ export interface ModelInitialData {
   thinkingConfig?: Record<string, unknown>
   isWeworkAvailable?: boolean
   visionSidecarModel?: VisionSidecarModelRef
-}
-
-/**
- * Extract thinkingConfig from model - reads from env (single source of truth).
- * Unwraps double-nested thinking_config if found (caused by earlier bug).
- */
-function extractThinkingConfig(
-  model: import('@/apis/models').ModelCRD
-): Record<string, unknown> | undefined {
-  const env = model.spec?.modelConfig?.env
-  let config = (env?.thinking_config ?? env?.thinkingConfig) as Record<string, unknown> | undefined
-  // Unwrap double-nested thinking_config from corrupted DB data
-  if (config) {
-    const keys = Object.keys(config)
-    if (
-      keys.length === 1 &&
-      (keys[0] === 'thinking_config' || keys[0] === 'thinkingConfig') &&
-      typeof config[keys[0]] === 'object' &&
-      config[keys[0]] !== null &&
-      !Array.isArray(config[keys[0]])
-    ) {
-      config = config[keys[0]] as Record<string, unknown>
-    }
-  }
-  return config
+  spec?: ModelSpecConfig
 }
 
 interface ModelEditDialogProps {
@@ -320,6 +306,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   publicationGroups,
 }) => {
   const { t } = useTranslation()
+  const { theme } = useTheme()
   // Support both legacy model prop and new initialData prop
   // Use useMemo to prevent re-creating the object on every render
   const effectiveInitialData = React.useMemo(() => {
@@ -348,9 +335,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             modelCapabilities: getModelCapabilitiesFromSpec(model.spec),
             videoConfig: model.spec.videoConfig,
             imageConfig: model.spec.imageConfig,
-            thinkingConfig: extractThinkingConfig(model),
+            thinkingConfig: extractThinkingConfig(model.spec.modelConfig?.env),
             isWeworkAvailable: model.spec.isWeworkAvailable,
             visionSidecarModel: model.spec.modelConfig?.visionSidecarModel,
+            spec: model.spec,
           }
         : null)
     )
@@ -383,6 +371,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [baseUrl, setBaseUrl] = useState('')
   const [customHeaders, setCustomHeaders] = useState('')
   const [customHeadersError, setCustomHeadersError] = useState('')
+  const [editingMode, setEditingMode] = useState<'form' | 'json'>('form')
+  const [rawSpec, setRawSpec] = useState<ModelSpecConfig>({
+    modelConfig: { env: {} },
+  } as ModelSpecConfig)
+  const [modelSpecJson, setModelSpecJson] = useState('')
+  const [modelSpecError, setModelSpecError] = useState('')
+  const [modelSpecCannotUseForm, setModelSpecCannotUseForm] = useState(false)
   const [modelIdNameError, setModelIdNameError] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -649,6 +644,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       setCustomHeadersError('')
       setModelIdNameError('')
       setShowApiKey(false)
+      const initialSpec =
+        effectiveInitialData?.spec || ({ modelConfig: { env: {} } } as ModelSpecConfig)
+      setRawSpec(initialSpec)
+      setModelSpecJson(formatModelSpec(initialSpec))
+      setModelSpecError('')
+      const canUseForm = canEditModelSpecWithForm(initialSpec)
+      setEditingMode(canUseForm ? 'form' : 'json')
+      setModelSpecCannotUseForm(!canUseForm)
     }
   }, [open, effectiveInitialData])
 
@@ -664,7 +667,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       .then(response => {
         if (cancelled) return
         setAvailableVisionModels(response.data)
-        const initialRef = effectiveInitialData?.visionSidecarModel
+        const initialRef = rawSpec.modelConfig?.visionSidecarModel
         if (initialRef) {
           const selection = initialVisionSidecarSelection(response.data, initialRef)
           setSelectedVisionSidecarKey(selection.selectedKey)
@@ -680,7 +683,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     return () => {
       cancelled = true
     }
-  }, [effectiveInitialData?.visionSidecarModel, isWeworkAvailable, modelCategoryType, open])
+  }, [isWeworkAvailable, modelCategoryType, open, rawSpec])
 
   const visionModelOptions = React.useMemo(
     () => visionSidecarModels(availableVisionModels, modelIdName),
@@ -844,9 +847,70 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }
 
+  const runtimeProviderFromSpec = (spec: ModelSpecConfig, modelValue: string): string => {
+    if (spec.protocol === 'openai-responses' || spec.protocol === 'gemini-deep-research') {
+      return spec.protocol
+    }
+    if (modelValue === 'claude') return 'anthropic'
+    return typeof spec.protocol === 'string' && spec.modelType !== 'llm'
+      ? spec.protocol
+      : modelValue
+  }
+
+  const getActiveRuntimeConfig = () => {
+    if (editingMode === 'form') {
+      const parsedHeaders = validateCustomHeaders(customHeaders)
+      if (parsedHeaders === null) return null
+      return {
+        providerType,
+        modelId: modelId === 'custom' ? customModelId : modelId,
+        apiKey,
+        baseUrl,
+        customHeaders: parsedHeaders,
+        modelCategoryType,
+      }
+    }
+
+    const spec = parseModelSpec(modelSpecJson)
+    const modelConfig = spec && isModelConfigObject(spec.modelConfig) ? spec.modelConfig : null
+    const env = modelConfig && isModelConfigObject(modelConfig.env) ? modelConfig.env : null
+    if (!spec || !env) {
+      if (spec) setModelSpecError(t('common:models.errors.model_spec_runtime_required'))
+      return null
+    }
+    const modelValue = typeof env.model === 'string' ? env.model : ''
+    const headers = env.custom_headers
+    if (
+      headers !== undefined &&
+      (!isModelConfigObject(headers) ||
+        Object.values(headers).some(value => typeof value !== 'string'))
+    ) {
+      setModelSpecError(t('common:models.errors.model_spec_headers_invalid'))
+      return null
+    }
+    const category = MODEL_CATEGORY_OPTIONS.some(option => option.value === spec.modelType)
+      ? (spec.modelType as ModelCategoryType)
+      : 'llm'
+    return {
+      providerType: runtimeProviderFromSpec(spec, modelValue),
+      modelId: typeof env.model_id === 'string' ? env.model_id : '',
+      apiKey: typeof env.api_key === 'string' ? env.api_key : '',
+      baseUrl: typeof env.base_url === 'string' ? env.base_url : '',
+      customHeaders: (headers || {}) as Record<string, string>,
+      modelCategoryType: category,
+    }
+  }
+
   const handleTestConnection = async () => {
-    const finalModelId = modelId === 'custom' ? customModelId : modelId
-    if (!finalModelId || !apiKey) {
+    const runtimeConfig = getActiveRuntimeConfig()
+    if (!runtimeConfig) {
+      toast({
+        variant: 'destructive',
+        title: t('common:models.errors.model_spec_invalid'),
+      })
+      return
+    }
+    if (!runtimeConfig.modelId || !runtimeConfig.apiKey) {
       toast({
         variant: 'destructive',
         title: t('common:models.errors.model_id_required'),
@@ -854,31 +918,24 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return
     }
 
-    // Parse custom headers for test connection
-    const parsedHeaders = validateCustomHeaders(customHeaders)
-    if (parsedHeaders === null) {
-      toast({
-        variant: 'destructive',
-        title: t('common:models.errors.custom_headers_invalid'),
-      })
-      return
-    }
-
     setTesting(true)
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType as
+        provider_type: runtimeConfig.providerType as
           | 'openai'
           | 'anthropic'
           | 'gemini'
           | 'gemini-deep-research'
           | 'openai-responses'
           | 'gpt-image',
-        model_id: finalModelId,
-        api_key: apiKey,
-        base_url: baseUrl || undefined,
-        custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
-        model_category_type: modelCategoryType,
+        model_id: runtimeConfig.modelId,
+        api_key: runtimeConfig.apiKey,
+        base_url: runtimeConfig.baseUrl || undefined,
+        custom_headers:
+          Object.keys(runtimeConfig.customHeaders).length > 0
+            ? runtimeConfig.customHeaders
+            : undefined,
+        model_category_type: runtimeConfig.modelCategoryType,
       })
 
       if (result.success) {
@@ -905,7 +962,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   }
 
   const handleFetchModels = async () => {
-    if (!apiKey.trim()) {
+    const runtimeConfig = getActiveRuntimeConfig()
+    if (!runtimeConfig) {
+      setFetchError(t('common:models.errors.model_spec_invalid'))
+      return
+    }
+    if (!runtimeConfig.apiKey.trim()) {
       setFetchError(t('common:models.fetch_error_no_api_key'))
       toast({
         variant: 'destructive',
@@ -914,15 +976,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return
     }
 
-    // Parse custom headers
-    const parsedHeaders = validateCustomHeaders(customHeaders)
-    if (parsedHeaders === null) {
-      setFetchError(t('common:models.errors.custom_headers_invalid'))
-      return
-    }
-
     // Check cache
-    const cacheKey = `${providerType}_${baseUrl || 'default'}`
+    const cacheKey = `${runtimeConfig.providerType}_${runtimeConfig.baseUrl || 'default'}`
     const cached = modelCacheRef.current.get(cacheKey)
     const now = Date.now()
 
@@ -941,10 +996,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
     try {
       const result = await modelApis.fetchAvailableModels({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'custom',
-        api_key: apiKey,
-        base_url: baseUrl || undefined,
-        custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
+        provider_type: runtimeConfig.providerType as 'openai' | 'anthropic' | 'gemini' | 'custom',
+        api_key: runtimeConfig.apiKey,
+        base_url: runtimeConfig.baseUrl || undefined,
+        custom_headers:
+          Object.keys(runtimeConfig.customHeaders).length > 0
+            ? runtimeConfig.customHeaders
+            : undefined,
       })
 
       if (result.success && result.models) {
@@ -1072,9 +1130,363 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     validateThinkingConfig(value)
   }
 
+  const modelSpecValidationMessage = (result: ModelSpecValidationResult): string => {
+    switch (result.error) {
+      case 'invalid_json':
+        return result.line && result.column
+          ? t('common:models.errors.model_spec_invalid_json_location', {
+              line: result.line,
+              column: result.column,
+            })
+          : t('common:models.errors.model_spec_invalid_json')
+      case 'invalid_object':
+        return t('common:models.errors.model_spec_invalid_object')
+      case 'invalid_model_config':
+        return t('common:models.errors.model_spec_invalid_model_config')
+      case 'unsafe_keys':
+        return t('common:models.errors.model_spec_unsafe_keys', {
+          keys: result.paths.join(', '),
+        })
+      default:
+        return ''
+    }
+  }
+
+  const parseModelSpec = (value: string): ModelSpecConfig | null => {
+    const result = validateModelSpecJson(value)
+    setModelSpecError(modelSpecValidationMessage(result))
+    return result.value
+  }
+
+  const handleModelSpecChange = (value: string) => {
+    setModelSpecJson(value)
+    if (modelSpecError) setModelSpecError('')
+  }
+
   const handleModelIdNameChange = (value: string) => {
     setModelIdName(value)
     validateModelIdName(value)
+  }
+
+  const buildManagedSpecFromForm = (
+    parsedHeaders: Record<string, string>,
+    parsedThinkingConfig: Record<string, unknown>,
+    notifyOnError: boolean
+  ): {
+    spec: ModelSpecConfig
+    videoConfig?: VideoGenerationConfig
+    selectedVisionSidecar?: VisionSidecarModelRef
+  } | null => {
+    const ttsConfig: TTSConfig | undefined =
+      modelCategoryType === 'tts'
+        ? { voice: ttsVoice || undefined, speed: ttsSpeed, output_format: ttsOutputFormat }
+        : undefined
+    const sttConfig: STTConfig | undefined =
+      modelCategoryType === 'stt'
+        ? {
+            language: sttLanguage || undefined,
+            transcription_format: sttTranscriptionFormat,
+          }
+        : undefined
+    const embeddingConfig: EmbeddingConfig | undefined =
+      modelCategoryType === 'embedding'
+        ? buildEmbeddingConfig({
+            dimensions: embeddingDimensions,
+            encodingFormat: embeddingEncodingFormat,
+            supportsImageInput: embeddingSupportsImageInput,
+          })
+        : undefined
+    const rerankConfig: RerankConfig | undefined =
+      modelCategoryType === 'rerank'
+        ? { top_n: rerankTopN, return_documents: rerankReturnDocuments }
+        : undefined
+
+    let parsedAdvancedCapabilities: VideoCapabilities = {}
+    if (modelCategoryType === 'video' && advancedCapabilities.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(advancedCapabilities)
+        if (!isModelConfigObject(parsed)) throw new Error('Capabilities must be an object')
+        parsedAdvancedCapabilities = parsed as VideoCapabilities
+        setAdvancedCapabilitiesError('')
+      } catch {
+        setAdvancedCapabilitiesError(t('common:models.video_advanced_capabilities_invalid'))
+        if (notifyOnError) {
+          toast({
+            variant: 'destructive',
+            title: t('common:models.video_advanced_capabilities_invalid'),
+          })
+        }
+        return null
+      }
+    }
+
+    const hasCapabilities =
+      capRatios.length > 0 ||
+      capResolutions.length > 0 ||
+      capDurations.length > 0 ||
+      Object.keys(parsedAdvancedCapabilities).length > 0
+    const capabilities = hasCapabilities
+      ? {
+          ...parsedAdvancedCapabilities,
+          ...(capRatios.length > 0 && { aspect_ratios: capRatios }),
+          ...(capResolutions.length > 0 && { resolutions: capResolutions }),
+          ...(capDurations.length > 0 && { durations_sec: capDurations }),
+        }
+      : undefined
+    const videoConfig: VideoGenerationConfig | undefined =
+      modelCategoryType === 'video'
+        ? {
+            resolution: capResolutions.some(
+              option => (option.value ?? option.label) === videoDefaultResolution
+            )
+              ? videoDefaultResolution
+              : (capResolutions[0]?.value ?? capResolutions[0]?.label ?? '720p'),
+            ratio: capRatios.some(option => option.value === videoDefaultRatio)
+              ? videoDefaultRatio
+              : (capRatios[0]?.value ?? '16:9'),
+            duration: capDurations.includes(videoDefaultDuration)
+              ? videoDefaultDuration
+              : capDurations[0] || 5,
+            generate_audio: videoGenerateAudio,
+            draft: videoDraft,
+            seed: videoSeed,
+            camera_fixed: videoCameraFixed,
+            watermark: videoWatermark,
+            ...(capabilities && { capabilities }),
+          }
+        : undefined
+    const imageGenerationConfig =
+      modelCategoryType === 'image' ? toImageGenerationConfig(imageConfig) : undefined
+    const rawModelCapabilities: ModelCapabilities = {
+      ...(supportsImageInput && { supportsImage: true }),
+      ...(supportsVideoInput && { supportsVideo: true }),
+    }
+    const modelCapabilities: ModelCapabilities | undefined =
+      modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
+        ? rawModelCapabilities
+        : undefined
+    const selectedVisionSidecar = selectedVisionSidecarRef(
+      modelCategoryType === 'llm' && isWeworkAvailable,
+      selectedVisionSidecarKey,
+      availableVisionModels,
+      unresolvedVisionSidecar
+    )
+
+    let modelFieldValue = providerType
+    if (modelCategoryType === 'llm') {
+      if (providerType === 'anthropic') modelFieldValue = 'claude'
+      if (providerType === 'openai-responses') modelFieldValue = 'openai'
+      if (providerType === 'gemini-deep-research') modelFieldValue = 'gemini'
+    }
+    const finalModelId = modelId === 'custom' ? customModelId : modelId
+    const spec: ModelSpecConfig = {
+      modelConfig: {
+        env: {
+          model: modelFieldValue,
+          model_id: finalModelId,
+          api_key: apiKey,
+          ...(baseUrl && { base_url: baseUrl }),
+          ...(Object.keys(parsedHeaders).length > 0 && { custom_headers: parsedHeaders }),
+          ...(Object.keys(parsedThinkingConfig).length > 0 && {
+            thinking_config: parsedThinkingConfig,
+          }),
+        },
+        ...(modelCategoryType === 'llm' && contextWindow && { context_window: contextWindow }),
+        ...(modelCategoryType === 'llm' &&
+          maxOutputTokens && { max_output_tokens: maxOutputTokens }),
+        ...(selectedVisionSidecar && { visionSidecarModel: selectedVisionSidecar }),
+      },
+      modelType: modelCategoryType,
+      ...(providerType === 'openai' && {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+      }),
+      ...(providerType === 'openai-responses' && {
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+      }),
+      ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
+      ...(modelCategoryType === 'video' && { protocol: providerType }),
+      ...(modelCategoryType === 'image' && { protocol: providerType }),
+      ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
+      ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
+      ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
+      ...(ttsConfig && { ttsConfig }),
+      ...(sttConfig && { sttConfig }),
+      ...(embeddingConfig && { embeddingConfig }),
+      ...(rerankConfig && { rerankConfig }),
+      ...(videoConfig && { videoConfig }),
+      ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
+      ...(modelCapabilities && { modelCapabilities }),
+      ...(isWeworkAvailable && { isWeworkAvailable: true }),
+    }
+    return { spec, videoConfig, selectedVisionSidecar: selectedVisionSidecar || undefined }
+  }
+
+  const hydrateFormFromSpec = (spec: ModelSpecConfig) => {
+    const modelConfig = spec.modelConfig
+    const env = modelConfig.env
+    const category = MODEL_CATEGORY_OPTIONS.some(option => option.value === spec.modelType)
+      ? (spec.modelType as ModelCategoryType)
+      : 'llm'
+    const modelValue = typeof env.model === 'string' ? env.model : ''
+    const nextProvider = runtimeProviderFromSpec(spec, modelValue) || 'openai'
+
+    setModelCategoryType(category)
+    setProviderType(nextProvider)
+    setModelId(typeof env.model_id === 'string' ? env.model_id : '')
+    setCustomModelId('')
+    setApiKey(typeof env.api_key === 'string' ? env.api_key : '')
+    setBaseUrl(typeof env.base_url === 'string' ? env.base_url : '')
+    setCustomHeaders(
+      isModelConfigObject(env.custom_headers) ? JSON.stringify(env.custom_headers, null, 2) : ''
+    )
+    setThinkingConfigStr(
+      extractThinkingConfig(env) ? JSON.stringify(extractThinkingConfig(env), null, 2) : ''
+    )
+    setContextWindow(
+      typeof modelConfig.context_window === 'number' ? modelConfig.context_window : undefined
+    )
+    setMaxOutputTokens(
+      typeof modelConfig.max_output_tokens === 'number' ? modelConfig.max_output_tokens : undefined
+    )
+    setCostIndex(typeof spec.costIndex === 'string' ? spec.costIndex : undefined)
+    setModelGroup(typeof spec.modelGroup === 'string' ? spec.modelGroup : '')
+    setModelSubGroup(typeof spec.modelSubGroup === 'string' ? spec.modelSubGroup : '')
+
+    const nextTtsConfig = isModelConfigObject(spec.ttsConfig) ? spec.ttsConfig : {}
+    setTtsVoice(typeof nextTtsConfig.voice === 'string' ? nextTtsConfig.voice : '')
+    setTtsSpeed(typeof nextTtsConfig.speed === 'number' ? nextTtsConfig.speed : 1)
+    setTtsOutputFormat(nextTtsConfig.output_format === 'wav' ? 'wav' : 'mp3')
+    const nextSttConfig = isModelConfigObject(spec.sttConfig) ? spec.sttConfig : {}
+    setSttLanguage(typeof nextSttConfig.language === 'string' ? nextSttConfig.language : '')
+    setSttTranscriptionFormat(
+      nextSttConfig.transcription_format === 'srt' || nextSttConfig.transcription_format === 'vtt'
+        ? nextSttConfig.transcription_format
+        : 'text'
+    )
+    const nextEmbeddingConfig = isModelConfigObject(spec.embeddingConfig)
+      ? spec.embeddingConfig
+      : {}
+    setEmbeddingDimensions(
+      typeof nextEmbeddingConfig.dimensions === 'number'
+        ? nextEmbeddingConfig.dimensions
+        : undefined
+    )
+    setEmbeddingEncodingFormat(
+      nextEmbeddingConfig.encoding_format === 'base64' ? 'base64' : 'float'
+    )
+    setEmbeddingSupportsImageInput(hasImageInputCapability(nextEmbeddingConfig))
+    const nextRerankConfig = isModelConfigObject(spec.rerankConfig) ? spec.rerankConfig : {}
+    setRerankTopN(typeof nextRerankConfig.top_n === 'number' ? nextRerankConfig.top_n : undefined)
+    setRerankReturnDocuments(
+      typeof nextRerankConfig.return_documents === 'boolean'
+        ? nextRerankConfig.return_documents
+        : true
+    )
+
+    const nextVideoConfig = isModelConfigObject(spec.videoConfig) ? spec.videoConfig : {}
+    setVideoGenerateAudio(
+      typeof nextVideoConfig.generate_audio === 'boolean' ? nextVideoConfig.generate_audio : true
+    )
+    setVideoDraft(typeof nextVideoConfig.draft === 'boolean' ? nextVideoConfig.draft : false)
+    setVideoSeed(typeof nextVideoConfig.seed === 'number' ? nextVideoConfig.seed : -1)
+    setVideoCameraFixed(
+      typeof nextVideoConfig.camera_fixed === 'boolean' ? nextVideoConfig.camera_fixed : false
+    )
+    setVideoWatermark(
+      typeof nextVideoConfig.watermark === 'boolean' ? nextVideoConfig.watermark : false
+    )
+    setVideoDefaultResolution(
+      typeof nextVideoConfig.resolution === 'string' ? nextVideoConfig.resolution : '720p'
+    )
+    setVideoDefaultRatio(typeof nextVideoConfig.ratio === 'string' ? nextVideoConfig.ratio : '16:9')
+    setVideoDefaultDuration(
+      typeof nextVideoConfig.duration === 'number' ? nextVideoConfig.duration : 5
+    )
+    const nextCapabilities = isModelConfigObject(nextVideoConfig.capabilities)
+      ? nextVideoConfig.capabilities
+      : {}
+    setCapRatios(
+      Array.isArray(nextCapabilities.aspect_ratios) ? nextCapabilities.aspect_ratios : []
+    )
+    setCapResolutions(
+      Array.isArray(nextCapabilities.resolutions) ? nextCapabilities.resolutions : []
+    )
+    setCapDurations(
+      Array.isArray(nextCapabilities.durations_sec) ? nextCapabilities.durations_sec : []
+    )
+    const {
+      aspect_ratios: _aspectRatios,
+      resolutions: _resolutions,
+      durations_sec: _durations,
+      ...advancedVideoCapabilities
+    } = nextCapabilities
+    setAdvancedCapabilities(
+      Object.keys(advancedVideoCapabilities).length
+        ? JSON.stringify(advancedVideoCapabilities, null, 2)
+        : ''
+    )
+    setImageConfig(
+      isModelConfigObject(spec.imageConfig)
+        ? fromImageGenerationConfig(spec.imageConfig)
+        : getDefaultImageConfig()
+    )
+    const nextModelCapabilities = getModelCapabilitiesFromSpec(spec)
+    setSupportsImageInput(nextModelCapabilities.supportsImage ?? false)
+    setSupportsVideoInput(nextModelCapabilities.supportsVideo ?? false)
+    setIsWeworkAvailable(spec.isWeworkAvailable === true)
+
+    const sidecar = isModelConfigObject(modelConfig.visionSidecarModel)
+      ? (modelConfig.visionSidecarModel as unknown as VisionSidecarModelRef)
+      : undefined
+    if (sidecar) {
+      const selection = initialVisionSidecarSelection(availableVisionModels, sidecar)
+      setSelectedVisionSidecarKey(selection.selectedKey)
+      setUnresolvedVisionSidecar(selection.unresolvedRef)
+    } else {
+      setSelectedVisionSidecarKey('')
+      setUnresolvedVisionSidecar(null)
+    }
+    setCustomHeadersError('')
+    setThinkingConfigError('')
+    setAdvancedCapabilitiesError('')
+  }
+
+  const handleSwitchToJson = () => {
+    const parsedHeaders = validateCustomHeaders(customHeaders)
+    const parsedThinkingConfig = validateThinkingConfig(thinkingConfigStr)
+    if (parsedHeaders === null || parsedThinkingConfig === null) return
+    const managedForm = buildManagedSpecFromForm(parsedHeaders, parsedThinkingConfig, false)
+    if (!managedForm) return
+
+    const mergedSpec = mergeFormManagedSpec(rawSpec, managedForm.spec)
+    setRawSpec(mergedSpec)
+    setModelSpecJson(formatModelSpec(mergedSpec))
+    setModelSpecError('')
+    setModelSpecCannotUseForm(false)
+    setEditingMode('json')
+  }
+
+  const handleSwitchToForm = () => {
+    const spec = parseModelSpec(modelSpecJson)
+    if (!spec) return
+    if (!canEditModelSpecWithForm(spec)) {
+      setModelSpecCannotUseForm(true)
+      setModelSpecError(t('common:models.errors.model_spec_not_form_compatible'))
+      return
+    }
+
+    setRawSpec(spec)
+    hydrateFormFromSpec(spec)
+    setModelSpecCannotUseForm(false)
+    setModelSpecError('')
+    setEditingMode('form')
+  }
+
+  const handleFormatModelSpec = () => {
+    const spec = parseModelSpec(modelSpecJson)
+    if (spec) setModelSpecJson(formatModelSpec(spec))
   }
 
   const handleSave = async () => {
@@ -1104,39 +1516,55 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
 
     const finalModelId = modelId === 'custom' ? customModelId : modelId
-    if (!finalModelId) {
-      toast({
-        variant: 'destructive',
-        title: t('common:models.errors.model_id_required'),
-      })
-      return
-    }
+    let expertSpec: ModelSpecConfig | null = null
+    let parsedHeaders: Record<string, string> = {}
+    let parsedThinkingConfig: Record<string, unknown> = {}
 
-    if (!apiKey.trim()) {
-      toast({
-        variant: 'destructive',
-        title: t('common:models.errors.api_key_required'),
-      })
-      return
-    }
+    if (editingMode === 'json') {
+      expertSpec = parseModelSpec(modelSpecJson)
+      if (!expertSpec) {
+        toast({
+          variant: 'destructive',
+          title: t('common:models.errors.model_spec_invalid'),
+        })
+        return
+      }
+    } else {
+      if (!finalModelId) {
+        toast({
+          variant: 'destructive',
+          title: t('common:models.errors.model_id_required'),
+        })
+        return
+      }
 
-    const parsedHeaders = validateCustomHeaders(customHeaders)
-    if (parsedHeaders === null) {
-      toast({
-        variant: 'destructive',
-        title: t('common:models.errors.custom_headers_invalid'),
-      })
-      return
-    }
+      if (!apiKey.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('common:models.errors.api_key_required'),
+        })
+        return
+      }
 
-    // Validate thinking config if provided
-    const parsedThinkingConfig = validateThinkingConfig(thinkingConfigStr)
-    if (parsedThinkingConfig === null) {
-      toast({
-        variant: 'destructive',
-        title: t('common:models.errors.thinking_config_invalid_json'),
-      })
-      return
+      const validatedHeaders = validateCustomHeaders(customHeaders)
+      if (validatedHeaders === null) {
+        toast({
+          variant: 'destructive',
+          title: t('common:models.errors.custom_headers_invalid'),
+        })
+        return
+      }
+      parsedHeaders = validatedHeaders
+
+      const validatedThinkingConfig = validateThinkingConfig(thinkingConfigStr)
+      if (validatedThinkingConfig === null) {
+        toast({
+          variant: 'destructive',
+          title: t('common:models.errors.thinking_config_invalid_json'),
+        })
+        return
+      }
+      parsedThinkingConfig = validatedThinkingConfig
     }
 
     if (
@@ -1153,138 +1581,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
     setSaving(true)
     try {
-      // Build type-specific config based on modelCategoryType
-      const ttsConfig: TTSConfig | undefined =
-        modelCategoryType === 'tts'
-          ? {
-              voice: ttsVoice || undefined,
-              speed: ttsSpeed,
-              output_format: ttsOutputFormat,
-            }
-          : undefined
-
-      const sttConfig: STTConfig | undefined =
-        modelCategoryType === 'stt'
-          ? {
-              language: sttLanguage || undefined,
-              transcription_format: sttTranscriptionFormat,
-            }
-          : undefined
-
-      const embeddingConfig: EmbeddingConfig | undefined =
-        modelCategoryType === 'embedding'
-          ? buildEmbeddingConfig({
-              dimensions: embeddingDimensions,
-              encodingFormat: embeddingEncodingFormat,
-              supportsImageInput: embeddingSupportsImageInput,
-            })
-          : undefined
-
-      const rerankConfig: RerankConfig | undefined =
-        modelCategoryType === 'rerank'
-          ? {
-              top_n: rerankTopN,
-              return_documents: rerankReturnDocuments,
-            }
-          : undefined
-
-      const rawModelCapabilities: ModelCapabilities = {
-        ...(supportsImageInput && { supportsImage: true }),
-        ...(supportsVideoInput && { supportsVideo: true }),
+      const managedForm =
+        editingMode === 'form'
+          ? buildManagedSpecFromForm(parsedHeaders, parsedThinkingConfig, true)
+          : null
+      if (editingMode === 'form' && !managedForm) return
+      const savedSpec = expertSpec || mergeFormManagedSpec(rawSpec, managedForm!.spec)
+      const savedSpecValidation = validateModelSpecJson(formatModelSpec(savedSpec))
+      if (!savedSpecValidation.value) {
+        const validationMessage = modelSpecValidationMessage(savedSpecValidation)
+        setModelSpecError(validationMessage)
+        toast({ variant: 'destructive', title: validationMessage })
+        return
       }
-      const modelCapabilities: ModelCapabilities | undefined =
-        modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
-          ? rawModelCapabilities
-          : undefined
-
-      let parsedAdvancedCapabilities: VideoCapabilities = {}
-      if (modelCategoryType === 'video' && advancedCapabilities.trim()) {
-        try {
-          const parsed: unknown = JSON.parse(advancedCapabilities)
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('Capabilities must be an object')
-          }
-          parsedAdvancedCapabilities = parsed as VideoCapabilities
-          setAdvancedCapabilitiesError('')
-        } catch {
-          setAdvancedCapabilitiesError(t('common:models.video_advanced_capabilities_invalid'))
-          toast({
-            variant: 'destructive',
-            title: t('common:models.video_advanced_capabilities_invalid'),
-          })
-          return
-        }
-      }
-
-      // Build video capabilities if any are configured
-      const hasCapabilities =
-        capRatios.length > 0 ||
-        capResolutions.length > 0 ||
-        capDurations.length > 0 ||
-        Object.keys(parsedAdvancedCapabilities).length > 0
-      const capabilities = hasCapabilities
-        ? {
-            ...parsedAdvancedCapabilities,
-            ...(capRatios.length > 0 && {
-              aspect_ratios: capRatios,
-            }),
-            ...(capResolutions.length > 0 && {
-              resolutions: capResolutions,
-            }),
-            ...(capDurations.length > 0 && { durations_sec: capDurations }),
-          }
-        : undefined
-
-      const videoConfig: VideoGenerationConfig | undefined =
-        modelCategoryType === 'video'
-          ? {
-              resolution: capResolutions.some(
-                option => (option.value ?? option.label) === videoDefaultResolution
-              )
-                ? videoDefaultResolution
-                : (capResolutions[0]?.value ?? capResolutions[0]?.label ?? '720p'),
-              ratio: capRatios.some(option => option.value === videoDefaultRatio)
-                ? videoDefaultRatio
-                : (capRatios[0]?.value ?? '16:9'),
-              duration: capDurations.includes(videoDefaultDuration)
-                ? videoDefaultDuration
-                : capDurations[0] || 5,
-              generate_audio: videoGenerateAudio,
-              draft: videoDraft,
-              seed: videoSeed,
-              camera_fixed: videoCameraFixed,
-              watermark: videoWatermark,
-              ...(capabilities && { capabilities }),
-            }
-          : undefined
-
-      // Build image config from state
-      const imageGenerationConfig =
-        modelCategoryType === 'image' ? toImageGenerationConfig(imageConfig) : undefined
-
-      const selectedVisionSidecar = selectedVisionSidecarRef(
-        modelCategoryType === 'llm' && isWeworkAvailable,
-        selectedVisionSidecarKey,
-        availableVisionModels,
-        unresolvedVisionSidecar
-      )
-
-      // Map provider type to model field value
-      // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
-      // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
-      let modelFieldValue = providerType
-      if (modelCategoryType === 'llm') {
-        if (providerType === 'anthropic') {
-          modelFieldValue = 'claude'
-        } else if (providerType === 'openai-responses') {
-          // openai-responses uses openai as the model type, protocol distinguishes the API format
-          modelFieldValue = 'openai'
-        } else if (providerType === 'gemini-deep-research') {
-          // gemini-deep-research uses gemini as the model type, protocol distinguishes the API format
-          modelFieldValue = 'gemini'
-        }
-      }
-
       const modelCRD: ModelCRD = {
         apiVersion: 'agent.wecode.io/v1',
         kind: 'Model',
@@ -1293,60 +1602,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           namespace: isGroupScope && groupName ? groupName : 'default',
           displayName: displayName.trim() || undefined,
         },
-        spec: {
-          modelConfig: {
-            env: {
-              model: modelFieldValue,
-              model_id: finalModelId,
-              api_key: apiKey,
-              ...(baseUrl && { base_url: baseUrl }),
-              ...(parsedHeaders &&
-                Object.keys(parsedHeaders).length > 0 && { custom_headers: parsedHeaders }),
-              // Thinking/reasoning config stored in env (single source of truth)
-              ...(parsedThinkingConfig &&
-                Object.keys(parsedThinkingConfig).length > 0 && {
-                  thinking_config: parsedThinkingConfig,
-                }),
-            },
-            ...(modelCategoryType === 'llm' &&
-              contextWindow && {
-                context_window: contextWindow,
-              }),
-            ...(modelCategoryType === 'llm' &&
-              maxOutputTokens && {
-                max_output_tokens: maxOutputTokens,
-              }),
-            ...(selectedVisionSidecar && { visionSidecarModel: selectedVisionSidecar }),
-          },
-          modelType: modelCategoryType,
-          // Save protocol/apiFormat so downstream routing can pick the right upstream endpoint.
-          // Plain OpenAI maps to Chat Completions; openai-responses maps to Responses.
-          ...(providerType === 'openai' && {
-            protocol: 'openai',
-            apiFormat: 'chat/completions',
-          }),
-          ...(providerType === 'openai-responses' && {
-            protocol: 'openai-responses',
-            apiFormat: 'responses',
-          }),
-          ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
-          // Save protocol for video models to specify the provider (seedance, runway, pika, etc.)
-          ...(modelCategoryType === 'video' && { protocol: providerType }),
-          // Save protocol for image models to specify the provider (openai, doubao, stability, etc.)
-          ...(modelCategoryType === 'image' && { protocol: providerType }),
-          // LLM-specific fields
-          ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
-          ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
-          ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
-          ...(modelCapabilities && { modelCapabilities }),
-          ...(ttsConfig && { ttsConfig }),
-          ...(sttConfig && { sttConfig }),
-          ...(embeddingConfig && { embeddingConfig }),
-          ...(rerankConfig && { rerankConfig }),
-          ...(videoConfig && { videoConfig }),
-          ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
-          ...(isWeworkAvailable && { isWeworkAvailable: true }),
-        },
+        spec: savedSpecValidation.value,
         status: {
           state: 'Available',
         },
@@ -1381,16 +1637,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         supportsImageInput,
         supportsVideoInput,
         // Video-specific configs (derive defaults from capabilities)
-        videoResolution: videoConfig?.resolution,
-        videoRatio: videoConfig?.ratio,
-        videoDuration: videoConfig?.duration,
+        videoResolution: managedForm?.videoConfig?.resolution,
+        videoRatio: managedForm?.videoConfig?.ratio,
+        videoDuration: managedForm?.videoConfig?.duration,
         videoGenerateAudio,
         videoDraft,
         videoSeed,
         videoCameraFixed,
         videoWatermark,
         isWeworkAvailable,
-        visionSidecarModel: selectedVisionSidecar,
+        visionSidecarModel: managedForm?.selectedVisionSidecar,
       }
 
       // If custom onSave callback is provided, use it
@@ -1460,29 +1716,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Model Category Type Selector - New */}
-          <div className="space-y-2">
-            <Label htmlFor="modelCategoryType" className="text-sm font-medium">
-              {t('common:models.model_category_type')} <span className="text-red-400">*</span>
-            </Label>
-            <Select
-              value={modelCategoryType}
-              onValueChange={(value: ModelCategoryType) => handleModelCategoryTypeChange(value)}
-              disabled={isEditing}
-            >
-              <SelectTrigger className="bg-base">
-                <SelectValue placeholder={t('common:models.select_model_category_type')} />
-              </SelectTrigger>
-              <SelectContent>
-                {MODEL_CATEGORY_OPTIONS.map(option => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {t(option.labelKey)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           {/* Model ID and Display Name - Two columns */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -1519,928 +1752,1120 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="modelGroup" className="text-sm font-medium">
-                {t('common:models.model_group')}
-              </Label>
-              <Input
-                id="modelGroup"
-                data-testid="model-group-input"
-                value={modelGroup}
-                onChange={e => setModelGroup(e.target.value)}
-                placeholder={t('common:models.model_group_placeholder')}
-                className="bg-base"
-              />
-              <p className="text-xs text-text-muted">{t('common:models.model_group_hint')}</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="modelSubGroup" className="text-sm font-medium">
-                {t('common:models.model_sub_group')}
-              </Label>
-              <Input
-                id="modelSubGroup"
-                data-testid="model-sub-group-input"
-                value={modelSubGroup}
-                onChange={e => setModelSubGroup(e.target.value)}
-                placeholder={t('common:models.model_sub_group_placeholder')}
-                className="bg-base"
-              />
-              <p className="text-xs text-text-muted">{t('common:models.model_sub_group_hint')}</p>
-            </div>
-          </div>
-
-          {/* Wework availability toggle */}
-          <div className="flex items-center justify-between rounded-lg border border-border p-3">
-            <div className="space-y-0.5">
-              <Label htmlFor="wework-available" className="text-sm font-medium">
-                {t('common:models.wework_available')}
-              </Label>
-              <p className="text-xs text-text-muted">{t('common:models.wework_available_hint')}</p>
-            </div>
-            <Switch
-              id="wework-available"
-              data-testid="model-wework-available-switch"
-              checked={isWeworkAvailable}
-              onCheckedChange={checked => setIsWeworkAvailable(checked)}
-            />
-          </div>
-
-          {/* Provider Type and Model ID - Two columns */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="provider_type" className="text-sm font-medium">
-                {t('common:models.provider_type')} <span className="text-red-400">*</span>
-              </Label>
-              <Select value={providerType} onValueChange={handleProviderChange}>
-                <SelectTrigger className="bg-base">
-                  <SelectValue placeholder={t('common:models.select_provider')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableProtocols.map(protocol => (
-                    <SelectItem key={protocol.value} value={protocol.value}>
-                      <div className="flex items-center gap-2">
-                        <span>{protocol.label}</span>
-                        {protocol.hint && (
-                          <span className="text-xs text-text-muted">({protocol.hint})</span>
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="model_id" className="text-sm font-medium">
-                  {t('common:models.model_id')} <span className="text-red-400">*</span>
-                </Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleFetchModels}
-                  disabled={fetchingModels || !apiKey.trim()}
-                  className="h-7 px-2 text-xs"
-                  title={
-                    !apiKey.trim()
-                      ? t('common:models.fetch_error_no_api_key')
-                      : t('common:models.fetch_models')
-                  }
-                >
-                  {fetchingModels ? (
-                    <>
-                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                      {t('common:models.fetching_models')}
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="mr-1 h-3 w-3" />
-                      {t('common:models.fetch_models')}
-                    </>
-                  )}
-                </Button>
-              </div>
-              <Popover open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={modelIdPopoverOpen}
-                    data-testid="model-id-select"
-                    className="w-full justify-between bg-base font-normal"
-                  >
-                    {modelId
-                      ? modelOptions.find(option => option.value === modelId)?.label || modelId
-                      : t('common:models.select_model_id')}
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-[--radix-popover-trigger-width] p-0"
-                  align="start"
-                  onOpenAutoFocus={e => e.preventDefault()}
-                  container={dialogContentElement}
-                >
-                  <div className="p-2 border-b">
-                    <Input
-                      placeholder={t('common:models.search_model_id', '搜索模型...')}
-                      value={modelIdSearch}
-                      onChange={e => setModelIdSearch(e.target.value)}
-                      className="h-8"
-                    />
-                  </div>
-                  <div className="p-1" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                    {filteredModelOptions.length === 0 ? (
-                      <div className="py-4 text-center text-sm text-text-muted">
-                        {t('common:branches.no_match', '没有找到匹配项')}
-                      </div>
-                    ) : (
-                      filteredModelOptions.map(option => (
-                        <div
-                          key={option.value}
-                          className={cn(
-                            'relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
-                            modelId === option.value && 'bg-accent'
-                          )}
-                          onClick={() => {
-                            setModelId(option.value)
-                            setModelIdPopoverOpen(false)
-                            setModelIdSearch('')
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              'mr-2 h-4 w-4',
-                              modelId === option.value ? 'opacity-100' : 'opacity-0'
-                            )}
-                          />
-                          {option.label}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
-              {fetchError && <p className="text-xs text-error">{fetchError}</p>}
-              {!apiKey.trim() && (
-                <p className="text-xs text-text-muted">
-                  {t('common:models.fetch_models_hint', '请先填写 API Key 后点击"加载模型"按钮')}
-                </p>
-              )}
-              {modelId === 'custom' && (
-                <Input
-                  value={customModelId}
-                  onChange={e => setCustomModelId(e.target.value)}
-                  placeholder={t('common:models.custom_model_id_placeholder')}
-                  className="mt-2 bg-base"
-                />
-              )}
-            </div>
-          </div>
-
-          {modelCategoryType === 'llm' && isWeworkAvailable && (
-            <div className="space-y-2 rounded-lg border border-border p-3">
-              <Label htmlFor="vision-sidecar-model" className="text-sm font-medium">
-                {t('common:models.vision_sidecar_model')}
-              </Label>
-              <Select
-                value={selectedVisionSidecarKey || 'disabled'}
-                onValueChange={value =>
-                  setSelectedVisionSidecarKey(value === 'disabled' ? '' : value)
-                }
-                disabled={loadingVisionModels}
-              >
-                <SelectTrigger
-                  ref={visionSidecarTriggerRef}
-                  id="vision-sidecar-model"
-                  data-testid="vision-sidecar-model-select"
-                  className="bg-base"
-                >
-                  <SelectValue
-                    placeholder={
-                      loadingVisionModels
-                        ? t('common:models.vision_sidecar_loading')
-                        : t('common:models.vision_sidecar_disabled')
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent
-                  ref={visionSidecarContentRef}
-                  onCloseAutoFocus={event =>
-                    preventSelectCloseFromStealingFocus(
-                      event,
-                      document.activeElement,
-                      visionSidecarTriggerRef.current,
-                      visionSidecarContentRef.current
-                    )
-                  }
-                >
-                  <SelectItem value="disabled">
-                    {t('common:models.vision_sidecar_disabled')}
-                  </SelectItem>
-                  {unresolvedVisionSidecar && (
-                    <SelectItem
-                      value={UNRESOLVED_VISION_SIDECAR_KEY}
-                      data-testid="vision-sidecar-model-unavailable-option"
-                    >
-                      {t('common:models.vision_sidecar_unavailable', {
-                        modelName: unresolvedVisionSidecar.modelName,
-                      })}
-                    </SelectItem>
-                  )}
-                  {visionModelOptions.map(candidate => (
-                    <SelectItem
-                      key={visionSidecarModelKey(candidate)}
-                      value={visionSidecarModelKey(candidate)}
-                    >
-                      {candidate.displayName || candidate.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-text-muted">{t('common:models.vision_sidecar_hint')}</p>
-              {!loadingVisionModels && visionModelOptions.length === 0 && (
-                <p className="text-xs text-warning">{t('common:models.vision_sidecar_empty')}</p>
-              )}
-            </div>
-          )}
-
-          {/* API Key */}
-          <div className="space-y-2">
-            <Label htmlFor="api_key" className="text-sm font-medium">
-              {t('common:models.api_key')} <span className="text-red-400">*</span>
-            </Label>
-            <div className="relative">
-              <Input
-                id="api_key"
-                type={showApiKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                placeholder={apiKeyPlaceholder}
-                className="bg-base pr-10"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
-                onClick={() => setShowApiKey(!showApiKey)}
-              >
-                {showApiKey ? (
-                  <EyeSlashIcon className="w-4 h-4" />
-                ) : (
-                  <EyeIcon className="w-4 h-4" />
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {/* Base URL */}
-          <div className="space-y-2">
-            <Label htmlFor="base_url" className="text-sm font-medium">
-              {t('common:models.base_url')}
-            </Label>
-            <Input
-              id="base_url"
-              value={baseUrl}
-              onChange={e => setBaseUrl(e.target.value)}
-              placeholder={baseUrlPlaceholder}
-              className="bg-base"
-            />
-            <p className="text-xs text-text-muted">{t('common:models.base_url_hint')}</p>
-          </div>
-
-          {/* Custom Headers */}
-          <div className="space-y-2">
-            <Label htmlFor="custom_headers" className="text-sm font-medium">
-              {t('common:models.custom_headers')}
-            </Label>
-            <Textarea
-              id="custom_headers"
-              value={customHeaders}
-              onChange={e => handleCustomHeadersChange(e.target.value)}
-              placeholder={`{\n  "X-Custom-Header": "value",\n  "Authorization": "Bearer token"\n}`}
-              className={`bg-base font-mono text-sm min-h-[100px] ${customHeadersError ? 'border-error' : ''}`}
-            />
-            {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
-            <p className="text-xs text-text-muted">{t('common:models.custom_headers_hint')}</p>
-          </div>
-
-          {/* LLM-specific fields - Context Window and Max Output Tokens */}
-          {modelCategoryType === 'llm' && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <Label htmlFor="context_window" className="text-sm font-medium">
-                  {t('common:models.context_window')}
-                </Label>
-                <Input
-                  id="context_window"
-                  type="number"
-                  value={contextWindow || ''}
-                  onChange={e => setContextWindow(parseInt(e.target.value) || undefined)}
-                  placeholder="128000"
-                  className="bg-base"
-                />
-                <p className="text-xs text-text-muted">{t('common:models.context_window_hint')}</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="max_output_tokens" className="text-sm font-medium">
-                  {t('common:models.max_output_tokens')}
-                </Label>
-                <Input
-                  id="max_output_tokens"
-                  type="number"
-                  value={maxOutputTokens || ''}
-                  onChange={e => setMaxOutputTokens(parseInt(e.target.value) || undefined)}
-                  placeholder="8192"
-                  className="bg-base"
-                />
-                <p className="text-xs text-text-muted">
-                  {t('common:models.max_output_tokens_hint')}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cost_index" className="text-sm font-medium">
-                  {t('common:models.cost_index')}
-                </Label>
-                <Input
-                  id="cost_index"
-                  data-testid="model-cost-index-input"
-                  type="text"
-                  value={costIndex ?? ''}
-                  onChange={e => setCostIndex(e.target.value || undefined)}
-                  placeholder="1"
-                  className="bg-base"
-                />
-                <p className="text-xs text-text-muted">{t('common:models.cost_index_hint')}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Thinking/Reasoning Config - JSON passthrough for LLM models */}
-          {modelCategoryType === 'llm' && (
-            <div className="space-y-2">
-              <Label htmlFor="thinking_config" className="text-sm font-medium">
-                {t('common:models.thinking_config')}
-              </Label>
-              <Textarea
-                id="thinking_config"
-                data-testid="thinking-config-input"
-                value={thinkingConfigStr}
-                onChange={e => handleThinkingConfigChange(e.target.value)}
-                placeholder={`{\n  "thinking": { "type": "enabled" }\n}`}
-                className={`bg-base font-mono text-sm min-h-[80px] ${thinkingConfigError ? 'border-error' : ''}`}
-              />
-              {thinkingConfigError && <p className="text-xs text-error">{thinkingConfigError}</p>}
-              <p className="text-xs text-text-muted">{t('common:models.thinking_config_hint')}</p>
-            </div>
-          )}
-
-          {/* Multimodal capabilities (LLM models only) */}
-          {modelCategoryType === 'llm' && (
-            <div className="space-y-3 rounded-lg bg-muted p-4">
-              <div className="flex items-start space-x-3">
-                <Checkbox
-                  id="supports_image_input"
-                  data-testid="supports-image-input-checkbox"
-                  checked={supportsImageInput}
-                  onCheckedChange={checked => setSupportsImageInput(Boolean(checked))}
-                />
-                <div className="space-y-1">
-                  <Label
-                    htmlFor="supports_image_input"
-                    className="cursor-pointer text-sm font-medium"
-                  >
-                    {t('common:models.supports_image_input')}
-                  </Label>
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.supports_image_input_hint')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start space-x-3">
-                <Checkbox
-                  id="supports_video_input"
-                  data-testid="supports-video-input-checkbox"
-                  checked={supportsVideoInput}
-                  onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
-                />
-                <div className="space-y-1">
-                  <Label
-                    htmlFor="supports_video_input"
-                    className="cursor-pointer text-sm font-medium"
-                  >
-                    {t('common:models.supports_video_input')}
-                  </Label>
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.supports_video_input_hint')}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TTS-specific fields */}
-          {modelCategoryType === 'tts' && (
-            <div className="space-y-4 p-4 bg-muted rounded-lg">
-              <h4 className="text-sm font-medium text-text-secondary">TTS Configuration</h4>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="tts_voice" className="text-sm font-medium">
-                    {t('common:models.tts_voice')}
-                  </Label>
-                  <Input
-                    id="tts_voice"
-                    value={ttsVoice}
-                    onChange={e => setTtsVoice(e.target.value)}
-                    placeholder="alloy, echo, fable, onyx, nova, shimmer"
-                    className="bg-base"
-                  />
-                  <p className="text-xs text-text-muted">{t('common:models.tts_voice_hint')}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="tts_speed" className="text-sm font-medium">
-                    {t('common:models.tts_speed')}
-                  </Label>
-                  <Input
-                    id="tts_speed"
-                    type="number"
-                    step="0.1"
-                    min="0.25"
-                    max="4.0"
-                    value={ttsSpeed}
-                    onChange={e => setTtsSpeed(parseFloat(e.target.value) || 1.0)}
-                    className="bg-base"
-                  />
-                  <p className="text-xs text-text-muted">{t('common:models.tts_speed_hint')}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="tts_output_format" className="text-sm font-medium">
-                    {t('common:models.tts_output_format')}
-                  </Label>
-                  <Select
-                    value={ttsOutputFormat}
-                    onValueChange={(v: 'mp3' | 'wav') => setTtsOutputFormat(v)}
-                  >
-                    <SelectTrigger className="bg-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mp3">MP3</SelectItem>
-                      <SelectItem value="wav">WAV</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* STT-specific fields */}
-          {modelCategoryType === 'stt' && (
-            <div className="space-y-4 p-4 bg-muted rounded-lg">
-              <h4 className="text-sm font-medium text-text-secondary">STT Configuration</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="stt_language" className="text-sm font-medium">
-                    {t('common:models.stt_language')}
-                  </Label>
-                  <Input
-                    id="stt_language"
-                    value={sttLanguage}
-                    onChange={e => setSttLanguage(e.target.value)}
-                    placeholder="en, zh, es, fr, de, ja, ko"
-                    className="bg-base"
-                  />
-                  <p className="text-xs text-text-muted">{t('common:models.stt_language_hint')}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="stt_format" className="text-sm font-medium">
-                    {t('common:models.stt_transcription_format')}
-                  </Label>
-                  <Select
-                    value={sttTranscriptionFormat}
-                    onValueChange={(v: 'text' | 'srt' | 'vtt') => setSttTranscriptionFormat(v)}
-                  >
-                    <SelectTrigger className="bg-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="text">Text</SelectItem>
-                      <SelectItem value="srt">SRT</SelectItem>
-                      <SelectItem value="vtt">VTT</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Embedding-specific fields */}
-          {modelCategoryType === 'embedding' && (
-            <div className="space-y-4 p-4 bg-muted rounded-lg">
-              <h4 className="text-sm font-medium text-text-secondary">Embedding Configuration</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="embedding_dimensions" className="text-sm font-medium">
-                    {t('common:models.embedding_dimensions')}
-                  </Label>
-                  <Input
-                    id="embedding_dimensions"
-                    type="number"
-                    value={embeddingDimensions || ''}
-                    onChange={e => setEmbeddingDimensions(parseInt(e.target.value) || undefined)}
-                    placeholder="1536 (OpenAI), 768 (Cohere)"
-                    className="bg-base"
-                  />
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.embedding_dimensions_hint')}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="embedding_format" className="text-sm font-medium">
-                    {t('common:models.embedding_encoding_format')}
-                  </Label>
-                  <Select
-                    value={embeddingEncodingFormat}
-                    onValueChange={(v: 'float' | 'base64') => setEmbeddingEncodingFormat(v)}
-                  >
-                    <SelectTrigger className="bg-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="float">Float</SelectItem>
-                      <SelectItem value="base64">Base64</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <Checkbox
-                  id="embedding_supports_image_input"
-                  data-testid="embedding-image-input-checkbox"
-                  checked={embeddingSupportsImageInput}
-                  onCheckedChange={checked => setEmbeddingSupportsImageInput(Boolean(checked))}
-                />
-                <div className="space-y-1">
-                  <Label
-                    htmlFor="embedding_supports_image_input"
-                    className="text-sm font-medium cursor-pointer"
-                  >
-                    {t('common:models.embedding_supports_image_input')}
-                  </Label>
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.embedding_supports_image_input_hint')}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Rerank-specific fields */}
-          {modelCategoryType === 'rerank' && (
-            <div className="space-y-4 p-4 bg-muted rounded-lg">
-              <h4 className="text-sm font-medium text-text-secondary">Rerank Configuration</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="rerank_top_n" className="text-sm font-medium">
-                    {t('common:models.rerank_top_n')}
-                  </Label>
-                  <Input
-                    id="rerank_top_n"
-                    type="number"
-                    value={rerankTopN || ''}
-                    onChange={e => setRerankTopN(parseInt(e.target.value) || undefined)}
-                    placeholder="Default: return all"
-                    className="bg-base"
-                  />
-                  <p className="text-xs text-text-muted">{t('common:models.rerank_top_n_hint')}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="rerank_return_docs" className="text-sm font-medium">
-                    {t('common:models.rerank_return_documents')}
-                  </Label>
-                  <Select
-                    value={rerankReturnDocuments ? 'true' : 'false'}
-                    onValueChange={v => setRerankReturnDocuments(v === 'true')}
-                  >
-                    <SelectTrigger className="bg-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="true">Yes</SelectItem>
-                      <SelectItem value="false">No</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Video-specific fields */}
-          {modelCategoryType === 'video' && (
-            <div className="space-y-4 p-4 bg-muted rounded-lg">
-              <h4 className="text-sm font-medium text-text-secondary">
-                {t('common:models.video_config_title')}
-              </h4>
-
-              {/* Model capabilities configuration */}
+          <div className="space-y-3 rounded-lg border border-border p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs text-text-muted mb-3">
-                  {t('common:models.video_capabilities_hint')}
+                <p className="text-sm font-medium text-text-primary">
+                  {t('common:models.model_spec_config')}
                 </p>
+                <p className="text-xs text-text-muted">
+                  {t('common:models.model_spec_config_hint')}
+                </p>
+              </div>
+              <div
+                role="tablist"
+                aria-label={t('common:models.model_spec_mode')}
+                className="inline-flex min-h-11 rounded-md bg-muted p-1"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={editingMode === 'form'}
+                  data-testid="model-spec-form-mode-button"
+                  onClick={editingMode === 'json' ? handleSwitchToForm : undefined}
+                  className={cn(
+                    'min-h-9 rounded px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    editingMode === 'form'
+                      ? 'bg-base text-text-primary shadow-sm'
+                      : 'cursor-pointer text-text-muted hover:text-text-primary'
+                  )}
+                >
+                  {t('common:models.model_spec_form_mode')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={editingMode === 'json'}
+                  data-testid="model-spec-json-mode-button"
+                  onClick={editingMode === 'form' ? handleSwitchToJson : undefined}
+                  className={cn(
+                    'min-h-9 rounded px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    editingMode === 'json'
+                      ? 'bg-base text-text-primary shadow-sm'
+                      : 'cursor-pointer text-text-muted hover:text-text-primary'
+                  )}
+                >
+                  {t('common:models.model_spec_json_mode')}
+                </button>
+              </div>
+            </div>
 
-                {/* Supported aspect ratios */}
-                <div className="space-y-2 mb-4">
-                  <Label className="text-sm font-medium">
-                    {t('common:models.video_capabilities_ratios')}
+            <p
+              className="flex items-start gap-1.5 text-xs text-warning"
+              data-testid="model-spec-switch-secret-warning"
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{t('common:models.model_spec_switch_secret_warning')}</span>
+            </p>
+
+            {editingMode === 'json' && (
+              <div className="space-y-3" role="tabpanel">
+                <div
+                  className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-text-primary"
+                  data-testid="model-spec-secret-warning"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                  <p>{t('common:models.model_spec_secret_warning')}</p>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <Label id="model-spec-json-label" className="text-sm font-medium">
+                    {t('common:models.model_spec_json_label')}
                   </Label>
-                  <div className="flex flex-wrap gap-2">
-                    {['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
-                      <button
-                        key={ratio}
-                        type="button"
-                        onClick={() =>
-                          setCapRatios(prev =>
-                            prev.some(option => option.value === ratio)
-                              ? prev.filter(option => option.value !== ratio)
-                              : [...prev, { label: ratio, value: ratio }]
-                          )
-                        }
-                        className={cn(
-                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capRatios.some(option => option.value === ratio)
-                            ? 'bg-primary/10 border-primary text-primary'
-                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
-                        )}
-                      >
-                        {ratio === 'adaptive' ? t('chat:video.ratio.adaptive') : ratio}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="model-spec-load-models-button"
+                      onClick={handleFetchModels}
+                      disabled={fetchingModels}
+                    >
+                      {fetchingModels ? (
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-1 h-3 w-3" />
+                      )}
+                      {t('common:models.fetch_models')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="model-spec-format-button"
+                      onClick={handleFormatModelSpec}
+                    >
+                      {t('common:models.model_spec_format')}
+                    </Button>
                   </div>
                 </div>
+                <div
+                  className={cn(
+                    'overflow-hidden rounded-md border border-border',
+                    modelSpecError && 'border-error'
+                  )}
+                >
+                  <CodeMirrorEditor
+                    value={modelSpecJson}
+                    onChange={handleModelSpecChange}
+                    onBlur={() => parseModelSpec(modelSpecJson)}
+                    language="json"
+                    theme={theme}
+                    vimEnabled={false}
+                    className="h-[420px]"
+                    ariaLabel={t('common:models.model_spec_json_label')}
+                    ariaDescribedBy={
+                      modelSpecError
+                        ? 'model-spec-json-hint model-spec-json-error'
+                        : 'model-spec-json-hint'
+                    }
+                    ariaInvalid={Boolean(modelSpecError)}
+                    dataTestId="model-spec-json-editor"
+                  />
+                </div>
+                <p id="model-spec-json-hint" className="text-xs text-text-muted">
+                  {t('common:models.model_spec_json_hint')}
+                </p>
+                {modelSpecError && (
+                  <p
+                    id="model-spec-json-error"
+                    role="alert"
+                    className={cn('text-xs text-error', modelSpecCannotUseForm && 'font-medium')}
+                  >
+                    {modelSpecError}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
-                {/* Supported resolutions */}
-                <div className="space-y-2 mb-4">
-                  <Label className="text-sm font-medium">
-                    {t('common:models.video_capabilities_resolutions')}
-                  </Label>
-                  <div className="flex flex-wrap gap-2">
-                    {['480p', '720p', '1080p'].map(res => (
-                      <button
-                        key={res}
-                        type="button"
-                        onClick={() =>
-                          setCapResolutions(prev =>
-                            prev.some(option => (option.value ?? option.label) === res)
-                              ? prev.filter(option => (option.value ?? option.label) !== res)
-                              : [...prev, { label: res, value: res }]
-                          )
-                        }
-                        className={cn(
-                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capResolutions.some(option => (option.value ?? option.label) === res)
-                            ? 'bg-primary/10 border-primary text-primary'
-                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
-                        )}
-                      >
-                        {res}
-                      </button>
+          {editingMode === 'form' && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="modelCategoryType" className="text-sm font-medium">
+                  {t('common:models.model_category_type')} <span className="text-red-400">*</span>
+                </Label>
+                <Select
+                  value={modelCategoryType}
+                  onValueChange={(value: ModelCategoryType) => handleModelCategoryTypeChange(value)}
+                  disabled={isEditing}
+                >
+                  <SelectTrigger className="bg-base">
+                    <SelectValue placeholder={t('common:models.select_model_category_type')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_CATEGORY_OPTIONS.map(option => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {t(option.labelKey)}
+                      </SelectItem>
                     ))}
-                  </div>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="modelGroup" className="text-sm font-medium">
+                    {t('common:models.model_group')}
+                  </Label>
+                  <Input
+                    id="modelGroup"
+                    data-testid="model-group-input"
+                    value={modelGroup}
+                    onChange={e => setModelGroup(e.target.value)}
+                    placeholder={t('common:models.model_group_placeholder')}
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">{t('common:models.model_group_hint')}</p>
                 </div>
 
-                <div className="space-y-2 mt-4">
-                  <Label htmlFor="video-advanced-capabilities" className="text-sm font-medium">
-                    {t('common:models.video_advanced_capabilities')}
+                <div className="space-y-2">
+                  <Label htmlFor="modelSubGroup" className="text-sm font-medium">
+                    {t('common:models.model_sub_group')}
+                  </Label>
+                  <Input
+                    id="modelSubGroup"
+                    data-testid="model-sub-group-input"
+                    value={modelSubGroup}
+                    onChange={e => setModelSubGroup(e.target.value)}
+                    placeholder={t('common:models.model_sub_group_placeholder')}
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.model_sub_group_hint')}
+                  </p>
+                </div>
+              </div>
+
+              {/* Wework availability toggle */}
+              <div className="flex items-center justify-between rounded-lg border border-border p-3">
+                <div className="space-y-0.5">
+                  <Label htmlFor="wework-available" className="text-sm font-medium">
+                    {t('common:models.wework_available')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.wework_available_hint')}
+                  </p>
+                </div>
+                <Switch
+                  id="wework-available"
+                  data-testid="model-wework-available-switch"
+                  checked={isWeworkAvailable}
+                  onCheckedChange={checked => setIsWeworkAvailable(checked)}
+                />
+              </div>
+
+              {/* Provider Type and Model ID - Two columns */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="provider_type" className="text-sm font-medium">
+                    {t('common:models.provider_type')} <span className="text-red-400">*</span>
+                  </Label>
+                  <Select value={providerType} onValueChange={handleProviderChange}>
+                    <SelectTrigger className="bg-base">
+                      <SelectValue placeholder={t('common:models.select_provider')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableProtocols.map(protocol => (
+                        <SelectItem key={protocol.value} value={protocol.value}>
+                          <div className="flex items-center gap-2">
+                            <span>{protocol.label}</span>
+                            {protocol.hint && (
+                              <span className="text-xs text-text-muted">({protocol.hint})</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="model_id" className="text-sm font-medium">
+                      {t('common:models.model_id')} <span className="text-red-400">*</span>
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleFetchModels}
+                      disabled={fetchingModels || !apiKey.trim()}
+                      className="h-7 px-2 text-xs"
+                      title={
+                        !apiKey.trim()
+                          ? t('common:models.fetch_error_no_api_key')
+                          : t('common:models.fetch_models')
+                      }
+                    >
+                      {fetchingModels ? (
+                        <>
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          {t('common:models.fetching_models')}
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-1 h-3 w-3" />
+                          {t('common:models.fetch_models')}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  <Popover open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={modelIdPopoverOpen}
+                        data-testid="model-id-select"
+                        className="w-full justify-between bg-base font-normal"
+                      >
+                        {modelId
+                          ? modelOptions.find(option => option.value === modelId)?.label || modelId
+                          : t('common:models.select_model_id')}
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-[--radix-popover-trigger-width] p-0"
+                      align="start"
+                      onOpenAutoFocus={e => e.preventDefault()}
+                      container={dialogContentElement}
+                    >
+                      <div className="p-2 border-b">
+                        <Input
+                          placeholder={t('common:models.search_model_id', '搜索模型...')}
+                          value={modelIdSearch}
+                          onChange={e => setModelIdSearch(e.target.value)}
+                          className="h-8"
+                        />
+                      </div>
+                      <div className="p-1" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                        {filteredModelOptions.length === 0 ? (
+                          <div className="py-4 text-center text-sm text-text-muted">
+                            {t('common:branches.no_match', '没有找到匹配项')}
+                          </div>
+                        ) : (
+                          filteredModelOptions.map(option => (
+                            <div
+                              key={option.value}
+                              className={cn(
+                                'relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
+                                modelId === option.value && 'bg-accent'
+                              )}
+                              onClick={() => {
+                                setModelId(option.value)
+                                setModelIdPopoverOpen(false)
+                                setModelIdSearch('')
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  'mr-2 h-4 w-4',
+                                  modelId === option.value ? 'opacity-100' : 'opacity-0'
+                                )}
+                              />
+                              {option.label}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  {fetchError && <p className="text-xs text-error">{fetchError}</p>}
+                  {!apiKey.trim() && (
+                    <p className="text-xs text-text-muted">
+                      {t(
+                        'common:models.fetch_models_hint',
+                        '请先填写 API Key 后点击"加载模型"按钮'
+                      )}
+                    </p>
+                  )}
+                  {modelId === 'custom' && (
+                    <Input
+                      value={customModelId}
+                      onChange={e => setCustomModelId(e.target.value)}
+                      placeholder={t('common:models.custom_model_id_placeholder')}
+                      className="mt-2 bg-base"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {modelCategoryType === 'llm' && isWeworkAvailable && (
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <Label htmlFor="vision-sidecar-model" className="text-sm font-medium">
+                    {t('common:models.vision_sidecar_model')}
+                  </Label>
+                  <Select
+                    value={selectedVisionSidecarKey || 'disabled'}
+                    onValueChange={value =>
+                      setSelectedVisionSidecarKey(value === 'disabled' ? '' : value)
+                    }
+                    disabled={loadingVisionModels}
+                  >
+                    <SelectTrigger
+                      ref={visionSidecarTriggerRef}
+                      id="vision-sidecar-model"
+                      data-testid="vision-sidecar-model-select"
+                      className="bg-base"
+                    >
+                      <SelectValue
+                        placeholder={
+                          loadingVisionModels
+                            ? t('common:models.vision_sidecar_loading')
+                            : t('common:models.vision_sidecar_disabled')
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent
+                      ref={visionSidecarContentRef}
+                      onCloseAutoFocus={event =>
+                        preventSelectCloseFromStealingFocus(
+                          event,
+                          document.activeElement,
+                          visionSidecarTriggerRef.current,
+                          visionSidecarContentRef.current
+                        )
+                      }
+                    >
+                      <SelectItem value="disabled">
+                        {t('common:models.vision_sidecar_disabled')}
+                      </SelectItem>
+                      {unresolvedVisionSidecar && (
+                        <SelectItem
+                          value={UNRESOLVED_VISION_SIDECAR_KEY}
+                          data-testid="vision-sidecar-model-unavailable-option"
+                        >
+                          {t('common:models.vision_sidecar_unavailable', {
+                            modelName: unresolvedVisionSidecar.modelName,
+                          })}
+                        </SelectItem>
+                      )}
+                      {visionModelOptions.map(candidate => (
+                        <SelectItem
+                          key={visionSidecarModelKey(candidate)}
+                          value={visionSidecarModelKey(candidate)}
+                        >
+                          {candidate.displayName || candidate.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.vision_sidecar_hint')}
+                  </p>
+                  {!loadingVisionModels && visionModelOptions.length === 0 && (
+                    <p className="text-xs text-warning">
+                      {t('common:models.vision_sidecar_empty')}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* API Key */}
+              <div className="space-y-2">
+                <Label htmlFor="api_key" className="text-sm font-medium">
+                  {t('common:models.api_key')} <span className="text-red-400">*</span>
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="api_key"
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={e => setApiKey(e.target.value)}
+                    placeholder={apiKeyPlaceholder}
+                    className="bg-base pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    aria-label={
+                      showApiKey ? t('common:models.hide_api_key') : t('common:models.show_api_key')
+                    }
+                  >
+                    {showApiKey ? (
+                      <EyeSlashIcon className="w-4 h-4" />
+                    ) : (
+                      <EyeIcon className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Base URL */}
+              <div className="space-y-2">
+                <Label htmlFor="base_url" className="text-sm font-medium">
+                  {t('common:models.base_url')}
+                </Label>
+                <Input
+                  id="base_url"
+                  value={baseUrl}
+                  onChange={e => setBaseUrl(e.target.value)}
+                  placeholder={baseUrlPlaceholder}
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">{t('common:models.base_url_hint')}</p>
+              </div>
+
+              {/* Custom Headers */}
+              <div className="space-y-2">
+                <Label htmlFor="custom_headers" className="text-sm font-medium">
+                  {t('common:models.custom_headers')}
+                </Label>
+                <Textarea
+                  id="custom_headers"
+                  value={customHeaders}
+                  onChange={e => handleCustomHeadersChange(e.target.value)}
+                  placeholder={`{\n  "X-Custom-Header": "value",\n  "Authorization": "Bearer token"\n}`}
+                  className={`bg-base font-mono text-sm min-h-[100px] ${customHeadersError ? 'border-error' : ''}`}
+                />
+                {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
+                <p className="text-xs text-text-muted">{t('common:models.custom_headers_hint')}</p>
+              </div>
+
+              {/* LLM-specific fields - Context Window and Max Output Tokens */}
+              {modelCategoryType === 'llm' && (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="context_window" className="text-sm font-medium">
+                      {t('common:models.context_window')}
+                    </Label>
+                    <Input
+                      id="context_window"
+                      type="number"
+                      value={contextWindow || ''}
+                      onChange={e => setContextWindow(parseInt(e.target.value) || undefined)}
+                      placeholder="128000"
+                      className="bg-base"
+                    />
+                    <p className="text-xs text-text-muted">
+                      {t('common:models.context_window_hint')}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="max_output_tokens" className="text-sm font-medium">
+                      {t('common:models.max_output_tokens')}
+                    </Label>
+                    <Input
+                      id="max_output_tokens"
+                      type="number"
+                      value={maxOutputTokens || ''}
+                      onChange={e => setMaxOutputTokens(parseInt(e.target.value) || undefined)}
+                      placeholder="8192"
+                      className="bg-base"
+                    />
+                    <p className="text-xs text-text-muted">
+                      {t('common:models.max_output_tokens_hint')}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="cost_index" className="text-sm font-medium">
+                      {t('common:models.cost_index')}
+                    </Label>
+                    <Input
+                      id="cost_index"
+                      data-testid="model-cost-index-input"
+                      type="text"
+                      value={costIndex ?? ''}
+                      onChange={e => setCostIndex(e.target.value || undefined)}
+                      placeholder="1"
+                      className="bg-base"
+                    />
+                    <p className="text-xs text-text-muted">{t('common:models.cost_index_hint')}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Thinking/Reasoning Config - JSON passthrough for LLM models */}
+              {modelCategoryType === 'llm' && (
+                <div className="space-y-2">
+                  <Label htmlFor="thinking_config" className="text-sm font-medium">
+                    {t('common:models.thinking_config')}
                   </Label>
                   <Textarea
-                    id="video-advanced-capabilities"
-                    data-testid="video-advanced-capabilities"
-                    value={advancedCapabilities}
-                    onChange={event => {
-                      setAdvancedCapabilities(event.target.value)
-                      setAdvancedCapabilitiesError('')
-                    }}
-                    placeholder='{"supports_image_input":true,"supports_video_input":true,"generation_modes":[...]}'
-                    className={`min-h-[180px] bg-base font-mono text-xs ${
-                      advancedCapabilitiesError ? 'border-error' : ''
-                    }`}
+                    id="thinking_config"
+                    data-testid="thinking-config-input"
+                    value={thinkingConfigStr}
+                    onChange={e => handleThinkingConfigChange(e.target.value)}
+                    placeholder={`{\n  "thinking": { "type": "enabled" }\n}`}
+                    className={`bg-base font-mono text-sm min-h-[80px] ${thinkingConfigError ? 'border-error' : ''}`}
                   />
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.video_advanced_capabilities_hint')}
-                  </p>
-                  {advancedCapabilitiesError && (
-                    <p className="text-xs text-error">{advancedCapabilitiesError}</p>
+                  {thinkingConfigError && (
+                    <p className="text-xs text-error">{thinkingConfigError}</p>
                   )}
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.thinking_config_hint')}
+                  </p>
                 </div>
+              )}
 
-                {/* Supported durations */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">
-                    {t('common:models.video_capabilities_durations')}
-                  </Label>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    {[-1, 5, 10].map(dur => (
-                      <button
-                        key={dur}
-                        type="button"
-                        onClick={() =>
-                          setCapDurations(prev =>
-                            prev.includes(dur)
-                              ? prev.filter(d => d !== dur)
-                              : [...prev, dur].sort((a, b) => a - b)
-                          )
-                        }
-                        className={cn(
-                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capDurations.includes(dur)
-                            ? 'bg-primary/10 border-primary text-primary'
-                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
-                        )}
+              {/* Multimodal capabilities (LLM models only) */}
+              {modelCategoryType === 'llm' && (
+                <div className="space-y-3 rounded-lg bg-muted p-4">
+                  <div className="flex items-start space-x-3">
+                    <Checkbox
+                      id="supports_image_input"
+                      data-testid="supports-image-input-checkbox"
+                      checked={supportsImageInput}
+                      onCheckedChange={checked => setSupportsImageInput(Boolean(checked))}
+                    />
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor="supports_image_input"
+                        className="cursor-pointer text-sm font-medium"
                       >
-                        {dur === -1 ? t('common:models.video_duration_auto') : `${dur}s`}
-                      </button>
-                    ))}
-                    {/* Show custom durations that aren't predefined */}
-                    {capDurations
-                      .filter(d => d !== -1 && d !== 5 && d !== 10)
-                      .map(dur => (
-                        <button
-                          key={dur}
-                          type="button"
-                          onClick={() => setCapDurations(prev => prev.filter(d => d !== dur))}
-                          className="px-3 py-1.5 text-xs rounded-md border bg-primary/10 border-primary text-primary transition-colors"
-                        >
-                          {dur}s ×
-                        </button>
-                      ))}
-                    {/* Custom duration input */}
-                    <div className="flex items-center gap-1">
+                        {t('common:models.supports_image_input')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.supports_image_input_hint')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start space-x-3">
+                    <Checkbox
+                      id="supports_video_input"
+                      data-testid="supports-video-input-checkbox"
+                      checked={supportsVideoInput}
+                      onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
+                    />
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor="supports_video_input"
+                        className="cursor-pointer text-sm font-medium"
+                      >
+                        {t('common:models.supports_video_input')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.supports_video_input_hint')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TTS-specific fields */}
+              {modelCategoryType === 'tts' && (
+                <div className="space-y-4 p-4 bg-muted rounded-lg">
+                  <h4 className="text-sm font-medium text-text-secondary">TTS Configuration</h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="tts_voice" className="text-sm font-medium">
+                        {t('common:models.tts_voice')}
+                      </Label>
                       <Input
-                        type="number"
-                        min={1}
-                        max={300}
-                        placeholder={t('common:models.video_capabilities_custom_add')}
-                        value={customDuration}
-                        onChange={e => setCustomDuration(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            const val = parseInt(customDuration)
-                            if (val > 0 && !capDurations.includes(val)) {
-                              setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
-                              setCustomDuration('')
-                            }
-                          }
-                        }}
-                        className="w-20 h-8 text-xs bg-base"
+                        id="tts_voice"
+                        value={ttsVoice}
+                        onChange={e => setTtsVoice(e.target.value)}
+                        placeholder="alloy, echo, fable, onyx, nova, shimmer"
+                        className="bg-base"
                       />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 px-2"
-                        onClick={() => {
-                          const val = parseInt(customDuration)
-                          if (val > 0 && !capDurations.includes(val)) {
-                            setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
-                            setCustomDuration('')
-                          }
-                        }}
+                      <p className="text-xs text-text-muted">{t('common:models.tts_voice_hint')}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="tts_speed" className="text-sm font-medium">
+                        {t('common:models.tts_speed')}
+                      </Label>
+                      <Input
+                        id="tts_speed"
+                        type="number"
+                        step="0.1"
+                        min="0.25"
+                        max="4.0"
+                        value={ttsSpeed}
+                        onChange={e => setTtsSpeed(parseFloat(e.target.value) || 1.0)}
+                        className="bg-base"
+                      />
+                      <p className="text-xs text-text-muted">{t('common:models.tts_speed_hint')}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="tts_output_format" className="text-sm font-medium">
+                        {t('common:models.tts_output_format')}
+                      </Label>
+                      <Select
+                        value={ttsOutputFormat}
+                        onValueChange={(v: 'mp3' | 'wav') => setTtsOutputFormat(v)}
                       >
-                        +
-                      </Button>
+                        <SelectTrigger className="bg-base">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mp3">MP3</SelectItem>
+                          <SelectItem value="wav">WAV</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Feature toggles */}
-              <div className="border-t pt-4 mt-4">
-                <h5 className="text-sm font-medium text-text-secondary mb-3">
-                  {t('common:models.video_feature_toggles')}
-                </h5>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-sm font-medium">
-                        {t('common:models.video_generate_audio')}
+              {/* STT-specific fields */}
+              {modelCategoryType === 'stt' && (
+                <div className="space-y-4 p-4 bg-muted rounded-lg">
+                  <h4 className="text-sm font-medium text-text-secondary">STT Configuration</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="stt_language" className="text-sm font-medium">
+                        {t('common:models.stt_language')}
                       </Label>
+                      <Input
+                        id="stt_language"
+                        value={sttLanguage}
+                        onChange={e => setSttLanguage(e.target.value)}
+                        placeholder="en, zh, es, fr, de, ja, ko"
+                        className="bg-base"
+                      />
                       <p className="text-xs text-text-muted">
-                        {t('common:models.video_generate_audio_hint')}
+                        {t('common:models.stt_language_hint')}
                       </p>
                     </div>
-                    <Select
-                      value={videoGenerateAudio ? 'true' : 'false'}
-                      onValueChange={v => setVideoGenerateAudio(v === 'true')}
-                    >
-                      <SelectTrigger className="w-20 bg-base">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">是</SelectItem>
-                        <SelectItem value="false">否</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-sm font-medium">
-                        {t('common:models.video_draft_mode')}
+                    <div className="space-y-2">
+                      <Label htmlFor="stt_format" className="text-sm font-medium">
+                        {t('common:models.stt_transcription_format')}
                       </Label>
-                      <p className="text-xs text-text-muted">
-                        {t('common:models.video_draft_mode_hint')}
-                      </p>
+                      <Select
+                        value={sttTranscriptionFormat}
+                        onValueChange={(v: 'text' | 'srt' | 'vtt') => setSttTranscriptionFormat(v)}
+                      >
+                        <SelectTrigger className="bg-base">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">Text</SelectItem>
+                          <SelectItem value="srt">SRT</SelectItem>
+                          <SelectItem value="vtt">VTT</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <Select
-                      value={videoDraft ? 'true' : 'false'}
-                      onValueChange={v => setVideoDraft(v === 'true')}
-                    >
-                      <SelectTrigger className="w-20 bg-base">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">是</SelectItem>
-                        <SelectItem value="false">否</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-sm font-medium">
-                        {t('common:models.video_camera_fixed')}
-                      </Label>
-                      <p className="text-xs text-text-muted">
-                        {t('common:models.video_camera_fixed_hint')}
-                      </p>
-                    </div>
-                    <Select
-                      value={videoCameraFixed ? 'true' : 'false'}
-                      onValueChange={v => setVideoCameraFixed(v === 'true')}
-                    >
-                      <SelectTrigger className="w-20 bg-base">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">是</SelectItem>
-                        <SelectItem value="false">否</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-sm font-medium">
-                        {t('common:models.video_watermark')}
-                      </Label>
-                    </div>
-                    <Select
-                      value={videoWatermark ? 'true' : 'false'}
-                      onValueChange={v => setVideoWatermark(v === 'true')}
-                    >
-                      <SelectTrigger className="w-20 bg-base">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">是</SelectItem>
-                        <SelectItem value="false">否</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Advanced parameters */}
-              <div className="border-t pt-4 mt-4">
-                <h5 className="text-sm font-medium text-text-secondary mb-3">
-                  {t('common:models.video_advanced_options')}
-                </h5>
-                <div className="space-y-2">
-                  <Label htmlFor="video_seed" className="text-sm font-medium">
-                    {t('common:models.video_seed')}
-                  </Label>
-                  <Input
-                    id="video_seed"
-                    type="number"
-                    value={videoSeed}
-                    onChange={e => setVideoSeed(parseInt(e.target.value) || -1)}
-                    placeholder="-1"
-                    className="bg-base w-40"
-                  />
-                  <p className="text-xs text-text-muted">{t('common:models.video_seed_hint')}</p>
+              {/* Embedding-specific fields */}
+              {modelCategoryType === 'embedding' && (
+                <div className="space-y-4 p-4 bg-muted rounded-lg">
+                  <h4 className="text-sm font-medium text-text-secondary">
+                    Embedding Configuration
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="embedding_dimensions" className="text-sm font-medium">
+                        {t('common:models.embedding_dimensions')}
+                      </Label>
+                      <Input
+                        id="embedding_dimensions"
+                        type="number"
+                        value={embeddingDimensions || ''}
+                        onChange={e =>
+                          setEmbeddingDimensions(parseInt(e.target.value) || undefined)
+                        }
+                        placeholder="1536 (OpenAI), 768 (Cohere)"
+                        className="bg-base"
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.embedding_dimensions_hint')}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="embedding_format" className="text-sm font-medium">
+                        {t('common:models.embedding_encoding_format')}
+                      </Label>
+                      <Select
+                        value={embeddingEncodingFormat}
+                        onValueChange={(v: 'float' | 'base64') => setEmbeddingEncodingFormat(v)}
+                      >
+                        <SelectTrigger className="bg-base">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="float">Float</SelectItem>
+                          <SelectItem value="base64">Base64</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="flex items-start space-x-3">
+                    <Checkbox
+                      id="embedding_supports_image_input"
+                      data-testid="embedding-image-input-checkbox"
+                      checked={embeddingSupportsImageInput}
+                      onCheckedChange={checked => setEmbeddingSupportsImageInput(Boolean(checked))}
+                    />
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor="embedding_supports_image_input"
+                        className="text-sm font-medium cursor-pointer"
+                      >
+                        {t('common:models.embedding_supports_image_input')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.embedding_supports_image_input_hint')}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Image-specific fields */}
-          {modelCategoryType === 'image' && (
-            <ImageConfigSection
-              config={imageConfig}
-              onChange={changes => setImageConfig(prev => ({ ...prev, ...changes }))}
-            />
+              {/* Rerank-specific fields */}
+              {modelCategoryType === 'rerank' && (
+                <div className="space-y-4 p-4 bg-muted rounded-lg">
+                  <h4 className="text-sm font-medium text-text-secondary">Rerank Configuration</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="rerank_top_n" className="text-sm font-medium">
+                        {t('common:models.rerank_top_n')}
+                      </Label>
+                      <Input
+                        id="rerank_top_n"
+                        type="number"
+                        value={rerankTopN || ''}
+                        onChange={e => setRerankTopN(parseInt(e.target.value) || undefined)}
+                        placeholder="Default: return all"
+                        className="bg-base"
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.rerank_top_n_hint')}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="rerank_return_docs" className="text-sm font-medium">
+                        {t('common:models.rerank_return_documents')}
+                      </Label>
+                      <Select
+                        value={rerankReturnDocuments ? 'true' : 'false'}
+                        onValueChange={v => setRerankReturnDocuments(v === 'true')}
+                      >
+                        <SelectTrigger className="bg-base">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="true">Yes</SelectItem>
+                          <SelectItem value="false">No</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Video-specific fields */}
+              {modelCategoryType === 'video' && (
+                <div className="space-y-4 p-4 bg-muted rounded-lg">
+                  <h4 className="text-sm font-medium text-text-secondary">
+                    {t('common:models.video_config_title')}
+                  </h4>
+
+                  {/* Model capabilities configuration */}
+                  <div>
+                    <p className="text-xs text-text-muted mb-3">
+                      {t('common:models.video_capabilities_hint')}
+                    </p>
+
+                    {/* Supported aspect ratios */}
+                    <div className="space-y-2 mb-4">
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_capabilities_ratios')}
+                      </Label>
+                      <div className="flex flex-wrap gap-2">
+                        {['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
+                          <button
+                            key={ratio}
+                            type="button"
+                            onClick={() =>
+                              setCapRatios(prev =>
+                                prev.some(option => option.value === ratio)
+                                  ? prev.filter(option => option.value !== ratio)
+                                  : [...prev, { label: ratio, value: ratio }]
+                              )
+                            }
+                            className={cn(
+                              'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                              capRatios.some(option => option.value === ratio)
+                                ? 'bg-primary/10 border-primary text-primary'
+                                : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                            )}
+                          >
+                            {ratio === 'adaptive' ? t('chat:video.ratio.adaptive') : ratio}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Supported resolutions */}
+                    <div className="space-y-2 mb-4">
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_capabilities_resolutions')}
+                      </Label>
+                      <div className="flex flex-wrap gap-2">
+                        {['480p', '720p', '1080p'].map(res => (
+                          <button
+                            key={res}
+                            type="button"
+                            onClick={() =>
+                              setCapResolutions(prev =>
+                                prev.some(option => (option.value ?? option.label) === res)
+                                  ? prev.filter(option => (option.value ?? option.label) !== res)
+                                  : [...prev, { label: res, value: res }]
+                              )
+                            }
+                            className={cn(
+                              'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                              capResolutions.some(option => (option.value ?? option.label) === res)
+                                ? 'bg-primary/10 border-primary text-primary'
+                                : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                            )}
+                          >
+                            {res}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 mt-4">
+                      <Label htmlFor="video-advanced-capabilities" className="text-sm font-medium">
+                        {t('common:models.video_advanced_capabilities')}
+                      </Label>
+                      <Textarea
+                        id="video-advanced-capabilities"
+                        data-testid="video-advanced-capabilities"
+                        value={advancedCapabilities}
+                        onChange={event => {
+                          setAdvancedCapabilities(event.target.value)
+                          setAdvancedCapabilitiesError('')
+                        }}
+                        placeholder='{"supports_image_input":true,"supports_video_input":true,"generation_modes":[...]}'
+                        className={`min-h-[180px] bg-base font-mono text-xs ${
+                          advancedCapabilitiesError ? 'border-error' : ''
+                        }`}
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.video_advanced_capabilities_hint')}
+                      </p>
+                      {advancedCapabilitiesError && (
+                        <p className="text-xs text-error">{advancedCapabilitiesError}</p>
+                      )}
+                    </div>
+
+                    {/* Supported durations */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_capabilities_durations')}
+                      </Label>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {[-1, 5, 10].map(dur => (
+                          <button
+                            key={dur}
+                            type="button"
+                            onClick={() =>
+                              setCapDurations(prev =>
+                                prev.includes(dur)
+                                  ? prev.filter(d => d !== dur)
+                                  : [...prev, dur].sort((a, b) => a - b)
+                              )
+                            }
+                            className={cn(
+                              'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                              capDurations.includes(dur)
+                                ? 'bg-primary/10 border-primary text-primary'
+                                : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                            )}
+                          >
+                            {dur === -1 ? t('common:models.video_duration_auto') : `${dur}s`}
+                          </button>
+                        ))}
+                        {/* Show custom durations that aren't predefined */}
+                        {capDurations
+                          .filter(d => d !== -1 && d !== 5 && d !== 10)
+                          .map(dur => (
+                            <button
+                              key={dur}
+                              type="button"
+                              onClick={() => setCapDurations(prev => prev.filter(d => d !== dur))}
+                              className="px-3 py-1.5 text-xs rounded-md border bg-primary/10 border-primary text-primary transition-colors"
+                            >
+                              {dur}s ×
+                            </button>
+                          ))}
+                        {/* Custom duration input */}
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={300}
+                            placeholder={t('common:models.video_capabilities_custom_add')}
+                            value={customDuration}
+                            onChange={e => setCustomDuration(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                const val = parseInt(customDuration)
+                                if (val > 0 && !capDurations.includes(val)) {
+                                  setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
+                                  setCustomDuration('')
+                                }
+                              }
+                            }}
+                            className="w-20 h-8 text-xs bg-base"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2"
+                            onClick={() => {
+                              const val = parseInt(customDuration)
+                              if (val > 0 && !capDurations.includes(val)) {
+                                setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
+                                setCustomDuration('')
+                              }
+                            }}
+                          >
+                            +
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Feature toggles */}
+                  <div className="border-t pt-4 mt-4">
+                    <h5 className="text-sm font-medium text-text-secondary mb-3">
+                      {t('common:models.video_feature_toggles')}
+                    </h5>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-sm font-medium">
+                            {t('common:models.video_generate_audio')}
+                          </Label>
+                          <p className="text-xs text-text-muted">
+                            {t('common:models.video_generate_audio_hint')}
+                          </p>
+                        </div>
+                        <Select
+                          value={videoGenerateAudio ? 'true' : 'false'}
+                          onValueChange={v => setVideoGenerateAudio(v === 'true')}
+                        >
+                          <SelectTrigger className="w-20 bg-base">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">是</SelectItem>
+                            <SelectItem value="false">否</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-sm font-medium">
+                            {t('common:models.video_draft_mode')}
+                          </Label>
+                          <p className="text-xs text-text-muted">
+                            {t('common:models.video_draft_mode_hint')}
+                          </p>
+                        </div>
+                        <Select
+                          value={videoDraft ? 'true' : 'false'}
+                          onValueChange={v => setVideoDraft(v === 'true')}
+                        >
+                          <SelectTrigger className="w-20 bg-base">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">是</SelectItem>
+                            <SelectItem value="false">否</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-sm font-medium">
+                            {t('common:models.video_camera_fixed')}
+                          </Label>
+                          <p className="text-xs text-text-muted">
+                            {t('common:models.video_camera_fixed_hint')}
+                          </p>
+                        </div>
+                        <Select
+                          value={videoCameraFixed ? 'true' : 'false'}
+                          onValueChange={v => setVideoCameraFixed(v === 'true')}
+                        >
+                          <SelectTrigger className="w-20 bg-base">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">是</SelectItem>
+                            <SelectItem value="false">否</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-sm font-medium">
+                            {t('common:models.video_watermark')}
+                          </Label>
+                        </div>
+                        <Select
+                          value={videoWatermark ? 'true' : 'false'}
+                          onValueChange={v => setVideoWatermark(v === 'true')}
+                        >
+                          <SelectTrigger className="w-20 bg-base">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">是</SelectItem>
+                            <SelectItem value="false">否</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Advanced parameters */}
+                  <div className="border-t pt-4 mt-4">
+                    <h5 className="text-sm font-medium text-text-secondary mb-3">
+                      {t('common:models.video_advanced_options')}
+                    </h5>
+                    <div className="space-y-2">
+                      <Label htmlFor="video_seed" className="text-sm font-medium">
+                        {t('common:models.video_seed')}
+                      </Label>
+                      <Input
+                        id="video_seed"
+                        type="number"
+                        value={videoSeed}
+                        onChange={e => setVideoSeed(parseInt(e.target.value) || -1)}
+                        placeholder="-1"
+                        className="bg-base w-40"
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.video_seed_hint')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Image-specific fields */}
+              {modelCategoryType === 'image' && (
+                <ImageConfigSection
+                  config={imageConfig}
+                  onChange={changes => setImageConfig(prev => ({ ...prev, ...changes }))}
+                />
+              )}
+            </>
           )}
 
           {publicationGroups && (
@@ -2461,7 +2886,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           <Button
             variant="outline"
             onClick={handleTestConnection}
-            disabled={testing || !modelId || !apiKey}
+            data-testid="model-test-connection-button"
+            disabled={testing || (editingMode === 'form' && (!modelId || !apiKey))}
           >
             {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             <BeakerIcon className="w-4 h-4 mr-1" />

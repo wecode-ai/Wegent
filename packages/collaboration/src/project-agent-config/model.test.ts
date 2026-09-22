@@ -6,7 +6,11 @@ import { describe, expect, it } from "vitest";
 
 import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent } from "../types";
-import { createSharedAgentBindingInput, normalizeProjectAgent } from "./model";
+import {
+  createResourceAgentBindingInput,
+  createSharedAgentBindingInput,
+  normalizeProjectAgent,
+} from "./model";
 
 const team: CollaborationOwnedAgent = {
   id: "workspace-agent-1",
@@ -56,6 +60,29 @@ describe("project agent configuration model", () => {
       name: "研发团队",
       runtime: "wegent",
       wegentTeamId: 12,
+    });
+  });
+
+  it("uses the project binding payload supplied by a local Agent resource", () => {
+    expect(
+      createResourceAgentBindingInput({
+        id: "local-agent",
+        name: "Local Agent",
+        owner_type: "workspace",
+        owner_id: "local-workspace",
+        owner_name: "Local workspace",
+        status: "available",
+        execution_environment_ids: [],
+        project_binding_input: {
+          name: "local-agent",
+          runtime: "codex",
+          model: null,
+        },
+      }),
+    ).toEqual({
+      name: "local-agent",
+      runtime: "codex",
+      model: null,
     });
   });
 

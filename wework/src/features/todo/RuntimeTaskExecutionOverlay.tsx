@@ -11,6 +11,7 @@ import {
   findRuntimeTask,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 export interface RuntimeTaskExecutionOverlayProps {
@@ -58,7 +59,7 @@ export function RuntimeTaskExecutionOverlay({
     if (turn?.id) onExecutionTurnIdentified?.(turn.id)
   }, [turn?.id, onExecutionTurnIdentified])
   const task = findRuntimeTask(state.runtimeWork, address)
-  const device = state.devices.find(candidate => candidate.device_id === address.deviceId)
+  const device = findWorkbenchDevice(state.devices, address.deviceId)
   return (
     <DesktopToolServices>
       <RuntimeExecutionConversation
@@ -84,7 +85,13 @@ export function RuntimeTaskExecutionOverlay({
           )
         }
         onRetryTranscript={session.reloadRuntimeTranscript}
-        executionRunning={session.status.taskExecution.running}
+        executionRunning={
+          session.status.taskExecution.running
+            ? true
+            : session.transcriptError || session.transcriptLoading
+              ? undefined
+              : false
+        }
         onStop={async () => {
           await cancelRuntimeTask(address)
           await session.reloadRuntimeTranscript()

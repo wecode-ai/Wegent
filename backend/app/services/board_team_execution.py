@@ -34,7 +34,9 @@ def _execution_prompt(
     if context is None:
         raise RuntimeError("Assigned board task context is unavailable")
     title = context.title or "Board task"
-    prompt = build_project_robot_user_input(
+    prompt = execution.runtime_origin_context.get(
+        "comment_prompt"
+    ) or build_project_robot_user_input(
         project_id=str(item.cloud_project_id),
         task_id=item.id,
         execution_id=execution.id,
@@ -107,7 +109,10 @@ async def dispatch_board_robot_execution(
         item is None
         or agent is None
         or item.cloud_project_id != execution.cloud_project_id
-        or item.assignee_agent_id != agent.id
+        or (
+            not execution.runtime_origin_context.get("comment_trigger_message_id")
+            and item.assignee_agent_id != agent.id
+        )
         or agent.cloud_project_id != execution.cloud_project_id
         or agent.status != "active"
     ):

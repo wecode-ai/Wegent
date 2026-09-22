@@ -10,12 +10,22 @@ export function useRuntimeConversationSession(
 ) {
   const context = useRuntimeConversationScope()
   const scope = context?.runtime === runtime ? context : null
-  const { deviceId, taskId } = address
+  const { deviceId, taskId, projectSession } = address
+  const projectId = projectSession?.projectId
+  const issueId = projectSession?.issueId
   const session = useMemo(
     () =>
-      scope?.get({ deviceId, taskId }) ??
-      createRuntimeConversationSession(runtime, { deviceId, taskId }),
-    [scope, runtime, deviceId, taskId]
+      scope?.get({
+        deviceId,
+        taskId,
+        ...(projectId && issueId ? { projectSession: { projectId, issueId } } : {}),
+      }) ??
+      createRuntimeConversationSession(runtime, {
+        deviceId,
+        taskId,
+        ...(projectId && issueId ? { projectSession: { projectId, issueId } } : {}),
+      }),
+    [scope, runtime, deviceId, taskId, projectId, issueId]
   )
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot)
   useEffect(() => {

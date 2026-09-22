@@ -13,7 +13,7 @@ export function createScope(runtime: RuntimeConversationClient) {
     getActivityTurnId: (key: string) => activityTurnIds.get(key),
     identifyActivityTurn: (key: string, turnId: string) => activityTurnIds.set(key, turnId),
     get(address: RuntimeTaskAddress) {
-      const key = JSON.stringify([address.deviceId, address.taskId])
+      const key = JSON.stringify([address.deviceId, address.taskId, address.projectSession ?? null])
       let session = sessions.get(key)
       if (!session) {
         session = createRuntimeConversationSession(runtime, address)

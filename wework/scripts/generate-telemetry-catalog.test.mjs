@@ -124,3 +124,27 @@ test('requires each operation to declare its failure stages', () => {
 
   assert.throws(() => validateRegistry(registry), /failureStages must not be empty/)
 })
+
+test('allows the approved bounded plugin identifier property', () => {
+  const registry = structuredClone(validRegistry)
+  registry.routes[0].publicProperties.push({
+    name: 'plugin_id',
+    type: 'string',
+    maxLength: 161,
+  })
+
+  const catalog = buildCatalog(registry)
+
+  assert.deepEqual(catalog.events[0].properties.at(-1), {
+    name: 'plugin_id',
+    type: 'string',
+    maxLength: 161,
+  })
+})
+
+test('requires bounded approved string properties', () => {
+  const registry = structuredClone(validRegistry)
+  registry.routes[0].publicProperties.push({ name: 'plugin_id', type: 'string' })
+
+  assert.throws(() => validateRegistry(registry), /maxLength must be a positive integer/)
+})

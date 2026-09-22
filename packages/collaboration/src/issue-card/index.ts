@@ -4,6 +4,7 @@
 
 export * from './CollaborationIssueCard'
 export * from './model'
+export * from './priorityBadgeClasses'
 
 export * from './IssueCardWorkflowStage'
 

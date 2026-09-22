@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -52,48 +53,19 @@ async function createGroup(control, { name, leader }) {
   await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
     value: name,
   })
+  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+  await control.command(
+    'click',
+    scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
+  )
+  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
   await control.command(
     'click',
     scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
   )
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-group-create-next"]'),
-    {
-      timeoutMs: 10_000,
-    }
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-group-create-tab-rules"][aria-selected="true"]'),
-    {
-      timeoutMs: 10_000,
-    }
-  )
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="collaboration-group-create-next"]'),
-    {
-      timeoutMs: 10_000,
-    }
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-group-create-tab-environment"][aria-selected="true"]'),
-    {
-      timeoutMs: 10_000,
-    }
-  )
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: 10_000,
-  })
-}
-
-async function createAgentGroup(control, { name, agentResourceId }) {
-  await createGroup(control, {
-    name,
-    leader: `agent:${agentResourceId}`,
   })
 }
 
@@ -167,6 +139,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'cloud')
 
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
         await control.command('waitFor', scoped('[data-testid="collaboration-workspace-create"]'), {
@@ -262,6 +235,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           scoped('[data-testid="collaboration-workspace-project-create"]')
         )
         await control.command(
+          'click',
+          '[data-testid="collaboration-workspace-project-create-blank"]'
+        )
+        await control.command(
           'waitFor',
           scoped('[data-testid="collaboration-project-create-dialog"]'),
           { timeoutMs: uiTimeoutMs }
@@ -305,19 +282,43 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped('[data-testid="collaboration-project-settings-participants"]')
         )
-        await control.command('waitFor', scoped('[data-testid="project-agent-config"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
+        await control.command(
+          'click',
+          scoped('[data-testid="collaboration-participants-tab-groups"]')
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="collaboration-group-add-${workspaceGroup.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'click',
+          scoped(`[data-testid="collaboration-group-add-${workspaceGroup.id}"]`)
+        )
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
+          response => response.items?.some(candidate => candidate.id === workspaceGroup.id),
+          'Adding the Workspace collaboration group to the Project did not persist',
+          uiTimeoutMs
+        )
+
+        await control.command(
+          'click',
+          scoped('[data-testid="collaboration-participants-tab-agents"]')
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-participants-tab-agents"][aria-selected="true"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
         await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="project-agent-mode-create-card"]',
-          {
-            timeoutMs: uiTimeoutMs,
-          }
-        )
         await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           timeoutMs: uiTimeoutMs,
         })
@@ -363,38 +364,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Creating a project-owned Agent did not persist',
           uiTimeoutMs
         )
-        await control.command(
-          'waitFor',
-          scoped(`[data-testid="project-agent-row-${projectAgent.id}"]`),
-          { text: PROJECT_AGENT_NAME, timeoutMs: uiTimeoutMs }
-        )
-        await capture(control, 'project-automation-03-project-agent-created.png')
-
+        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
+          text: PROJECT_AGENT_NAME,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'click',
           scoped('[data-testid="collaboration-participants-tab-groups"]')
         )
         await control.command(
           'waitFor',
-          scoped(`[data-testid="collaboration-group-add-${workspaceGroup.id}"]`),
+          scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
           { timeoutMs: uiTimeoutMs }
         )
+        await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
+          value: PROJECT_GROUP_NAME,
+        })
         await control.command(
           'click',
-          scoped(`[data-testid="collaboration-group-add-${workspaceGroup.id}"]`)
+          scoped('[data-testid="collaboration-group-create-add-members"]')
         )
-        await waitForApiValue(
-          () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
-          response => response.items?.some(candidate => candidate.id === workspaceGroup.id),
-          'Adding the Workspace collaboration group to the Project did not persist',
+        const projectAgentMemberTestId = await waitForTestIdByText(
+          control,
+          ACTIVE_WORKBENCH_SELECTOR,
+          'collaboration-group-create-member-agent-',
+          PROJECT_AGENT_NAME,
           uiTimeoutMs
         )
-
-        await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
-        await createAgentGroup(control, {
-          name: PROJECT_GROUP_NAME,
-          agentResourceId: projectAgent.wegentTeamId,
+        await control.command('click', `[data-testid="${projectAgentMemberTestId}"]`)
+        await control.command('waitFor', scoped('.collaboration-group-selected-people'), {
+          text: PROJECT_AGENT_NAME,
+          timeoutMs: uiTimeoutMs,
         })
+        await capture(control, 'project-automation-03-project-agent-created.png')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-create"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
         const projectGroup = await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
           response =>
@@ -465,9 +480,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await createAgentGroup(control, {
+        await createGroup(control, {
           name: DELETABLE_GROUP_NAME,
-          agentResourceId: String(projectAgent.wegentTeamId),
+          leader: `human:${workspace.created_by_user_id}`,
         })
         const deletableGroup = await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),

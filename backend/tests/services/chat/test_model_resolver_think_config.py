@@ -160,7 +160,7 @@ class TestExtractDeveloperRoleSupport:
 
     @_DECRYPT_PATCH
     def test_supports_developer_role_absent(self, _decrypt):
-        """No supports_developer_role in env → None."""
+        """No supports_developer_role in env preserves the existing payload shape."""
         spec = _make_spec()
         result = _extract_model_config(spec)
-        assert result["supports_developer_role"] is None
+        assert "supports_developer_role" not in result

@@ -4,15 +4,19 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { track } from '@/telemetry/client'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
+import { observeOperation } from '@/telemetry/observeOperation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
+  removePluginMarketplaceInstallation,
   sameInstalledPlugins,
   sameMarketplaceItems,
   setPluginMarketplaceCache,
+  subscribePluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
@@ -25,6 +29,8 @@ import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagement
 import {
   installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
+  linkedCloudInstalledPluginId,
+  linkedCloudPluginId,
   mergeInstalledPlugins,
 } from './installedPluginMerge'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
@@ -154,6 +160,23 @@ export function PluginManagementWorkspace({
     setActiveTab(tab)
     document.getElementById(`plugin-management-${tab}-tab`)?.focus()
   }
+
+  useEffect(() => {
+    return subscribePluginMarketplaceCache(snapshot => {
+      if (!snapshot || snapshot.cacheKey !== marketplaceCacheKeyValue) return
+      setInstalledPlugins(previous =>
+        sameInstalledPlugins(previous, snapshot.installedPlugins)
+          ? previous
+          : snapshot.installedPlugins
+      )
+      setMarketplaceItems(previous =>
+        sameMarketplaceItems(previous, snapshot.marketplaceItems)
+          ? previous
+          : snapshot.marketplaceItems
+      )
+      if (snapshot.deviceId) setCurrentDeviceId(snapshot.deviceId)
+    })
+  }, [marketplaceCacheKeyValue])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
     if (!showCoreDshTab) return
@@ -301,7 +324,8 @@ export function PluginManagementWorkspace({
         track('plugin_enabled_changed', {
           enabled: !plugin.enabled,
           scope: 'plugin',
-          source: 'cloud',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -344,7 +368,8 @@ export function PluginManagementWorkspace({
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
-          source: 'cloud',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -392,7 +417,30 @@ export function PluginManagementWorkspace({
         })
       )
       .then(outcome => {
-        setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
+        const nextInventory = removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
+          installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
+          marketplaceItemIds: [
+            marketplaceItem?.id,
+            marketplaceItem?.remotePluginId,
+            plugin.raw.spec.pluginId,
+            linkedCloudPluginId(plugin.raw),
+          ],
+          marketplaceId:
+            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+            installedPluginMarketplaceId(plugin.raw),
+          pluginKeys: [
+            plugin.raw.spec.source.pluginKey,
+            typeof plugin.raw.metadata.name === 'string' ? plugin.raw.metadata.name : null,
+            pluginName,
+          ],
+        })
+        if (nextInventory) {
+          setInstalledPlugins(nextInventory.installedPlugins)
+          setMarketplaceItems(nextInventory.marketplaceItems)
+        } else {
+          setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        }
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))
         notifyLocalPluginSkillsChanged([String(id), pluginName, plugin.raw.spec.source.pluginKey])
         const warningDetails = pluginUninstallWarningDetails(outcome)
@@ -419,6 +467,7 @@ export function PluginManagementWorkspace({
         }
         track('plugin_uninstalled', {
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch((error: unknown) => {
@@ -538,8 +587,10 @@ export function PluginManagementWorkspace({
   }
 
   const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
-    const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
-    const installed = await localPluginApi.importMarketplaceCopy(descriptor)
+    const installed = await observeOperation('plugin.copy', async () => {
+      const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
+      return localPluginApi.importMarketplaceCopy(descriptor)
+    })
     const item = toInstalledPluginItem(installed)
     setInstalledPlugins(previous => [
       item,

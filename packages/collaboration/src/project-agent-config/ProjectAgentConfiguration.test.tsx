@@ -357,6 +357,27 @@ describe("ProjectAgentConfiguration", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it("opens and consumes a host-requested add action once", async () => {
+    const { api } = createApi();
+    const onConsumed = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          openComposerRequestId={17}
+          onOpenComposerRequestConsumed={onConsumed}
+          project={project}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+
+    expect(onConsumed).toHaveBeenCalledWith(17);
+    expect(element("project-agent-dialog")).toBeTruthy();
+  });
+
   it("excludes cloud Agent resources from local projects", async () => {
     const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
     const { api } = createApi({

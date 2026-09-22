@@ -719,6 +719,7 @@ fn mcp_tool_call_request_user_input_can_be_auto_approved() {
     });
 
     assert!(is_mcp_tool_call_approval_request(&message));
+    assert!(!codex_notification_requires_user_input(&message));
     assert_eq!(
         mcp_tool_call_request_user_input_response(message_params(&message)),
         Some(json!({
@@ -765,6 +766,7 @@ fn ordinary_request_user_input_is_not_treated_as_mcp_tool_approval() {
             }
         });
         assert!(!is_mcp_tool_call_approval_request(&message));
+        assert!(codex_notification_requires_user_input(&message));
         assert!(mcp_tool_call_request_user_input_response(message_params(&message)).is_none());
     }
 }
@@ -898,6 +900,161 @@ fn prepare_wework_codex_home_replaces_stale_auth_link() {
         source_auth
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_skips_auth_link_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-subscription-off");
+    let user_codex_home = root.join("user-codex");
+    let codex_home = root.join("wework-codex");
+    let source_auth = user_codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+        .expect("user Codex home should be created");
+    fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+    env::set_var(CODEX_HOME_ENV, &user_codex_home);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert!(!codex_home.join("auth.json").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_wework_codex_home_removes_existing_link_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-subscription-cleanup");
+    let user_codex_home = root.join("user-codex");
+    let codex_home = root.join("wework-codex");
+    let source_auth = user_codex_home.join("auth.json");
+    let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+        .expect("user Codex home should be created");
+    fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+    fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+    std::os::unix::fs::symlink(&source_auth, &linked_auth)
+        .expect("existing auth link should be created");
+    env::set_var(CODEX_HOME_ENV, &user_codex_home);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert!(!linked_auth.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_preserves_user_auth_file_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-subscription-user-file");
+    let codex_home = root.join("wework-codex");
+    let managed_auth = codex_home.join("auth.json");
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+    fs::write(&managed_auth, br#"{"token":"user-managed"}"#)
+        .expect("user auth file should be written");
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert_eq!(
+        fs::read(&managed_auth).expect("user auth file should be preserved"),
+        br#"{"token":"user-managed"}"#
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_removes_copied_auth_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-subscription-copy-cleanup");
+    let user_codex_home = root.join("user-codex");
+    let codex_home = root.join("wework-codex");
+    let source_auth = user_codex_home.join("auth.json");
+    let managed_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+        .expect("user Codex home should be created");
+    fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+    fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+    // Simulate a wework-managed copy (Windows-style) created while enabled.
+    fs::copy(&source_auth, &managed_auth).expect("managed auth copy should be created");
+    fs::write(codex_home.join(".wework-managed-auth"), [])
+        .expect("managed auth marker should be written");
+    env::set_var(CODEX_HOME_ENV, &user_codex_home);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert!(!managed_auth.exists());
+    assert!(!codex_home.join(".wework-managed-auth").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_wework_codex_home_removes_dangling_link_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-subscription-dangling");
+    let codex_home = root.join("wework-codex");
+    let missing_native_auth = root.join("missing-codex").join("auth.json");
+    let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+    std::os::unix::fs::symlink(&missing_native_auth, &linked_auth)
+        .expect("dangling auth link should be created");
+    env::set_var(
+        CODEX_HOME_ENV,
+        missing_native_auth
+            .parent()
+            .expect("missing auth should have a parent"),
+    );
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert!(!linked_auth.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_wework_codex_home_preserves_user_symlink_when_subscription_disabled() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-user-symlink");
+    let codex_home = root.join("wework-codex");
+    let user_auth = root.join("user-managed-auth.json");
+    let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+    fs::write(&user_auth, br#"{"token":"user-managed"}"#).expect("user auth should be written");
+    std::os::unix::fs::symlink(&user_auth, &linked_auth)
+        .expect("user-managed auth link should be created");
+    env::set_var(CODEX_HOME_ENV, root.join("native-codex"));
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert_eq!(
+        fs::read_link(&linked_auth).expect("user-managed auth link should be preserved"),
+        user_auth
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1562,7 +1719,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
     assert!(launch_config.local_proxy_registration.is_some());
     assert!(launch_config.config_overrides.iter().any(|value| {
         value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.contains("/v1/codex-router/task-")
+            && value.ends_with("/v1/codex-router\"")
     }));
     for params in [
         thread_start_params(&request, &launch_config),
@@ -1791,12 +1948,63 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     );
     assert!(launch_config.config_overrides.iter().any(|override_value| {
         override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.contains("/v1/codex-router/task-")
+            && override_value.ends_with("/v1/codex-router\"")
     }));
     assert!(!launch_config
         .config_overrides
         .iter()
         .any(|override_value| override_value.contains("experimental_bearer_token")));
+}
+
+#[test]
+fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("fork-router");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let mut request = ExecutionRequest {
+        task_id: "fork-router-source-task".to_owned(),
+        model_config: json!({
+            "model_id": "source-model",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    let cold_fork = build_codex_launch_config_for_fork(&request, "fork-router-source-thread")
+        .expect("fork must not require an in-memory source route");
+    let source = build_codex_launch_config(&request).expect("source route should register");
+    bind_local_proxy_thread(&source, "fork-router-source-thread")
+        .expect("source thread should bind");
+    request.model_config["model_id"] = json!("selected-model");
+    let warm_fork = build_codex_launch_config_for_fork(&request, "fork-router-source-thread")
+        .expect("fork must accept the current model independently of the source route");
+    let token = |config: &CodexLaunchConfig| {
+        config
+            .local_proxy_registration
+            .as_ref()
+            .expect("proxy route")
+            .0
+            .clone()
+    };
+    assert_ne!(token(&cold_fork), token(&source));
+    assert_ne!(token(&warm_fork), token(&source));
+    assert_ne!(token(&warm_fork), token(&cold_fork));
+    assert!(warm_fork
+        .config_overrides
+        .contains(&"model=selected-model".to_owned()));
+
+    local_model_proxy::bind_fork_thread(&token(&warm_fork), "fork-router-new-thread")
+        .expect("new thread should own the fork route");
+    request.task_id = "fork-router-new-thread".to_owned();
+    let resumed = build_codex_launch_config(&request).expect("fork follow-up should register");
+    assert_eq!(token(&resumed), token(&warm_fork));
+    assert_ne!(token(&resumed), token(&source));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -3028,6 +3236,12 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 
 #[test]
 fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("restored-fork-router");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
     let request = ExecutionRequest {
         task_id: "restored-task".to_owned(),
         model_config: json!({
@@ -3046,9 +3260,13 @@ fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() 
         launch_config.model_provider.as_deref(),
         Some(codex_model_catalog::PROVIDER_ID)
     );
-    let retained = local_model_proxy::retain_for_thread("restored-thread", Some("gpt-5.6-luna"))
-        .expect("restored thread should be bound to the recreated route");
-    local_model_proxy::unregister(&retained);
+    let registration = launch_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("restored fork should have an independent route");
+    local_model_proxy::bind_fork_thread(&registration.0, "restored-fork-thread")
+        .expect("the new thread should own the route");
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

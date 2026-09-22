@@ -129,6 +129,16 @@ async function openPicker() {
   await act(async () => element<HTMLButtonElement>("-add").click());
 }
 
+async function addRepositoryDraft() {
+  await act(async () => element<HTMLButtonElement>("-add-repository").click());
+}
+
+async function saveConfiguration() {
+  await act(async () =>
+    element<HTMLButtonElement>("-save-configuration").click(),
+  );
+}
+
 function candidateDeviceIds() {
   return [
     ...container!.querySelectorAll<HTMLElement>(
@@ -145,12 +155,16 @@ async function render({
   locale = "zh-CN",
   gitRepositories,
   executionEnvironment,
+  onManageDevices,
+  onProjectChange,
 }: {
   assigned?: CollaborationExecutionEnvironment[];
   role?: CollaborationProject["access_role"];
   locale?: CollaborationLocale;
   gitRepositories?: SharedWorkspaceApi["gitRepositories"];
   executionEnvironment?: CollaborationProject["execution_environment"];
+  onManageDevices?(): void;
+  onProjectChange?(project: CollaborationProject): void;
 } = {}) {
   const online = environment(21, "Personal online", "online");
   const offline = environment(22, "Personal offline", "offline");
@@ -160,26 +174,34 @@ async function render({
   const available = [online, offline, shared, failed, preparing];
   const api = {
     projects: {
-      update: vi.fn(async () => ({
-        ...project,
-        version: 2,
-        execution_environment: {
-          repositories: [
-            {
-              name: "Wegent",
-              url: "https://github.com/wecode-ai/Wegent.git",
-              ref: "main",
-              path: "wegent",
-              primary: true,
-            },
-          ],
-          setup_steps: [
-            { command: "pnpm install", working_directory: "wegent" },
-          ],
-          fingerprint: "environment-v1",
-          devices: {},
-        },
-      })),
+      update: vi.fn(
+        async (
+          _projectId: string,
+          input: {
+            executionEnvironment: {
+              repositories: NonNullable<
+                CollaborationProject["execution_environment"]
+              >["repositories"];
+              setupSteps: Array<{
+                command: string;
+                workingDirectory: string;
+              }>;
+            };
+          },
+        ) => ({
+          ...project,
+          version: 2,
+          execution_environment: {
+            repositories: input.executionEnvironment.repositories,
+            setup_steps: input.executionEnvironment.setupSteps.map((step) => ({
+              command: step.command,
+              working_directory: step.workingDirectory,
+            })),
+            fingerprint: "environment-v1",
+            devices: {},
+          },
+        }),
+      ),
       initializeExecutionEnvironment: vi.fn(
         async (_projectId: string, input: { deviceId: number }) => {
           // The backend records the entry under the identity of the exact
@@ -240,6 +262,8 @@ async function render({
     root?.render(
       <ProjectExecutionEnvironments
         api={api}
+        onManageDevices={onManageDevices}
+        onProjectChange={onProjectChange}
         project={{
           ...project,
           access_role: role,
@@ -335,6 +359,7 @@ describe("ProjectExecutionEnvironments", () => {
       assigned: [environment(21, "Assigned online", "online")],
     });
 
+    await addRepositoryDraft();
     await change("-repository-name-0", "Wegent");
     await change(
       "-repository-url-0",
@@ -354,6 +379,7 @@ describe("ProjectExecutionEnvironments", () => {
     );
     await change("-setup-command-0", "pnpm install");
     await change("-setup-directory-0", "wegent");
+    await saveConfiguration();
     await act(async () => element<HTMLButtonElement>("-initialize-21").click());
 
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
@@ -391,29 +417,110 @@ describe("ProjectExecutionEnvironments", () => {
     });
     expect(container?.textContent).toContain("环境已初始化");
     expect(element("-21").textContent).toContain("环境已就绪");
-    expect(
-      container?.querySelector(`[data-testid="${prefix}-config-status"]`),
-    ).toBeNull();
+    expect(element("-configuration-status").textContent).toContain(
+      "配置已保存",
+    );
   });
 
-  it("blocks environment creation until the primary repository is selected", async () => {
+  it("initializes a repository-free environment without an implicit save", async () => {
     const api = await render({
       assigned: [environment(21, "Assigned online", "online")],
     });
 
-    // Name and path are filled, but no Git repository is selected — the row
-    // is dropped from the payload, so creating must stop with a clear message
-    // instead of failing on the device.
-    await change("-repository-name-0", "Wegent");
-    await change("-repository-path-0", "wegent");
-    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+    const initializeButton = element<HTMLButtonElement>("-initialize-21");
+    expect(element("-required").textContent).toBe("必需");
+    expect(element("-readiness").textContent).toBe("待完成");
+    expect(container?.textContent).toContain(
+      "至少在一台在线设备上完成初始化，项目任务才能使用此环境运行。",
+    );
+    expect(initializeButton.classList).toContain(
+      "collaboration-primary-button",
+    );
+
+    await act(async () => initializeButton.click());
 
     expect(api.projects.update).not.toHaveBeenCalled();
-    expect(api.projects.initializeExecutionEnvironment).not.toHaveBeenCalled();
     expect(
-      container?.querySelector(`[data-testid="${prefix}-environment-error"]`)
-        ?.textContent,
-    ).toContain("请先为主仓库选择 Git 仓库");
+      api.projects.initializeExecutionEnvironment,
+    ).toHaveBeenCalledExactlyOnceWith("project-1", {
+      deviceId: 21,
+      version: 1,
+    });
+    expect(element("-21").textContent).toContain("环境已就绪");
+    expect(element("-readiness").textContent).toBe("已完成");
+    expect(element("-completion-status").textContent).toBe("环境已初始化");
+    expect(initializeButton.classList).toContain(
+      "collaboration-secondary-button",
+    );
+    expect(initializeButton.classList).not.toContain(
+      "collaboration-primary-button",
+    );
+  });
+
+  it("saves repository-free setup steps before enabling initialization", async () => {
+    const onProjectChange = vi.fn();
+    const api = await render({
+      assigned: [environment(21, "Assigned online", "online")],
+      onProjectChange,
+    });
+
+    expect(element("-repositories-empty").textContent).toContain(
+      "未添加代码仓库",
+    );
+    await act(async () =>
+      element<HTMLButtonElement>("-add-setup-step").click(),
+    );
+    await change("-setup-command-0", "mkdir -p generated");
+    expect(element<HTMLButtonElement>("-initialize-21").disabled).toBe(true);
+
+    await saveConfiguration();
+
+    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
+      version: 1,
+      executionEnvironment: {
+        repositories: [],
+        setupSteps: [{ command: "mkdir -p generated", workingDirectory: "" }],
+      },
+    });
+    expect(element("-configuration-status").textContent).toContain(
+      "配置已保存",
+    );
+    expect(element<HTMLButtonElement>("-initialize-21").disabled).toBe(false);
+    expect(onProjectChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "project-1", version: 2 }),
+    );
+  });
+
+  it("publishes the initialized project so a remount keeps the current version", async () => {
+    const onProjectChange = vi.fn();
+    const api = await render({
+      assigned: [environment(21, "Assigned online", "online")],
+      onProjectChange,
+    });
+
+    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+
+    expect(onProjectChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "project-1", version: 3 }),
+    );
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledWith(
+      "project-1",
+      { deviceId: 21, version: 1 },
+    );
+  });
+
+  it("does not silently discard an incomplete repository draft", async () => {
+    const api = await render();
+
+    await addRepositoryDraft();
+    await change("-repository-name-0", "Wegent");
+    await change("-repository-path-0", "wegent");
+    await saveConfiguration();
+
+    expect(api.projects.update).not.toHaveBeenCalled();
+    expect(element("-configuration-error").textContent).toContain(
+      "请补全仓库的名称、Git 仓库和目录",
+    );
   });
 
   it("summarizes a device-side clone failure and shows it once", async () => {
@@ -443,12 +550,14 @@ describe("ProjectExecutionEnvironments", () => {
         },
       }),
     );
+    await addRepositoryDraft();
     await change("-repository-name-0", "Wegent");
     await change(
       "-repository-url-0",
       "https://github.com/wecode-ai/Wegent.git",
     );
     await change("-repository-path-0", "wegent");
+    await saveConfiguration();
     await act(async () => element<HTMLButtonElement>("-initialize-21").click());
 
     const shown = container?.querySelector(
@@ -466,12 +575,54 @@ describe("ProjectExecutionEnvironments", () => {
     ).toBeNull();
   });
 
+  it("explains that a legacy Executor cannot initialize a blank environment", async () => {
+    const api = await render({
+      assigned: [environment(21, "Assigned online", "online")],
+      executionEnvironment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "blank-environment-v1",
+        devices: {},
+      },
+    });
+    const rawError =
+      "Failed to prepare execution repositories: " +
+      "Execution environment must have exactly one primary repository";
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
+      async () => ({
+        ...project,
+        version: 3,
+        execution_environment: {
+          repositories: [],
+          setup_steps: [],
+          fingerprint: "blank-environment-v1",
+          devices: {
+            "device-21": {
+              status: "error" as const,
+              workspace_path: "",
+              prepared_at: null,
+              error: rawError,
+            },
+          },
+        },
+      }),
+    );
+
+    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+
+    const shown = element("-environment-error");
+    expect(shown.textContent).toContain(
+      "当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试",
+    );
+    expect(shown.getAttribute("title")).toBe(rawError);
+  });
+
   it("shows environment configuration before runtime devices", async () => {
     await render({
       assigned: [environment(21, "Assigned online", "online")],
     });
 
-    const repository = element("-repository-url-0");
+    const repository = element("-repositories-empty");
     const configuredEnvironment = element("-21");
     const addButton = element<HTMLButtonElement>("-add");
 
@@ -503,6 +654,24 @@ describe("ProjectExecutionEnvironments", () => {
     );
     expect(element("-picker").textContent).not.toContain("Personal offline");
     expect(element("-picker").textContent).not.toContain("Shared preparing");
+  });
+
+  it("opens device settings when there are no online candidates", async () => {
+    const onManageDevices = vi.fn();
+    await render({
+      assigned: [
+        environment(21, "Assigned personal", "online"),
+        environment(23, "Assigned shared", "online"),
+      ],
+      onManageDevices,
+    });
+    await openPicker();
+
+    await act(async () =>
+      element<HTMLButtonElement>("-manage-devices-picker").click(),
+    );
+
+    expect(onManageDevices).toHaveBeenCalledOnce();
   });
 
   it("keeps online candidates available while filtering the configured pool", async () => {
@@ -574,12 +743,14 @@ describe("ProjectExecutionEnvironments", () => {
       ],
     });
 
+    await addRepositoryDraft();
     await change("-repository-name-0", "Wegent");
     await change(
       "-repository-url-0",
       "https://github.com/wecode-ai/Wegent.git",
     );
     await change("-repository-path-0", "wegent");
+    await saveConfiguration();
     await act(async () =>
       element<HTMLButtonElement>("-initialize-1824").click(),
     );
@@ -618,12 +789,6 @@ describe("ProjectExecutionEnvironments", () => {
     api.projects.initializeExecutionEnvironment.mockImplementationOnce(
       () => pending,
     );
-    await change("-repository-name-0", "Wegent");
-    await change(
-      "-repository-url-0",
-      "https://github.com/wecode-ai/Wegent.git",
-    );
-    await change("-repository-path-0", "wegent");
     await act(async () =>
       element<HTMLButtonElement>("-initialize-1824").click(),
     );
@@ -738,21 +903,17 @@ describe("ProjectExecutionEnvironments", () => {
         environment(1824, "Wework desktop", "online", "app-record-1824"),
       ],
     });
-    api.projects.update.mockImplementationOnce(() => pending);
-    await change("-repository-name-0", "Wegent");
-    await change(
-      "-repository-url-0",
-      "https://github.com/wecode-ai/Wegent.git",
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
+      () => pending,
     );
-    await change("-repository-path-0", "wegent");
     await act(async () => {
       element<HTMLButtonElement>("-initialize-1748").click();
       element<HTMLButtonElement>("-initialize-1748").click();
       element<HTMLButtonElement>("-initialize-1824").click();
     });
 
-    expect(api.projects.update).toHaveBeenCalledOnce();
-    expect(api.projects.initializeExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.projects.update).not.toHaveBeenCalled();
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce();
     expect(element("-1748").textContent).toContain("正在初始化环境");
   });
 
@@ -789,6 +950,7 @@ describe("ProjectExecutionEnvironments", () => {
       },
     });
 
+    await addRepositoryDraft();
     await change("-repository-url-0", repositoryKey(repositoryOptions[0]));
 
     expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
@@ -813,7 +975,7 @@ describe("ProjectExecutionEnvironments", () => {
     );
 
     await change("-repository-ref-0", "develop");
-    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+    await saveConfiguration();
 
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
@@ -840,6 +1002,8 @@ describe("ProjectExecutionEnvironments", () => {
       gitRepositories: { list, listBranches: vi.fn() },
     });
 
+    expect(container?.textContent).not.toContain("仓库列表加载失败");
+    await addRepositoryDraft();
     expect(container?.textContent).toContain("仓库列表加载失败");
     expect(element("-repository-url-0")).toBeInstanceOf(HTMLInputElement);
     expect(element("-repository-ref-0")).toBeInstanceOf(HTMLInputElement);
@@ -893,6 +1057,9 @@ describe("ProjectExecutionEnvironments", () => {
     });
 
     expect(list).toHaveBeenCalledOnce();
+    await act(async () =>
+      workspaceElement<HTMLButtonElement>("-add-repository").click(),
+    );
     expect(workspaceElement("-repository-url-0")).toBeInstanceOf(
       HTMLSelectElement,
     );
@@ -906,6 +1073,9 @@ describe("ProjectExecutionEnvironments", () => {
     });
 
     expect(list).not.toHaveBeenCalled();
+    await act(async () =>
+      workspaceElement<HTMLButtonElement>("-add-repository").click(),
+    );
     expect(workspaceElement("-repository-url-0")).toBeInstanceOf(
       HTMLInputElement,
     );
@@ -948,6 +1118,7 @@ describe("ProjectExecutionEnvironments", () => {
       assigned: [environment(21, "Assigned online", "online")],
     });
 
+    await addRepositoryDraft();
     await change("-repository-name-0", "Draft name");
 
     await rerender(api, {
@@ -996,12 +1167,6 @@ describe("ProjectExecutionEnvironments", () => {
     api.projects.initializeExecutionEnvironment.mockImplementationOnce(
       () => pending,
     );
-    await change("-repository-name-0", "Wegent");
-    await change(
-      "-repository-url-0",
-      "https://github.com/wecode-ai/Wegent.git",
-    );
-    await change("-repository-path-0", "wegent");
     await act(async () =>
       element<HTMLButtonElement>("-initialize-1824").click(),
     );

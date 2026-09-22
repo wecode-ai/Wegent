@@ -30,6 +30,7 @@ import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-m
 import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
+import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
@@ -74,6 +75,15 @@ export function e2eOpenDialogOverride(
   return { canceled: false, filePaths: [resolve(selectedPath)] }
 }
 
+export function e2eSaveDialogOverride(
+  environment: NodeJS.ProcessEnv = process.env
+): { canceled: false; filePath: string } | null {
+  const controlUrl = environment.WEWORK_E2E_CONTROL_URL?.trim()
+  const selectedPath = environment.WEWORK_E2E_SAVE_DIALOG_PATH?.trim()
+  if (!controlUrl || !selectedPath) return null
+  return { canceled: false, filePath: resolve(selectedPath) }
+}
+
 /** Owner-view region capture limits (8K frame envelope). */
 const MAX_CAPTURE_WIDTH = 7680
 const MAX_CAPTURE_HEIGHT = 4320
@@ -105,6 +115,7 @@ export interface ElectronDesktopServices {
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   quitApplication: () => void
+  relaunchApplication: () => void
   openRuntimeTask: (taskAddressId: string) => void
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
@@ -297,6 +308,9 @@ export function createElectronCapabilityRouter(
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('app.quit', (_params, context) => {
     context.deferUntilResponseSent(desktopServices.quitApplication)
+  })
+  router.register('app.relaunch', (_params, context) => {
+    context.deferUntilResponseSent(desktopServices.relaunchApplication)
   })
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
@@ -703,9 +717,10 @@ export function createElectronCapabilityRouter(
     const override = e2eOpenDialogOverride()
     return override ?? dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
   })
-  router.register('dialog.save', params =>
-    dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
-  )
+  router.register('dialog.save', params => {
+    const override = e2eSaveDialogOverride()
+    return override ?? dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
+  })
   router.register('dialog.message', params =>
     dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   )
@@ -824,6 +839,7 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  registerWorkspaceFileActions(router, () => requiredWindow(window))
   router.register('workspace.openFile', params =>
     openFileInWorkspaceApp(stringParam(params, 'opener'), stringParam(params, 'path'), {
       open: (opener, path) => openLocalWorkspace(opener, path, app.getPath('userData')),

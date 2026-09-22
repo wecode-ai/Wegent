@@ -2,6 +2,8 @@ import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from '
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { cloudFetch } from './cloud-http.js'
+
 interface StoredCloudCredential {
   version: 2
   apiBaseUrl: string
@@ -54,7 +56,7 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly request: typeof fetch = fetch
+    private readonly request: typeof fetch = cloudFetch
   ) {}
 
   devicePublicKey(): Promise<DevicePublicKey> {

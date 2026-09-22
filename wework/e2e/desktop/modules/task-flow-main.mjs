@@ -125,6 +125,7 @@ import {
 import {
   verifyFollowUpSendRejectionNotice,
   verifyModelServiceConnectionError,
+  verifyModelProxyRestartRecovery,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -1169,6 +1170,7 @@ async function main() {
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
@@ -1282,6 +1284,7 @@ async function main() {
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+      WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
       WEWORK_E2E_STARTUP_SPLASH_CAPTURE: join(resultDir, 'startup-splash.png'),
       WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
@@ -1453,6 +1456,7 @@ async function main() {
         initialRendererLocation: ready.location,
         pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
+        resultDir,
         runtimeRoot: electronCoreRuntimeRoot,
       })
       if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
@@ -3451,6 +3455,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'model-service-connection-error'
       await verifyModelServiceConnectionError({ composerSelector, control })
 
+      phase = 'model-proxy-restart-recovery'
+      await verifyModelProxyRestartRecovery({
+        composerSelector,
+        control,
+        executorLogPath,
+        restartDesktopApp,
+      })
+
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('resilience')) {
@@ -3743,7 +3755,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
@@ -3784,16 +3795,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        value: 'file-panel-anchor',
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,

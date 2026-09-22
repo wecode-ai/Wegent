@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState, type ChangeEventHandler } from "react";
+import {
+  useRef,
+  useState,
+  type ChangeEventHandler,
+  type ReactNode,
+} from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { Check, Search } from "lucide-react";
 
@@ -99,48 +104,101 @@ export interface IssueDetailSearchableSelectOption<
   searchText?: string;
 }
 
+export interface IssueDetailSearchableSelectAction {
+  label: string;
+  icon?: ReactNode;
+  testId: string;
+  onSelect(): void;
+}
+
 export interface IssueDetailSearchableSelectProps<TValue extends string> {
   value: TValue;
   options: IssueDetailSearchableSelectOption<TValue>[];
+  actions?: IssueDetailSearchableSelectAction[];
   testId: string;
   accessibleLabel: string;
   className?: string;
   disabled?: boolean;
   searchPlaceholder: string;
   emptyLabel: string;
+  groupLimit?: number;
+  showAllLabel?(group: string, count: number): string;
   onChange(value: TValue): void;
+}
+
+function visibleSearchableSelectOptions<TValue extends string>(
+  options: IssueDetailSearchableSelectOption<TValue>[],
+  value: TValue,
+  normalizedQuery: string,
+  groupLimit: number | undefined,
+  expandedGroups: Set<string>,
+) {
+  if (normalizedQuery) {
+    return options.filter((option) =>
+      `${option.label} ${option.searchText ?? ""} ${option.group ?? ""}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    );
+  }
+  if (!groupLimit) return options;
+
+  const groupCounts = new Map<string, number>();
+  return options.filter((option) => {
+    if (!option.group || expandedGroups.has(option.group)) return true;
+    const visibleCount = groupCounts.get(option.group) ?? 0;
+    if (visibleCount < groupLimit || option.value === value) {
+      groupCounts.set(option.group, visibleCount + 1);
+      return true;
+    }
+    return false;
+  });
 }
 
 export function IssueDetailSearchableSelect<TValue extends string>({
   value,
   options,
+  actions = [],
   testId,
   accessibleLabel,
   className,
   disabled,
   searchPlaceholder,
   emptyLabel,
+  groupLimit,
+  showAllLabel,
   onChange,
 }: IssueDetailSearchableSelectProps<TValue>) {
   const portalTheme = useCollaborationPortalTheme();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleOptions = normalizedQuery
-    ? options.filter((option) =>
-        `${option.label} ${option.searchText ?? ""} ${option.group ?? ""}`
-          .toLocaleLowerCase()
-          .includes(normalizedQuery),
-      )
-    : options;
+  const effectiveGroupLimit = showAllLabel ? groupLimit : undefined;
+  const visibleOptions = visibleSearchableSelectOptions(
+    options,
+    value,
+    normalizedQuery,
+    effectiveGroupLimit,
+    expandedGroups,
+  );
+  const groupCounts = new Map<string, number>();
+  options.forEach((option) => {
+    if (!option.group) return;
+    groupCounts.set(option.group, (groupCounts.get(option.group) ?? 0) + 1);
+  });
 
   return (
     <Popover.Root
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (nextOpen) setQuery("");
+        if (nextOpen) {
+          setQuery("");
+          setExpandedGroups(new Set());
+        }
       }}
     >
       <Popover.Trigger asChild>
@@ -157,8 +215,6 @@ export function IssueDetailSearchableSelect<TValue extends string>({
       <Popover.Portal>
         <Popover.Content
           {...portalTheme}
-          role="listbox"
-          aria-label={accessibleLabel}
           data-testid={`${testId}-menu`}
           sideOffset={4}
           collisionPadding={8}
@@ -181,12 +237,27 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
             />
           </label>
-          <div className="mt-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div
+            role="listbox"
+            aria-label={accessibleLabel}
+            className="mt-1 min-h-0 overflow-y-auto overscroll-contain"
+          >
             {visibleOptions.map((option, index) => {
               const previousGroup = visibleOptions[index - 1]?.group;
+              const nextGroup = visibleOptions[index + 1]?.group;
               const showGroup = Boolean(
                 option.group && option.group !== previousGroup,
               );
+              const totalInGroup = option.group
+                ? (groupCounts.get(option.group) ?? 0)
+                : 0;
+              const showAll =
+                !normalizedQuery &&
+                Boolean(option.group) &&
+                option.group !== nextGroup &&
+                Boolean(effectiveGroupLimit) &&
+                totalInGroup > (effectiveGroupLimit ?? 0) &&
+                !expandedGroups.has(option.group!);
               return (
                 <div key={option.value}>
                   {showGroup ? (
@@ -214,6 +285,22 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                       <Check className="h-3.5 w-3.5 shrink-0" />
                     ) : null}
                   </button>
+                  {showAll && option.group ? (
+                    <button
+                      type="button"
+                      data-testid={`${testId}-show-all-${option.group}`}
+                      onClick={() =>
+                        setExpandedGroups((current) => {
+                          const next = new Set(current);
+                          next.add(option.group!);
+                          return next;
+                        })
+                      }
+                      className="flex min-h-9 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                    >
+                      {showAllLabel?.(option.group, totalInGroup)}
+                    </button>
+                  ) : null}
                 </div>
               );
             })}
@@ -223,6 +310,34 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               </p>
             ) : null}
           </div>
+          {actions.length > 0 ? (
+            <div className="mt-1 shrink-0 border-t border-border pt-1">
+              {actions.map((action) => (
+                <button
+                  key={action.testId}
+                  type="button"
+                  data-testid={action.testId}
+                  onClick={() => {
+                    setOpen(false);
+                    action.onSelect();
+                  }}
+                  className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                >
+                  {action.icon ? (
+                    <span
+                      aria-hidden="true"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center"
+                    >
+                      {action.icon}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate">
+                    {action.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

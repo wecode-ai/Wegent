@@ -23,10 +23,11 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_notification_requires_user_input, codex_runtime_approval_policy,
+        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexAuthMutationError, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -52,6 +53,7 @@ const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
 const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
 
 enum RestoreStartupState {
     Waiting {
@@ -1161,6 +1163,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
             "runtime.worktrees.list" => self.list_worktrees().await,
             "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.apply_issue_cleanup" => {
+                self.apply_issue_worktree_cleanup(payload).await
+            }
             "runtime.worktrees.restore" => self.restore_worktree(payload).await,
             "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,

@@ -32,7 +32,7 @@ replace the preparation animation with the concrete error and a retry action.
 
 ## Project Space Board Progress
 
-项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示三行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中与待确认两列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；入口作为独立的视图操作右对齐展示。该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。
+项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示两行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中与待确认两列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；入口作为独立的视图操作右对齐展示。该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。
 
 Running cards on project-space boards show the agent's current process output
 instead of internal thinking text. The standard view grows naturally with the
@@ -52,6 +52,14 @@ processing summary only after final text has stopped streaming and the active
 turn has settled. While output is streaming, Wework keeps the processing layout
 stable so the completed state cannot repeatedly appear and disappear or make
 following text flicker.
+
+## Embedded Browser Navigation
+
+内嵌浏览器首次加载实际页面时会移除初始化用的 `about:blank` 历史项，
+避免后退到空白宿主页；后续页面的前进、后退记录正常保留。
+
+The embedded browser removes its bootstrap `about:blank` history entry when the
+first real page commits. Later navigation retains normal Back and Forward history.
 
 ## Collaboration Loading
 

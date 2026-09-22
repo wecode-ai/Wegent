@@ -3703,13 +3703,22 @@ describe('DesktopSidebar', () => {
                     running: false,
                     updatedAt: '2026-06-20T02:00:00Z',
                   },
+                  {
+                    taskId: 'codex-waiting',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Waiting for an answer',
+                    runtime: 'codex',
+                    running: true,
+                    interactionStatus: 'waitingForUserInput',
+                    updatedAt: '2026-06-20T01:30:00Z',
+                  },
                 ],
               },
             ],
           },
         ],
         chats: [],
-        totalTasks: 3,
+        totalTasks: 4,
       },
     })
 
@@ -3733,6 +3742,8 @@ describe('DesktopSidebar', () => {
       screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
     ).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-waiting-codex-waiting')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-running-codex-waiting')).not.toBeInTheDocument()
   })
 
   test('shows a queued active Goal recovery as running while preserving queue actions', async () => {

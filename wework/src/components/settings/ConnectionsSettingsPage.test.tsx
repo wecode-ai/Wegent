@@ -2559,7 +2559,77 @@ describe('ConnectionsSettingsPage', () => {
     expect(openSpy).not.toHaveBeenCalled()
   })
 
-  test('shows the actual IDE target before opening a remote device session', async () => {
+  test.each([
+    ['cloud', cloudDevice(), 'device-1'],
+    ['remote Docker', remoteDevice(), 'remote-device'],
+  ])('opens a %s device IDE directly in the system browser', async (_label, device, deviceId) => {
+    api.getAllDevices.mockResolvedValue([device])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: deviceId,
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: 'http://10.20.30.40:17888/session/code-server-1?token=secret',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId(`connection-code-server-button-${deviceId}`))
+    await waitFor(() => {
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'http://10.20.30.40:17888/session/code-server-1?token=secret',
+        { target: 'system' }
+      )
+    })
+    expect(screen.queryByTestId(`connection-ide-target-${deviceId}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`connection-ide-confirm-${deviceId}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`connection-ide-cancel-${deviceId}`)).not.toBeInTheDocument()
+  })
+
+  test('reports a missing IDE URL instead of silently doing nothing', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: 'remote-device',
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: '',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
+
+    expect(await screen.findByTestId('connection-session-error-remote-device')).toHaveTextContent(
+      '设备未返回 IDE 地址，请重试'
+    )
+    expect(openExternalUrlMock).not.toHaveBeenCalled()
+  })
+
+  test('reports invalid IDE URLs returned by the external URL helper', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: 'remote-device',
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: 'not-a-valid-url',
+      transport: 'http',
+    })
+    openExternalUrlMock.mockResolvedValue(false)
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
+
+    expect(await screen.findByTestId('connection-session-error-remote-device')).toHaveTextContent(
+      '无法使用系统默认浏览器打开 IDE，请重试'
+    )
+  })
+
+  test('allows retrying after the system browser fails to open the IDE', async () => {
     api.getAllDevices.mockResolvedValue([remoteDevice()])
     api.startCodeServer.mockResolvedValue({
       session_id: 'code-server-1',
@@ -2569,21 +2639,22 @@ describe('ConnectionsSettingsPage', () => {
       url: 'http://10.20.30.40:17888/session/code-server-1?token=secret',
       transport: 'http',
     })
+    openExternalUrlMock
+      .mockRejectedValueOnce(new Error('System browser unavailable'))
+      .mockResolvedValueOnce(true)
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
-    const target = await screen.findByTestId('connection-ide-target-remote-device')
-    expect(target).toHaveTextContent('http://10.20.30.40:17888')
-    expect(target).not.toHaveTextContent('token=secret')
-    expect(openExternalUrlMock).not.toHaveBeenCalled()
+    const ideButton = await screen.findByTestId('connection-code-server-button-remote-device')
+    await userEvent.click(ideButton)
+    expect(await screen.findByTestId('connection-session-error-remote-device')).toHaveTextContent(
+      '无法使用系统默认浏览器打开 IDE，请重试'
+    )
 
-    await userEvent.click(screen.getByTestId('connection-ide-confirm-remote-device'))
-    await waitFor(() => {
-      expect(openExternalUrlMock).toHaveBeenCalledWith(
-        'http://10.20.30.40:17888/session/code-server-1?token=secret'
-      )
-    })
+    await userEvent.click(ideButton)
+    await waitFor(() => expect(openExternalUrlMock).toHaveBeenCalledTimes(2))
+    expect(api.startCodeServer).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('connection-session-error-remote-device')).not.toBeInTheDocument()
   })
 
   test('allows deleting offline remote device registrations', async () => {

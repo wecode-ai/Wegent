@@ -99,3 +99,11 @@ export function createSharedAgentBindingInput(
     wegentTeamId: team.team_id,
   };
 }
+
+export function createResourceAgentBindingInput(
+  agent: CollaborationOwnedAgent,
+): Record<string, unknown> {
+  return agent.project_binding_input
+    ? { ...agent.project_binding_input }
+    : createSharedAgentBindingInput(agent);
+}

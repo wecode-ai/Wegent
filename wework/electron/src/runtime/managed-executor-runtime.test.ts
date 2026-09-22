@@ -104,6 +104,76 @@ describe('managed executor runtime', () => {
     await directory.remove()
   })
 
+  test('removes an existing native Codex auth link when the subscription is off', async () => {
+    const directory = await temporaryDirectory('managed-executor-disabled-')
+    const nativeCodexHome = join(directory.path, 'native-codex')
+    const managedCodexHome = join(directory.path, 'managed-codex')
+    const nativeAuth = join(nativeCodexHome, 'auth.json')
+    const managedAuth = join(managedCodexHome, 'auth.json')
+    await mkdir(nativeCodexHome, { recursive: true })
+    await writeFile(nativeAuth, '{"auth":"native"}\n')
+    await mkdir(managedCodexHome, { recursive: true })
+    // Simulate a previously-enabled state by creating the symlink ourselves.
+    if (process.platform === 'win32') {
+      await writeFile(managedAuth, '{"auth":"native"}\n')
+    } else {
+      await import('node:fs/promises').then(({ symlink }) =>
+        symlink(nativeAuth, managedAuth, 'file')
+      )
+    }
+    await writeFile(join(managedCodexHome, '.wework-managed-auth'), '')
+
+    prepareManagedExecutorEnvironment({
+      dataDirectory: join(directory.path, 'data'),
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
+        WEGENT_CODEX_HOME: managedCodexHome,
+        WEGENT_EXECUTOR_HOME: join(directory.path, 'executor'),
+        WEWORK_CODEX_SUBSCRIPTION_ENABLED: 'false',
+      },
+    })
+
+    await expect(readFile(managedAuth, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(
+      await import('node:fs/promises').then(({ stat }) =>
+        stat(join(managedCodexHome, '.wework-managed-auth')).then(
+          () => true,
+          () => false
+        )
+      )
+    ).toBe(false)
+    await directory.remove()
+  })
+
+  test('preserves a real Codex auth file when the subscription is off', async () => {
+    const directory = await temporaryDirectory('managed-executor-real-file-')
+    const nativeCodexHome = join(directory.path, 'native-codex')
+    const managedCodexHome = join(directory.path, 'managed-codex')
+    await mkdir(nativeCodexHome, { recursive: true })
+    await mkdir(managedCodexHome, { recursive: true })
+    // A user-managed auth file with no wework marker must be left untouched.
+    await writeFile(join(managedCodexHome, 'auth.json'), '{"auth":"user-uploaded"}\n')
+
+    prepareManagedExecutorEnvironment({
+      dataDirectory: join(directory.path, 'data'),
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
+        WEGENT_CODEX_HOME: managedCodexHome,
+        WEGENT_EXECUTOR_HOME: join(directory.path, 'executor'),
+        WEWORK_CODEX_SUBSCRIPTION_ENABLED: 'false',
+      },
+    })
+
+    expect(await readFile(join(managedCodexHome, 'auth.json'), 'utf8')).toBe(
+      '{"auth":"user-uploaded"}\n'
+    )
+    await directory.remove()
+  })
+
   test('waits for a credentialed local endpoint handshake', async () => {
     const directory = await temporaryDirectory('managed-executor-')
     const endpoint =

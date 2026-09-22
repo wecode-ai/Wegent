@@ -200,7 +200,6 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     useComposerMentionCandidates(
       apps,
       skills,
-      selectedModel,
       activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention'
         ? activeMenu.trigger.query
         : '',

@@ -451,6 +451,9 @@ export function useWorkbenchRuntimeMessaging({
       if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
 
       let sendRequested = false
+      const isRequestUserInputResponse = Boolean(
+        request.requestUserInputResponse ?? request.request_user_input_response
+      )
       const optimisticUserMessage = options?.optimisticUserMessage
       const outboundRequestWithClientId = optimisticUserMessage
         ? {
@@ -466,7 +469,7 @@ export function useWorkbenchRuntimeMessaging({
       }
       try {
         const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
-        if (!options?.silentBusyRetry) {
+        if (!options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
@@ -474,10 +477,12 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
-        if (options?.silentBusyRetry) {
+        if (options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
-        if (response.status === 'queued') {
+        if (isRequestUserInputResponse) {
+          lifecycleStore.userInputResponded(outboundRequest.address)
+        } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)
           options?.onQueued?.(response)
         } else {
@@ -945,6 +950,7 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        automaticWorkspaceSelection?: boolean
         preserveAttachments?: boolean
         launchStartedAt?: number
         taskCreateRequest?: RuntimeTaskCreateRequest | null
@@ -953,8 +959,8 @@ export function useWorkbenchRuntimeMessaging({
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      const workspaceExecution = options?.sideSource ? undefined : intent.execution
-      const requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
+      let workspaceExecution = options?.sideSource ? undefined : intent.execution
+      let requestedManagedWorkspace = Boolean(workspaceExecution?.workspace)
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -970,16 +976,37 @@ export function useWorkbenchRuntimeMessaging({
         : (modelSelection.getSelectedModel?.() ??
           modelSelection.selectedModel ??
           resolveAutomaticModel(modelSelection.models))
-      const selectedModelOptions = hasOverrideSelection
-        ? (overrideSelection?.options ?? {})
-        : (modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions)
-      const executionModel = options?.taskCreateRequest
+      const taskRequestSelection = options?.taskCreateRequest?.modelSelection
+      const overrideExecutionModel = hasOverrideSelection
+        ? overrideSelection
+          ? selectedModel
+            ? selectedModelExecutionFields(selectedModel, overrideSelection.options ?? {})
+            : {
+                modelId: overrideSelection.modelName,
+                modelType: overrideSelection.modelType,
+                modelOptions: overrideSelection.options ?? {},
+              }
+          : {}
+        : null
+      const executionModel = options?.taskCreateRequest?.modelId
         ? {
             modelId: options.taskCreateRequest.modelId,
             modelType: options.taskCreateRequest.modelType,
             modelOptions: options.taskCreateRequest.modelOptions,
           }
-        : selectedModelExecutionFields(selectedModel, selectedModelOptions)
+        : taskRequestSelection?.modelName
+          ? {
+              modelId: taskRequestSelection.modelName,
+              modelType: taskRequestSelection.modelType,
+              modelOptions: taskRequestSelection.options,
+            }
+          : overrideExecutionModel
+            ? overrideExecutionModel
+            : {
+                modelId: intent.modelId,
+                modelType: intent.modelType,
+                modelOptions: intent.modelOptions,
+              }
       const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
       const friendlyTitle =
         runtime === 'codex'
@@ -1011,6 +1038,11 @@ export function useWorkbenchRuntimeMessaging({
         ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
             ?.project
         : null
+      const hasDirectManagedWorkspaceTarget = Boolean(
+        requestedManagedWorkspace &&
+        options?.taskCreateRequest?.deviceId?.trim() &&
+        options.taskCreateRequest.workspacePath?.trim()
+      )
       let runtimeTaskTarget: Pick<
         RuntimeTaskCreateRequest,
         | 'projectId'
@@ -1028,6 +1060,15 @@ export function useWorkbenchRuntimeMessaging({
         runtimeTaskTarget = {
           deviceId: options.sideSource.deviceId,
           workspacePath: options.sideSource.workspacePath,
+        }
+      } else if (
+        options?.taskCreateRequest?.deviceId?.trim() &&
+        options.taskCreateRequest.workspacePath?.trim()
+      ) {
+        optimisticDeviceId = options.taskCreateRequest.deviceId.trim()
+        runtimeTaskTarget = {
+          deviceId: optimisticDeviceId,
+          workspacePath: options.taskCreateRequest.workspacePath.trim(),
         }
       } else if (projectId) {
         if (!selectedProjectWorkspace) {
@@ -1063,7 +1104,7 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      if (requestedManagedWorkspace) {
+      if (requestedManagedWorkspace && !hasDirectManagedWorkspaceTarget) {
         const worktreeProject =
           state.projects.find(project => project.id === projectId) ??
           (state.currentProject?.id === projectId ? state.currentProject : null)
@@ -1071,31 +1112,42 @@ export function useWorkbenchRuntimeMessaging({
         const worktreeDevice = findWorkbenchDevice(state.devices, worktreeDeviceId)
         const runtimeWorkApi = services.runtimeWorkApi
         if (!runtimeWorkApi || !worktreeProject) {
-          reportSendBlocked(
-            i18n.t('workbench.worktree_unavailable_preflight_failed'),
-            { worktreeDeviceId, reason: 'runtime_api_unavailable' },
-            options
-          )
-          return false
-        }
-        const availability = await probeProjectWorktreeAvailability({
-          api: runtimeWorkApi,
-          project: worktreeProject,
-          workspace: selectedProjectWorkspace,
-          device: worktreeDevice,
-          ref: intent.execution?.workspace?.branch ?? projectWorktreeBranch,
-        })
-        if (!availability.available) {
-          reportSendBlocked(
-            i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
-            {
-              worktreeDeviceId,
-              reason: availability.reason,
-              sourcePath: availability.sourcePath,
-            },
-            options
-          )
-          return false
+          if (options?.automaticWorkspaceSelection) {
+            workspaceExecution = undefined
+            requestedManagedWorkspace = false
+          } else {
+            reportSendBlocked(
+              i18n.t('workbench.worktree_unavailable_preflight_failed'),
+              { worktreeDeviceId, reason: 'runtime_api_unavailable' },
+              options
+            )
+            return false
+          }
+        } else {
+          const availability = await probeProjectWorktreeAvailability({
+            api: runtimeWorkApi,
+            project: worktreeProject,
+            workspace: selectedProjectWorkspace,
+            device: worktreeDevice,
+            ref: workspaceExecution?.workspace?.branch ?? projectWorktreeBranch,
+          })
+          if (!availability.available) {
+            if (options?.automaticWorkspaceSelection) {
+              workspaceExecution = undefined
+              requestedManagedWorkspace = false
+            } else {
+              reportSendBlocked(
+                i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
+                {
+                  worktreeDeviceId,
+                  reason: availability.reason,
+                  sourcePath: availability.sourcePath,
+                },
+                options
+              )
+              return false
+            }
+          }
         }
       }
 
@@ -1286,7 +1338,7 @@ export function useWorkbenchRuntimeMessaging({
       })
       lifecycleStore.sendRequested(optimisticAddress, {
         ...(requestedManagedWorkspace
-          ? { workspaceCreationKind: intent.execution?.workspace?.source }
+          ? { workspaceCreationKind: workspaceExecution?.workspace?.source }
           : {}),
       })
       if (options?.initialGoal) {
@@ -1306,7 +1358,7 @@ export function useWorkbenchRuntimeMessaging({
             0
         )
         if (
-          intent.execution?.workspace &&
+          workspaceExecution?.workspace &&
           Number.isFinite(worktreeCreationDelayMs) &&
           worktreeCreationDelayMs > 0
         ) {
@@ -1417,7 +1469,7 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: address.deviceId,
               workspacePath: resolvedWorkspacePath,
               projectId,
-              workspaceKind: intent.execution?.workspace?.source,
+              workspaceKind: workspaceExecution?.workspace?.source,
             }),
             task: buildOptimisticRuntimeTask({
               taskId: address.taskId,
@@ -1426,7 +1478,7 @@ export function useWorkbenchRuntimeMessaging({
               runtime,
               status: response.status ?? 'running',
               queuePosition: response.queuePosition,
-              workspaceKind: intent.execution?.workspace?.source,
+              workspaceKind: workspaceExecution?.workspace?.source,
               modelSelection: createModelSelection,
             }),
           })
@@ -1527,7 +1579,7 @@ export function useWorkbenchRuntimeMessaging({
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
               runtime,
               status: 'failed',
-              workspaceKind: intent.execution?.workspace?.source,
+              workspaceKind: workspaceExecution?.workspace?.source,
               error: message,
             }),
           })
@@ -1798,7 +1850,13 @@ export function useWorkbenchRuntimeMessaging({
       )
       if (prepared.activeDeviceId) {
         const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
-        if (!isWorkbenchDeviceOnline(activeDevice)) {
+        const hasPreparedExecutionTarget = Boolean(
+          taskRequest?.deviceId?.trim() && taskRequest.workspacePath?.trim()
+        )
+        if (
+          !isWorkbenchDeviceOnline(activeDevice) &&
+          (activeDevice || !hasPreparedExecutionTarget)
+        ) {
           const deviceName =
             getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
             i18n.t('workbench.current_device')
@@ -1815,18 +1873,37 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      const executionModel = taskRequest
+      const executionModel = taskRequest?.modelId
         ? {
             modelId: taskRequest.modelId,
             modelType: taskRequest.modelType,
             modelOptions: taskRequest.modelOptions,
           }
-        : options.executionModel
-      const workspaceExecution = taskRequest
-        ? taskRequest.execution
-        : Object.prototype.hasOwnProperty.call(options, 'workspaceExecution')
-          ? (options.workspaceExecution ?? undefined)
-          : prepared.intent.execution
+        : taskRequest?.modelSelection?.modelName
+          ? {
+              modelId: taskRequest.modelSelection.modelName,
+              modelType: taskRequest.modelSelection.modelType,
+              modelOptions: taskRequest.modelSelection.options,
+            }
+          : options.executionModel
+      const workspaceSourceTask = taskRequest?.workspaceSourceTask ?? options.workspaceSource
+      const workspaceExecution = workspaceSourceTask
+        ? undefined
+        : taskRequest
+          ? taskRequest.execution
+          : Object.prototype.hasOwnProperty.call(options, 'workspaceExecution')
+            ? (options.workspaceExecution ?? undefined)
+            : prepared.intent.execution
+      const taskCreateRequest = workspaceSourceTask
+        ? {
+            ...(taskRequest ?? {
+              schemaVersion: 2 as const,
+              runtime: options.runtime ?? 'codex',
+              message,
+            }),
+            workspaceSourceTask,
+          }
+        : taskRequest
       const baseIntent = {
         ...prepared.intent,
         execution: workspaceExecution,
@@ -1861,10 +1938,11 @@ export function useWorkbenchRuntimeMessaging({
         additionalContext: taskRequest?.additionalContext ?? options.additionalContext,
         runtimeExecutablePath: taskRequest?.runtimeExecutablePath,
         runtimePermissionMode: taskRequest?.runtimePermissionMode,
-        taskCreateRequest: taskRequest,
+        taskCreateRequest,
         onError: options.onError,
         prepareRuntimeTask: options.prepareRuntimeTask,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
+        automaticWorkspaceSelection: options.automaticWorkspaceSelection,
         openInMainPane: false,
       })
     },

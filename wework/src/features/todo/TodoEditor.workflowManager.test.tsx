@@ -72,6 +72,8 @@ const plan: WorkflowPlan = {
     id: 'manager-run-1',
     status: 'queued',
     recent_activity: '正在进入执行队列',
+    model: 'deepseek-v4-pro-responses',
+    device_id: 'runtime-device-1',
     error: null,
     updated_at: '2026-08-26T00:00:00Z',
   },
@@ -101,12 +103,15 @@ describe('TodoEditor workflow manager execution', () => {
         api={api}
         projectChatClient={{} as never}
         currentUserId={1}
+        deviceNamesById={{ 'runtime-device-1': '本地开发机' }}
       />
     )
 
     await user.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     const managerCard = await screen.findByTestId('cloud-todo-workflow-manager-run')
     expect(managerCard).toBeEnabled()
+    expect(managerCard).toHaveTextContent('deepseek-v4-pro-responses · 本地开发机')
+    expect(managerCard).not.toHaveTextContent('runtime-device-1')
     expect(screen.getByTestId('cloud-todo-workflow-manager-open-execution')).toBeInTheDocument()
 
     await user.click(managerCard)

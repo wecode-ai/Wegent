@@ -82,16 +82,58 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('keeps existing resources selectable alongside the resource-library form', () => {
+  it('opens the resource-library form without exposing existing Agent selection', () => {
     const api = {
       listModels: vi.fn(async () => []),
       listSkills: vi.fn(async () => []),
     } as unknown as ReturnType<typeof createAgentResourceApi>
     const host = createWeworkProjectAgentConfigurationHost(api)
 
-    expect(host.supportsExistingAgentSelection).toBe(true)
+    expect(host.supportsExistingAgentSelection).toBe(false)
     expect(host.renderAgentCreator).toBeTypeOf('function')
     expect(host.renderAgentEditor).toBeTypeOf('function')
+  })
+
+  it('creates the default local Agent from the current device model', async () => {
+    const defaultAgent = {
+      id: 'local-agent-default',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+    }
+    const ensureDefault = vi.fn(async () => defaultAgent)
+    const localAgentApi = {
+      list: vi.fn(async () => []),
+      ensureDefault,
+      create: vi.fn(),
+    }
+    const localModelApi = {
+      listModels: vi.fn(async () => ({
+        data: [
+          {
+            name: 'gpt-5',
+            displayName: 'GPT-5',
+            type: 'public',
+            namespace: 'default',
+          },
+        ],
+      })),
+    }
+    const host = createWeworkProjectAgentConfigurationHost(
+      undefined,
+      localAgentApi as never,
+      localModelApi as never
+    )
+
+    await expect(host.createDefaultLocalAgent?.()).resolves.toBe(defaultAgent.id)
+    expect(ensureDefault).toHaveBeenCalledWith(
+      DEFAULT_WORK_ITEM_PROJECT_ID,
+      expect.objectContaining({
+        name: 'current-device-agent',
+        displayName: '当前设备智能体',
+        model: 'gpt-5',
+        capabilityMode: 'follow_device',
+      })
+    )
   })
 
   it('uses the real unified resource creator contract and returns the created Team reference', async () => {
@@ -546,6 +588,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
           executionMode: 'auto',
           executionEnvironment: 'local',
           executionDeviceId: null,
+          workspacePolicy: 'git_worktree',
           capabilityMode: 'manual',
           additionalSkills: [
             {
@@ -605,7 +648,11 @@ describe('weworkProjectAgentConfigurationHost', () => {
       expect(update).toHaveBeenCalledWith(
         DEFAULT_WORK_ITEM_PROJECT_ID,
         agent.id,
-        expect.objectContaining({ version: 3, executionMode: 'auto' })
+        expect.objectContaining({
+          version: 3,
+          executionMode: 'auto',
+          workspacePolicy: 'git_worktree',
+        })
       )
     )
     expect(onSaved).toHaveBeenCalledOnce()

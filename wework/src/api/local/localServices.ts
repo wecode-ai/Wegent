@@ -19,6 +19,7 @@ import {
 import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
@@ -692,6 +693,16 @@ function normalizeRuntimeTaskSummary(
   const goalExecutionStatus = runtimeGoalExecutionStatusValue(
     taskRecord.goalExecutionStatus ?? taskRecord.goal_execution_status
   )
+  const rawInteractionStatus = Object.hasOwn(taskRecord, 'interactionStatus')
+    ? taskRecord.interactionStatus
+    : taskRecord.interaction_status
+  const interactionStatus =
+    rawInteractionStatus === null
+      ? null
+      : rawInteractionStatus === 'waitingForUserInput'
+        ? rawInteractionStatus
+        : undefined
+  const hasInteractionStatus = rawInteractionStatus === null || interactionStatus !== undefined
   const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
@@ -722,6 +733,7 @@ function normalizeRuntimeTaskSummary(
     ...(modelSelection ? { modelSelection } : {}),
     ...(hasGoalStatus ? { goalStatus } : {}),
     ...(goalExecutionStatus ? { goalExecutionStatus } : {}),
+    ...(hasInteractionStatus ? { interactionStatus } : {}),
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),
@@ -1257,6 +1269,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
+  executionDeviceId?: string
   workspacePath?: string | null
   standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
@@ -1413,6 +1426,7 @@ async function buildLocalRuntimeExecutionRequest(
     ...(input.origin ? { origin: input.origin } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
+    ...(input.executionDeviceId ? { execution_device_id: input.executionDeviceId } : {}),
     new_session: input.newSession,
     ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
@@ -1703,7 +1717,16 @@ async function createLocalRuntimeTaskPayload(
 
   return {
     ...payload,
-    ...(materialized?.runtimeHandle ? { runtimeHandle: materialized.runtimeHandle } : {}),
+    ...(materialized?.runtimeHandle || normalizedData.executionDeviceId
+      ? {
+          runtimeHandle: {
+            ...(materialized?.runtimeHandle ?? {}),
+            ...(normalizedData.executionDeviceId
+              ? { executionDeviceId: normalizedData.executionDeviceId }
+              : {}),
+          },
+        }
+      : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
@@ -1733,6 +1756,7 @@ async function createLocalRuntimeTaskPayload(
         additionalContext: normalizedData.additionalContext,
         attachments: normalizedData.attachments,
         localDeviceId,
+        executionDeviceId: normalizedData.executionDeviceId,
         workspacePath: runtimeWorkspace?.workspacePath,
         standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
         runtimeProjectKey: normalizedData.runtimeProjectKey,
@@ -1806,6 +1830,8 @@ async function createLocalRuntimeSendPayload(
     stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
     'codex'
   const teamBinding = recordValue(recordValue(normalizedAddress.runtimeHandle).wegentTeam)
+  const executionDeviceId =
+    stringValue(recordValue(normalizedAddress.runtimeHandle).executionDeviceId) ?? undefined
   const wegentTeamId =
     typeof teamBinding.id === 'number' && teamBinding.id > 0 ? teamBinding.id : null
   const materializedExecutionRequest =
@@ -1863,6 +1889,7 @@ async function createLocalRuntimeSendPayload(
         cloudProjectId: normalizedData.cloudProjectId,
         origin: normalizedData.origin,
         localDeviceId,
+        executionDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
@@ -1914,6 +1941,7 @@ async function createLocalRuntimeSendPayload(
         cloudProjectId: normalizedData.cloudProjectId,
         origin: normalizedData.origin,
         localDeviceId,
+        executionDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
@@ -2928,7 +2956,10 @@ export function createRuntimeWorkApiFromIpc(
     cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
-    async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+    async createRuntimeTask(
+      data: RuntimeTaskCreateRequest,
+      beforeDispatch?: () => Promise<void>
+    ): Promise<RuntimeTaskCreateResponse> {
       const startedAt = Date.now()
       logRuntimeTaskCreateStage('local-create-started', {
         taskId: data.taskId ?? null,
@@ -3004,6 +3035,8 @@ export function createRuntimeWorkApiFromIpc(
         userId: executionRequest.user_id ?? null,
         userName: stringValue(executionRequest.user_name),
       })
+      // Fence delivery only after preparation succeeds and before Runtime can accept the task.
+      await beforeDispatch?.()
       logRuntimeTaskCreateStage('local-rpc-dispatched', {
         taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
@@ -3054,14 +3087,39 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeTaskQueueReorderResponse> {
       return requestWithLocalDevice('runtime.tasks.queue.reorder', data)
     },
-    forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
-      if (data.lastTurnId) {
-        return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
-          ...data,
-          taskId: data.source.taskId,
-        })
+    async forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      if (!data.lastTurnId) return requestWithLocalDevice('runtime.tasks.import_fork', data)
+
+      const selection = data.modelSelection
+      let modelConfig: Record<string, unknown> | undefined
+      if (selection?.modelName) {
+        if (
+          selection.modelType === 'runtime' &&
+          !(await prepareRuntimeModel({
+            deviceId: data.target.deviceId,
+            modelId: selection.modelName,
+          }))
+        ) {
+          throw modelCatalogSyncCancelled()
+        }
+        modelConfig = await applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            'codex',
+            requireLocalCodexCatalog,
+            selection.modelName,
+            selection.modelType,
+            selection.options,
+            options.cloudModelGateway
+          ),
+          selection.options,
+          resolveProxy
+        )
       }
-      return requestWithLocalDevice('runtime.tasks.import_fork', data)
+      return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
+        ...data,
+        taskId: data.source.taskId,
+        ...(modelConfig ? { modelConfig } : {}),
+      })
     },
   }
 }
@@ -3571,11 +3629,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   let rememberedCodexAuthConfigured: boolean | null = null
   const modelApi = {
     listModels: async () => {
+      // Always reconcile pending local model catalogs (custom model interfaces)
+      // so they appear in the picker even when the Codex subscription is off.
+      await ensureStatus()
+      const { localCodexSubscriptionEnabled } = await getAppPreferences()
+      if (!localCodexSubscriptionEnabled) {
+        return { data: localRuntimeModels([], null, false) }
+      }
       let codexOfficialModels: CodexOfficialModel[]
       let codexOfficialError: string | null
       let codexAuthConfigured: boolean
       try {
-        await ensureStatus()
         const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
           requestLocalCodexOfficialModels(request).then(
             value => ({ value, error: null }),

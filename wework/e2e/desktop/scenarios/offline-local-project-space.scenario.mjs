@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   captureVerificationScreenshot,
+  completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
+  selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -123,11 +125,41 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
           timeoutMs: uiTimeoutMs,
         }
       )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`)
+          )
+        ),
+        0,
+        'The local collaboration domain mixed in a cloud Workspace'
+      )
+      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'cloud')
       await control.command(
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
           text: '云端空间',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
+          )
+        ),
+        0,
+        'The cloud collaboration domain mixed in the device-owned local Workspace'
+      )
+      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'local')
+      await control.command(
+        'waitFor',
+        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
+        {
+          text: '本地空间',
           timeoutMs: uiTimeoutMs,
         }
       )
@@ -181,29 +213,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-workspace-project-create"]')
       )
-      await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
+      await control.command(
+        'click',
+        '[data-testid="collaboration-workspace-project-import-folder"]'
+      )
+      await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const createSnapshot = await snapshot(control)
-      assert.ok(
-        createSnapshot.testIds.includes('cloud-project-location-local'),
-        'The local workspace project dialog did not identify local storage'
-      )
       assert.equal(
-        createSnapshot.testIds.includes('cloud-project-location-cloud'),
-        false,
-        'The local workspace project dialog incorrectly offered cloud storage'
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="collaboration-project-name-input"]',
+            { visible: true }
+          )
+        ),
+        0,
+        'The local workspace unexpectedly opened the cloud project form'
       )
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
@@ -263,9 +291,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         scoped('[data-testid="collaboration-project-settings-participants"]')
       )
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
@@ -358,13 +383,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: '本地空间',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'waitFor',
-        sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
-        {
-          text: '云端空间',
-          timeoutMs: uiTimeoutMs,
-        }
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`)
+          )
+        ),
+        0,
+        'Returning to the local domain mixed in a cloud Workspace'
       )
 
       assert.equal(

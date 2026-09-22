@@ -2016,6 +2016,7 @@ describe('ComposerTextarea', () => {
 
   test('keeps conversation and cloud candidates out of the $ skill menu', async () => {
     const textareaRef = createRef<HTMLElement>()
+    const listSkills = vi.fn().mockResolvedValue([GMAIL_SKILL])
     const reference =
       '[$Fix login flow](wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22source-task%22%7D)'
     const conversationCandidates: ComposerConversationMentionCandidate[] = [
@@ -2063,7 +2064,7 @@ describe('ComposerTextarea', () => {
           rows={2}
           textareaRef={textareaRef}
           className="min-h-12"
-          onListLocalSkills={async () => [GMAIL_SKILL]}
+          onListLocalSkills={listSkills}
           cloudMentionCandidates={[cloudCandidate]}
           conversationMentionCandidates={conversationCandidates}
         />

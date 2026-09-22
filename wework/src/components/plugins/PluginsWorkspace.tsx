@@ -1,3 +1,8 @@
+import {
+  recordPluginInstallationAccepted,
+  reconcilePluginInstallation,
+} from '@/features/plugins/pluginInstallTelemetry'
+import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { RefreshCw, Settings2 } from 'lucide-react'
@@ -15,7 +20,12 @@ import {
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
-import { track } from '@/telemetry/client'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import {
+  installedPluginTelemetryIdentity,
+  marketplacePluginTelemetryIdentity,
+  pluginTelemetryIdentityFromParts,
+} from '@/telemetry/pluginIdentity'
 import {
   isLocalBrowserConnector,
   isLocalConnector,
@@ -105,6 +115,7 @@ import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginImportDialog } from './PluginImportDialog'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+import { pluginOperationNoticeAutoDismissDelay } from './pluginOperationNoticePolicy'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginPublicationProgressDrawer } from './PluginPublicationProgressDrawer'
 import { PluginShareDialog } from './PluginShareDialog'
@@ -115,7 +126,6 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo } from './plugin-assets'
 import {
   isCloudManagedInstalledPlugin,
-  linkedCloudPluginId,
   linkedCloudInstalledPluginId,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
@@ -174,6 +184,7 @@ import {
   preferNonEmptyCatalogRows,
   rememberMarketplaceKey,
   rememberedMarketplaceKey,
+  resolveMarketplaceUninstallId,
   requiredConnectionNames,
   toInstalledPluginItem,
   toMarketplaceInstalledPluginItem,
@@ -399,6 +410,7 @@ export function PluginsWorkspace({
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(
     () => initialMarketplaceCache?.selectedMarketplaceKey || rememberedMarketplaceKey()
   )
+  const authoritativeInventoryRefreshRef = useRef(false)
   // Always open the marketplace on the "全部" distribution tab; do not restore a
   // previously selected local marketplace filter when navigating back from another route.
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
@@ -994,8 +1006,15 @@ export function PluginsWorkspace({
     setPluginPublishError(null)
     setPluginPublishShareRecovery(false)
     setIsUploadingPlugin(true)
+    const ownedListing = findOwnedMarketplacePlugin(plugin)
+    let attempt = beginOperation(
+      request.intent === 'restricted' &&
+        ownedListing?.accessRole === 'owner' &&
+        ownedListing.visibility === 'personal'
+        ? 'plugin.share'
+        : 'plugin.publish_request'
+    )
     try {
-      const ownedListing = findOwnedMarketplacePlugin(plugin)
       if (
         request.intent === 'restricted' &&
         ownedListing?.accessRole === 'owner' &&
@@ -1006,6 +1025,7 @@ export function PluginsWorkspace({
           targets: request.targets,
           allowCopy: request.targets.length > 0 && request.allowCopy,
         })
+        attempt.succeed()
         setPluginMarketplaceState(previous => ({
           ...previous,
           items: previous.items.map(item =>
@@ -1063,6 +1083,10 @@ export function PluginsWorkspace({
           testNotes: request.testNotes,
           riskDeclaration: { ...request.riskDeclaration },
         }
+        if (existingPublication?.actionEligibility.canCreateRevision) {
+          attempt.cancel()
+          attempt = beginOperation('plugin.publish_revision')
+        }
         const publication = existingPublication?.actionEligibility.canCreateRevision
           ? await pluginApi.publishPublicationRevision(
               existingPublication.id,
@@ -1081,6 +1105,7 @@ export function PluginsWorkspace({
               },
               request.operationAttemptId
             )
+        attempt.succeed()
         setPublicationRequests(previous => mergePublicationRequests(previous, [publication]))
         setMarketplaceRefreshTick(previous => previous + 1)
         setPluginPublishTarget(null)
@@ -1106,6 +1131,10 @@ export function PluginsWorkspace({
         targets: request.targets,
         allowCopy: request.allowCopy,
       })
+      attempt.succeed()
+      if (completed.submission.status === 'approved') beginOperation('plugin.publish').succeed()
+      else if (completed.submission.status === 'rejected')
+        beginOperation('plugin.publish').fail('confirm')
       await integratePersonalPublication(plugin, completed)
       setPluginPublishTarget(null)
       setPluginPublishAccess(null)
@@ -1134,6 +1163,7 @@ export function PluginsWorkspace({
         })
       }
     } catch (error) {
+      attempt.fail('request')
       const message = getErrorMessage(error, 'Failed to publish local plugin')
       const versionExists = /version already exists/i.test(message)
       const ownedListing = findOwnedMarketplacePlugin(plugin)
@@ -1203,11 +1233,13 @@ export function PluginsWorkspace({
     if (!pluginShareState) return
     setPluginShareSaving(true)
     setPluginShareError(null)
+    const attempt = beginOperation('plugin.share')
     try {
       const access = await pluginApi.updateMarketplacePluginAccess(
         pluginShareState.plugin.id,
         request
       )
+      attempt.succeed()
       setPluginMarketplaceState(previous => ({
         ...previous,
         items: previous.items.map(item =>
@@ -1227,6 +1259,7 @@ export function PluginsWorkspace({
       }))
       setPluginShareState(null)
     } catch (error) {
+      attempt.fail('request')
       setPluginShareError(error instanceof Error ? error.message : 'Failed to save plugin access')
     } finally {
       setPluginShareSaving(false)
@@ -1236,9 +1269,11 @@ export function PluginsWorkspace({
   const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
     setPluginSharePreparing(true)
     setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+    const attempt = beginOperation('plugin.copy')
     try {
       const descriptor = await pluginApi.copyMarketplacePlugin(plugin.id)
       const installed = await localPluginApi.importMarketplaceCopy(descriptor)
+      attempt.succeed()
       const installedItem = toInstalledPluginItem(installed)
       setInstalledPlugins(previous => [
         installedItem,
@@ -1248,6 +1283,7 @@ export function PluginsWorkspace({
       setSelectedMarketplacePluginId(null)
       setSelectedPluginId(installedItem.id)
     } catch (error) {
+      attempt.fail('request')
       setPluginMarketplaceState(previous => ({
         ...previous,
         error: error instanceof Error ? error.message : 'Failed to copy plugin',
@@ -1307,7 +1343,8 @@ export function PluginsWorkspace({
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
-          source: 'local',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -1316,8 +1353,13 @@ export function PluginsWorkspace({
       })
   }
 
+  useEffect(() => {
+    for (const plugin of installedPlugins) reconcilePluginInstallation(plugin.raw, currentDeviceId)
+  }, [installedPlugins, currentDeviceId])
+
   const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
     if (!isCloudManagedInstalledPlugin(plugin.raw)) return
+    const attempt = beginOperation('plugin.update_policy')
     const updatePolicy = enabled ? 'auto' : 'manual'
     const pluginId = plugin.id
     setUpdatingPluginPolicyIds(previous => new Set(previous).add(pluginId))
@@ -1339,12 +1381,14 @@ export function PluginsWorkspace({
     pluginApi
       .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
       .then(updated => {
+        attempt.succeed()
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins(previous =>
           previous.map(item => (String(item.id) === String(pluginId) ? nextItem : item))
         )
       })
       .catch(error => {
+        attempt.fail('request')
         const errorMessage = getErrorMessage(error, 'Unknown error')
         setInstalledPlugins(previous =>
           previous.map(item => (String(item.id) === String(pluginId) ? plugin : item))
@@ -1431,7 +1475,12 @@ export function PluginsWorkspace({
         plugin?.raw.spec.source.pluginKey ?? '',
       ])
       setMarketplaceRefreshTick(previous => previous + 1)
-      track('plugin_uninstalled', { source: 'local' })
+      track('plugin_uninstalled', {
+        source: plugin && isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+        ...(plugin
+          ? installedPluginTelemetryIdentity(plugin.raw)
+          : pluginTelemetryIdentityFromParts({ marketplace: 'unknown', pluginKey: pluginName })),
+      })
     }
     const isAccountUninstallSettledError = (error: unknown) => {
       const message = getErrorMessage(error, '')
@@ -1581,6 +1630,7 @@ export function PluginsWorkspace({
       },
     },
     onComplete: () => {
+      authoritativeInventoryRefreshRef.current = true
       setReconciliationRevision(previous => previous + 1)
       refreshLocalMarketplace()
       setPluginOperationNotice({
@@ -2012,6 +2062,7 @@ export function PluginsWorkspace({
     // Always re-prepare before connector auth + install. The confirm dialog opens
     // immediately with the list-row item; a fast confirm must not skip connector
     // detail that prepareMarketplaceInstallItem is still loading.
+    let installRequestAttempt: OperationAttempt | null = null
     const request = prepareMarketplaceInstallItem(item)
       .then(async preparedItem => {
         await ensureMarketplaceConnectors(preparedItem)
@@ -2033,6 +2084,9 @@ export function PluginsWorkspace({
         return preparedItem
       })
       .then(async preparedItem => {
+        installRequestAttempt = beginOperation('plugin.install_request', {
+          properties: marketplacePluginTelemetryIdentity(preparedItem),
+        })
         if (installFromLocal) {
           const plugin = await localPluginApi.installAvailablePlugin(
             preparedItem.id,
@@ -2066,7 +2120,13 @@ export function PluginsWorkspace({
         }
       })
       .then(async ({ plugin, preparedItem, targetDeviceId }) => {
+        installRequestAttempt?.succeed()
         await ensureLocalConnectorsAfterInstall(preparedItem, plugin)
+        recordPluginInstallationAccepted(
+          plugin,
+          targetDeviceId,
+          installFromLocal ? 'local' : 'cloud'
+        )
         return { plugin, targetDeviceId }
       })
 
@@ -2151,7 +2211,6 @@ export function PluginsWorkspace({
           deviceId: currentDeviceIdRef.current || '',
           fetchedAt: Date.now(),
         })
-        track('plugin_installed', { source: installFromLocal ? 'local' : 'cloud' })
         setMarketplaceRefreshTick(previous => previous + 1)
         setPluginOperationNotice({
           id: `installed-${item.id}`,
@@ -2179,6 +2238,7 @@ export function PluginsWorkspace({
         }
       })
       .catch((error: unknown) => {
+        installRequestAttempt?.fail('request')
         if (Reflect.get(error as object, 'code') === 'PLUGIN_DEVICE_DISCONNECTED') {
           setPluginMarketplaceState(previous => ({ ...previous, error: null }))
           showDeviceDisconnectedNotice(item.id)
@@ -2258,19 +2318,7 @@ export function PluginsWorkspace({
   }
 
   const marketplaceUninstallId = (item: PluginMarketplaceItem): string | number => {
-    const linkedLocal = installedPlugins.find(plugin => {
-      if (isCloudManagedInstalledPlugin(plugin.raw)) return false
-      const cloudPluginId = linkedCloudPluginId(plugin.raw)
-      return cloudPluginId !== null && String(cloudPluginId) === String(item.id)
-    })
-    if (linkedLocal) return linkedLocal.id
-    if (item.installedPluginId !== null && item.installedPluginId !== undefined) {
-      return item.installedPluginId
-    }
-    if (typeof item.manifest?.marketplaceId === 'string' && item.manifest.marketplaceId) {
-      return `${item.name}@${item.manifest.marketplaceId}`
-    }
-    return item.id
+    return resolveMarketplaceUninstallId(item, installedPlugins)
   }
 
   const confirmUninstallPlugin = () => {
@@ -2331,6 +2379,7 @@ export function PluginsWorkspace({
     const pending = pendingPersonalPluginDelete
     if (pending.cloudPluginId !== null && !pending.impact) return
     setIsDeletingPersonalPlugin(true)
+    const attempt = beginOperation('plugin.delete')
     try {
       if (pending.publication) {
         if (!pending.publication.actionEligibility.canWithdraw) {
@@ -2368,6 +2417,7 @@ export function PluginsWorkspace({
         )
       }
 
+      attempt.succeed()
       const normalizedName = pending.pluginName.trim().toLowerCase()
       const matchesInstalled = (plugin: InstalledPluginItem) =>
         plugin.distribution === 'personal' &&
@@ -2408,6 +2458,7 @@ export function PluginsWorkspace({
         }),
       })
     } catch (error) {
+      attempt.fail('request')
       if (error instanceof ApiError && error.status === 409 && pending.cloudPluginId !== null) {
         try {
           const impact = await pluginApi.getMarketplacePluginDeleteImpact(pending.cloudPluginId)
@@ -2724,6 +2775,9 @@ export function PluginsWorkspace({
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
+    const authoritativeInventoryRefresh =
+      isExplicitRefresh && authoritativeInventoryRefreshRef.current
+    authoritativeInventoryRefreshRef.current = false
     if (isExplicitRefresh) {
       lastMarketplaceRefreshTickRef.current = marketplaceRefreshTick
     }
@@ -2888,6 +2942,8 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+        authoritativeInstalledState:
+          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3117,6 +3173,8 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+        authoritativeInstalledState:
+          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3234,6 +3292,8 @@ export function PluginsWorkspace({
             nextInstalled: nextInstalledRaw,
             previousStateMatchesScope:
               marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+            authoritativeInstalledState:
+              authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
           })
           const heldBack = holdBackInFlightMarketplaceInstalls({
             items: retained.items,
@@ -3974,11 +4034,13 @@ export function PluginsWorkspace({
 
   const withdrawPublication = async (publication: PluginPublicationRequestItem) => {
     setWithdrawingPublicationId(publication.id)
+    const attempt = beginOperation('plugin.withdraw')
     try {
       const updated = await pluginApi.withdrawPublicationRequest(
         publication.id,
         publication.currentRevision
       )
+      attempt.succeed()
       setPublicationRequests(previous => mergePublicationRequests(previous, [updated]))
       setPublicationProgress(current => (current?.id === updated.id ? updated : current))
       setPluginOperationNotice({
@@ -3987,6 +4049,7 @@ export function PluginsWorkspace({
         message: t('workbench.plugins_publication_withdrawn_notice', '全员发布申请已撤回。'),
       })
     } catch (error) {
+      attempt.fail('request')
       setPluginMarketplaceState(previous => ({
         ...previous,
         error: error instanceof Error ? error.message : 'Failed to withdraw publication request',
@@ -4158,11 +4221,12 @@ export function PluginsWorkspace({
   }, [selectedMarketplacePluginId])
 
   useEffect(() => {
-    if (pluginOperationNotice?.kind !== 'success' || pluginOperationNotice.actionLabel) return
-    const noticeId = pluginOperationNotice.id
+    const autoDismissDelay = pluginOperationNoticeAutoDismissDelay(pluginOperationNotice)
+    const noticeId = pluginOperationNotice?.id
+    if (autoDismissDelay === null || !noticeId) return
     const timeoutId = window.setTimeout(() => {
       setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
-    }, 4_000)
+    }, autoDismissDelay)
     return () => window.clearTimeout(timeoutId)
   }, [pluginOperationNotice])
 

@@ -9,15 +9,16 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import {
+  completeLocalCollaborationFolderImport,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
-const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const PROJECT_NAME = `首次协作验收-${process.pid}`
 const ISSUE_NAME = `整理首用闭环-${process.pid}`
 const RUN_MARKER = 'COLLABORATION_FIRST_USE_ASSISTANT'
 const COMPLETION_MARKER = 'COLLABORATION_FIRST_USE_COMPLETED'
-const DEFAULT_AGENT_NAME = '当前设备助手'
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -46,7 +47,6 @@ export function createDesktopScenario({
 }) {
   let active = false
   let verifiedRequest = null
-  let defaultAgentId = null
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
 
@@ -84,21 +84,16 @@ export function createDesktopScenario({
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
-      await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', scoped('[data-testid^="collaboration-agents-row-"]'), {
-        text: DEFAULT_AGENT_NAME,
-        timeoutMs: uiTimeoutMs,
-      })
-      const agentSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
-      const defaultAgentRowTestId = agentSnapshot.testIds.find(testId =>
-        testId.startsWith('collaboration-agents-row-')
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            sidebarScoped('[data-testid="collaboration-primary-agents"]')
+          )
+        ),
+        1,
+        'First use did not expose the standalone Agent destination'
       )
-      assert.ok(defaultAgentRowTestId, 'The first-use default Agent was not created')
-      defaultAgentId = defaultAgentRowTestId.slice('collaboration-agents-row-'.length)
-      await capture(control, 'collaboration-first-use-00-default-agent.png')
 
       await control.command('click', sidebarScoped('[data-testid="collaboration-primary-home"]'))
       await control.command(
@@ -112,31 +107,13 @@ export function createDesktopScenario({
       await capture(control, 'collaboration-first-use-01-welcome.png')
 
       await control.command('click', scoped('[data-testid="collaboration-first-project-create"]'))
-      await control.command(
-        'waitFor',
-        scoped(`[data-testid="collaboration-project-workspace-${LOCAL_WORKSPACE_ID}"]`),
-        { timeoutMs: uiTimeoutMs }
-      )
+      await control.command('click', '[data-testid="collaboration-first-project-create-folder"]')
       await capture(control, 'collaboration-first-use-02-workspace.png')
-      await control.command(
-        'click',
-        scoped(`[data-testid="collaboration-project-workspace-${LOCAL_WORKSPACE_ID}"]`)
-      )
-      await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
+      await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await capture(control, 'collaboration-first-use-03-project.png')
+      await capture(control, 'collaboration-first-use-04-project.png')
 
       await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
@@ -145,17 +122,13 @@ export function createDesktopScenario({
       await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
         value: ISSUE_NAME,
       })
-      await capture(control, 'collaboration-first-use-04-issue.png')
+      await capture(control, 'collaboration-first-use-05-issue.png')
       await control.command(
         'clickWhenEnabled',
         scoped('[data-testid="cloud-todo-create-confirm"]'),
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-default-assistant"]'), {
-        text: '本机助手',
-        timeoutMs: uiTimeoutMs,
-      })
-      await capture(control, 'collaboration-first-use-05-assistant.png')
+      await capture(control, 'collaboration-first-use-06-assistant.png')
 
       await control.command('click', scoped('[data-testid="cloud-todo-start-default-assistant"]'))
       const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
@@ -163,7 +136,7 @@ export function createDesktopScenario({
       await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, taskPanel)
-      await capture(control, 'collaboration-first-use-06-composer.png')
+      await capture(control, 'collaboration-first-use-07-composer.png')
 
       await control.command('fill', composer, {
         value: `${RUN_MARKER} 完成当前 Issue，并明确回复执行结果。`,
@@ -178,7 +151,7 @@ export function createDesktopScenario({
         }
       )
       assert.ok(verifiedRequest, 'The default assistant did not reach the real model request')
-      await capture(control, 'collaboration-first-use-07-result.png')
+      await capture(control, 'collaboration-first-use-08-result.png')
 
       await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
       await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
@@ -206,36 +179,12 @@ export function createDesktopScenario({
         'The accepted Issue did not reach the completed state',
         uiTimeoutMs
       )
-      await capture(control, 'collaboration-first-use-08-issue-result.png')
-
-      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-agents"]'))
-      await control.command(
-        'click',
-        scoped(`[data-testid="collaboration-agents-delete-${defaultAgentId}"]`)
-      )
-      await control.command(
-        'waitFor',
-        scoped('[data-testid="collaboration-delete-agent-dialog"]'),
-        { text: DEFAULT_AGENT_NAME, timeoutMs: uiTimeoutMs }
-      )
-      await capture(control, 'collaboration-first-use-09-delete-agent-confirmation.png')
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-delete-agent-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'waitFor',
-        scoped(`[data-testid="collaboration-agents-row-${defaultAgentId}"]`),
-        { visible: false, timeoutMs: uiTimeoutMs }
-      )
-      await capture(control, 'collaboration-first-use-10-agent-deleted.png')
+      await capture(control, 'collaboration-first-use-09-issue-result.png')
     },
 
     diagnostics() {
       return {
         active,
-        defaultAgentId,
         requestVerified: Boolean(verifiedRequest),
       }
     },
