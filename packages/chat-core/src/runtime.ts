@@ -235,6 +235,8 @@ export interface ChatBlock {
   contentOriginalChars?: number;
   tool_use_id?: string;
   tool_name?: string;
+  plugin_id?: string;
+  mcp_server?: string;
   tool_input?: Record<string, unknown>;
   tool_output?: unknown;
   tool_output_truncated?: boolean;

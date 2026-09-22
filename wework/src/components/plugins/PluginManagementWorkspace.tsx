@@ -4,7 +4,9 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { track } from '@/telemetry/client'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
+import { observeOperation } from '@/telemetry/observeOperation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
@@ -301,7 +303,8 @@ export function PluginManagementWorkspace({
         track('plugin_enabled_changed', {
           enabled: !plugin.enabled,
           scope: 'plugin',
-          source: 'cloud',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -344,7 +347,8 @@ export function PluginManagementWorkspace({
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
-          source: 'cloud',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch(() => {
@@ -419,6 +423,7 @@ export function PluginManagementWorkspace({
         }
         track('plugin_uninstalled', {
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+          ...installedPluginTelemetryIdentity(plugin.raw),
         })
       })
       .catch((error: unknown) => {
@@ -538,8 +543,10 @@ export function PluginManagementWorkspace({
   }
 
   const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
-    const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
-    const installed = await localPluginApi.importMarketplaceCopy(descriptor)
+    const installed = await observeOperation('plugin.copy', async () => {
+      const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
+      return localPluginApi.importMarketplaceCopy(descriptor)
+    })
     const item = toInstalledPluginItem(installed)
     setInstalledPlugins(previous => [
       item,
