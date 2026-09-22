@@ -315,6 +315,11 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                 )
                 if existed:
                     # Update existing model
+                    stored_spec = (
+                        existed.json.get("spec")
+                        if isinstance(existed.json, dict)
+                        else None
+                    )
                     if isinstance(existed.json, dict):
                         model_crd = Model.model_validate(existed.json)
                         # Update env section
@@ -355,6 +360,11 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     if getattr(it, "is_active", None) is not None:
                         existed.is_active = it.is_active  # type: ignore[attr-defined]
 
+                    validate_embedding_dimension_declaration(
+                        spec=(existed.json or {}).get("spec") or {},
+                        stored_spec=stored_spec,
+                        name=it.name,
+                    )
                     db.add(existed)
                     db.commit()
                     db.refresh(existed)
@@ -376,6 +386,11 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         "apiVersion": "agent.wecode.io/v1",
                     }
 
+                    validate_embedding_dimension_declaration(
+                        spec=spec,
+                        stored_spec=None,
+                        name=it.name,
+                    )
                     db_obj = Kind(
                         user_id=0,
                         kind="Model",
@@ -390,7 +405,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     created.append(db_obj)
             except Exception as e:
                 db.rollback()
-                skipped.append({"name": it.name, "reason": f"DB error: {str(e)}"})
+                skipped.append({"name": it.name, "reason": f"Rejected: {str(e)}"})
 
         return {"created": created, "updated": updated, "skipped": skipped}
 

@@ -15,6 +15,7 @@ Note: Requires Milvus 2.5+ for keyword and hybrid search support.
 
 import json
 import logging
+import math
 from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
@@ -366,7 +367,7 @@ class MilvusBackend(BaseStorageBackend):
         self,
         nodes: List[BaseNode],
         chunk_metadata: ChunkMetadata,
-        embed_model,
+        embed_model: BaseEmbedding,
         **kwargs,
     ) -> Dict:
         """
@@ -509,6 +510,10 @@ class MilvusBackend(BaseStorageBackend):
             raise EmbeddingResponseFormatError(
                 f"Embedding model '{model}' returned vectors of mixed dimensions"
             )
+        if any(not math.isfinite(value) for vector in vectors for value in vector):
+            raise EmbeddingResponseFormatError(
+                f"Embedding model '{model}' returned a non-finite vector value"
+            )
 
         for node, vector in zip(batch, vectors):
             node.embedding = vector
@@ -533,6 +538,40 @@ class MilvusBackend(BaseStorageBackend):
                 client.close()
             except Exception:
                 pass
+
+    def _open_query_collection(
+        self,
+        *,
+        collection_name: str,
+        declared_dim: Optional[int],
+        embed_model: BaseEmbedding,
+    ) -> Optional[CollectionSnapshot]:
+        """
+        Return the snapshot a query may read.
+
+        Returns:
+            None when the collection does not exist, because a query must never
+            create the collection it reads.
+
+        Raises:
+            CollectionDimensionMismatchError: When the collection stores another
+                dimension than the one the embedding model declares.
+        """
+        snapshot = self._collection_snapshot(collection_name)
+        if not snapshot.exists:
+            logger.info(
+                "[Milvus] retrieve: collection %s does not exist; returning no records",
+                collection_name,
+            )
+            return None
+
+        if declared_dim is not None:
+            raise_on_dimension_mismatch(
+                stored_dim=snapshot.dimension,
+                expected_dim=declared_dim,
+                model=embedding_model_name(embed_model),
+            )
+        return snapshot
 
     @staticmethod
     def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:
@@ -578,7 +617,7 @@ class MilvusBackend(BaseStorageBackend):
         self,
         knowledge_id: str,
         query: str,
-        embed_model,
+        embed_model: BaseEmbedding,
         retrieval_setting: Dict[str, Any],
         scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
@@ -629,25 +668,18 @@ class MilvusBackend(BaseStorageBackend):
         # A query never creates the collection it reads, and vector/hybrid
         # queries need vectors matching the dimension the collection stores.
         # Keyword queries never touch the vector field, so they stay available.
-        snapshot = self._collection_snapshot(collection_name)
-        if not snapshot.exists:
-            logger.info(
-                "[Milvus] retrieve: collection %s does not exist; returning no records",
-                collection_name,
-            )
-            return {"records": []}
-
         declared_dim = (
             None
             if retrieval_mode == "keyword"
             else resolve_declared_dimension(embed_model)
         )
-        if declared_dim is not None:
-            raise_on_dimension_mismatch(
-                stored_dim=snapshot.dimension,
-                expected_dim=declared_dim,
-                model=embedding_model_name(embed_model),
-            )
+        snapshot = self._open_query_collection(
+            collection_name=collection_name,
+            declared_dim=declared_dim,
+            embed_model=embed_model,
+        )
+        if snapshot is None:
+            return {"records": []}
 
         # Create vector store
         vector_store = self.create_vector_store(
@@ -850,12 +882,28 @@ class MilvusBackend(BaseStorageBackend):
         Args:
             knowledge_id: Knowledge base ID
             doc_ref: Document reference ID (doc_xxx format)
-            **kwargs: Additional parameters
+            **kwargs: Additional parameters, including
+                ``expected_embedding_dimension`` for callers that replace an
+                existing document index and must not delete on a mismatch, and
+                ``expected_embedding_model`` naming the model behind it
 
         Returns:
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # A re-index delete happens before the write, so it compares the stored
+        # dimension first and leaves the old data untouched on a mismatch.
+        expected_dim = kwargs.get("expected_embedding_dimension")
+        if is_positive_int(expected_dim):
+            snapshot = self._collection_snapshot(collection_name)
+            if snapshot.exists:
+                raise_on_dimension_mismatch(
+                    stored_dim=snapshot.dimension,
+                    expected_dim=expected_dim,
+                    model=str(kwargs.get("expected_embedding_model") or "unknown"),
+                )
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document

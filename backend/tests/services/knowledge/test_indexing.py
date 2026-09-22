@@ -125,6 +125,63 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
     }
 
 
+def test_run_document_indexing_passes_the_declared_dimension_to_the_delete_spec() -> (
+    None
+):
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
+    runtime_spec = SimpleNamespace(
+        embedding_model_config=SimpleNamespace(resolved_config={"dimensions": 1536})
+    )
+    gateway = MagicMock()
+    gateway.index_document = AsyncMock(
+        return_value={"status": "success", "indexed_count": 1, "index_name": "kb_1"}
+    )
+    gateway.delete_document_index = AsyncMock(return_value={"deleted_chunks": 2})
+
+    with (
+        patch(
+            "app.services.knowledge.indexing.resolve_kb_index_info",
+            return_value=kb_index_info,
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
+            return_value=runtime_spec,
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=object(),
+        ) as mock_build_delete_spec,
+        patch(
+            "app.services.knowledge.indexing.get_index_gateway",
+            return_value=gateway,
+        ),
+    ):
+        run_document_indexing(
+            knowledge_base_id="1",
+            attachment_id=2,
+            retriever_name="retriever-1",
+            retriever_namespace="default",
+            embedding_model_name="embedding-1",
+            embedding_model_namespace="default",
+            user_id=3,
+            user_name="tester",
+            splitter_config_dict={},
+            document_id=4,
+            kb_index_info=kb_index_info,
+            trigger_summary=False,
+            db=db,
+        )
+
+    assert (
+        mock_build_delete_spec.call_args.kwargs["expected_embedding_dimension"] == 1536
+    )
+    assert mock_build_delete_spec.call_args.kwargs["expected_embedding_model"] == (
+        "embedding-1"
+    )
+
+
 def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec() -> (
     None
 ):

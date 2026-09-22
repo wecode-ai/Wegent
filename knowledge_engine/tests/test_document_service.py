@@ -165,6 +165,8 @@ async def test_delete_document_delegates_to_storage_backend() -> None:
         knowledge_id="1",
         doc_ref="doc-1",
         user_id=5,
+        expected_embedding_dimension=1536,
+        expected_embedding_model="embedding-model",
     )
 
     assert result == {
@@ -177,4 +179,6 @@ async def test_delete_document_delegates_to_storage_backend() -> None:
         knowledge_id="1",
         doc_ref="doc-1",
         user_id=5,
+        expected_embedding_dimension=1536,
+        expected_embedding_model="embedding-model",
     )

@@ -10,9 +10,8 @@ import asyncio
 import logging
 from typing import Any
 
-from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -69,6 +68,8 @@ class AdminExecutor:
             knowledge_id=knowledge_id,
             doc_ref=request.document_ref,
             user_id=config.index_owner_user_id,
+            expected_embedding_dimension=request.expected_embedding_dimension,
+            expected_embedding_model=request.expected_embedding_model,
         )
 
         return result

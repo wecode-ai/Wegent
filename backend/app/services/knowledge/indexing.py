@@ -46,6 +46,7 @@ from app.services.knowledge.splitter_config import (
 )
 from app.services.rag.gateway_factory import get_index_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from knowledge_engine.embedding.contract import is_positive_int
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -325,6 +326,10 @@ def _prepare_indexing_runtime(
                 knowledge_base_id=int(knowledge_base_id),
                 document_ref=str(document_id),
                 index_owner_user_id=kb_info.index_owner_user_id,
+                expected_embedding_dimension=_declared_embedding_dimension(
+                    runtime_spec
+                ),
+                expected_embedding_model=embedding_model_name,
             )
         except ValueError as e:
             logger.warning(
@@ -359,6 +364,14 @@ def _prepare_indexing_runtime(
         kb_info=kb_info,
         skip_result=None,
     )
+
+
+def _declared_embedding_dimension(runtime_spec: Any) -> Optional[int]:
+    """Return the dimension the knowledge base's embedding model declares."""
+    embedding_config = getattr(runtime_spec, "embedding_model_config", None)
+    resolved_config = getattr(embedding_config, "resolved_config", None) or {}
+    dimensions = resolved_config.get("dimensions")
+    return dimensions if is_positive_int(dimensions) else None
 
 
 def _run_indexing_gateway_calls(

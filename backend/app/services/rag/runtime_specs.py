@@ -100,6 +100,8 @@ class DeleteRuntimeSpec(RuntimeSpecModel):
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+    expected_embedding_dimension: Optional[int] = None
+    expected_embedding_model: Optional[str] = None
 
 
 class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):

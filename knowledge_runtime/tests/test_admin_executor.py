@@ -7,9 +7,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.admin_executor import AdminExecutor
 from knowledge_runtime.services.config_resolver import AdminResolvedConfig
-
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -50,6 +50,8 @@ class TestAdminExecutor:
             knowledge_base_id=1,
             user_id=42,
             document_ref="doc_123",
+            expected_embedding_dimension=1536,
+            expected_embedding_model="embedding-model",
         )
 
         mock_storage_backend = MagicMock()
@@ -76,6 +78,8 @@ class TestAdminExecutor:
             knowledge_id="1",
             doc_ref="doc_123",
             user_id=7,
+            expected_embedding_dimension=1536,
+            expected_embedding_model="embedding-model",
         )
 
     @pytest.mark.asyncio

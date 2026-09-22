@@ -579,3 +579,60 @@ class TestEmbeddingDimensionContract:
 
         assert result["deleted_chunks"] == 2
         mock_store.delete_nodes.assert_called_once()
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_reindex_delete_fails_before_deleting_on_a_dimension_mismatch(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = collection_description(5)
+
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        with pytest.raises(CollectionDimensionMismatchError) as exc_info:
+            self._backend().delete_document(
+                knowledge_id="kb_1",
+                doc_ref="doc_1",
+                expected_embedding_dimension=1536,
+                expected_embedding_model="embedding-model",
+            )
+
+        assert exc_info.value.model == "embedding-model"
+        assert (exc_info.value.expected, exc_info.value.actual) == (1536, 5)
+        mock_store.delete_nodes.assert_not_called()
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_non_finite_provider_values_fail_before_any_write(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+        value: float,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = False
+
+        embed_model = StubEmbeddingModel(declared_dimension=None, vector_dimension=4)
+        embed_model.batch_response = [[0.5, value, 0.5, 0.5]]
+
+        with pytest.raises(EmbeddingResponseFormatError, match="non-finite"):
+            self._backend().index_with_metadata(
+                nodes=[TextNode(text="chunk one")],
+                chunk_metadata=self._chunk_metadata(),
+                embed_model=embed_model,
+            )
+
+        mock_milvus_vs.assert_not_called()
+        client.create_collection.assert_not_called()

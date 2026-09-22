@@ -453,6 +453,8 @@ async def test_delete_document_index_local_delegates_to_engine_document_service(
             namespace="default",
             storage_config={"type": "qdrant"},
         ),
+        expected_embedding_dimension=1536,
+        expected_embedding_model="embedding-model",
     )
 
     with (
@@ -473,6 +475,8 @@ async def test_delete_document_index_local_delegates_to_engine_document_service(
         knowledge_id="1",
         doc_ref="doc-1",
         user_id=7,
+        expected_embedding_dimension=1536,
+        expected_embedding_model="embedding-model",
     )
 
 
