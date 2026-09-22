@@ -126,7 +126,6 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo } from './plugin-assets'
 import {
   isCloudManagedInstalledPlugin,
-  linkedCloudPluginId,
   linkedCloudInstalledPluginId,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
@@ -185,6 +184,7 @@ import {
   preferNonEmptyCatalogRows,
   rememberMarketplaceKey,
   rememberedMarketplaceKey,
+  resolveMarketplaceUninstallId,
   requiredConnectionNames,
   toInstalledPluginItem,
   toMarketplaceInstalledPluginItem,
@@ -2314,19 +2314,7 @@ export function PluginsWorkspace({
   }
 
   const marketplaceUninstallId = (item: PluginMarketplaceItem): string | number => {
-    const linkedLocal = installedPlugins.find(plugin => {
-      if (isCloudManagedInstalledPlugin(plugin.raw)) return false
-      const cloudPluginId = linkedCloudPluginId(plugin.raw)
-      return cloudPluginId !== null && String(cloudPluginId) === String(item.id)
-    })
-    if (linkedLocal) return linkedLocal.id
-    if (item.installedPluginId !== null && item.installedPluginId !== undefined) {
-      return item.installedPluginId
-    }
-    if (typeof item.manifest?.marketplaceId === 'string' && item.manifest.marketplaceId) {
-      return `${item.name}@${item.manifest.marketplaceId}`
-    }
-    return item.id
+    return resolveMarketplaceUninstallId(item, installedPlugins)
   }
 
   const confirmUninstallPlugin = () => {
