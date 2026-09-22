@@ -41,9 +41,8 @@ def ensure_vector_contract(
 ) -> None:
     """Raise when a provider returns a vector that breaks the vector contract.
 
-    Every vector must hold real numbers only, carry at least one non-zero value
-    and stay finite; when the model declares a dimension, every vector must also
-    carry exactly that dimension.
+    Every vector must hold real numbers only and stay finite; when the model
+    declares a dimension, every vector must also carry exactly that dimension.
     """
     for vector in vectors:
         if isinstance(vector, (str, bytes)):
@@ -70,10 +69,6 @@ def ensure_vector_contract(
                 raise EmbeddingResponseFormatError(
                     f"Embedding model '{model}' returned a non-finite vector value"
                 )
-        if not any(values):
-            raise EmbeddingResponseFormatError(
-                f"Embedding model '{model}' returned an all-zero vector"
-            )
         if declared is not None and len(values) != declared:
             raise EmbeddingDimensionMismatchError(
                 model=model,

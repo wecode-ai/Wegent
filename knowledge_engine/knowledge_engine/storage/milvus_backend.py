@@ -395,6 +395,19 @@ class MilvusBackend(BaseStorageBackend):
         collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
         nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
+        if not self._embeddable_nodes(nodes_for_embedding):
+            # No vector can decide the collection dimension, so this write must
+            # not create a collection from the configured default dimension.
+            logger.info(
+                "[Milvus] index_with_metadata: collection=%s carries no embeddable "
+                "content; nothing to write",
+                collection_name,
+            )
+            return {
+                "indexed_count": 0,
+                "index_name": collection_name,
+                "status": "success",
+            }
 
         # Resolve the contract before this adapter writes anything.
         embed_dim = self._resolve_write_dimension(
@@ -488,9 +501,7 @@ class MilvusBackend(BaseStorageBackend):
         # Only nodes with content reach the provider; the rest are dropped by the
         # index write anyway, and their placeholder responses must not decide the
         # dimension of the collection.
-        embeddable = [
-            node for node in nodes if node.get_content(metadata_mode=MetadataMode.EMBED)
-        ]
+        embeddable = self._embeddable_nodes(nodes)
         batch = embeddable[: self._first_batch_size(embeddable, embed_model)]
         if not batch:
             return None
@@ -528,6 +539,13 @@ class MilvusBackend(BaseStorageBackend):
         if is_positive_int(batch_size):
             return batch_size
         return len(nodes)
+
+    @staticmethod
+    def _embeddable_nodes(nodes: List[BaseNode]) -> List[BaseNode]:
+        """Return the nodes that carry content and therefore reach the provider."""
+        return [
+            node for node in nodes if node.get_content(metadata_mode=MetadataMode.EMBED)
+        ]
 
     def _collection_snapshot(self, collection_name: str) -> CollectionSnapshot:
         """Read the collection once, closing the client used for that read."""

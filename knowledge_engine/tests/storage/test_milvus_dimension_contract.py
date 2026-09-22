@@ -79,7 +79,7 @@ class TestEmbeddingDimensionContract:
             3,
             5,
         )
-        assert error.code == "embedding_dimension_mismatch"
+        assert error.code == "collection_dimension_mismatch"
         assert error.retryable is False
         assert "http://localhost:19530" not in str(error)
         assert "milvus-secret-token" not in str(error)
@@ -361,9 +361,41 @@ class TestEmbeddingDimensionContract:
                 ),
             )
 
-        assert exc_info.value.actual == 0
+        assert exc_info.value.actual is None
         assert "dense vector" in str(exc_info.value)
         mock_milvus_vs.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_index_without_embeddable_content_never_touches_the_collection(
+        self,
+        mock_client_cls,
+        mock_milvus_vs,
+        mock_storage_ctx,
+        mock_vs_index,
+    ):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.has_collection.return_value = True
+        client.describe_collection.return_value = collection_description(768)
+
+        result = self._backend().index_with_metadata(
+            nodes=[TextNode(text="")],
+            chunk_metadata=self._chunk_metadata(),
+            embed_model=StubEmbeddingModel(declared_dimension=None, vector_dimension=4),
+        )
+
+        assert result == {
+            "indexed_count": 0,
+            "index_name": "test_kb_kb_1",
+            "status": "success",
+        }
+        client.has_collection.assert_not_called()
+        client.describe_collection.assert_not_called()
+        mock_milvus_vs.assert_not_called()
+        mock_vs_index.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")

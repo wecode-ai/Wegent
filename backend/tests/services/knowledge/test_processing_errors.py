@@ -47,13 +47,13 @@ def test_map_indexing_collection_dimension_mismatch_stays_sanitized() -> None:
 
     payload = json.dumps(result.model_dump(mode="json"))
     assert result.stage == DocumentProcessingStage.INDEXING
-    assert result.code == "embedding_dimension_mismatch"
+    assert result.code == "collection_dimension_mismatch"
     assert result.retryable is False
     assert result.generation == 7
     assert result.model == "Qwen/Qwen3-Embedding-8B"
     assert result.message == (
-        "The embedding model returned an unexpected vector dimension. "
-        "Check the model configuration and rebuild the document index."
+        "The document index stores a different vector dimension than the "
+        "embedding model declares. Rebuild the document index to match the model."
     )
     for leaked in ("milvus", "localhost", "http", "secret", "0.5"):
         assert leaked not in payload.lower()

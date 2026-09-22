@@ -29,7 +29,7 @@ def _index_request() -> Request:
 
 
 @pytest.mark.parametrize(
-    ("error", "expected_message"),
+    ("error", "expected_code", "expected_message"),
     [
         (
             EmbeddingDimensionMismatchError(
@@ -37,6 +37,7 @@ def _index_request() -> Request:
                 expected=1024,
                 actual=4096,
             ),
+            "embedding_dimension_mismatch",
             "Embedding model 'Qwen/Qwen3-Embedding-8B' returned 4096 "
             "dimensions; expected 1024.",
         ),
@@ -46,6 +47,7 @@ def _index_request() -> Request:
                 expected=1024,
                 actual=4096,
             ),
+            "collection_dimension_mismatch",
             "Embedding model 'Qwen/Qwen3-Embedding-8B' declares 1024 dimensions, "
             "but the existing collection stores 4096 dimensions; rebuild the "
             "index to match.",
@@ -55,6 +57,7 @@ def _index_request() -> Request:
 @pytest.mark.asyncio
 async def test_embedding_dimension_mismatch_returns_stable_nonretryable_error(
     error: EmbeddingDimensionMismatchError,
+    expected_code: str,
     expected_message: str,
 ) -> None:
     response = await embedding_dimension_mismatch_handler(_index_request(), error)
@@ -62,7 +65,7 @@ async def test_embedding_dimension_mismatch_returns_stable_nonretryable_error(
 
     assert response.status_code == 422
     assert payload == {
-        "code": "embedding_dimension_mismatch",
+        "code": expected_code,
         "message": expected_message,
         "retryable": False,
         "details": {

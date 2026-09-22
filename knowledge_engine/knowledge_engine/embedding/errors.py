@@ -27,7 +27,7 @@ class EmbeddingDimensionMismatchError(RuntimeError):
         *,
         model: str,
         expected: int,
-        actual: int,
+        actual: int | None,
         message: str | None = None,
     ) -> None:
         self.model = model
@@ -49,10 +49,11 @@ class EmbeddingDimensionMismatchError(RuntimeError):
 class CollectionDimensionMismatchError(EmbeddingDimensionMismatchError):
     """Raised when a collection does not hold the declared vector dimension.
 
-    The reported ``actual`` dimension is ``0`` when the collection exists but
+    The reported ``actual`` dimension is ``None`` when the collection exists but
     does not declare a readable dense vector field.
     """
 
+    code = "collection_dimension_mismatch"
     _message_template = (
         "Embedding model '{model}' declares {expected} dimensions, but the existing "
         "collection stores {actual} dimensions; rebuild the index to match."
@@ -69,7 +70,7 @@ class CollectionDimensionMismatchError(EmbeddingDimensionMismatchError):
         return cls(
             model=model,
             expected=expected,
-            actual=0,
+            actual=None,
             message=(
                 f"Embedding model '{model}' declares {expected} dimensions, but the "
                 "existing collection does not declare a dense vector dimension."

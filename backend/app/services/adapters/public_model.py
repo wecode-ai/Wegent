@@ -53,6 +53,11 @@ def with_public_model_visibility(
 SPEC_LEVEL_KEYS = ("protocol", "apiFormat", "modelType", "embeddingConfig")
 
 
+def _merge_declaration(spec: Dict[str, Any], declaration: Dict[str, Any]) -> None:
+    """Apply the CRD-level keys a bulk item declares onto a Model spec."""
+    spec.update(declaration)
+
+
 def _hoist_spec_keys(
     config: Dict[str, Any],
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -341,11 +346,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         if it.api_format is not None:
                             model_crd.spec.apiFormat = it.api_format
                         json_data = model_crd.model_dump(exclude_none=True)
-                        if declaration:
-                            json_data["spec"] = {
-                                **json_data["spec"],
-                                **declaration,
-                            }
+                        _merge_declaration(json_data["spec"], declaration)
                         existed.json = json_data
                     else:
                         # Fallback for invalid JSON
@@ -362,7 +363,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                             spec["protocol"] = it.protocol
                         if it.api_format is not None:
                             spec["apiFormat"] = it.api_format
-                        spec.update(declaration)
+                        _merge_declaration(spec, declaration)
                         json_data = {
                             "kind": "Model",
                             "spec": spec,
@@ -393,7 +394,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         spec["protocol"] = it.protocol
                     if it.api_format is not None:
                         spec["apiFormat"] = it.api_format
-                    spec.update(declaration)
+                    _merge_declaration(spec, declaration)
                     json_data = {
                         "kind": "Model",
                         "spec": spec,

@@ -9,9 +9,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from app.core.exceptions import ValidationException
+from app.schemas.kind import ModelCategoryType, resolve_model_category
 from knowledge_engine.embedding.contract import is_positive_int
-
-EMBEDDING_MODEL_TYPE = "embedding"
 
 
 def declared_embedding_dimension(spec: Optional[Mapping[str, Any]]) -> Any:
@@ -59,21 +58,6 @@ def validate_embedding_dimension_declaration(
         )
 
 
-def _model_type(spec: Mapping[str, Any]) -> str:
-    """Return the model category of a Model spec.
-
-    Accepts the legacy nested ``modelConfig.modelType`` location and enum
-    members, because parsed Model resources keep their category as an enum.
-    """
-    model_type = spec.get("modelType")
-    if model_type is None:
-        model_config = spec.get("modelConfig") or {}
-        if isinstance(model_config, Mapping):
-            model_type = model_config.get("modelType")
-    model_type = getattr(model_type, "value", model_type)
-    return str(model_type or "llm").strip().lower()
-
-
 def _declares_embedding(
     spec: Mapping[str, Any],
     stored_spec: Optional[Mapping[str, Any]],
@@ -83,6 +67,9 @@ def _declares_embedding(
     The stored resource decides as well, so an update cannot silence the
     contract by omitting or changing the declared category.
     """
-    if _model_type(spec) == EMBEDDING_MODEL_TYPE:
+    if resolve_model_category(spec) == ModelCategoryType.EMBEDDING.value:
         return True
-    return stored_spec is not None and _model_type(stored_spec) == EMBEDDING_MODEL_TYPE
+    return (
+        stored_spec is not None
+        and resolve_model_category(stored_spec) == ModelCategoryType.EMBEDDING.value
+    )
