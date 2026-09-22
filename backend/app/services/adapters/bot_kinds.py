@@ -902,9 +902,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             required_role=BaseRole.Developer,
         )
 
-        # Components use the requesting user so restricted public models are
-        # hidden from display data for non-whitelisted viewers.
-        ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        ghost, shell, model = self._get_bot_components(db, bot, bot.user_id)
         return self._convert_to_bot_dict(bot, ghost, shell, model)
 
     def get_bot_detail(
