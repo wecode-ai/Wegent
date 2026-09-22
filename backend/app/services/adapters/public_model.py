@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ValidationException
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, ModelSpec, Shell
@@ -303,6 +304,13 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
 
         for it in items:
             try:
+                # Declarations a bulk item may carry for an embedding model
+                declaration: Dict[str, Any] = {}
+                if it.model_type:
+                    declaration["modelType"] = it.model_type
+                if it.embedding_config:
+                    declaration["embeddingConfig"] = it.embedding_config
+
                 existed = (
                     db.query(Kind)
                     .filter(
@@ -332,7 +340,13 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                             model_crd.spec.protocol = it.protocol
                         if it.api_format is not None:
                             model_crd.spec.apiFormat = it.api_format
-                        existed.json = model_crd.model_dump(exclude_none=True)
+                        json_data = model_crd.model_dump(exclude_none=True)
+                        if declaration:
+                            json_data["spec"] = {
+                                **json_data["spec"],
+                                **declaration,
+                            }
+                        existed.json = json_data
                     else:
                         # Fallback for invalid JSON
                         spec: Dict[str, Any] = {
@@ -348,6 +362,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                             spec["protocol"] = it.protocol
                         if it.api_format is not None:
                             spec["apiFormat"] = it.api_format
+                        spec.update(declaration)
                         json_data = {
                             "kind": "Model",
                             "spec": spec,
@@ -378,6 +393,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         spec["protocol"] = it.protocol
                     if it.api_format is not None:
                         spec["apiFormat"] = it.api_format
+                    spec.update(declaration)
                     json_data = {
                         "kind": "Model",
                         "spec": spec,
@@ -403,9 +419,12 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     db.commit()
                     db.refresh(db_obj)
                     created.append(db_obj)
+            except ValidationException as e:
+                db.rollback()
+                skipped.append({"name": it.name, "reason": str(e)})
             except Exception as e:
                 db.rollback()
-                skipped.append({"name": it.name, "reason": f"Rejected: {str(e)}"})
+                skipped.append({"name": it.name, "reason": f"DB error: {str(e)}"})
 
         return {"created": created, "updated": updated, "skipped": skipped}
 

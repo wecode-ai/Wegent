@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.schema import BaseNode
 
 from shared.models import RetrievalScope
@@ -312,7 +313,7 @@ class BaseStorageBackend(ABC):
         self,
         nodes: List[BaseNode],
         chunk_metadata: ChunkMetadata,
-        embed_model,
+        embed_model: BaseEmbedding,
         **kwargs,
     ) -> Dict:
         """
@@ -346,7 +347,7 @@ class BaseStorageBackend(ABC):
         self,
         knowledge_id: str,
         query: str,
-        embed_model,
+        embed_model: BaseEmbedding,
         retrieval_setting: Dict[str, Any],
         scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,

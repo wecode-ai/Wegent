@@ -18,7 +18,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from knowledge_engine.embedding.contract import ensure_declared_dimension
+from knowledge_engine.embedding.contract import ensure_vector_contract
 from knowledge_engine.embedding.errors import (
     EmbeddingDimensionMismatchError,
     EmbeddingResponseFormatError,
@@ -155,7 +155,7 @@ class CustomEmbedding(BaseEmbedding):
                 )
             embedding = [float(value) for value in response_embedding]
 
-        ensure_declared_dimension(
+        ensure_vector_contract(
             model=self.model,
             declared=self._configured_dimension,
             vectors=[embedding],

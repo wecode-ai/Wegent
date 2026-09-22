@@ -207,3 +207,27 @@ def test_bulk_update_of_legacy_embedding_model_is_rejected(
     assert "dimensions" in result["skipped"][0]["reason"]
     spec = _stored_model(test_db, "legacy-public-model").json["spec"]
     assert spec["modelConfig"]["env"].get("api_key") is None
+
+
+def test_bulk_update_of_legacy_embedding_model_can_declare_its_dimension(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    _seed_legacy_embedding_model(test_db, "legacy-public-model")
+
+    result = public_model_service.bulk_create_models(
+        db=test_db,
+        items=[
+            ModelBulkCreateItem(
+                name="legacy-public-model",
+                env={"model": "custom", "api_key": "new-key"},
+                model_type="embedding",
+                embedding_config={"dimensions": 1024},
+            )
+        ],
+        current_user=test_user,
+    )
+
+    assert result["skipped"] == []
+    spec = _stored_model(test_db, "legacy-public-model").json["spec"]
+    assert spec["embeddingConfig"] == {"dimensions": 1024}

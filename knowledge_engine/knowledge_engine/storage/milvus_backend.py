@@ -15,7 +15,6 @@ Note: Requires Milvus 2.5+ for keyword and hybrid search support.
 
 import json
 import logging
-import math
 from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
@@ -32,7 +31,7 @@ from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_fi
 from pymilvus import AsyncMilvusClient, MilvusClient
 
 from knowledge_engine.embedding.contract import (
-    ensure_declared_dimension,
+    ensure_vector_contract,
     is_positive_int,
     resolve_declared_dimension,
 )
@@ -500,7 +499,7 @@ class MilvusBackend(BaseStorageBackend):
                 f"{len(batch)} texts"
             )
 
-        ensure_declared_dimension(
+        ensure_vector_contract(
             model=model,
             declared=declared_dim,
             vectors=vectors,
@@ -509,10 +508,6 @@ class MilvusBackend(BaseStorageBackend):
         if any(len(vector) != dimension for vector in vectors):
             raise EmbeddingResponseFormatError(
                 f"Embedding model '{model}' returned vectors of mixed dimensions"
-            )
-        if any(not math.isfinite(value) for vector in vectors for value in vector):
-            raise EmbeddingResponseFormatError(
-                f"Embedding model '{model}' returned a non-finite vector value"
             )
 
         for node, vector in zip(batch, vectors):
@@ -872,7 +867,15 @@ class MilvusBackend(BaseStorageBackend):
 
         return {"records": results}
 
-    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
+    def delete_document(
+        self,
+        knowledge_id: str,
+        doc_ref: str,
+        *,
+        expected_embedding_dimension: Optional[int] = None,
+        expected_embedding_model: Optional[str] = None,
+        **kwargs,
+    ) -> Dict:
         """
         Delete document from Milvus using LlamaIndex API.
 
@@ -882,10 +885,11 @@ class MilvusBackend(BaseStorageBackend):
         Args:
             knowledge_id: Knowledge base ID
             doc_ref: Document reference ID (doc_xxx format)
-            **kwargs: Additional parameters, including
-                ``expected_embedding_dimension`` for callers that replace an
-                existing document index and must not delete on a mismatch, and
-                ``expected_embedding_model`` naming the model behind it
+            expected_embedding_dimension: Dimension callers expect the collection
+                to hold. Callers that replace an existing document index set it
+                so a mismatch fails before anything is deleted.
+            expected_embedding_model: Model name reported in that failure
+            **kwargs: Additional parameters
 
         Returns:
             Deletion result dict
@@ -894,14 +898,13 @@ class MilvusBackend(BaseStorageBackend):
 
         # A re-index delete happens before the write, so it compares the stored
         # dimension first and leaves the old data untouched on a mismatch.
-        expected_dim = kwargs.get("expected_embedding_dimension")
-        if is_positive_int(expected_dim):
+        if is_positive_int(expected_embedding_dimension):
             snapshot = self._collection_snapshot(collection_name)
             if snapshot.exists:
                 raise_on_dimension_mismatch(
                     stored_dim=snapshot.dimension,
-                    expected_dim=expected_dim,
-                    model=str(kwargs.get("expected_embedding_model") or "unknown"),
+                    expected_dim=expected_embedding_dimension,
+                    model=expected_embedding_model or "unknown",
                 )
 
         vector_store = self.create_vector_store(collection_name)

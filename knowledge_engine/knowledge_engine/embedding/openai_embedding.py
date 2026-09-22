@@ -10,7 +10,7 @@ from typing import List
 
 from llama_index.embeddings.openai import OpenAIEmbedding
 
-from knowledge_engine.embedding.contract import ensure_declared_dimension
+from knowledge_engine.embedding.contract import ensure_vector_contract
 
 
 class DimensionCheckedOpenAIEmbedding(OpenAIEmbedding):
@@ -35,7 +35,7 @@ class DimensionCheckedOpenAIEmbedding(OpenAIEmbedding):
         return self._check_vector(await super()._aget_query_embedding(query))
 
     def _check_vectors(self, vectors: List[List[float]]) -> List[List[float]]:
-        ensure_declared_dimension(
+        ensure_vector_contract(
             model=self.model_name,
             declared=self.dimensions,
             vectors=vectors,

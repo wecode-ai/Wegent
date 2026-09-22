@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pytest_mock import MockerFixture
 
+from knowledge_engine.embedding.contract import ensure_vector_contract
 from knowledge_engine.embedding.custom import CustomEmbedding
 from knowledge_engine.embedding.errors import (
     EmbeddingDimensionMismatchError,
@@ -339,3 +340,23 @@ def test_openai_embedding_rejects_undeclared_query_dimensions(
 
     assert exc_info.value.expected == 3
     assert exc_info.value.actual == 4
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_vector_contract_rejects_non_finite_values_without_a_declaration(
+    value: float,
+) -> None:
+    with pytest.raises(EmbeddingResponseFormatError, match="non-finite"):
+        ensure_vector_contract(
+            model="any-model",
+            declared=None,
+            vectors=[[0.1, value]],
+        )
+
+
+def test_vector_contract_accepts_a_declared_legacy_vector() -> None:
+    ensure_vector_contract(
+        model="any-model",
+        declared=3,
+        vectors=[[0.1, 0.2, 0.3]],
+    )
