@@ -22,6 +22,7 @@ import { resolvePluginLogo } from '../plugin-assets'
 import {
   installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
+  linkedCloudPluginId,
   mergeInstalledPlugins,
   storeDirMatchesPluginKey,
 } from '../installedPluginMerge'
@@ -419,6 +420,28 @@ export function findInstalledPluginForMarketplaceItem(
         storeDirMatchesPluginKey(String(plugin.raw.spec.source.pluginKey || ''), item.name)
     ) ?? null
   )
+}
+
+export function resolveMarketplaceUninstallId(
+  item: PluginMarketplaceItem,
+  plugins: InstalledPluginItem[]
+): string | number {
+  const installed = findInstalledPluginForMarketplaceItem(item, plugins)
+  if (installed) return installed.id
+
+  const linkedLocal = plugins.find(plugin => {
+    if (isCloudManagedInstalledPlugin(plugin.raw)) return false
+    const cloudPluginId = linkedCloudPluginId(plugin.raw)
+    return cloudPluginId !== null && String(cloudPluginId) === String(item.id)
+  })
+  if (linkedLocal) return linkedLocal.id
+  if (item.installedPluginId !== null && item.installedPluginId !== undefined) {
+    return item.installedPluginId
+  }
+  if (typeof item.manifest?.marketplaceId === 'string' && item.manifest.marketplaceId) {
+    return `${item.name}@${item.manifest.marketplaceId}`
+  }
+  return item.id
 }
 
 export function localMarketplaceKey(id: string): string {

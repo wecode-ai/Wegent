@@ -12,9 +12,11 @@ import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQr
 import {
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
+  removePluginMarketplaceInstallation,
   sameInstalledPlugins,
   sameMarketplaceItems,
   setPluginMarketplaceCache,
+  subscribePluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
@@ -27,6 +29,8 @@ import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagement
 import {
   installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
+  linkedCloudInstalledPluginId,
+  linkedCloudPluginId,
   mergeInstalledPlugins,
 } from './installedPluginMerge'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
@@ -156,6 +160,23 @@ export function PluginManagementWorkspace({
     setActiveTab(tab)
     document.getElementById(`plugin-management-${tab}-tab`)?.focus()
   }
+
+  useEffect(() => {
+    return subscribePluginMarketplaceCache(snapshot => {
+      if (!snapshot || snapshot.cacheKey !== marketplaceCacheKeyValue) return
+      setInstalledPlugins(previous =>
+        sameInstalledPlugins(previous, snapshot.installedPlugins)
+          ? previous
+          : snapshot.installedPlugins
+      )
+      setMarketplaceItems(previous =>
+        sameMarketplaceItems(previous, snapshot.marketplaceItems)
+          ? previous
+          : snapshot.marketplaceItems
+      )
+      if (snapshot.deviceId) setCurrentDeviceId(snapshot.deviceId)
+    })
+  }, [marketplaceCacheKeyValue])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
     if (!showCoreDshTab) return
@@ -396,7 +417,30 @@ export function PluginManagementWorkspace({
         })
       )
       .then(outcome => {
-        setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
+        const nextInventory = removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
+          installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
+          marketplaceItemIds: [
+            marketplaceItem?.id,
+            marketplaceItem?.remotePluginId,
+            plugin.raw.spec.pluginId,
+            linkedCloudPluginId(plugin.raw),
+          ],
+          marketplaceId:
+            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+            installedPluginMarketplaceId(plugin.raw),
+          pluginKeys: [
+            plugin.raw.spec.source.pluginKey,
+            typeof plugin.raw.metadata.name === 'string' ? plugin.raw.metadata.name : null,
+            pluginName,
+          ],
+        })
+        if (nextInventory) {
+          setInstalledPlugins(nextInventory.installedPlugins)
+          setMarketplaceItems(nextInventory.marketplaceItems)
+        } else {
+          setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        }
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))
         notifyLocalPluginSkillsChanged([String(id), pluginName, plugin.raw.spec.source.pluginKey])
         const warningDetails = pluginUninstallWarningDetails(outcome)

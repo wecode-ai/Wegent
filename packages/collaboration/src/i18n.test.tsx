@@ -41,6 +41,8 @@ describe("collaboration i18n", () => {
       "todo.projects_home",
       "todo.files_title",
       "todo.manage_project",
+      "todo.project_member_capability",
+      "todo.project_member_role",
       "todo.issue_detail",
       "todo.attachment",
       "todo.collaborators",
@@ -63,7 +65,11 @@ describe("collaboration i18n", () => {
 
   it("localizes the pending pasted-text attachment status", () => {
     const key = "workbench.adding_pasted_text_attachment";
-    expect(createCollaborationTranslator("en")(key)).toBe("Adding pasted text…");
-    expect(createCollaborationTranslator("zh-CN")(key)).toBe("正在添加粘贴的文本…");
+    expect(createCollaborationTranslator("en")(key)).toBe(
+      "Adding pasted text…",
+    );
+    expect(createCollaborationTranslator("zh-CN")(key)).toBe(
+      "正在添加粘贴的文本…",
+    );
   });
 });

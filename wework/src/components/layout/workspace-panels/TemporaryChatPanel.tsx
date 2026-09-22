@@ -569,7 +569,7 @@ export function TemporaryChatPanel({
           optimisticAddress = nextAddress
           createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
           setMessages(getRuntimeConversationMessages(nextAddress))
-          updateAddress(nextAddress)
+          setAddress(nextAddress)
         }
         targetAddress = createTask
           ? await createTask(message, {
@@ -676,7 +676,6 @@ export function TemporaryChatPanel({
       currentProject,
       input,
       busy,
-      lifecycleStore,
       queuedMessages.length,
       conversationQueue,
       sideChatProjectChat,

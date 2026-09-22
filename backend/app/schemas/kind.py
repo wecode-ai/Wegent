@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Mapping, Optional
 from pydantic import (
     AliasChoices,
     BaseModel,
+    ConfigDict,
     Field,
     field_serializer,
     field_validator,
@@ -83,6 +84,8 @@ def resolve_model_category(spec: Optional[Mapping[str, Any]]) -> str:
 class TTSConfig(BaseModel):
     """TTS-specific configuration"""
 
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
+
     voice: Optional[str] = Field(
         None, description="Voice ID (e.g., 'alloy', 'echo' for OpenAI)"
     )
@@ -95,6 +98,8 @@ class TTSConfig(BaseModel):
 class STTConfig(BaseModel):
     """STT-specific configuration"""
 
+    model_config = ConfigDict(extra="allow")
+
     language: Optional[str] = Field(
         None, description="Language code (e.g., 'en', 'zh')"
     )
@@ -105,6 +110,8 @@ class STTConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     """Embedding-specific configuration"""
+
+    model_config = ConfigDict(extra="allow")
 
     dimensions: Optional[int] = Field(
         None, description="Output dimensions (e.g., 1536)"
@@ -122,6 +129,8 @@ class EmbeddingConfig(BaseModel):
 class RerankConfig(BaseModel):
     """Rerank-specific configuration"""
 
+    model_config = ConfigDict(extra="allow")
+
     top_n: Optional[int] = Field(None, description="Number of top results to return")
     return_documents: Optional[bool] = Field(
         True, description="Whether to return document texts"
@@ -137,6 +146,8 @@ class ModelCapabilities(BaseModel):
     covering image analysis (no separate ``supportsImage`` toggle on such
     models).
     """
+
+    model_config = ConfigDict(extra="allow")
 
     supportsImage: Optional[bool] = Field(
         None,
@@ -258,8 +269,41 @@ class GhostList(BaseModel):
 
 
 # Model CRD schemas
+_UNSAFE_MODEL_SPEC_KEYS = frozenset({"__proto__", "constructor", "prototype"})
+
+
+def _unsafe_model_spec_paths(value: Any, path: str = "spec") -> List[str]:
+    """Return unsafe key paths without exposing configuration values."""
+    if isinstance(value, dict):
+        paths: List[str] = []
+        for key, nested_value in value.items():
+            key_path = f"{path}.{key}"
+            if key in _UNSAFE_MODEL_SPEC_KEYS:
+                paths.append(key_path)
+            paths.extend(_unsafe_model_spec_paths(nested_value, key_path))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, nested_value in enumerate(value):
+            paths.extend(_unsafe_model_spec_paths(nested_value, f"{path}[{index}]"))
+        return paths
+    return []
+
+
 class ModelSpec(BaseModel):
     """Model specification"""
+
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unsafe_keys(cls, value: Any) -> Any:
+        unsafe_paths = _unsafe_model_spec_paths(value)
+        if unsafe_paths:
+            raise ValueError(
+                "Model spec contains unsafe key names: " + ", ".join(unsafe_paths)
+            )
+        return value
 
     modelConfig: Dict[str, Any]
     isCustomConfig: Optional[bool] = (
@@ -409,6 +453,8 @@ class ModelStatus(Status):
 
 class Model(BaseModel):
     """Model CRD"""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "Model"

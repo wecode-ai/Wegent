@@ -12,7 +12,7 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { TaskActivityView } from './TaskActivityView'
-import type { Attachment } from '@/types/api'
+import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 
 const createProjectRuntimeTask = vi.fn()
@@ -36,14 +36,14 @@ const attachmentSelectionMock = {
   resetAttachments: vi.fn(),
 }
 
-const { runtimeWorkMock, agentsMock, openExternalUrlMock, lifecycleSnapshotMock } = vi.hoisted(
-  () => ({
+const { runtimeWorkMock, devicesMock, agentsMock, openExternalUrlMock, lifecycleSnapshotMock } =
+  vi.hoisted(() => ({
     lifecycleSnapshotMock: { value: { tasks: new Map() } },
     runtimeWorkMock: { value: null as unknown },
+    devicesMock: { value: [] as DeviceInfo[] },
     agentsMock: { value: [] as Array<Record<string, unknown>> },
     openExternalUrlMock: vi.fn().mockResolvedValue(true),
-  })
-)
+  }))
 
 const replyQueueStoreMock = vi.hoisted(() => ({ value: null as TaskReplyQueueStore | null }))
 vi.mock('./taskReplyQueue', () => ({
@@ -84,7 +84,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
   useWorkbenchPaneContext: () => ({
     state: {
       runtimeWork: runtimeWorkMock.value,
-      devices: [],
+      devices: devicesMock.value,
     },
     services: workbenchServices,
     createProjectRuntimeTask,
@@ -226,6 +226,7 @@ describe('TaskActivityView', () => {
       },
     ]
     runtimeWorkMock.value = null
+    devicesMock.value = []
     lifecycleSnapshotMock.value = { tasks: new Map() }
     createProjectRuntimeTask.mockReset()
     sendRuntimePaneMessage.mockReset()
@@ -1570,12 +1571,32 @@ describe('TaskActivityView', () => {
   })
 
   it('renders a bound Issue execution as a task summary without a workflow stage', async () => {
+    devicesMock.value = [
+      {
+        id: 1,
+        device_id: 'logical-device-1',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: 'logical-device-1',
+            runtime_device_id: 'runtime-device-1',
+            status: 'online',
+          },
+        ],
+      },
+    ]
     const completedAgentMessage: ProjectChatMessage = {
       ...agentMessage,
       type: 'text',
       content: '普通 Issue 执行完成。',
+      metadata: { run_id: '8bd9eeb-b551-413e-801d-534aa32f3715' },
       status: 'completed',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      runtimeAddress: { deviceId: 'runtime-device-1', taskId: 'runtime-task-1' },
     }
     const client = {
       subscribe: vi.fn(async () => ({
@@ -1597,13 +1618,14 @@ describe('TaskActivityView', () => {
         currentUserId={1}
         project={{ id: '11', name: 'Wework' } as never}
         task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
+        deviceNamesById={{ 'logical-device-1': 'Local Executor' }}
         taskBindings={[
           {
             id: 10,
             cloud_project_id: '11',
             loop_item_id: 'WEG-1',
             task_user_id: 1,
-            device_id: 'device-1',
+            device_id: 'runtime-device-1',
             task_id: 'runtime-task-1',
             task_title: 'pwd',
             backend_task_id: null,
@@ -1617,7 +1639,10 @@ describe('TaskActivityView', () => {
 
     const card = await screen.findByTestId('cloud-task-activity-message-message-2')
     expect(card).toHaveTextContent('pwd')
-    expect(screen.getByTestId('task-activity-run-event-message-2')).toHaveTextContent('AI 执行')
+    const executionEvent = screen.getByTestId('task-activity-run-event-message-2')
+    expect(executionEvent).toHaveTextContent('AI 执行')
+    expect(executionEvent).toHaveTextContent('Local Executor')
+    expect(executionEvent).not.toHaveTextContent('8bd9eeb')
     expect(card).toHaveTextContent('普通 Issue 执行完成。')
   })
 

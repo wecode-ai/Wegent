@@ -451,6 +451,9 @@ export function useWorkbenchRuntimeMessaging({
       if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
 
       let sendRequested = false
+      const isRequestUserInputResponse = Boolean(
+        request.requestUserInputResponse ?? request.request_user_input_response
+      )
       const optimisticUserMessage = options?.optimisticUserMessage
       const outboundRequestWithClientId = optimisticUserMessage
         ? {
@@ -466,7 +469,7 @@ export function useWorkbenchRuntimeMessaging({
       }
       try {
         const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
-        if (!options?.silentBusyRetry) {
+        if (!options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
@@ -474,10 +477,12 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
-        if (options?.silentBusyRetry) {
+        if (options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
-        if (response.status === 'queued') {
+        if (isRequestUserInputResponse) {
+          lifecycleStore.userInputResponded(outboundRequest.address)
+        } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)
           options?.onQueued?.(response)
         } else {
@@ -971,16 +976,37 @@ export function useWorkbenchRuntimeMessaging({
         : (modelSelection.getSelectedModel?.() ??
           modelSelection.selectedModel ??
           resolveAutomaticModel(modelSelection.models))
-      const selectedModelOptions = hasOverrideSelection
-        ? (overrideSelection?.options ?? {})
-        : (modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions)
-      const executionModel = options?.taskCreateRequest
+      const taskRequestSelection = options?.taskCreateRequest?.modelSelection
+      const overrideExecutionModel = hasOverrideSelection
+        ? overrideSelection
+          ? selectedModel
+            ? selectedModelExecutionFields(selectedModel, overrideSelection.options ?? {})
+            : {
+                modelId: overrideSelection.modelName,
+                modelType: overrideSelection.modelType,
+                modelOptions: overrideSelection.options ?? {},
+              }
+          : {}
+        : null
+      const executionModel = options?.taskCreateRequest?.modelId
         ? {
             modelId: options.taskCreateRequest.modelId,
             modelType: options.taskCreateRequest.modelType,
             modelOptions: options.taskCreateRequest.modelOptions,
           }
-        : selectedModelExecutionFields(selectedModel, selectedModelOptions)
+        : taskRequestSelection?.modelName
+          ? {
+              modelId: taskRequestSelection.modelName,
+              modelType: taskRequestSelection.modelType,
+              modelOptions: taskRequestSelection.options,
+            }
+          : overrideExecutionModel
+            ? overrideExecutionModel
+            : {
+                modelId: intent.modelId,
+                modelType: intent.modelType,
+                modelOptions: intent.modelOptions,
+              }
       const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
       const friendlyTitle =
         runtime === 'codex'
@@ -1012,6 +1038,11 @@ export function useWorkbenchRuntimeMessaging({
         ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
             ?.project
         : null
+      const hasDirectManagedWorkspaceTarget = Boolean(
+        requestedManagedWorkspace &&
+        options?.taskCreateRequest?.deviceId?.trim() &&
+        options.taskCreateRequest.workspacePath?.trim()
+      )
       let runtimeTaskTarget: Pick<
         RuntimeTaskCreateRequest,
         | 'projectId'
@@ -1029,6 +1060,15 @@ export function useWorkbenchRuntimeMessaging({
         runtimeTaskTarget = {
           deviceId: options.sideSource.deviceId,
           workspacePath: options.sideSource.workspacePath,
+        }
+      } else if (
+        options?.taskCreateRequest?.deviceId?.trim() &&
+        options.taskCreateRequest.workspacePath?.trim()
+      ) {
+        optimisticDeviceId = options.taskCreateRequest.deviceId.trim()
+        runtimeTaskTarget = {
+          deviceId: optimisticDeviceId,
+          workspacePath: options.taskCreateRequest.workspacePath.trim(),
         }
       } else if (projectId) {
         if (!selectedProjectWorkspace) {
@@ -1064,7 +1104,7 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      if (requestedManagedWorkspace) {
+      if (requestedManagedWorkspace && !hasDirectManagedWorkspaceTarget) {
         const worktreeProject =
           state.projects.find(project => project.id === projectId) ??
           (state.currentProject?.id === projectId ? state.currentProject : null)
@@ -1810,7 +1850,13 @@ export function useWorkbenchRuntimeMessaging({
       )
       if (prepared.activeDeviceId) {
         const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
-        if (!isWorkbenchDeviceOnline(activeDevice)) {
+        const hasPreparedExecutionTarget = Boolean(
+          taskRequest?.deviceId?.trim() && taskRequest.workspacePath?.trim()
+        )
+        if (
+          !isWorkbenchDeviceOnline(activeDevice) &&
+          (activeDevice || !hasPreparedExecutionTarget)
+        ) {
           const deviceName =
             getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
             i18n.t('workbench.current_device')
@@ -1827,13 +1873,19 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      const executionModel = taskRequest
+      const executionModel = taskRequest?.modelId
         ? {
             modelId: taskRequest.modelId,
             modelType: taskRequest.modelType,
             modelOptions: taskRequest.modelOptions,
           }
-        : options.executionModel
+        : taskRequest?.modelSelection?.modelName
+          ? {
+              modelId: taskRequest.modelSelection.modelName,
+              modelType: taskRequest.modelSelection.modelType,
+              modelOptions: taskRequest.modelSelection.options,
+            }
+          : options.executionModel
       const workspaceSourceTask = taskRequest?.workspaceSourceTask ?? options.workspaceSource
       const workspaceExecution = workspaceSourceTask
         ? undefined

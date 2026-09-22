@@ -547,6 +547,22 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    pub(super) fn set_interaction_status(&self, local_task_id: &str, status: Option<&str>) {
+        let mut changed = false;
+        self.store.update_task(local_task_id, |link| {
+            let next_status = status.map(ToOwned::to_owned);
+            if link.interaction_status == next_status {
+                return;
+            }
+            link.interaction_status = next_status;
+            link.updated_at = now_ms().max(link.updated_at);
+            changed = true;
+        });
+        if changed {
+            emit_runtime_work_changed(&self.event_tx, &self.device_id, local_task_id);
+        }
+    }
+
     pub(super) async fn prepare_deferred_worktree(
         &self,
         turn: &mut SpawnTurnRequest,
@@ -850,6 +866,9 @@ impl RuntimeWorkRpcHandler {
                 }
                 return;
             }
+        }
+        if codex_notification_requires_user_input(&message) {
+            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         }
 
         if let (Some(active_turn), Some(cwd)) = (active_turn.as_ref(), request.cwd()) {

@@ -304,6 +304,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
                 onCreateProjectMode={projectWork.onCreateProjectMode}
                 showClearButton={projectWork.showProjectClearButton}
+                showProjectSelector={projectWork.showProjectSelector}
                 projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
                 projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
                 middleContext={projectWorkBarMiddleContext}

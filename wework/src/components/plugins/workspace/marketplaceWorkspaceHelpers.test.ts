@@ -9,6 +9,7 @@ import {
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
   requiredConnectionNames,
+  resolveMarketplaceUninstallId,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
@@ -168,6 +169,42 @@ describe('pluginUsesWegentConnectorOAuth', () => {
       manifest: { marketplaceId: 'default' },
     }
     expect(pluginUsesWegentConnectorOAuth(item)).toBe(true)
+  })
+})
+
+describe('resolveMarketplaceUninstallId', () => {
+  test('prefers the actual installed inventory record over a stale marketplace id', () => {
+    const item: PluginMarketplaceItem = {
+      ...githubMarketplaceItem(),
+      id: 54,
+      installedPluginId: 54,
+      name: 'documents',
+      displayName: '文档',
+      sourceProvider: 'wegent',
+      sourceLabel: 'Wegent 官方',
+      manifest: { marketplaceId: 'wegent' },
+    }
+    const installed = githubInstalledItem()
+    installed.id = '269646-wegent-documents-0.1.3'
+    installed.name = '文档'
+    installed.raw.metadata = {
+      name: 'documents',
+      namespace: 'wegent',
+      labels: { id: '269646-wegent-documents-0.1.3' },
+    }
+    installed.raw.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent',
+      pluginKey: 'documents',
+      marketplace: 'wegent',
+    }
+    installed.raw.spec.sourcePayload = {
+      managedByWegent: true,
+      cloudInstalledPluginId: 269646,
+      marketplaceName: 'wegent',
+    }
+
+    expect(resolveMarketplaceUninstallId(item, [installed])).toBe('269646-wegent-documents-0.1.3')
   })
 })
 

@@ -192,11 +192,13 @@ def test_cleanup_intent_routes_app_alias_to_executor_record(
             "spec": {
                 "deviceId": "electron-device",
                 "deviceType": "app",
+                "appDeviceId": "electron-ipc-device",
             }
         },
     )
     test_db.add(device)
     test_db.commit()
+    route_id = f"app-record-{device.id}"
     project = _project(test_db, test_user)
     item = loop_item_service.create(
         test_db,
@@ -209,7 +211,7 @@ def test_cleanup_intent_routes_app_alias_to_executor_record(
             cloud_project_id=project.id,
             loop_item_id=item.id,
             task_user_id=test_user.id,
-            device_id="electron-device",
+            device_id=route_id,
             task_id="runtime-task-1",
             task_title=item.title,
             linked_by_user_id=test_user.id,
@@ -229,9 +231,12 @@ def test_cleanup_intent_routes_app_alias_to_executor_record(
         .filter(WorkspaceCleanupIntent.loop_item_id == item.id)
         .one()
     )
-    route_id = f"app-record-{device.id}"
     assert intent.device_id == route_id
-    assert intent.metadata_json["execution_target_id"] == "electron-device"
+    assert intent.metadata_json["execution_target_id"] == "electron-ipc-device"
+    assert due_execution_targets(
+        test_db,
+        now=_utcnow() + timedelta(seconds=1),
+    ) == [(test_user.id, "electron-ipc-device")]
     assert (
         pull_due(
             test_db,

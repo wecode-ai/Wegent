@@ -1,4 +1,4 @@
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import type { CollaborationExecutionEnvironment, SharedWorkspaceApi } from '@wegent/collaboration'
 import { isDefaultWorkItemProject, type CloudProject } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import type {
@@ -6,6 +6,32 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
+
+function executionEnvironmentIdentity(environment: CollaborationExecutionEnvironment): string {
+  return environment.device_key?.trim() || `device:${environment.device_id ?? environment.id}`
+}
+
+export function mergeExecutionEnvironmentResources(
+  localEnvironments: CollaborationExecutionEnvironment[],
+  cloudEnvironments: CollaborationExecutionEnvironment[]
+): CollaborationExecutionEnvironment[] {
+  const currentLocalDeviceKeys = new Set(
+    localEnvironments
+      .filter(environment => environment.kind === 'local_device')
+      .map(executionEnvironmentIdentity)
+  )
+  const seen = new Set<string>()
+  return cloudEnvironments.flatMap(environment => {
+    const identity = executionEnvironmentIdentity(environment)
+    if (seen.has(identity)) return []
+    seen.add(identity)
+    return [
+      currentLocalDeviceKeys.has(identity)
+        ? { ...environment, is_current_device: true }
+        : environment,
+    ]
+  })
+}
 
 export function withoutDefaultWorkItemProject(api: SharedWorkspaceApi): SharedWorkspaceApi {
   return {
@@ -421,10 +447,10 @@ export function createWeworkPlatformApi(
               ...localResources.agents.map(agent => ({ ...agent, location: 'local' as const })),
               ...cloudResources.agents.map(agent => ({ ...agent, location: 'cloud' as const })),
             ],
-            execution_environments: [
-              ...localResources.execution_environments,
-              ...cloudResources.execution_environments,
-            ],
+            execution_environments: mergeExecutionEnvironmentResources(
+              localResources.execution_environments,
+              cloudResources.execution_environments
+            ),
           }
         } catch {
           return localResources

@@ -262,9 +262,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
-        timeoutMs: uiTimeoutMs,
-      })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
         timeoutMs: uiTimeoutMs,
       })

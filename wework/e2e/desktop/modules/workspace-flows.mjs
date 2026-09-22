@@ -656,16 +656,15 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-02-created.png',
     boardContentSelector
   )
-  const editIssueContentSelector = `${issueDetailSelector} [data-testid="cloud-todo-edit-content"]`
-  await control.command('click', editIssueContentSelector)
   await waitForAttribute(
     control,
     issueDetailDescription,
     'contenteditable',
     'true',
-    'The newly created Issue did not enter editable content mode'
+    'The newly created Issue did not open with editable content'
   )
-  await control.command('fill', issueDetailDescription, {
+  await control.command('fill', issueDetailDescription, { value: '' })
+  await control.command('pasteText', issueDetailDescription, {
     value: twoLineIssueDescription,
   })
   await waitForControlValue(

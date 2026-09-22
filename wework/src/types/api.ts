@@ -74,6 +74,7 @@ export type {
   RuntimeProjectWork,
   RuntimeWorkListResponse,
   RuntimeGoalExecutionStatus,
+  RuntimeTaskInteractionStatus,
   RuntimeGoalCreateInput,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -905,6 +906,8 @@ export interface RuntimeTaskExecutionConfig {
 
 export interface RuntimeTaskCreateRequest extends RuntimeTaskCreateIntent {
   forceStart?: boolean
+  /** Logical route used to bind this task to a project Issue. */
+  executionDeviceId?: string
   wegentTeamId?: number
   newSession?: boolean
   projectInstructions?: string

@@ -893,6 +893,7 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             link.completed_at = Some(link.updated_at);
             link.status = status.to_owned();
+            link.interaction_status = None;
             apply_local_execution_state(link, false, None);
             if link.thread_id.is_some() {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
@@ -936,6 +937,7 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             link.completed_at = Some(link.updated_at);
             link.status = "cancelled".to_owned();
+            link.interaction_status = None;
             apply_local_execution_state(link, false, None);
         });
         if let Some(link) = self.local_task_link(local_task_id) {
@@ -1158,6 +1160,7 @@ impl RuntimeWorkRpcHandler {
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
                 link.status = status.to_owned();
+                link.interaction_status = None;
             }
             apply_local_execution_state(link, status == "running", None);
             if link.thread_id.is_some() {

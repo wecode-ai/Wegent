@@ -1505,6 +1505,7 @@ describe('createLocalAppServices', () => {
 
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'local-device',
+      executionDeviceId: 'app-record-1839',
       workspacePath: '/Users/me/project',
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
@@ -1551,6 +1552,7 @@ describe('createLocalAppServices', () => {
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.create', {
       deviceId: 'device-uuid',
+      executionDeviceId: 'app-record-1839',
       workspacePath: '/Users/me/project',
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
@@ -1589,6 +1591,9 @@ describe('createLocalAppServices', () => {
           local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
+      runtimeHandle: {
+        executionDeviceId: 'app-record-1839',
+      },
       executionRequest: expect.objectContaining({
         system_prompt: 'Run focused project tests.',
         project_plugin_ids: ['quality-gate@team-market'],
@@ -1631,6 +1636,7 @@ describe('createLocalAppServices', () => {
           },
         },
         device_id: 'device-uuid',
+        execution_device_id: 'app-record-1839',
         execution_target_type: 'local',
         workspace_source: 'local_path',
         project_workspace_path: '/Users/me/project',

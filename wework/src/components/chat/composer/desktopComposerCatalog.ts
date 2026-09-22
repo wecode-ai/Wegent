@@ -4,13 +4,12 @@ import {
   getComposerApps,
   publishComposerApps,
   replaceComposerApps,
-  readComposerAppsSnapshot,
   shouldSuppressComposerAppsSync,
   subscribeComposerApps,
 } from './composerAppsSnapshot'
 export const desktopComposerCatalogStore = {
   get: getComposerApps,
-  readSnapshot: readComposerAppsSnapshot,
+  readSnapshot: getComposerApps,
   publish: publishComposerApps,
   replace: replaceComposerApps,
   subscribe: subscribeComposerApps,

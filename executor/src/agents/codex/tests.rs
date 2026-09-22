@@ -719,6 +719,7 @@ fn mcp_tool_call_request_user_input_can_be_auto_approved() {
     });
 
     assert!(is_mcp_tool_call_approval_request(&message));
+    assert!(!codex_notification_requires_user_input(&message));
     assert_eq!(
         mcp_tool_call_request_user_input_response(message_params(&message)),
         Some(json!({
@@ -765,6 +766,7 @@ fn ordinary_request_user_input_is_not_treated_as_mcp_tool_approval() {
             }
         });
         assert!(!is_mcp_tool_call_approval_request(&message));
+        assert!(codex_notification_requires_user_input(&message));
         assert!(mcp_tool_call_request_user_input_response(message_params(&message)).is_none());
     }
 }

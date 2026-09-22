@@ -3,6 +3,8 @@
 
 """Issue assignments stored as structured LoopItemComment events."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -87,6 +89,10 @@ class IssueAssignmentService:
         self._require_issue_project(db, project_id, issue_id)
         return list(self._active_events(db, issue_id).values())
 
+    def active_for_issue(self, db: Session, issue_id: str) -> list[AssignmentEvent]:
+        """Return active assignments in activity order without a second data source."""
+        return list(self._active_events(db, issue_id).values())
+
     def active(
         self,
         db: Session,
@@ -129,8 +135,34 @@ class IssueAssignmentService:
             member_id=normalized_id,
             workflow_step=workflow_step,
         )
-        if existing is not None:
+        if existing is not None and not (
+            existing.metadata.get("trigger") == "default" and trigger != "default"
+        ):
             return existing, False
+        if normalized_type == "human" and not self._workflow_step(workflow_step):
+            for previous in self._active_events(db, issue_id).values():
+                if previous.workflow_step:
+                    continue
+                db.add(
+                    LoopItemComment(
+                        cloud_project_id=str(project_id),
+                        loop_item_id=issue_id,
+                        description="",
+                        created_by_user_id=assigned_by_user_id,
+                        updated_by_user_id=assigned_by_user_id,
+                        status="active",
+                        metadata_json={
+                            "event_type": ASSIGNMENT_EVENT_TYPE,
+                            "action": "unassign",
+                            "assignment_event_id": previous.id,
+                            "target_type": previous.member_type,
+                            "target_id": previous.member_id,
+                            "workflow_step": previous.workflow_step,
+                            "notify": False,
+                            "trigger": "reassignment",
+                        },
+                    )
+                )
         target_name = self._target_name(db, normalized_type, normalized_id)
         metadata = {
             "event_type": ASSIGNMENT_EVENT_TYPE,
