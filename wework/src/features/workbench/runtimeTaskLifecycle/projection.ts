@@ -139,10 +139,26 @@ export function runtimeTaskTrackingExecutionStatus(
 
   const task = lifecycle.task
   if (!task) return null
-  const status = task.status?.trim().toLowerCase()
-  const turnStatus = task.turnStatus?.trim().toLowerCase()
+  return runtimeTaskSummaryTrackingExecutionStatus(task)
+}
+
+export function runtimeTaskSummaryTrackingExecutionStatus(
+  task: RuntimeTaskSummary
+): RuntimeTaskTrackingExecutionStatus | null {
+  const normalizedTask = normalizeRuntimeTaskSummary(task)
+  const status = normalizedTask.status?.trim().toLowerCase()
+  const turnStatus = normalizedTask.turnStatus?.trim().toLowerCase()
+  const threadStatus = normalizedTask.threadStatus?.trim().toLowerCase()
   if (status === 'archived') return 'archived'
-  if (status === 'failed' || status === 'error' || turnStatus === 'failed') return 'failed'
+  if (
+    status === 'failed' ||
+    status === 'error' ||
+    turnStatus === 'failed' ||
+    threadStatus === 'systemerror' ||
+    Boolean(normalizedTask.error)
+  ) {
+    return 'failed'
+  }
   if (
     status === 'cancelled' ||
     status === 'canceled' ||
@@ -153,8 +169,15 @@ export function runtimeTaskTrackingExecutionStatus(
     return 'cancelled'
   }
   if (status === 'queued') return 'queued'
-  if (task.running === true) return 'running'
-  if (isRuntimeTaskAuthoritativeCompletion(task)) return 'succeeded'
+  if (isRuntimeTaskExecutionRunning(normalizedTask)) return 'running'
+  if (
+    isRuntimeTaskAuthoritativeCompletion(normalizedTask) ||
+    status === 'done' ||
+    status === 'completed' ||
+    status === 'succeeded'
+  ) {
+    return 'succeeded'
+  }
   return null
 }
 

@@ -207,12 +207,14 @@ function renderController(
   api: SharedWorkspaceApi,
   location: CollaborationLocation,
   myWorkEnabled?: boolean,
+  initialProject?: CollaborationProject,
 ): CollaborationWorkspaceController {
   hookRuntime.beginRender();
   const controller = useCollaborationWorkspaceController({
     api,
     location,
     messages,
+    initialProject,
     ...(myWorkEnabled === undefined ? {} : { myWorkEnabled }),
     pollIntervalMs: 0,
   });
@@ -241,13 +243,33 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(api.myWork).toBeUndefined();
   });
 
-  it("does not return to project A when its catalog resolves after navigation to B", async () => {
-    const catalogA = deferred<CollaborationProject[]>();
-    const catalogB = deferred<CollaborationProject[]>();
+  it("does not wait for the catalog when opening an already loaded project", async () => {
     const api = createApi();
-    vi.mocked(api.projects.list)
-      .mockImplementationOnce(() => catalogA.promise)
-      .mockImplementationOnce(() => catalogB.promise);
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "board" as const,
+    };
+    renderController(api, location, false, projectA);
+    await vi.waitFor(() => {
+      const controller = renderController(api, location, false, projectA);
+      expect(controller.state.project).toEqual(projectA);
+      expect(controller.state.loading).toBe(false);
+    });
+    expect(api.projects.list).not.toHaveBeenCalled();
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
+      projectA.id,
+    );
+  });
+
+  it("does not return to project A when its detail resolves after navigation to B", async () => {
+    const detailA = deferred<CollaborationProject>();
+    const detailB = deferred<CollaborationProject>();
+    const api = createApi();
+    vi.mocked(api.projects.get)
+      .mockImplementationOnce(() => detailA.promise)
+      .mockImplementationOnce(() => detailB.promise);
 
     renderController(api, {
       projectId: projectA.id,
@@ -260,12 +282,12 @@ describe("useCollaborationWorkspaceController location effects", () => {
       view: "board",
     });
 
-    catalogB.resolve([projectA, projectB]);
+    detailB.resolve(projectB);
     await vi.waitFor(() => {
       expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(projectB.id);
     });
 
-    catalogA.resolve([projectA, projectB]);
+    detailA.resolve(projectA);
     await Promise.resolve();
     await Promise.resolve();
 
@@ -329,5 +351,48 @@ describe("useCollaborationWorkspaceController location effects", () => {
       });
       expect(controller.state.selectedIssue).toEqual(issueA);
     });
+  });
+
+  it("ignores an old board response after switching project API sources", async () => {
+    const localApi = createApi();
+    const cloudApi = createApi();
+    const oldSnapshot =
+      deferred<
+        Awaited<ReturnType<SharedWorkspaceApi["issues"]["getBoardSnapshot"]>>
+      >();
+    vi.mocked(localApi.issues.getBoardSnapshot).mockReturnValue(
+      oldSnapshot.promise,
+    );
+    renderController(localApi, {
+      projectId: projectA.id,
+      issueId: null,
+      view: "board",
+    });
+    await vi.waitFor(() =>
+      expect(localApi.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+
+    const location = {
+      projectId: projectB.id,
+      issueId: null,
+      view: "board" as const,
+    };
+    renderController(cloudApi, location);
+    await vi.waitFor(() => {
+      expect(renderController(cloudApi, location).state.project).toEqual(
+        projectB,
+      );
+    });
+    oldSnapshot.resolve({
+      items: [issueA],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    await oldSnapshot.promise;
+    await Promise.resolve();
+    const controller = renderController(cloudApi, location);
+    expect(controller.state.project).toEqual(projectB);
+    expect(controller.state.issues).toEqual([issueB]);
   });
 });

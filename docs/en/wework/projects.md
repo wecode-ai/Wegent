@@ -57,12 +57,35 @@ After enabling **Settings → General → Experimental features**, open **Edit p
 
 ### Create a local or cloud project space
 
-When the Collaboration page has no project space yet, its first-project guide shows separate **Create local project** and **Create cloud project** actions. The creation dialog also identifies the actual storage location:
+The Collaboration page always shows the current device's **Local space** in
+the sidebar. When it is empty, the guide offers **Add folder**. After you choose
+a directory and confirm the project name, Wework registers it as a Task project
+and adds it to the local space. Cloud projects are still created inside a cloud
+space, and the creation UI identifies the actual storage location:
 
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
+
+### Import more projects into the local space
+
+Wework automatically adds local Task projects to the local space during initial
+setup. To add more projects later, open the local space's **…** menu or the
+project page's **Add project** menu:
+
+- **Import existing project** lists projects that already exist on the Tasks
+  page but are not yet in the local space. Wework deduplicates them by runtime
+  project identity and normalized workspace roots, so projects already shown in
+  the local space are excluded.
+- **Add folder** selects a new local directory, registers its Task project, and
+  adds it to the local space immediately.
+
+Background synchronization does not automatically restore an archived local
+collaboration project, preventing a project the user removed from reappearing.
+Explicitly choosing its Task project from **Import existing project** restores
+the corresponding local collaboration project. The sidebar refreshes after the
+import, and restarting Wework does not create a duplicate.
 
 New conversations started in that local project inherit the selected project space. Before the first message is sent, the composer shows **Add to board · Project space name**. Sending creates a task in the selected local or cloud project space and links the conversation. Repeated synchronization of the same conversation does not create duplicate board tasks.
 

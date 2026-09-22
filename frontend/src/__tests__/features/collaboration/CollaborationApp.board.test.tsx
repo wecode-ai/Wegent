@@ -136,6 +136,7 @@ describe('CollaborationApp shared project board', () => {
       projects: {
         get: jest.fn().mockResolvedValue(currentProject),
         update: updateProject,
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         getBoardSnapshot: jest.fn().mockResolvedValue({
@@ -287,6 +288,7 @@ describe('CollaborationApp shared project board', () => {
     const api = {
       projects: {
         get: jest.fn().mockResolvedValue(currentProject),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         getBoardSnapshot: jest.fn().mockResolvedValue({
@@ -383,6 +385,7 @@ describe('CollaborationApp shared project board', () => {
       projects: {
         list: jest.fn().mockResolvedValue([externalProject]),
         get: jest.fn().mockResolvedValue(externalProject),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         listPage,

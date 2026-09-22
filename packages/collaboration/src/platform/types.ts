@@ -6,11 +6,15 @@ import type { ReactNode } from "react";
 
 import type {
   CollaborationDefaultAssistant,
+  CollaborationProject,
   CollaborationView,
+  ProjectSettingsSectionId,
+  CollaborationWorkspace,
 } from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
+export type CollaborationDomain = "local" | "cloud";
 export type CollaborationPlatformRootView =
   | "home"
   | "agents"
@@ -32,15 +36,21 @@ export type CollaborationWorkspaceView =
 
 export interface CollaborationPlatformLocation {
   platformView: CollaborationPlatformView;
+  collaborationDomain?: CollaborationDomain;
   rootView?: CollaborationPlatformRootView;
   workspaceId: string | null;
   workspaceView: CollaborationWorkspaceView;
   projectId: string | null;
   projectView: CollaborationView;
+  projectSettingsSection?: ProjectSettingsSectionId | null;
   issueId: string | null;
 }
 
 export interface CollaborationPlatformHostAdapter {
+  currentUser?: {
+    id: number;
+    name: string;
+  };
   cloudAccess?: {
     authenticated: boolean;
     requestLogin(): void;
@@ -69,6 +79,13 @@ export interface CollaborationPlatformHostAdapter {
     hasCloudDevice: boolean;
     onClose(): void;
     onCreated(deviceId?: number): Promise<void>;
+  }): ReactNode;
+  renderProjectImporter?(input: {
+    workspace: CollaborationWorkspace;
+    mode: "folder" | "existing";
+    projects: CollaborationProject[];
+    onClose(): void;
+    onImported(project: CollaborationProject): Promise<void>;
   }): ReactNode;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;

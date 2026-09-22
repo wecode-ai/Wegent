@@ -10,11 +10,15 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  waitForTestIdByText,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = `本地智能体能力验收-${process.pid}`
 const AGENT_NAME = `本地能力智能体-${process.pid}`
+const GROUP_NAME = `本地能力协作小组-${process.pid}`
 const ISSUE_NAME = `本地智能体执行验收-${process.pid}`
 const RUN_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_RUN'
 const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
@@ -190,13 +194,18 @@ export async function createDesktopScenario({
         'click',
         scoped('[data-testid="collaboration-project-settings-participants"]')
       )
-      await control.command('waitFor', scoped('[data-testid="project-agent-config"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-participants-tab-agents"]')
+      )
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-participants-tab-agents"][aria-selected="true"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="project-agent-mode-create-card"]', {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
@@ -235,21 +244,64 @@ export async function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
         text: AGENT_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      const settingsSnapshot = JSON.parse(
-        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-participants-tab-groups"]')
       )
-      const agentRowTestId = settingsSnapshot.testIds.find(testId =>
-        testId.startsWith('project-agent-row-')
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
       )
-      assert.ok(agentRowTestId, 'The local Agent row was not created')
-      const agentId = agentRowTestId.slice('project-agent-row-'.length)
+      await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
+        value: GROUP_NAME,
+      })
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-group-create-add-members"]')
+      )
+      const agentMemberTestId = await waitForTestIdByText(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        'collaboration-group-create-member-agent-',
+        AGENT_NAME,
+        uiTimeoutMs
+      )
+      await control.command('click', `[data-testid="${agentMemberTestId}"]`)
+      await control.command('waitFor', scoped('.collaboration-group-selected-people'), {
+        text: AGENT_NAME,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="collaboration-group-create"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
+      const groupDetailTestId = await waitForTestIdByText(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        'collaboration-group-detail-local-group-',
+        GROUP_NAME,
+        uiTimeoutMs
+      )
+      const groupId = groupDetailTestId.slice('collaboration-group-detail-'.length)
       await captureScreenshot(
         control,
-        'collaboration-local-agent-03-agent-created.png',
+        'collaboration-local-agent-03-group-created.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
 
@@ -272,7 +324,7 @@ export async function createDesktopScenario({
       await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
       await control.command(
         'click',
-        `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+        `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
       )
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
         timeoutMs: uiTimeoutMs,

@@ -50,7 +50,7 @@ function IssueExecutionDetailsContent({
         }
         transcriptError={state.error ?? metadataError ?? actionError}
         onRetryTranscript={() => void reload()}
-        executionRunning={state.running}
+        executionRunning={state.error && !state.running ? undefined : state.running}
         onStop={async () => {
           await runtime.cancel(target.address)
           await reload()
@@ -65,8 +65,11 @@ function IssueExecutionDetailsContent({
 
 export function IssueExecutionDetails(props: Parameters<typeof IssueExecutionDetailsContent>[0]) {
   const { runtime, target, translate, onClose } = props
-  const access = useRuntimeDeviceAccess(runtime, [target.address.deviceId])
-  if (access.get(target.address.deviceId) === 'allowed')
+  const access = useRuntimeDeviceAccess(
+    runtime,
+    target.address.projectSession ? [] : [target.address.deviceId]
+  )
+  if (target.address.projectSession || access.get(target.address.deviceId) === 'allowed')
     return <IssueExecutionDetailsContent {...props} />
   return (
     <RuntimeExecutionDetails

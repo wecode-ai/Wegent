@@ -96,6 +96,19 @@ export function runtimeTaskProjectUiId(
     if (projectWork) return runtimeProjectUiId(projectWork.project)
   }
 
+  const directDeviceId = request.deviceId?.trim()
+  const directWorkspacePath = normalizeRuntimeWorkspacePath(request.workspacePath ?? '')
+  if (directDeviceId && directWorkspacePath) {
+    const projectWork = runtimeWork?.projects.find(item =>
+      item.deviceWorkspaces.some(
+        workspace =>
+          executionDeviceId(workspace) === directDeviceId &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) === directWorkspacePath
+      )
+    )
+    if (projectWork) return runtimeProjectUiId(projectWork.project)
+  }
+
   const runtimeProjectKey = request.runtimeProjectKey?.trim()
   const deviceId = request.deviceId?.trim()
   if (!runtimeProjectKey || !deviceId) return null

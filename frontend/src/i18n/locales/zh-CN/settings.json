@@ -298,6 +298,12 @@
         "knowledge_description": "新聊天默认会带上这些知识库，之后仍可在聊天中追加选择。",
         "mcp_description": "连接外部 MCP 服务，为智能体补充工具能力。"
       },
+      "capability": {
+        "base_title": "使用通用基础能力",
+        "base_description": "沿用系统智能体的通用 Skill、工具和插件能力，不改变当前智能体的人设与执行方式。启用后可能增加上下文与工具调用消耗。",
+        "enabled": "已启用",
+        "disabled": "未启用"
+      },
       "execution": {
         "bind_mode_description": "决定这个智能体可以在哪些入口和任务类型中使用。",
         "requires_workspace_description": "开启后，编码任务必须先选择仓库。",

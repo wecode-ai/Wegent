@@ -45,6 +45,7 @@ export interface RuntimeTaskSummary {
   queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   goalExecutionStatus?: RuntimeGoalExecutionStatus | null
+  interactionStatus?: RuntimeTaskInteractionStatus | null
   optimistic?: boolean
   cachedProjection?: boolean
   error?: string | null
@@ -210,6 +211,8 @@ export interface RuntimeGuidanceResponse {
 }
 
 export type RuntimeGoalExecutionStatus = 'running' | 'recovering' | 'needsAttention'
+
+export type RuntimeTaskInteractionStatus = 'waitingForUserInput'
 
 export interface RuntimeGoalCreateInput {
   objective: string

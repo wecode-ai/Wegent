@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { inCollaborationSidebar, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 
@@ -357,6 +357,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', '[data-testid="wework-collaboration-platform"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'cloud')
       await control.command(
         'waitFor',
         inCollaborationSidebar(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE.id}"]`),
@@ -456,6 +457,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, 'cloud-space-mention-03-consecutive-moves-stable.png')
 
       await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="cloud-todo-card-progress-popup-${WEBSITE_TODO.id}"]`,
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-card-open-task-${WEBSITE_TODO.id}"]`,
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
         timeoutMs: uiTimeoutMs,
       })

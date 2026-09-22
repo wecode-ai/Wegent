@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Bot, UserRound, Plus, ChevronDown, Check, X } from "lucide-react";
+import { Bot, UserRound, Plus, Check, Copy, X } from "lucide-react";
 import type { CollaborationGroup } from "../types";
 
 export type GroupCandidate = {
@@ -14,43 +14,46 @@ export type GroupCandidate = {
   name: string;
 };
 
+export type GroupAgentAction = {
+  id: "create-default" | "create" | "copy";
+  label: string;
+  description: string;
+  onSelect(): void;
+};
+
 const copy = {
   "zh-CN": {
     leader: "负责人",
-    leaderHint: "协调分工，推动协作小组完成目标。",
-    choose: "选择负责人",
-    change: "更换",
+    makeLeader: "设为负责人",
     members: "协作小组成员",
     add: "添加成员",
-    memberHint: "负责人已加入协作小组，无需重复添加。",
-    empty: "按需添加一起协作的人或智能体，也可以只由负责人开始。",
+    memberHint: "负责人接收任务并协调推进，可在成员行切换。",
+    empty: "尚未添加其他成员",
     responsibility: "职责（选填）",
-    memberExample: "例如：实现功能、代码审查",
+    responsibilityPlaceholder: "在小组中负责什么（可选）",
     search: "搜索成员或智能体",
     noResults: "没有匹配的成员或智能体",
     remove: "移除",
-    done: "完成",
     human: "成员",
     agent: "智能体",
+    agentActions: "添加智能体",
   },
   en: {
     leader: "Leader",
-    leaderHint: "Coordinate the team and guide work toward its goal.",
-    choose: "Choose a leader",
-    change: "Change",
+    makeLeader: "Make leader",
     members: "Team members",
     add: "Add members",
-    memberHint: "The leader is already included in the team.",
-    empty:
-      "Add people or agents to collaborate, or start with just the leader.",
+    memberHint:
+      "The leader receives work and coordinates progress. Change it from any member row.",
+    empty: "No additional members yet",
     responsibility: "Responsibility (optional)",
-    memberExample: "E.g. implementation or code review",
+    responsibilityPlaceholder: "What will they own? (Optional)",
     search: "Search people or agents",
     noResults: "No matching people or agents",
     remove: "Remove",
-    done: "Done",
     human: "Person",
     agent: "Agent",
+    agentActions: "Add an agent",
   },
 };
 
@@ -76,27 +79,22 @@ function Identity({
 }
 
 function ParticipantPicker({
-  mode,
   candidates,
   selected,
   locale,
   onSelect,
+  agentActions = [],
 }: {
-  mode: "leader" | "members";
   candidates: GroupCandidate[];
   selected: string[];
   locale: keyof typeof copy;
   onSelect(candidate: GroupCandidate, selected: boolean): void;
+  agentActions?: GroupAgentAction[];
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const messages = copy[locale];
-  const label =
-    mode === "leader"
-      ? selected.length
-        ? messages.change
-        : messages.choose
-      : messages.add;
+  const label = messages.add;
   const visible = candidates.filter((candidate) =>
     candidate.name
       .toLocaleLowerCase()
@@ -114,23 +112,20 @@ function ParticipantPicker({
         <button
           type="button"
           className="collaboration-group-people-action"
-          data-testid={
-            mode === "leader"
-              ? "collaboration-group-leader"
-              : "collaboration-group-create-add-members"
-          }
+          data-testid="collaboration-group-create-add-members"
         >
-          {mode === "members" && <Plus size={16} aria-hidden="true" />}
+          <Plus size={16} aria-hidden="true" />
           {label}
-          {mode === "leader" && <ChevronDown size={14} aria-hidden="true" />}
         </button>
       </Popover.Trigger>
       <Popover.Content
         className="collaboration-group-people-picker"
         align="end"
+        side="bottom"
         sideOffset={6}
+        avoidCollisions={false}
         collisionPadding={12}
-        aria-label={mode === "leader" ? messages.choose : messages.add}
+        aria-label={messages.add}
         onKeyDown={(event) => {
           if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
           const items = Array.from(
@@ -154,7 +149,7 @@ function ParticipantPicker({
         }}
       >
         <input
-          data-testid={`collaboration-group-${mode}-search`}
+          data-testid="collaboration-group-members-search"
           aria-label={messages.search}
           placeholder={messages.search}
           value={query}
@@ -173,14 +168,9 @@ function ParticipantPicker({
                 key={candidate.value}
                 data-candidate
                 aria-pressed={checked}
-                data-testid={
-                  mode === "leader"
-                    ? `collaboration-group-leader-${candidate.kind}-${candidate.id}`
-                    : `collaboration-group-create-member-${candidate.kind}-${candidate.id}`
-                }
+                data-testid={`collaboration-group-create-member-${candidate.kind}-${candidate.id}`}
                 onClick={() => {
                   onSelect(candidate, !checked);
-                  if (mode === "leader") setOpen(false);
                 }}
               >
                 <Identity candidate={candidate} locale={locale} />
@@ -190,17 +180,31 @@ function ParticipantPicker({
           })}
           {!visible.length && <p>{messages.noResults}</p>}
         </div>
-        {mode === "members" && (
-          <Popover.Close asChild>
-            <button
-              type="button"
-              className="collaboration-group-people-action"
-              data-testid="collaboration-group-members-done"
-            >
-              {messages.done}
-            </button>
-          </Popover.Close>
-        )}
+        {agentActions.length > 0 ? (
+          <div className="collaboration-group-agent-actions">
+            <span>{messages.agentActions}</span>
+            {agentActions.map((action) => {
+              const Icon = action.id === "copy" ? Copy : Bot;
+              return (
+                <button
+                  type="button"
+                  key={action.id}
+                  data-testid={`collaboration-group-agent-action-${action.id}`}
+                  onClick={() => {
+                    setOpen(false);
+                    action.onSelect();
+                  }}
+                >
+                  <Icon size={16} aria-hidden="true" />
+                  <span>
+                    <strong>{action.label}</strong>
+                    <small>{action.description}</small>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </Popover.Content>
     </Popover.Root>
   );
@@ -211,43 +215,55 @@ export function GroupParticipantsEditor({
   leader,
   members,
   locale,
+  compact = false,
   onLeaderChange,
   onMemberChange,
   onResponsibilityChange,
+  agentActions,
 }: {
   candidates: GroupCandidate[];
   leader: string;
   members: CollaborationGroup["members"];
   locale: keyof typeof copy;
+  compact?: boolean;
   onLeaderChange(candidate: GroupCandidate): void;
   onMemberChange(candidate: GroupCandidate, selected: boolean): void;
   onResponsibilityChange(
     candidate: GroupCandidate,
     responsibility: string,
   ): void;
+  agentActions?: GroupAgentAction[];
 }) {
   const messages = copy[locale];
-  const selectedLeader = candidates.find(
-    (candidate) => candidate.value === leader,
+  const selectedParticipants = candidates
+    .filter(
+      (candidate) =>
+        candidate.value === leader ||
+        members.some(
+          (member) => `${member.kind}:${member.id}` === candidate.value,
+        ),
+    )
+    .sort((left, right) => {
+      if (left.value === leader) return -1;
+      if (right.value === leader) return 1;
+      return 0;
+    });
+  const selectedMembers = selectedParticipants.filter(
+    (candidate) => candidate.value !== leader,
   );
-  const selectedMembers = candidates.filter(
-    (candidate) =>
-      candidate.value !== leader &&
-      members.some(
-        (member) => `${member.kind}:${member.id}` === candidate.value,
-      ),
-  );
+  const selectedValues = selectedMembers.map((candidate) => candidate.value);
   const responsibility = (candidate: GroupCandidate) => (
     <label className="collaboration-group-person-responsibility">
       <span>{messages.responsibility}</span>
       <input
         data-testid={`collaboration-group-create-responsibility-${candidate.kind}-${candidate.id}`}
+        aria-label={`${candidate.name} ${messages.responsibility}`}
         value={
           members.find(
             (member) => `${member.kind}:${member.id}` === candidate.value,
           )?.responsibility ?? ""
         }
-        placeholder={messages.memberExample}
+        placeholder={messages.responsibilityPlaceholder}
         onChange={(event) =>
           onResponsibilityChange(candidate, event.target.value)
         }
@@ -255,77 +271,88 @@ export function GroupParticipantsEditor({
     </label>
   );
   return (
-    <div className="collaboration-group-people-editor">
-      <section aria-label={messages.leader}>
-        <div className="collaboration-group-people-heading">
-          <div>
-            <h4>{messages.leader}</h4>
-            <p>{messages.leaderHint}</p>
-          </div>
-        </div>
-        <div className="collaboration-group-person-card">
-          <div className="collaboration-group-person-toolbar">
-            {selectedLeader ? (
-              <Identity candidate={selectedLeader} locale={locale} />
-            ) : (
-              <span className="collaboration-group-person-empty">
-                {messages.choose}
-              </span>
-            )}
-            <ParticipantPicker
-              mode="leader"
-              candidates={candidates}
-              selected={leader ? [leader] : []}
-              locale={locale}
-              onSelect={onLeaderChange}
-            />
-          </div>
-        </div>
-      </section>
+    <div
+      className={`collaboration-group-people-editor${compact ? " is-compact" : ""}`}
+    >
       <section aria-label={messages.members}>
         <div className="collaboration-group-people-heading">
           <div>
             <h4>
               {messages.members}
-              {selectedMembers.length > 0 && (
-                <small>{selectedMembers.length}</small>
+              {selectedParticipants.length > 0 && (
+                <small>{selectedParticipants.length}</small>
               )}
             </h4>
             <p>{messages.memberHint}</p>
           </div>
           <ParticipantPicker
-            mode="members"
             candidates={candidates.filter(
               (candidate) => candidate.value !== leader,
             )}
-            selected={selectedMembers.map((candidate) => candidate.value)}
+            selected={selectedValues}
             locale={locale}
             onSelect={onMemberChange}
+            agentActions={agentActions}
           />
         </div>
         <div className="collaboration-group-selected-people">
-          {selectedMembers.map((candidate) => (
-            <div
-              key={candidate.value}
-              className="collaboration-group-person-card"
-            >
-              <div className="collaboration-group-person-toolbar">
-                <Identity candidate={candidate} locale={locale} />
-                <button
-                  type="button"
-                  className="collaboration-group-people-action"
-                  aria-label={`${messages.remove} ${candidate.name}`}
-                  title={`${messages.remove} ${candidate.name}`}
-                  data-testid={`collaboration-group-remove-member-${candidate.kind}-${candidate.id}`}
-                  onClick={() => onMemberChange(candidate, false)}
-                >
-                  <X size={16} aria-hidden="true" />
-                </button>
+          {selectedParticipants.map((candidate) => {
+            const isLeader = candidate.value === leader;
+            return (
+              <div
+                key={candidate.value}
+                className="collaboration-group-person-card"
+                data-leader={isLeader || undefined}
+                data-testid={
+                  isLeader ? "collaboration-group-leader" : undefined
+                }
+              >
+                <div className="collaboration-group-person-toolbar">
+                  <Identity candidate={candidate} locale={locale} />
+                  {isLeader ? null : responsibility(candidate)}
+                  <span className="collaboration-group-person-actions">
+                    {isLeader ? (
+                      <span
+                        className="collaboration-group-leader-badge"
+                        data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
+                      >
+                        <Check size={14} aria-hidden="true" />
+                        {messages.leader}
+                      </span>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="collaboration-group-people-action collaboration-group-make-leader"
+                          aria-label={`${messages.makeLeader} ${candidate.name}`}
+                          title={messages.makeLeader}
+                          data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
+                          onClick={() => onLeaderChange(candidate)}
+                        >
+                          <span
+                            className="collaboration-group-leader-indicator"
+                            aria-hidden="true"
+                          />
+                          {messages.leader}
+                        </button>
+                        <button
+                          type="button"
+                          className="collaboration-group-people-action"
+                          aria-label={`${messages.remove} ${candidate.name}`}
+                          title={`${messages.remove} ${candidate.name}`}
+                          data-testid={`collaboration-group-remove-member-${candidate.kind}-${candidate.id}`}
+                          onClick={() => onMemberChange(candidate, false)}
+                        >
+                          <X size={16} aria-hidden="true" />
+                        </button>
+                      </>
+                    )}
+                  </span>
+                </div>
               </div>
-              {responsibility(candidate)}
-            </div>
-          ))}
-          {!selectedMembers.length && (
+            );
+          })}
+          {!selectedParticipants.length && (
             <p className="collaboration-group-people-empty">{messages.empty}</p>
           )}
         </div>

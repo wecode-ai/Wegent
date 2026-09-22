@@ -32,6 +32,8 @@ export function ProjectAgentConfiguration({
   resourceContext,
   onError,
   onAgentsChange,
+  openComposerRequestId,
+  onOpenComposerRequestConsumed,
   scope = "project",
   translate,
 }: {
@@ -51,12 +53,16 @@ export function ProjectAgentConfiguration({
   };
   onError(): void;
   onAgentsChange?(): void;
+  openComposerRequestId?: number;
+  onOpenComposerRequestConsumed?(requestId: number): void;
   scope?: "project" | "workspace";
   translate: CollaborationTranslate;
 }) {
   const workspaceId = project.workspace_id;
   const usesLocalAgentCreator =
     project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
+  const usesLocalAgentEditor =
+    project.project_store === "local" && Boolean(host?.renderLocalAgentEditor);
   const supportsAgentCreation = Boolean(
     usesLocalAgentCreator || host?.renderAgentCreator,
   );
@@ -153,6 +159,20 @@ export function ProjectAgentConfiguration({
     project.project_store,
     supportsExistingAgentSelection,
     workspaceId,
+  ]);
+
+  useEffect(() => {
+    if (openComposerRequestId === undefined) return;
+    if (canManage) {
+      setMode(defaultMode);
+      setComposerOpen(true);
+    }
+    onOpenComposerRequestConsumed?.(openComposerRequestId);
+  }, [
+    canManage,
+    defaultMode,
+    onOpenComposerRequestConsumed,
+    openComposerRequestId,
   ]);
 
   useEffect(() => {
@@ -457,9 +477,9 @@ export function ProjectAgentConfiguration({
     namespace: project.namespace ?? "default",
   };
   const localAgentProjectId = scope === "project" ? project.id : undefined;
-  const canEditAgentResource = usesLocalAgentCreator
-    ? Boolean(host?.renderLocalAgentEditor)
-    : Boolean(host?.renderAgentEditor);
+  const canEditAgentResource = Boolean(
+    host?.renderLocalAgentEditor || host?.renderAgentEditor,
+  );
 
   function renderCustomAgentCreator() {
     if (mode !== "create") return null;
@@ -584,7 +604,7 @@ export function ProjectAgentConfiguration({
                     <div className={styles.agentActions}>
                       {canEditAgentResource &&
                       ((agent.definitionSource === "project" &&
-                        usesLocalAgentCreator) ||
+                        usesLocalAgentEditor) ||
                         (agent.definitionSource === "shared_agent" &&
                           agent.wegentTeamId !== null)) ? (
                         <button
@@ -749,7 +769,7 @@ export function ProjectAgentConfiguration({
 
           {editingAgent &&
           editingAgent.definitionSource === "project" &&
-          usesLocalAgentCreator &&
+          usesLocalAgentEditor &&
           host?.renderLocalAgentEditor
             ? host.renderLocalAgentEditor({
                 projectId: localAgentProjectId,

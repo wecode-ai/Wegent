@@ -1,5 +1,10 @@
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import {
+  isWorkspaceFileTab,
+  workspaceFileTabId,
+  type WorkspaceFileTabs,
+} from './workspace-panels/workspaceFileTabs'
+import {
   memo,
   type MouseEvent as ReactMouseEvent,
   useCallback,
@@ -44,6 +49,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceNamesById,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
   LOCAL_WORKBENCH_DEVICE_ALIAS,
@@ -252,6 +258,7 @@ import type {
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
+  RuntimeTaskForkRequest,
 } from '@/types/api'
 import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
@@ -309,6 +316,24 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
+
+function runtimeTaskForkModelOptions(
+  projectChat: ProjectChatControls
+): Pick<RuntimeTaskForkRequest, 'modelSelection'> {
+  const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
+  const selectedModelOptions =
+    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const executionModel = selectedModelExecutionFields(selectedModel ?? null, selectedModelOptions)
+  if (!executionModel.modelId) return {}
+  return {
+    modelSelection: {
+      modelName: executionModel.modelId,
+      modelType: executionModel.modelType ?? null,
+      options: executionModel.modelOptions ?? {},
+    },
+  }
+}
+
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
@@ -365,6 +390,7 @@ interface SubagentTranscriptState {
 }
 
 interface WorkbenchPaneWorkspaceState {
+  fileTabs?: WorkspaceFileTabs
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
@@ -489,6 +515,7 @@ function rightPanelTabType(
   tab: RightWorkspacePanelTab
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
+  if (isWorkspaceFileTab(tab)) return 'files'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
   if (isRightWorkspaceHarnessTab(tab) || isRightWorkspaceTerminalTab(tab)) return 'terminal'
   if (tab === 'review' || tab === 'files') return tab
@@ -1686,6 +1713,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(
     () => initialWorkspaceState?.selectedWorkspaceFile ?? null
   )
+  const [fileTabs, setFileTabs] = useState<WorkspaceFileTabs>(
+    () => initialWorkspaceState?.fileTabs ?? {}
+  )
   const [reviewState, setReviewState] = useState<DesktopReviewState>(
     () =>
       initialWorkspaceState?.reviewState ?? {
@@ -1806,6 +1836,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       reviewState,
       selectedFileWorkspaceTargetKey,
       selectedWorkspaceFile,
+      fileTabs,
       sourceBrowserLabel: defaultEmbeddedBrowserLabel,
     })
   }, [
@@ -1823,6 +1854,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reviewState,
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
+    fileTabs,
   ])
   const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
     id: number
@@ -1912,11 +1944,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const displayedRightPanelOpen = rightPanelOpen
   const displayedRightPanelExpanded = rightPanelExpanded
   const compactRightPanelOpen =
-    (rightPanelTabs.length === 1 &&
-      rightPanelTabs[0].startsWith('chat:') &&
-      rightPanelView === rightPanelTabs[0]) ||
-    rightPanelView === 'subagents' ||
-    isRightWorkspaceExtensionTab(rightPanelView)
+    rightPanelView === 'subagents' || isRightWorkspaceExtensionTab(rightPanelView)
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,
@@ -1997,7 +2025,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(
-      workspaceProject || openFileRequest?.target || openFileRequest?.attachment
+      workspaceProject ||
+      openFileRequest?.target ||
+      openFileRequest?.attachment ||
+      Object.keys(fileTabs).length
     )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
@@ -2021,6 +2052,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [
     openFileRequest?.target,
     openFileRequest?.attachment,
+    fileTabs,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
@@ -2140,7 +2172,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       : null
   const canBrowseFiles = Boolean(
-    workspaceProject || openFileRequest?.target || openFileRequest?.attachment
+    workspaceProject ||
+    openFileRequest?.target ||
+    openFileRequest?.attachment ||
+    Object.keys(fileTabs).length
   )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
@@ -3871,6 +3906,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (tab === 'files') {
       setOpenFileRequest(null)
     }
+    if (isWorkspaceFileTab(tab)) {
+      setFileTabs(current => {
+        const next = { ...current }
+        delete next[tab]
+        return next
+      })
+    }
     if (browserState?.developmentPreview) {
       smartAppDevelopmentPreviewRequestsRef.current.set(
         tab as RightWorkspaceBrowserTab,
@@ -4138,8 +4180,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (target: WorkspaceTarget) => {
       setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
       setOpenFileRequest(null)
+      openRightPanelTab('files')
     },
-    [setOpenFileRequest]
+    [setOpenFileRequest, openRightPanelTab]
+  )
+  const openFileTab = useCallback(
+    (target: WorkspaceTarget, path: string) => {
+      const tab = workspaceFileTabId(target, path)
+      if (
+        rightPanelTabs.includes('files') &&
+        selectedWorkspaceFile &&
+        !selectedWorkspaceFile.isDirectory &&
+        workspaceFileTabId(selectedWorkspaceFile.target, selectedWorkspaceFile.path) === tab
+      ) {
+        openRightPanelTab('files')
+        return
+      }
+      setFileTabs(current => (current[tab] ? current : { ...current, [tab]: { target, path } }))
+      openRightPanelTab(tab)
+    },
+    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile]
   )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
@@ -4200,7 +4260,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         logFilePreviewDiagnostic(traceId, 'message_link_click', pathMetadata)
         scheduleFilePreviewMainThreadProbe(traceId, 'message_link_click')
         const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
-        const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
+        const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
+          workspaceTargets: fileWorkspaceTargets,
+        })
         let localTarget =
           attachmentTarget ??
           (absoluteLocalTarget &&
@@ -4222,10 +4284,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
         }
         if (localTarget && isDirectory) {
-          localTarget = {
-            ...localTarget,
-            path: trimmedPath.replace(/\\/g, '/').replace(/\/+$/, '') || '/',
-          }
+          localTarget = createLocalFileWorkspaceTarget(trimmedPath, devices, {
+            workspaceTargets: attachmentTarget ? [] : fileWorkspaceTargets,
+            isDirectory: true,
+          })
         }
         setOpenFileRequest(current => ({
           id: (current?.id ?? 0) + 1,
@@ -4251,6 +4313,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       devices,
       effectiveWorkspaceTarget,
+      fileWorkspaceTargets,
       getDeviceHomeDirectory,
       openRightPanelTab,
       setOpenFileRequest,
@@ -5351,21 +5414,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onEditLastUserMessage={paneSession.editLastUserMessage}
                     canEditLastUserMessage={canEditLastUserMessage}
                     onForkMessage={
-                      currentRuntimeUsesCodex
-                        ? message => {
+                      currentRuntimeUsesCodex &&
+                      currentRuntimeTask &&
+                      (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
+                        ? async message => {
                             const workspacePath =
                               currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
                             if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                            return forkCurrentRuntimeTask(
-                              {
-                                deviceId: currentRuntimeTask.deviceId,
-                                workspacePath,
-                              },
-                              {
-                                source: currentRuntimeConversationSource ?? currentRuntimeTask,
-                                lastTurnId: message.turnId,
-                              }
-                            )
+                            paneSession.clearError()
+                            try {
+                              await forkCurrentRuntimeTask(
+                                {
+                                  deviceId: currentRuntimeTask.deviceId,
+                                  workspacePath,
+                                },
+                                {
+                                  source: currentRuntimeConversationSource ?? currentRuntimeTask,
+                                  lastTurnId: message.turnId,
+                                  ...runtimeTaskForkModelOptions(projectChat),
+                                }
+                              )
+                            } catch (error) {
+                              paneSession.setError(
+                                getErrorMessage(error, t('workbench.task_fork_failed'))
+                              )
+                            }
                           }
                         : undefined
                     }
@@ -5625,6 +5698,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               initialFileSelection={initialFileWorkspaceSelection}
+              fileTabs={fileTabs}
+              onOpenFileTab={openFileTab}
               workspaceTargetError={
                 openFileRequest?.target || openFileRequest?.attachment ? null : workspaceTargetError
               }
@@ -5662,6 +5737,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
                     onOpenBoard={openBoundProjectSpaceTask}
                     onOpenTask={openRuntimeTask}
                   />
@@ -5770,7 +5846,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onFork={async target => {
-            await forkCurrentRuntimeTask(target)
+            await forkCurrentRuntimeTask(target, {
+              source: currentRuntimeTask ?? undefined,
+            })
           }}
         />
         <ContinueInImDialog

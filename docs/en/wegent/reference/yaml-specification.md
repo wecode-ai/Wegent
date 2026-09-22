@@ -40,6 +40,10 @@ metadata:
 spec:
   systemPrompt: |
     You are a senior software engineer, proficient in Git, GitHub MCP, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and MR (Merge Request) process.
+  baseGhostRef:
+    name: system-default-ghost
+    namespace: default
+    user_id: 0
   mcpServers:
     github:
       env:
@@ -65,8 +69,11 @@ spec:
 | `metadata.name`      | string | Yes      | Unique identifier for the Ghost                                                  |
 | `metadata.namespace` | string | Yes      | Namespace, typically `default`                                                   |
 | `spec.systemPrompt`  | string | Yes      | System prompt defining agent personality and capabilities                        |
+| `spec.baseGhostRef`  | object | No       | Ghost reference used as a capability baseline; one level only                    |
 | `spec.mcpServers`    | object | No       | MCP server configuration defining agent's tool capabilities                      |
 | `spec.skills`        | array  | No       | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
+
+`baseGhostRef` contains `name`, `namespace`, and `user_id`. At runtime, only the base Ghost's MCP servers, Skills, preloaded Skills, and plugins are inherited. Same-name entries from the current Ghost take precedence, and the current Ghost's `systemPrompt` is always preserved. Wegent merges the configuration before making one model request; it does not invoke both Ghosts separately. Nested `baseGhostRef` values are not supported.
 
 ### Business MCP Server Identity
 

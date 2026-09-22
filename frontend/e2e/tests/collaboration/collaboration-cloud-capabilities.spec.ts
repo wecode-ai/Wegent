@@ -128,7 +128,9 @@ async function createProjectByUi(
   )
 
   await page.getByTestId('collaboration-workspace-project-create').click()
+  await page.getByTestId('collaboration-workspace-project-create-blank').click()
   await page.getByTestId('collaboration-project-name-input').fill(projectName)
+  await page.getByTestId('collaboration-project-create-advanced').click()
   await page
     .getByTestId('collaboration-project-description-input')
     .fill('Created through the shared Collaboration UI.')
@@ -498,30 +500,36 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect.poll(async () => (await issue(page, created.id)).priority).toBe('high')
       await captureEvidence(page, 'web-03-priority-board')
 
+      await selectGroupBy(page, project.id, 'tag')
+      await dragIssueTo(page, created.id, `tag-tag-${suffix}`)
+      await expect.poll(async () => (await issue(page, created.id)).tags).toContain(`tag-${suffix}`)
+      await captureEvidence(page, 'web-04-tag-board')
+
       await selectGroupBy(page, project.id, 'assignee')
       await dragIssueTo(page, created.id, `assignee-${member.id}`)
       await expect
         .poll(async () => (await issue(page, created.id)).assignee_user_id)
         .toBe(member.id)
-      await captureEvidence(page, 'web-04-assignee-board')
+      await captureEvidence(page, 'web-05-assignee-board')
 
-      await selectGroupBy(page, project.id, 'tag')
-      await dragIssueTo(page, created.id, `tag-tag-${suffix}`)
-      await expect.poll(async () => (await issue(page, created.id)).tags).toContain(`tag-${suffix}`)
-      await captureEvidence(page, 'web-05-tag-board')
-
+      // A directly assigned human Issue advances through work review, so exercise
+      // board status drag with an Issue that has only the implicit creator default.
+      const statusIssue = await createIssueByApi(page, project.id, `Board status Issue ${suffix}`)
+      await page.reload()
       await selectGroupBy(page, project.id, 'status')
       const reorderResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
         return response.request().method() === 'POST' && pathname.endsWith('/loop-items/reorder')
       })
-      await dragIssueTo(page, created.id, 'completed')
+      await dragIssueTo(page, statusIssue.id, 'completed')
       const reordered = await reorderResponse
       expect(reordered.ok(), `Board reorder failed: ${await reordered.text()}`).toBe(true)
       const reorderedItems = (await reordered.json()) as { items: CloudIssue[] }
-      expect(reorderedItems.items.find(item => item.id === created.id)?.status).toBe('completed')
-      expect((await issue(page, created.id)).status).toBe('completed')
-      await page.getByTestId(`collaboration-issue-${created.id}`).scrollIntoViewIfNeeded()
+      expect(reorderedItems.items.find(item => item.id === statusIssue.id)?.status).toBe(
+        'completed'
+      )
+      expect((await issue(page, statusIssue.id)).status).toBe('completed')
+      await page.getByTestId(`collaboration-issue-${statusIssue.id}`).scrollIntoViewIfNeeded()
       await captureEvidence(page, 'web-06-status-board')
     } finally {
       if (projectId) await archiveProject(page, projectId)

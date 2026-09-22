@@ -1,8 +1,7 @@
 import { RuntimeConversationQueue } from '@wegent/collaboration/execution/runtimeConversationQueue'
 import type { RuntimeTaskAddress } from '@/types/api'
-import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 
-type Queue = RuntimeConversationQueue<RuntimeTaskLifecycleSnapshot | null>
+type Queue = RuntimeConversationQueue<number>
 const queuesByWorkbench = new WeakMap<object, Map<string, Queue>>()
 
 /** Pending replies belong to the addressed task, not the lifetime of its drawer. */

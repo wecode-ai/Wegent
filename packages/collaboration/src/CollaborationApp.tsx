@@ -1,42 +1,51 @@
-import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
+import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { RuntimeConfigurationProvider } from './runtime-profile/RuntimeConfigurationProvider'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
   createCollaborationTranslator,
   localizeStandardStatuses,
   type CollaborationLocale,
-} from './i18n'
-import { collaborationTestIds } from './testIds'
-import { CollaborationSettings } from './CollaborationSettings'
-import { IssueCreate, IssueDetail } from './IssueDetail'
-import { IssueDeleteDialog } from './issue-delete'
-import { CollaborationProjectViewShell } from './project-shell'
-import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
-import { MyWorkAdapter } from './web-adapter/MyWorkAdapter'
+} from "./i18n";
+import { collaborationTestIds } from "./testIds";
+import { CollaborationSettings } from "./CollaborationSettings";
+import { IssueCreate, IssueDetail } from "./IssueDetail";
+import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
+import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
+import { IssueDeleteDialog } from "./issue-delete";
+import {
+  CollaborationProjectViewShell,
+  ProjectLoadingSkeleton,
+} from "./project-shell";
+import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
+import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import {
   ProjectBoardAdapter,
   type ProjectBoardIssueCardRenderContext,
-} from './web-adapter/ProjectBoardAdapter'
-import { WorkspaceProjectsHomeAdapter } from './web-adapter/WorkspaceProjectsHomeAdapter'
+} from "./web-adapter/ProjectBoardAdapter";
+import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import type {
   CollaborationAssignment,
   CollaborationHostAdapter,
   CollaborationIssue,
   CollaborationProject,
+  ProjectSettingsSectionId,
   CollaborationStatus,
   CollaborationView,
-} from './types'
-import type { SharedWorkspaceApi, WorkspaceTaskBinding } from './ports/SharedWorkspaceApi'
-import { useCollaborationWorkspaceController } from './workspace-controller'
-import { canEditCollaborationIssue } from './permissions'
-import { ProjectCreateDialog, projectCreateLabels } from './project-create'
-import { ProjectIssueTable, useIssueAssignmentsByIssueId } from './platform'
+} from "./types";
+import type {
+  SharedWorkspaceApi,
+  WorkspaceTaskBinding,
+} from "./ports/SharedWorkspaceApi";
+import { useCollaborationWorkspaceController } from "./workspace-controller";
+import { canEditCollaborationIssue } from "./permissions";
+import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
+import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
   ProjectCollaborationParticipants,
   ProjectCollaborationGroups,
@@ -44,77 +53,81 @@ import {
   ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
-} from './project-manage'
+} from "./project-manage";
 
 export interface CollaborationIssueDetailRenderContext {
-  api: SharedWorkspaceApi
-  project: CollaborationProject
-  issue: CollaborationIssue
-  allIssues: CollaborationIssue[]
-  assignments: CollaborationAssignment[]
-  taskBindings: WorkspaceTaskBinding[]
-  defaultAssistant?: CollaborationHostAdapter['defaultAssistant']
-  onClose(): void
-  onChange(issue: CollaborationIssue): void
-  onCreateTask?(workflowStep?: string): void
+  api: SharedWorkspaceApi;
+  project: CollaborationProject;
+  issue: CollaborationIssue;
+  allIssues: CollaborationIssue[];
+  assignments: CollaborationAssignment[];
+  taskBindings: WorkspaceTaskBinding[];
+  defaultAssistant?: CollaborationHostAdapter["defaultAssistant"];
+  onClose(): void;
+  onChange(issue: CollaborationIssue): void;
+  onCreateTask?(workflowStep?: string): void;
   /** Present only when the host enabled Issue deletion. */
-  onDelete?(): void
+  onDelete?(): void;
 }
 
 interface CollaborationAppProps {
-  api: SharedWorkspaceApi
-  host: CollaborationHostAdapter
-  locale?: CollaborationLocale
-  pollIntervalMs?: number
-  createProjectRequestKey?: number
-  refreshProjectRequestKey?: number
-  showProjectBack?: boolean
+  api: SharedWorkspaceApi;
+  host: CollaborationHostAdapter;
+  initialProject?: CollaborationProject;
+  locale?: CollaborationLocale;
+  pollIntervalMs?: number;
+  createProjectRequestKey?: number;
+  refreshProjectRequestKey?: number;
+  showProjectBack?: boolean;
   /** Enables the per-Issue delete action across board, table, and detail. */
-  issueDeleteEnabled?: boolean
+  issueDeleteEnabled?: boolean;
   /**
    * Host work that must succeed before the Issue is deleted, such as stopping
    * an in-flight run on the device that owns it. A rejection aborts the delete
    * and its message is shown in the confirmation dialog.
    */
-  onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>
+  onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>;
   onCreateTask?(
     project: CollaborationProject,
     issue: CollaborationIssue,
-    workflowStep?: string
-  ): void
-  renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode
+    workflowStep?: string,
+  ): void;
+  renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
-      onMarkRead(): Promise<void>
-    }
-  ): ReactNode
+      onMarkRead(): Promise<void>;
+    },
+  ): ReactNode;
 }
 
 function projectStatuses(
   project: CollaborationProject,
-  messages: (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en'],
-  translate: ReturnType<typeof createCollaborationTranslator>
+  messages:
+    | (typeof collaborationMessages)["zh-CN"]
+    | (typeof collaborationMessages)["en"],
+  translate: ReturnType<typeof createCollaborationTranslator>,
 ): CollaborationStatus[] {
-  const statuses = project.board_config?.statuses
+  const statuses = project.board_config?.statuses;
   return statuses && statuses.length > 0
     ? localizeStandardStatuses(statuses, translate)
     : [
-        { id: 'inbox', name: messages.statusInbox, color: 'gray' },
-        { id: 'pending', name: messages.statusPending, color: 'blue' },
+        { id: "inbox", name: messages.statusInbox, color: "gray" },
+        { id: "pending", name: messages.statusPending, color: "blue" },
         {
-          id: 'in_progress',
+          id: "in_progress",
           name: messages.statusInProgress,
-          color: 'orange',
+          color: "orange",
         },
-        { id: 'in_review', name: messages.statusInReview, color: 'purple' },
-        { id: 'completed', name: messages.statusCompleted, color: 'green' },
-      ]
+        { id: "in_review", name: messages.statusInReview, color: "purple" },
+        { id: "completed", name: messages.statusCompleted, color: "green" },
+      ];
 }
 
 export function CollaborationApp({
   api,
   host,
-  locale = 'zh-CN',
+  initialProject,
+  locale = "zh-CN",
   pollIntervalMs = 15_000,
   createProjectRequestKey = 0,
   refreshProjectRequestKey = 0,
@@ -125,23 +138,31 @@ export function CollaborationApp({
   renderBoardIssueCard,
   renderIssueDetail,
 }: CollaborationAppProps) {
-  const messages = collaborationMessages[locale]
-  const translate = useMemo(() => createCollaborationTranslator(locale), [locale])
-  const [createProjectOpen, setCreateProjectOpen] = useState(false)
-  const [createIssueOpen, setCreateIssueOpen] = useState(false)
-  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
-  const [settingsSectionId, setSettingsSectionId] = useState('project')
-  const [deleteIssueTarget, setDeleteIssueTarget] = useState<CollaborationIssue | null>(null)
-  const [deleteIssueBusy, setDeleteIssueBusy] = useState(false)
-  const [deleteIssueError, setDeleteIssueError] = useState<string | null>(null)
+  const messages = collaborationMessages[locale];
+  const translate = useMemo(
+    () => createCollaborationTranslator(locale),
+    [locale],
+  );
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
+  const [settingsSectionId, setSettingsSectionId] =
+    useState<ProjectSettingsSectionId>(
+      host.location.projectSettingsSection ?? "project",
+    );
+  const [deleteIssueTarget, setDeleteIssueTarget] =
+    useState<CollaborationIssue | null>(null);
+  const [deleteIssueBusy, setDeleteIssueBusy] = useState(false);
+  const [deleteIssueError, setDeleteIssueError] = useState<string | null>(null);
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
+    initialProject,
     messages,
     myWorkEnabled: host.capabilities.myWork === true,
     pollIntervalMs,
     notify: (message, kind) => host.notify?.(message, kind),
-  })
+  });
   const {
     projects,
     myWork,
@@ -158,89 +179,136 @@ export function CollaborationApp({
     taskBindings,
     loading,
     error,
-  } = state
-  const { assignmentsByIssueId, replaceIssueAssignments } = useIssueAssignmentsByIssueId({
-    assignmentsApi: api.assignments,
-    issues,
-    enabled: project !== null,
-  })
+  } = state;
+  const { assignmentsByIssueId, replaceIssueAssignments } =
+    useIssueAssignmentsByIssueId({
+      assignmentsApi: api.assignments,
+      issues,
+      enabled: project !== null,
+    });
+  const environmentReadiness = useProjectExecutionEnvironmentReadiness({
+    api,
+    project,
+  });
   useEffect(() => {
-    host.onProjectsChange?.(projects)
-  }, [host, projects])
+    host.onProjectsChange?.(projects);
+  }, [host, projects]);
 
   useEffect(() => {
-    if (createProjectRequestKey > 0) setCreateProjectOpen(true)
-  }, [createProjectRequestKey])
+    if (createProjectRequestKey > 0) setCreateProjectOpen(true);
+  }, [createProjectRequestKey]);
 
   useEffect(() => {
-    if (refreshProjectRequestKey <= 0 || !project) return
-    void commands.loadProjectSnapshot(project.id)
-  }, [commands, project?.id, refreshProjectRequestKey])
+    if (refreshProjectRequestKey <= 0 || !project) return;
+    void commands.loadProjectSnapshot(project.id);
+  }, [commands, project?.id, refreshProjectRequestKey]);
+
+  useEffect(() => {
+    setSettingsSectionId(
+      host.location.view === "manage"
+        ? (host.location.projectSettingsSection ?? "project")
+        : "project",
+    );
+  }, [host.location.projectSettingsSection, host.location.view, project?.id]);
 
   const navigateView = (view: CollaborationView) => {
-    host.navigate({ projectId: project?.id ?? null, issueId: null, view })
-  }
+    host.navigate({
+      projectId: project?.id ?? null,
+      issueId: null,
+      view,
+      projectSettingsSection: view === "manage" ? settingsSectionId : null,
+    });
+  };
 
   const requestIssueDelete = (issue: CollaborationIssue) => {
-    setDeleteIssueError(null)
-    setDeleteIssueTarget(issue)
-  }
+    setDeleteIssueError(null);
+    setDeleteIssueTarget(issue);
+  };
   const closeIssueDelete = () => {
-    setDeleteIssueTarget(null)
-    setDeleteIssueError(null)
-  }
+    setDeleteIssueTarget(null);
+    setDeleteIssueError(null);
+  };
   const confirmIssueDelete = async () => {
-    if (!deleteIssueTarget || deleteIssueBusy) return
-    setDeleteIssueBusy(true)
-    setDeleteIssueError(null)
+    if (!deleteIssueTarget || deleteIssueBusy) return;
+    setDeleteIssueBusy(true);
+    setDeleteIssueError(null);
     try {
       // Stopping the run first keeps a deleted Issue from leaving an execution
       // that no board or detail view can reach any more.
-      await onPrepareIssueDelete?.(deleteIssueTarget)
+      await onPrepareIssueDelete?.(deleteIssueTarget);
       await commands.archiveIssue(deleteIssueTarget.id, {
         throwOnError: true,
-      })
+      });
       if (host.location.issueId === deleteIssueTarget.id) {
         host.navigate({
           projectId: project?.id ?? null,
           issueId: null,
           view: host.location.view,
-        })
+        });
       }
-      setDeleteIssueTarget(null)
+      setDeleteIssueTarget(null);
     } catch (error) {
       setDeleteIssueError(
         error instanceof Error && error.message
           ? error.message
-          : translate('todo.delete_issue_failed', '删除任务失败')
-      )
+          : translate("todo.delete_issue_failed", "删除任务失败"),
+      );
     } finally {
-      setDeleteIssueBusy(false)
+      setDeleteIssueBusy(false);
     }
-  }
-  const issueDeleteAvailable = issueDeleteEnabled
+  };
+  const issueDeleteAvailable = issueDeleteEnabled;
+  const environmentNotice = project ? (
+    <IssueExecutionEnvironmentNotice
+      canManage={
+        project.access_role === "Owner" || project.access_role === "Maintainer"
+      }
+      onOpenEnvironmentSettings={() =>
+        host.navigate({
+          projectId: project.id,
+          issueId: null,
+          view: "manage",
+          projectSettingsSection: "environments",
+        })
+      }
+      readiness={environmentReadiness}
+      translate={translate}
+    />
+  ) : null;
 
   if (loading) {
     return (
-      <div className="collaboration-loading" data-testid={collaborationTestIds.root}>
-        {messages.loading}
-      </div>
-    )
+      <ProjectLoadingSkeleton
+        testId={collaborationTestIds.root}
+        label={messages.loading}
+        layout={
+          host.location.projectId && host.location.view === "board"
+            ? "board"
+            : "list"
+        }
+      />
+    );
   }
 
   return (
     <RuntimeConfigurationProvider api={api} project={project} locale={locale}>
       <BrowserTaskDrafts runtime={api.runtime}>
         <section
-          className={`collaboration-app${project ? ' collaboration-app-project issue-drawer-workspace' : ''}`}
+          className={`collaboration-app${project ? " collaboration-app-project issue-drawer-workspace" : ""}`}
           data-testid={collaborationTestIds.root}
         >
           {error && (
-            <div className="collaboration-alert" role="alert" data-testid="collaboration-error">
+            <div
+              className="collaboration-alert"
+              role="alert"
+              data-testid="collaboration-error"
+            >
               {error}
             </div>
           )}
-          {!project && host.capabilities.myWork === true && host.location.rootView === 'my-work' ? (
+          {!project &&
+          host.capabilities.myWork === true &&
+          host.location.rootView === "my-work" ? (
             <MyWorkAdapter
               items={myWork}
               locale={locale}
@@ -248,15 +316,15 @@ export function CollaborationApp({
                 host.navigate({
                   projectId: null,
                   issueId: null,
-                  view: 'board',
-                  rootView: 'home',
+                  view: "board",
+                  rootView: "home",
                 })
               }
-              onSelectItem={item =>
+              onSelectItem={(item) =>
                 host.navigate({
                   projectId: item.cloud_project_id,
                   issueId: item.id,
-                  view: 'board',
+                  view: "board",
                 })
               }
             />
@@ -267,18 +335,18 @@ export function CollaborationApp({
               projectMembers={projectMembers}
               myWork={host.capabilities.myWork === true ? myWork : []}
               onCreateProject={() => setCreateProjectOpen(true)}
-              onSelectProject={nextProject =>
+              onSelectProject={(nextProject) =>
                 host.navigate({
                   projectId: nextProject.id,
                   issueId: null,
-                  view: 'board',
+                  view: "board",
                 })
               }
-              onManageProject={nextProject =>
+              onManageProject={(nextProject) =>
                 host.navigate({
                   projectId: nextProject.id,
                   issueId: null,
-                  view: 'manage',
+                  view: "manage",
                 })
               }
               onOpenMyWork={
@@ -287,12 +355,14 @@ export function CollaborationApp({
                       host.navigate({
                         projectId: null,
                         issueId: null,
-                        view: 'board',
-                        rootView: 'my-work',
+                        view: "board",
+                        rootView: "my-work",
                       })
                   : undefined
               }
-              onUnavailable={() => commands.reportError(messages.capabilitiesUnavailable)}
+              onUnavailable={() =>
+                commands.reportError(messages.capabilitiesUnavailable)
+              }
               locale={locale}
             />
           ) : (
@@ -306,14 +376,14 @@ export function CollaborationApp({
                 manage: messages.settings,
               }}
               testIds={{
-                board: 'collaboration-tab-board',
-                table: 'collaboration-tab-table',
-                files: 'collaboration-tab-files',
-                manage: 'collaboration-tab-manage',
+                board: "collaboration-tab-board",
+                table: "collaboration-tab-table",
+                files: "collaboration-tab-files",
+                manage: "collaboration-tab-manage",
               }}
               switcherAriaLabel={messages.title}
               compactSwitcherIcon={<span aria-hidden="true">▾</span>}
-              onViewChange={view => navigateView(view as CollaborationView)}
+              onViewChange={(view) => navigateView(view as CollaborationView)}
               assistantOpen={false}
               backAction={
                 showProjectBack ? (
@@ -325,7 +395,7 @@ export function CollaborationApp({
                       host.navigate({
                         projectId: null,
                         issueId: null,
-                        view: 'board',
+                        view: "board",
                       })
                     }
                     aria-label={messages.back}
@@ -341,8 +411,9 @@ export function CollaborationApp({
                 <span className="collaboration-project-heading">
                   <strong>{project.name}</strong>
                   <small>
-                    {locale === 'zh-CN' ? '协作项目' : 'Collaboration project'} · {members.length}{' '}
-                    {locale === 'zh-CN' ? '位成员' : 'members'}
+                    {locale === "zh-CN" ? "协作项目" : "Collaboration project"}{" "}
+                    · {members.length}{" "}
+                    {locale === "zh-CN" ? "位成员" : "members"}
                   </small>
                 </span>
               }
@@ -353,7 +424,7 @@ export function CollaborationApp({
               }
               renderRightActions={({ actionRefs, showLabels }) => (
                 <>
-                  {host.location.view === 'board' ? (
+                  {host.location.view === "board" ? (
                     <button
                       ref={actionRefs.add}
                       type="button"
@@ -365,7 +436,7 @@ export function CollaborationApp({
                       {showLabels ? messages.createIssue : null}
                     </button>
                   ) : null}
-                  {host.projectActions?.map(action => (
+                  {host.projectActions?.map((action) => (
                     <button
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
@@ -392,14 +463,16 @@ export function CollaborationApp({
                         onClick={() => setBoardSettingsOpen(true)}
                         type="button"
                       >
-                        {translate('todo.board_settings', '看板设置')}
+                        {translate("todo.board_settings", "看板设置")}
                       </button>
                       <div
                         className="collaboration-empty-project"
                         data-testid="collaboration-empty-project"
                       >
                         <div className="collaboration-empty-project-content">
-                          <span className="collaboration-empty-project-icon">◇</span>
+                          <span className="collaboration-empty-project-icon">
+                            ◇
+                          </span>
                           <span className="collaboration-empty-project-progress">
                             {messages.emptyProjectProgress}
                           </span>
@@ -415,16 +488,13 @@ export function CollaborationApp({
                           </button>
                           <div className="collaboration-empty-project-flow">
                             {[
-                              [messages.emptyProjectStepIssue, messages.emptyProjectStepIssueHint],
                               [
-                                host.defaultAssistant
-                                  ? locale === 'zh-CN'
-                                    ? `交给${host.defaultAssistant.name}`
-                                    : `Hand off to ${host.defaultAssistant.name}`
-                                  : messages.emptyProjectStepAssign,
-                                host.defaultAssistant
-                                  ? host.defaultAssistant.description
-                                  : messages.emptyProjectStepAssignHint,
+                                messages.emptyProjectStepIssue,
+                                messages.emptyProjectStepIssueHint,
+                              ],
+                              [
+                                messages.emptyProjectStepAssign,
+                                messages.emptyProjectStepAssignHint,
                               ],
                               [
                                 messages.emptyProjectStepDeliver,
@@ -442,7 +512,7 @@ export function CollaborationApp({
                     </div>
                   ) : (
                     <ProjectBoardAdapter
-                      onMarkRead={issue => void commands.markIssueRead(issue)}
+                      onMarkRead={(issue) => void commands.markIssueRead(issue)}
                       runtime={api.runtime}
                       previewDisabled={Boolean(selectedIssue)}
                       translate={translate}
@@ -455,7 +525,7 @@ export function CollaborationApp({
                       taskBindings={taskBindings}
                       labels={{
                         noIssues: messages.noIssues,
-                        noPriority: translate('todo.priority_none', '无优先级'),
+                        noPriority: translate("todo.priority_none", "无优先级"),
                         search: messages.searchIssues,
                         groupBy: messages.groupBy,
                         groupStatus: messages.groupStatus,
@@ -465,40 +535,48 @@ export function CollaborationApp({
                         unassigned: messages.unassigned,
                         noTag: messages.noTag,
                       }}
-                      onOpen={issue =>
+                      onOpen={(issue) =>
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
-                          view: 'board',
+                          view: "board",
                         })
                       }
                       onMove={async (issue, mutation) => {
-                        if (mutation.kind === 'status') {
+                        if (mutation.kind === "status") {
                           await commands.reorderIssue({
                             issue,
                             status: mutation.status,
                             laneIds: mutation.laneIds,
                             optimisticItems: mutation.optimisticItems,
-                          })
-                          return
+                          });
+                          return;
                         }
-                        if (mutation.kind === 'assignee' && mutation.assigneeType) {
-                          await commands.assignIssue(String(project.id), issue.id, {
-                            version: issue.version,
-                            assigneeType: mutation.assigneeType,
-                            assigneeId: mutation.assigneeId!,
-                            notifyAssignee: true,
-                          })
-                          return
+                        if (
+                          mutation.kind === "assignee" &&
+                          mutation.assigneeType
+                        ) {
+                          await commands.assignIssue(
+                            String(project.id),
+                            issue.id,
+                            {
+                              version: issue.version,
+                              assigneeType: mutation.assigneeType,
+                              assigneeId: mutation.assigneeId!,
+                              notifyAssignee: true,
+                            },
+                          );
+                          return;
                         }
                         await commands.updateIssue(
                           issue.id,
-                          mutation.kind === 'priority'
+                          mutation.kind === "priority"
                             ? {
                                 version: issue.version,
-                                priority: mutation.priority as CollaborationIssue['priority'],
+                                priority:
+                                  mutation.priority as CollaborationIssue["priority"],
                               }
-                            : mutation.kind === 'tag'
+                            : mutation.kind === "tag"
                               ? { version: issue.version, tags: mutation.tags }
                               : {
                                   version: issue.version,
@@ -506,26 +584,32 @@ export function CollaborationApp({
                                   assigneeAgentId: null,
                                   assigneeTeamId: null,
                                 },
-                          { throwOnError: true }
-                        )
+                          { throwOnError: true },
+                        );
                       }}
                       onCreateIssue={() => setCreateIssueOpen(true)}
                       onOpenBoardSettings={() => setBoardSettingsOpen(true)}
-                      onDeleteIssue={issueDeleteAvailable ? requestIssueDelete : undefined}
-                      onGroupByChange={groupBy =>
+                      onDeleteIssue={
+                        issueDeleteAvailable ? requestIssueDelete : undefined
+                      }
+                      onGroupByChange={(groupBy) =>
                         commands.changeProjectGroup({
                           project,
                           groupBy,
-                          defaultStatuses: projectStatuses(project, messages, translate),
+                          defaultStatuses: projectStatuses(
+                            project,
+                            messages,
+                            translate,
+                          ),
                         })
                       }
                       renderIssueCard={
                         renderBoardIssueCard
-                          ? context =>
+                          ? (context) =>
                               renderBoardIssueCard({
                                 ...context,
                                 onMarkRead: async () => {
-                                  await commands.markIssueRead(context.issue)
+                                  await commands.markIssueRead(context.issue);
                                 },
                               })
                           : undefined
@@ -547,26 +631,30 @@ export function CollaborationApp({
                       projectKey={project.project_key}
                       searchPlaceholder={messages.searchIssues}
                       createLabel={messages.createIssue}
-                      allLabel={locale === 'zh-CN' ? '全部' : 'All'}
+                      allLabel={locale === "zh-CN" ? "全部" : "All"}
                       tagLabel={messages.issueTags}
                       manualAssignmentLabel={translate(
-                        'todo.manual_assignment',
-                        locale === 'zh-CN' ? 'Issue 内分配' : 'Assigned in Issue'
+                        "todo.manual_assignment",
+                        locale === "zh-CN"
+                          ? "Issue 内分配"
+                          : "Assigned in Issue",
                       )}
-                      actionsLabel={translate('common.actions', '操作')}
-                      deleteLabel={translate('todo.delete_issue', '删除任务')}
-                      onDelete={issueDeleteAvailable ? requestIssueDelete : undefined}
-                      statusName={status =>
+                      actionsLabel={translate("common.actions", "操作")}
+                      deleteLabel={translate("todo.delete_issue", "删除任务")}
+                      onDelete={
+                        issueDeleteAvailable ? requestIssueDelete : undefined
+                      }
+                      statusName={(status) =>
                         projectStatuses(project, messages, translate).find(
-                          candidate => candidate.id === status
+                          (candidate) => candidate.id === status,
                         )?.name ?? status
                       }
                       onCreate={() => setCreateIssueOpen(true)}
-                      onOpen={issue =>
+                      onOpen={(issue) =>
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
-                          view: 'table',
+                          view: "table",
                         })
                       }
                     />
@@ -574,35 +662,51 @@ export function CollaborationApp({
                 ),
                 files: (
                   <div className="collaboration-project-content">
-                    <CollaborationFilesAdapter api={api} project={project} locale={locale} />
+                    <CollaborationFilesAdapter
+                      api={api}
+                      project={project}
+                      locale={locale}
+                    />
                   </div>
                 ),
                 manage: (
                   <ProjectSettingsShell
                     ariaLabel={messages.settings}
-                    onSectionChange={setSettingsSectionId}
+                    onSectionChange={(sectionId) => {
+                      const nextSectionId =
+                        sectionId as ProjectSettingsSectionId;
+                      setSettingsSectionId(nextSectionId);
+                      host.navigate({
+                        projectId: project.id,
+                        issueId: null,
+                        view: "manage",
+                        projectSettingsSection: nextSectionId,
+                      });
+                    }}
                     selectedSectionId={settingsSectionId}
                     sections={[
                       {
-                        id: 'project',
+                        id: "project",
                         label: messages.projectConfiguration,
-                        testId: 'collaboration-project-settings-project',
+                        testId: "collaboration-project-settings-project",
                         content: (
                           <CollaborationSettings
                             api={api}
                             key={project.id}
                             project={project}
                             onChange={commands.replaceProject}
-                            onError={() => commands.reportError(messages.saveFailed)}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
                             translate={translate}
                             section="overview"
                           />
                         ),
                       },
                       {
-                        id: 'collaboration-participants',
+                        id: "collaboration-participants",
                         label: messages.collaborationParticipants,
-                        testId: 'collaboration-project-settings-participants',
+                        testId: "collaboration-project-settings-participants",
                         content: (
                           <ProjectCollaborationParticipants
                             translate={translate}
@@ -612,20 +716,28 @@ export function CollaborationApp({
                                 embedded
                                 project={project}
                                 onChange={commands.replaceProject}
-                                onError={() => commands.reportError(messages.saveFailed)}
+                                onError={() =>
+                                  commands.reportError(messages.saveFailed)
+                                }
                                 translate={translate}
                                 section="members"
                               />
                             }
                             agentsContent={
                               <CollaborationSettings
-                                agentConfigurationHost={host.projectAgentConfiguration}
-                                agentResourceContext={host.projectAgentResourceContext}
+                                agentConfigurationHost={
+                                  host.projectAgentConfiguration
+                                }
+                                agentResourceContext={
+                                  host.projectAgentResourceContext
+                                }
                                 api={api}
                                 embedded
                                 project={project}
                                 onChange={commands.replaceProject}
-                                onError={() => commands.reportError(messages.saveFailed)}
+                                onError={() =>
+                                  commands.reportError(messages.saveFailed)
+                                }
                                 onAgentsChange={() =>
                                   void commands.refreshProjectAgents(project.id)
                                 }
@@ -643,8 +755,8 @@ export function CollaborationApp({
                                   members={members}
                                   agents={agents}
                                   canManage={
-                                    project.access_role === 'Owner' ||
-                                    project.access_role === 'Maintainer'
+                                    project.access_role === "Owner" ||
+                                    project.access_role === "Maintainer"
                                   }
                                 />
                               ) : (
@@ -653,8 +765,8 @@ export function CollaborationApp({
                                   data-testid="collaboration-project-groups-unavailable"
                                 >
                                   {translate(
-                                    'todo.collaboration_groups_unavailable_description',
-                                    '协作小组服务当前不可用。'
+                                    "todo.collaboration_groups_unavailable_description",
+                                    "协作小组服务当前不可用。",
                                   )}
                                 </div>
                               )
@@ -663,12 +775,18 @@ export function CollaborationApp({
                         ),
                       },
                       {
-                        id: 'environments',
+                        id: "environments",
                         label: messages.projectEnvironments,
-                        testId: 'collaboration-project-settings-environments',
+                        testId: "collaboration-project-settings-environments",
                         content: (
                           <ProjectExecutionEnvironments
                             api={api}
+                            onManageDevices={
+                              host.manageResource
+                                ? () => host.manageResource?.("environments")
+                                : undefined
+                            }
+                            onProjectChange={commands.replaceProject}
                             project={project}
                             translate={translate}
                           />
@@ -677,9 +795,10 @@ export function CollaborationApp({
                       ...(host.capabilities.automation && api.automations
                         ? [
                             {
-                              id: 'automatic-processing',
+                              id: "automatic-processing",
                               label: messages.automaticProcessing,
-                              testId: 'collaboration-project-settings-automatic-processing',
+                              testId:
+                                "collaboration-project-settings-automatic-processing",
                               content: (
                                 <ProjectAutomaticProcessing
                                   api={api}
@@ -703,7 +822,7 @@ export function CollaborationApp({
             <ProjectCreateDialog
               targets={[
                 {
-                  location: 'cloud',
+                  location: "cloud",
                   create: api.projects.create,
                 },
               ]}
@@ -711,19 +830,19 @@ export function CollaborationApp({
               allowDingTalkAITable={host.capabilities.dingtalkAitable}
               labels={projectCreateLabels[locale]}
               testIds={{
-                name: 'collaboration-project-name-input',
-                description: 'collaboration-project-description-input',
+                name: "collaboration-project-name-input",
+                description: "collaboration-project-description-input",
                 confirm: collaborationTestIds.createProjectConfirm,
               }}
               host={host.projectCreate}
               onClose={() => setCreateProjectOpen(false)}
-              onCreated={created => {
-                setCreateProjectOpen(false)
+              onCreated={(created) => {
+                setCreateProjectOpen(false);
                 host.navigate({
                   projectId: created.id,
                   issueId: null,
-                  view: 'board',
-                })
+                  view: "board",
+                });
               }}
             />
           )}
@@ -732,17 +851,18 @@ export function CollaborationApp({
               api={api}
               project={project}
               allIssues={issues}
+              environmentNotice={environmentNotice}
               messages={messages}
               translate={translate}
               onClose={() => setCreateIssueOpen(false)}
-              onCreated={created => {
-                commands.appendIssue(created)
-                setCreateIssueOpen(false)
+              onCreated={(created) => {
+                commands.appendIssue(created);
+                setCreateIssueOpen(false);
                 host.navigate({
                   projectId: project.id,
                   issueId: created.id,
-                  view: 'board',
-                })
+                  view: "board",
+                });
               }}
               onError={() => commands.reportError(messages.saveFailed)}
             />
@@ -772,22 +892,26 @@ export function CollaborationApp({
                 issue: selectedIssue,
                 allIssues: issues,
                 assignments,
-                taskBindings: taskBindings.filter(binding => binding.issueId === selectedIssue.id),
+                taskBindings: taskBindings.filter(
+                  (binding) => binding.issueId === selectedIssue.id,
+                ),
                 defaultAssistant: host.defaultAssistant,
                 onClose: () => {
-                  commands.clearSelectedIssue()
+                  commands.clearSelectedIssue();
                   host.navigate({
                     projectId: project.id,
                     issueId: null,
                     view: host.location.view,
-                  })
+                  });
                 },
                 onChange: commands.replaceIssue,
                 onCreateTask: onCreateTask
-                  ? workflowStep => onCreateTask(project, selectedIssue, workflowStep)
+                  ? (workflowStep) =>
+                      onCreateTask(project, selectedIssue, workflowStep)
                   : undefined,
                 onDelete:
-                  issueDeleteAvailable && canEditCollaborationIssue(selectedIssue)
+                  issueDeleteAvailable &&
+                  canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueDelete(selectedIssue)
                     : undefined,
               })
@@ -806,28 +930,33 @@ export function CollaborationApp({
                 messages={messages}
                 translate={translate}
                 onClose={() => {
-                  commands.clearSelectedIssue()
+                  commands.clearSelectedIssue();
                   host.navigate({
                     projectId: project.id,
                     issueId: null,
                     view: host.location.view,
-                  })
+                  });
                 }}
                 onChange={commands.replaceIssue}
-                onCommentsChange={nextComments =>
+                onCommentsChange={(nextComments) =>
                   commands.replaceComments(selectedIssue.id, nextComments)
                 }
-                onAssignmentsChange={nextAssignments => {
-                  commands.replaceAssignments(selectedIssue.id, nextAssignments)
-                  replaceIssueAssignments(selectedIssue.id, nextAssignments)
+                onAssignmentsChange={(nextAssignments) => {
+                  commands.replaceAssignments(
+                    selectedIssue.id,
+                    nextAssignments,
+                  );
+                  replaceIssueAssignments(selectedIssue.id, nextAssignments);
                 }}
                 onCreateTask={
                   onCreateTask
-                    ? workflowStep => onCreateTask(project, selectedIssue, workflowStep)
+                    ? (workflowStep) =>
+                        onCreateTask(project, selectedIssue, workflowStep)
                     : undefined
                 }
                 onDelete={
-                  issueDeleteAvailable && canEditCollaborationIssue(selectedIssue)
+                  issueDeleteAvailable &&
+                  canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueDelete(selectedIssue)
                     : undefined
                 }
@@ -840,7 +969,9 @@ export function CollaborationApp({
             <IssueDeleteDialog
               busy={deleteIssueBusy}
               error={deleteIssueError}
-              hasChildren={issues.some(candidate => candidate.parent_id === deleteIssueTarget.id)}
+              hasChildren={issues.some(
+                (candidate) => candidate.parent_id === deleteIssueTarget.id,
+              )}
               onCancel={closeIssueDelete}
               onConfirm={() => void confirmIssueDelete()}
               title={deleteIssueTarget.title}
@@ -850,5 +981,5 @@ export function CollaborationApp({
         </section>
       </BrowserTaskDrafts>
     </RuntimeConfigurationProvider>
-  )
+  );
 }

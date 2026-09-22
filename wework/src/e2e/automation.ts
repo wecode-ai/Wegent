@@ -51,6 +51,12 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
+import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
+import type {
+  WeworkConversationAssetChunk,
+  WeworkConversationSnapshot,
+} from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
@@ -518,6 +524,29 @@ function findDesktopControlElements(selector: string): HTMLElement[] {
   return elements
 }
 
+function isWithinDesktopControlElement(element: HTMLElement, ancestorSelector: string): boolean {
+  let current: Node | null = element
+  while (current) {
+    if (current instanceof HTMLElement && current.matches(ancestorSelector)) return true
+    if (current.parentNode) {
+      current = current.parentNode
+      continue
+    }
+    const root = current.getRootNode()
+    current = root instanceof ShadowRoot ? root.host : null
+  }
+  return false
+}
+
+function findDesktopControlElementsWithin(
+  selector: string,
+  ancestorSelector?: string
+): HTMLElement[] {
+  const elements = findDesktopControlElements(selector)
+  if (!ancestorSelector) return elements
+  return elements.filter(element => isWithinDesktopControlElement(element, ancestorSelector))
+}
+
 function desktopControlElementText(selector: string, visible = false): string {
   const elements = findDesktopControlElements(selector)
   return (visible ? elements.filter(desktopControlElementVisible) : elements)
@@ -822,12 +851,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
-function pressDesktopControlPointer(selector: string): string {
-  const element = findDesktopControlElements(selector)[0]
+function pressDesktopControlPointer(selector: string, click = false): string {
+  const elements = findDesktopControlElements(selector)
+  const element = click ? elements.find(desktopControlElementVisible) : elements[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  if (click && !desktopControlElementEnabled(element))
+    throw new Error(`Pointer target is disabled: "${selector}"`)
   const options = desktopControlEventOptions(element)
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   dispatchDesktopControlPointerEvent(element, 'pointerup', options)
+  if (click) {
+    if (!element.isConnected) throw new Error(`Pointer target detached before click: "${selector}"`)
+    if (!desktopControlElementEnabled(element))
+      throw new Error(`Pointer target is disabled: "${selector}"`)
+    element.click()
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -984,6 +1022,7 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       await waitForDesktopControlElement({
         ...command,
         selector: command.waitForSelector,
+        target: undefined,
         visible: true,
       })
       return JSON.stringify({
@@ -1000,6 +1039,39 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
 async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   await startDesktopControlDrag(command)
   return endDesktopControlDrag(command)
+}
+
+async function dragDesktopControlElementBy(command: DesktopControlCommand): Promise<string> {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const delta = JSON.parse(command.value ?? '{}') as { x?: number; y?: number }
+  const deltaX = Number(delta.x ?? 0)
+  const deltaY = Number(delta.y ?? 0)
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+    throw new Error('dragBy requires finite x and y deltas')
+  }
+
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && activeElement !== element) {
+    activeElement.blur()
+    await waitForDesktopControlTick()
+  }
+
+  const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
+  const endOptions = {
+    ...startOptions,
+    clientX: Math.max(0, Math.floor(Number(startOptions.clientX ?? 0) + deltaX)),
+    clientY: Math.max(0, Math.floor(Number(startOptions.clientY ?? 0) + deltaY)),
+  }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+  dispatchDesktopControlPointerEvent(element, 'pointerup', { ...endOptions, buttons: 0 })
+  await waitForDesktopControlTick()
+  return element.textContent?.trim() ?? ''
 }
 
 let activeDesktopControlDataTransfer: {
@@ -1119,7 +1191,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
   let matchedAt: number | null = null
 
   while (Date.now() - startedAt < timeoutMs) {
-    const elements = findDesktopControlElements(command.selector)
+    const elements = findDesktopControlElementsWithin(command.selector, command.target)
     if (command.visible === false) {
       const visibleElements = elements.filter(desktopControlElementVisible)
       if (visibleElements.length === 0) {
@@ -1149,19 +1221,21 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
     await waitForDesktopControlTick()
   }
 
-  const diagnostics = findDesktopControlElements(command.selector).map(element => ({
-    className: element.className,
-    dataPresentation: element.dataset.presentation ?? null,
-    hidden: element.hidden,
-    ariaHidden: element.getAttribute('aria-hidden'),
-    rendered: desktopControlElementRendered(element),
-    visible: desktopControlElementVisible(element),
-    rect: element.getBoundingClientRect().toJSON(),
-  }))
+  const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
+    element => ({
+      className: element.className,
+      dataPresentation: element.dataset.presentation ?? null,
+      hidden: element.hidden,
+      ariaHidden: element.getAttribute('aria-hidden'),
+      rendered: desktopControlElementRendered(element),
+      visible: desktopControlElementVisible(element),
+      rect: element.getBoundingClientRect().toJSON(),
+    })
+  )
   throw new Error(
     `Timed out waiting for selector "${command.selector}"${
-      command.text ? ` containing "${command.text}"` : ''
-    }; matches=${JSON.stringify(diagnostics)}`
+      command.target ? ` within "${command.target}"` : ''
+    }${command.text ? ` containing "${command.text}"` : ''}; matches=${JSON.stringify(diagnostics)}`
   )
 }
 
@@ -1777,6 +1851,87 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
       return JSON.stringify(getRuntimeConversationMessagesForLogicalAddress(address))
     }
+    case 'openConversationExportFixture': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        assetPath?: string
+        fileSize?: number
+        filename?: string
+        imagePath?: string
+        imageSize?: number
+      }
+      if (
+        !input.assetPath ||
+        !input.filename ||
+        typeof input.fileSize !== 'number' ||
+        !input.imagePath ||
+        typeof input.imageSize !== 'number'
+      ) {
+        throw new Error(
+          'openConversationExportFixture requires assetPath, filename, fileSize, imagePath, and imageSize'
+        )
+      }
+      const snapshot: WeworkConversationSnapshot = {
+        reference: {
+          deviceId: 'desktop-e2e-device',
+          taskId: 'conversation-export-fixture',
+          workspacePath: '/conversation/workspace',
+        },
+        title: 'Conversation export fixture',
+        complete: true,
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'done',
+            items: [
+              {
+                id: 'user-1',
+                type: 'user_message',
+                content: 'Export the attached evidence.',
+                status: 'done',
+                attachments: [
+                  {
+                    id: 1,
+                    filename: input.filename,
+                    fileSize: input.fileSize,
+                    mimeType: 'text/plain',
+                    localPath: input.assetPath,
+                  },
+                  {
+                    id: 2,
+                    filename: 'outside-workspace.png',
+                    fileSize: input.imageSize,
+                    mimeType: 'image/png',
+                    localPath: input.imagePath,
+                  },
+                ],
+              },
+              {
+                id: 'assistant-1',
+                type: 'assistant_text',
+                content: 'The evidence is attached.',
+              },
+            ],
+          },
+        ],
+      }
+      bindDshConversationController({
+        getTranscript: async () => snapshot,
+        readAssetChunk: async (_reference, request) =>
+          readConversationAssetChunk(snapshot, request, chunkRequest =>
+            invokeDesktopHost<WeworkConversationAssetChunk>(
+              'filesystem.readFileChunk',
+              chunkRequest
+            )
+          ),
+      })
+      window.dispatchEvent(
+        new CustomEvent('wework:conversation-export:open', {
+          detail: snapshot.reference,
+        })
+      )
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
@@ -1943,6 +2098,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dragBy':
+      return dragDesktopControlElementBy(command)
     case 'dragDataTransfer':
       return dragDesktopControlDataTransfer(command)
     case 'dragDataTransferStart':
@@ -2379,9 +2536,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(samples)
     }
     case 'click': {
-      const elements = findDesktopControlElements(command.selector)
+      const elements = findDesktopControlElementsWithin(command.selector, command.target)
       const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
-      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!element)
+        throw new Error(
+          `Unable to find selector "${command.selector}"${
+            command.target ? ` within "${command.target}"` : ''
+          }`
+        )
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
@@ -2623,6 +2785,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerClick':
+      // Keep one gesture together across transient hover UI, without transport gaps.
+      return pressDesktopControlPointer(command.selector, true)
     case 'pointerDownOnly': {
       await invokeDesktopHost('e2e.focusMainWindow')
       const result = startDesktopControlPointer(command.selector)

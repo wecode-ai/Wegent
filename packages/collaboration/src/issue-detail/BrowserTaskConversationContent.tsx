@@ -48,6 +48,9 @@ function BrowserTaskConversationContentContent({
         )}
         <TemporaryConversationLayout
           messageCount={state.messages.length}
+          loading={state.loading}
+          loadError={state.error}
+          onRetry={() => void reload()}
           emptyStateText={translate('activity.task_conversation_empty')}
           translate={translate}
           testId={testId}
@@ -83,6 +86,7 @@ function BrowserTaskConversationContentContent({
 export function BrowserTaskConversationContent(
   props: Parameters<typeof BrowserTaskConversationContentContent>[0]
 ) {
+  if (props.address.projectSession) return <BrowserTaskConversationContentContent {...props} />
   return (
     <RuntimeDeviceAccessBoundary
       runtime={props.runtime}

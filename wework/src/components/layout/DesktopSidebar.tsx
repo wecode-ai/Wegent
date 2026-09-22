@@ -908,6 +908,7 @@ function hasRuntimeTaskBranchWarning(task: RuntimeTaskSummary): boolean {
 }
 
 function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
+  if (task.interactionStatus === 'waitingForUserInput') return true
   const status = task.status?.trim().toLowerCase() ?? ''
   return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
     status.includes(value)
@@ -918,12 +919,14 @@ function getRuntimeTaskPriorityReason(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary,
   unreadTaskKeys: ReadonlySet<string>,
-  runningTaskKeys: ReadonlySet<string>
+  runningTaskKeys: ReadonlySet<string>,
+  waitingTaskKeys: ReadonlySet<string>
 ): RuntimeTaskPriorityReason | null {
   if (unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))) return 'unread'
-  if (isRuntimeTaskWaiting(task)) return 'waiting'
   const address = getRuntimeTaskAddress(workspace, task)
-  if (runningTaskKeys.has(getRuntimeTaskLifecycleKey(address))) return 'active'
+  const lifecycleKey = getRuntimeTaskLifecycleKey(address)
+  if (waitingTaskKeys.has(lifecycleKey) || isRuntimeTaskWaiting(task)) return 'waiting'
+  if (runningTaskKeys.has(lifecycleKey)) return 'active'
   return null
 }
 
@@ -1949,6 +1952,21 @@ function RuntimeTaskRow({
                       aria-hidden="true"
                     />
                   </span>
+                ) : taskLifecycle?.derived.shouldShowSidebarWaiting ||
+                  priorityReason === 'waiting' ? (
+                  <span
+                    data-testid={`runtime-local-task-waiting-${task.taskId}`}
+                    role="status"
+                    title={t('workbench.priority_filter_waiting', '等待回复')}
+                    aria-label={t('workbench.priority_filter_waiting', '等待回复')}
+                    className="flex h-[30px] w-[30px] items-center justify-center"
+                  >
+                    {priorityLayout ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                    ) : (
+                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    )}
+                  </span>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
@@ -1982,20 +2000,6 @@ function RuntimeTaskRow({
                         icon={Loader2}
                         className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
                       />
-                    )}
-                  </span>
-                ) : priorityReason === 'waiting' ? (
-                  <span
-                    data-testid={`runtime-local-task-waiting-${task.taskId}`}
-                    role="status"
-                    title={t('workbench.priority_filter_waiting', '等待回复')}
-                    aria-label={t('workbench.priority_filter_waiting', '等待回复')}
-                    className="flex h-[30px] w-[30px] items-center justify-center"
-                  >
-                    {priorityLayout ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                    ) : (
-                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
                     )}
                   </span>
                 ) : unread ? (
@@ -2507,6 +2511,15 @@ function ProjectItem({
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const waitingTaskKeys = useMemo(
+    () =>
+      new Set(
+        [...lifecycleSnapshot.tasks.entries()]
+          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
+          .map(([key]) => key)
+      ),
+    [lifecycleSnapshot.tasks]
+  )
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
@@ -2643,9 +2656,10 @@ function ProjectItem({
       getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
     )
   ).length
-  const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ task }) =>
-    isRuntimeTaskWaiting(task)
-  ).length
+  const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) => {
+    const key = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+    return waitingTaskKeys.has(key) || isRuntimeTaskWaiting(task)
+  }).length
   const projectUnreadTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
     unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
   ).length
@@ -3330,6 +3344,15 @@ export function DesktopSidebar({
   } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const waitingTaskKeys = useMemo(
+    () =>
+      new Set(
+        [...lifecycleSnapshot.tasks.entries()]
+          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
+          .map(([key]) => key)
+      ),
+    [lifecycleSnapshot.tasks]
+  )
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
   const standaloneProjectWork = useMemo(
     () =>
@@ -3546,7 +3569,8 @@ export function DesktopSidebar({
           workspace,
           task,
           visibleUnreadRuntimeTaskKeys,
-          lifecycleSnapshot.runningTaskKeys
+          lifecycleSnapshot.runningTaskKeys,
+          waitingTaskKeys
         ),
       }))
     )
@@ -3560,7 +3584,8 @@ export function DesktopSidebar({
         workspace,
         task,
         visibleUnreadRuntimeTaskKeys,
-        lifecycleSnapshot.runningTaskKeys
+        lifecycleSnapshot.runningTaskKeys,
+        waitingTaskKeys
       ),
     }))
 
@@ -3570,6 +3595,7 @@ export function DesktopSidebar({
     lifecycleSnapshot.runningTaskKeys,
     sidebarRuntimeProjects,
     visibleUnreadRuntimeTaskKeys,
+    waitingTaskKeys,
   ])
   const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
     () =>

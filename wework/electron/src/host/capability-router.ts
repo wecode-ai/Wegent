@@ -3,6 +3,7 @@ export const HOST_PROTOCOL_VERSION = 1
 export const HOST_CAPABILITIES = [
   'app.getVersion',
   'app.quit',
+  'app.relaunch',
   'appUpdate.check',
   'appUpdate.download',
   'appUpdate.downloadProgress',
@@ -162,6 +163,9 @@ export const HOST_CAPABILITIES = [
   'workspace.listOpeners',
   'workspace.open',
   'workspace.openFile',
+  'workspace.fileGitHubUrl',
+  'workspace.copyFileContents',
+  'workspace.saveFileAs',
   'workspace.pickOpener',
   'workspace.takePendingOpenRequests',
   'navigation.pendingSchemes',

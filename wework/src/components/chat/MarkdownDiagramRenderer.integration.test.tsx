@@ -1,5 +1,6 @@
 import { render, waitFor } from '@testing-library/react'
 import { afterAll, beforeAll, expect, test, vi } from 'vitest'
+import 'mermaid'
 import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
 import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 

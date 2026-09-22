@@ -44,6 +44,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'click-then-macrotask': 'clickThenMacrotask',
   'context-menu': 'contextMenu',
   'seed-local-project': 'seedLocalProject',
+  'archive-local-project': 'archiveLocalProject',
   'plugin-auth': 'localConnectorAuth',
   'preview-plugin-import': 'previewPluginImport',
   'import-plugin-package': 'importPluginPackage',
@@ -98,6 +99,7 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
   'activate-task-notification',
   'click-at',
   'seed-local-project',
+  'archive-local-project',
   'plugin-auth',
   'preview-plugin-import',
   'import-plugin-package',
@@ -134,7 +136,8 @@ Options:
   --packaged true           Launch the packaged app instead of Electron source mode
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
-                            click-at, seed-local-project, paste-paths, or drop-paths
+                            click-at, seed-local-project, archive-local-project,
+                            paste-paths, or drop-paths
   --target SELECTOR         Event target selector for pointer-move (default: body)
                             Required destination for drag and click-then-macrotask
   --file PATH               File to dispatch for drop-file

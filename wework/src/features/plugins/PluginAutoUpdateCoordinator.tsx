@@ -9,7 +9,7 @@ import { useLocalExecutorCloudConnectionStatus } from '@/features/cloud-connecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { scheduleIdleTask } from '@/features/idle-tasks/idleTaskScheduler'
-import { track } from '@/telemetry/client'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import { createSocketClient } from '@wegent/chat-core'
 import { runCurrentDevicePluginAutoUpdate } from './pluginAutoUpdate'
 

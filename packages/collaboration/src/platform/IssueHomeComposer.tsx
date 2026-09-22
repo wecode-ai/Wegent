@@ -48,6 +48,7 @@ export interface IssueHomeTaskComposerProps {
   onChange(value: string): void;
   onDraftChange?(value: string): void;
   ownerControl?: ReactNode;
+  environmentNotice?: ReactNode;
   onSubmit(value: string): Promise<boolean>;
   disabled: boolean;
   placeholder: string;
@@ -90,6 +91,7 @@ export function IssueHomeComposer({
   placeholder,
   projectLabel,
   error,
+  environmentNotice,
   renderTaskComposer,
 }: {
   ref: Ref<ComposerInputHandle>;
@@ -114,6 +116,7 @@ export function IssueHomeComposer({
   projectLabel: string;
   memberLabel: string;
   error: string | null;
+  environmentNotice?: ReactNode;
   renderTaskComposer?(props: IssueHomeTaskComposerProps): ReactNode;
 }) {
   const [files, setFiles] = useState<PendingFile[]>([]);
@@ -269,6 +272,7 @@ export function IssueHomeComposer({
           onChange,
           onDraftChange: draftChanged,
           ownerControl,
+          environmentNotice,
           onSubmit: submit,
           disabled: pending,
           placeholder,
@@ -288,6 +292,7 @@ export function IssueHomeComposer({
   return (
     <>
       <ComposerErrorBanner error={error} />
+      {environmentNotice}
       <ProjectComposerBody
         workBar={projectSelector}
         ref={ref}

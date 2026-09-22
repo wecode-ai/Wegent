@@ -589,6 +589,7 @@ class TestUserScopedMcpInjection:
         )
         ghost = SimpleNamespace(
             name="shared-agent-ghost",
+            namespace="default",
             json={
                 "kind": "Ghost",
                 "metadata": {
@@ -666,6 +667,7 @@ class TestUserScopedMcpInjection:
         )
         ghost = SimpleNamespace(
             name="shared-agent-ghost",
+            namespace="default",
             json={
                 "kind": "Ghost",
                 "metadata": {

@@ -169,7 +169,13 @@ function createHost(): ProjectManageHost {
       Trash2: Icon,
       X: Icon,
     },
-    translate: (_key, fallback) => fallback,
+    translate: (_key, fallback, options) => {
+      let value = fallback;
+      for (const [name, replacement] of Object.entries(options ?? {})) {
+        value = value.split(`{{${name}}}`).join(String(replacement));
+      }
+      return value;
+    },
     confirm: () => true,
     trackCompleted: vi.fn(),
     trackFailed: vi.fn(),
@@ -183,6 +189,10 @@ function renderView(
   host: ProjectManageHost,
   currentProject: ProjectManageProject,
   onProjectUpdated: (project: ProjectManageProject) => void,
+  quickAdd?: {
+    requestId: number;
+    onConsumed(requestId: number): void;
+  },
 ) {
   hookRuntime.beginRender();
   const tree = ProjectManageView({
@@ -190,6 +200,8 @@ function renderView(
     host,
     project: currentProject,
     onProjectUpdated,
+    openMembersRequestId: quickAdd?.requestId,
+    onOpenMembersRequestConsumed: quickAdd?.onConsumed,
   });
   hookRuntime.flushEffects();
   return tree;
@@ -224,6 +236,21 @@ async function flushPromises() {
 describe("ProjectManageView project scope", () => {
   beforeEach(() => {
     hookRuntime.reset();
+  });
+
+  it("opens and consumes a host-requested member action", () => {
+    const api = createApi();
+    const host = createHost();
+    const onConsumed = vi.fn();
+    const currentProject = project("project-a", "private");
+    const quickAdd = { requestId: 23, onConsumed };
+
+    renderView(api, host, currentProject, vi.fn(), quickAdd);
+    const tree = renderView(api, host, currentProject, vi.fn(), quickAdd);
+
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+    expect(onConsumed).toHaveBeenCalledWith(23);
+    expect(findByTestId(tree, "cloud-member-search")).toBeTruthy();
   });
 
   it("reloads the authoritative member list after adding a member", async () => {
@@ -289,6 +316,47 @@ describe("ProjectManageView project scope", () => {
       vi.unstubAllGlobals();
       vi.useRealTimers();
     }
+  });
+
+  it("explains and saves project member capabilities", async () => {
+    const api = createApi();
+    const host = createHost();
+    const member = {
+      id: 2,
+      user_id: 2,
+      user_name: "member",
+      email: "member@example.com",
+      role: "Developer" as const,
+      capability_description: "",
+    };
+    vi.mocked(api.listMembers).mockResolvedValue([member]);
+    vi.mocked(api.updateMember).mockResolvedValue({
+      ...member,
+      capability_description: "前端实现与交互验收",
+    });
+    const currentProject = project("project-a", "private");
+
+    let tree = renderView(api, host, currentProject, vi.fn());
+    await flushPromises();
+    tree = renderView(api, host, currentProject, vi.fn());
+    findByTestId(tree, "cloud-project-members-toggle").props.onClick();
+    tree = renderView(api, host, currentProject, vi.fn());
+
+    const capability = findByTestId(tree, "cloud-project-member-capability-2");
+    expect(capability.props.placeholder).toBe("例如：前端开发、产品验收");
+    expect(capability.props["aria-label"]).toBe("member 的职责与能力");
+    expect(
+      findByTestId(tree, "cloud-project-member-capability-heading"),
+    ).toBeTruthy();
+
+    capability.props.onBlur({
+      target: { value: "  前端实现与交互验收  " },
+    });
+    await flushPromises();
+
+    expect(api.updateMember).toHaveBeenCalledWith("project-a", 2, {
+      capability_description: "前端实现与交互验收",
+    });
   });
 
   it("does not write an old project mutation response into the new project", async () => {

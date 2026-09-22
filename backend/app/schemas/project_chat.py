@@ -123,7 +123,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     # V1 compatibility only. New clients must send workspaceBinding.
     local_project_id: int | None = Field(default=None)
     max_concurrent_executions: int = Field(default=1, ge=1, le=20)
-    workspace_policy: BotWorkspacePolicy = "project"
+    workspace_policy: BotWorkspacePolicy = "git_worktree"
     default_runtime_profile_id: str | None = Field(default=None, max_length=64)
     plugins: list[ProjectChatAgentPlugin] = Field(default_factory=list, max_length=50)
     additional_skills: list[ProjectChatAgentSkill] = Field(
@@ -404,6 +404,15 @@ class ProjectChatAutomationManagerContinuation(ProjectChatSchema):
     task_id: str = Field(min_length=1, max_length=64)
     trigger_message_id: str = Field(min_length=1, max_length=64)
     manager_message_id: str = Field(min_length=1, max_length=64)
+
+
+class ProjectChatCommentExecution(ProjectChatSchema):
+    """Execute a saved comment using its project assignment or thread binding."""
+
+    project_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    trigger_message_id: str = Field(min_length=1, max_length=64)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=64)
 
 
 class ProjectChatWegentContinuation(ProjectChatSchema):

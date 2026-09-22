@@ -5620,6 +5620,86 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
 }
 
 #[tokio::test]
+async fn execution_mapper_persists_request_user_input_without_settling_execution() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("execution-mapper-request-user-input");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-waiting";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "runtime-subtask-waiting".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Waiting task".to_owned(),
+    );
+    link.thread_id = Some("thread-waiting".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-waiting".to_owned(),
+        "turn-waiting".to_owned(),
+    );
+    let active_turn = handler
+        .active_codex_turn(local_task_id)
+        .expect("request user input turn should be active");
+    let message = json!({
+        "id": 42,
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "thread-waiting",
+            "turnId": "turn-waiting",
+            "itemId": "question-1",
+            "questions": [{
+                "id": "choice",
+                "question": "Continue?",
+                "options": [{"label": "Yes", "description": "Continue"}]
+            }]
+        }
+    });
+
+    let mut event_mapper = CodexNotificationEventMapper::default();
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut event_mapper,
+            message,
+        )
+        .await;
+
+    let link = handler
+        .local_task_link(local_task_id)
+        .expect("waiting task should remain persisted");
+    assert_eq!(
+        link.interaction_status.as_deref(),
+        Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    );
+    assert!(
+        handler.is_active_local_task(local_task_id),
+        "waiting for input must not settle the active execution"
+    );
+
+    let events = std::iter::from_fn(|| event_rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["event"] == "response.block.created"
+            && event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
+    }));
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "runtime.work.changed"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
 async fn execution_mapper_drops_notifications_after_stop_is_requested() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-cancel-race");

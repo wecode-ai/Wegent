@@ -198,11 +198,12 @@ fn execution_repositories(request: &ExecutionRequest) -> Result<Vec<ExecutionRep
                 .unwrap_or(false),
         });
     }
-    if repositories
-        .iter()
-        .filter(|repository| repository.primary)
-        .count()
-        != 1
+    if !repositories.is_empty()
+        && repositories
+            .iter()
+            .filter(|repository| repository.primary)
+            .count()
+            != 1
     {
         return Err("Execution environment must have exactly one primary repository".to_owned());
     }

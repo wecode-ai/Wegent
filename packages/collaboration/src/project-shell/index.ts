@@ -4,3 +4,4 @@
 
 export * from "./ProjectShell";
 export * from "./CollaborationProjectViewShell";
+export * from "./ProjectLoadingSkeleton";

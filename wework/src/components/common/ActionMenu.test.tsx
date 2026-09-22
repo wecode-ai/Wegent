@@ -250,6 +250,54 @@ describe('ActionMenu', () => {
     await screen.findByTestId('clear-data-submenu')
   })
 
+  test('keeps a zero-delay submenu selectable across the pointer gap', async () => {
+    const openInVsCode = vi.fn()
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        submenuCloseDelayMs={0}
+        items={[
+          {
+            label: 'Open with',
+            testId: 'open-with',
+            children: [{ label: 'VS Code', testId: 'vscode', onSelect: openInVsCode }],
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+    fireEvent.pointerEnter(screen.getByTestId('open-with'))
+    await screen.findByTestId('open-with-submenu')
+    fireEvent.pointerLeave(screen.getByTestId('open-with'))
+    fireEvent.pointerEnter(screen.getByTestId('open-with-submenu'))
+    fireEvent.click(screen.getByTestId('vscode'))
+
+    expect(openInVsCode).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('open-with-submenu')).not.toBeInTheDocument()
+  })
+
+  test('closes when an outside target stops pointer event propagation', async () => {
+    render(
+      <>
+        <ActionMenu
+          ariaLabel="More actions"
+          testId="more-actions"
+          items={[{ label: 'Settings', testId: 'settings-item', onSelect: vi.fn() }]}
+        />
+        <div data-testid="editor-surface" onPointerDown={event => event.stopPropagation()} />
+      </>
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+    expect(screen.getByTestId('more-actions-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(screen.getByTestId('editor-surface'))
+
+    expect(screen.queryByTestId('more-actions-menu')).not.toBeInTheDocument()
+  })
+
   test('toggles submenu open and closed when clicking a parent item', async () => {
     render(
       <ActionMenu
