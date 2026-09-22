@@ -3245,6 +3245,7 @@ function runtimeTaskLoadAddressKey(address: RuntimeTaskAddress): string {
 
   return JSON.stringify({
     route: getRuntimeTaskRouteKey(address),
+    projectSession: address.projectSession ?? null,
     runtime: address.runtime ?? null,
     threadId: address.threadId?.trim() || runtimeHandleThreadId || null,
     workspaceKind: address.workspaceKind ?? null,

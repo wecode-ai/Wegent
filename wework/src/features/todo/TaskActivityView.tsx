@@ -7,6 +7,7 @@ import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIs
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import {
   dispatchTaskCardReply,
+  commentAgentMentions,
   cardSessionAddress,
   cardSessionActive as sharedCardSessionActive,
   isCustomAutomationManager,
@@ -603,6 +604,7 @@ export function TaskActivityView({
   ): Promise<CardCommentSendResult> {
     if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
     if (
+      !client.executeTaskComment &&
       isCustomAutomationManager(card.root) &&
       (!client.continueAutomationManager || !cardSessionAddress(card))
     )
@@ -622,9 +624,13 @@ export function TaskActivityView({
     setError(null)
     try {
       const executionProject = effectiveCommentProject
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const explicitMentions = commentAgentMentions(text, agents)
+      const activeMentions =
+        explicitMentions.length || projectLocation !== 'local'
+          ? explicitMentions
+          : assignedAgent
+            ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+            : []
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
@@ -632,7 +638,10 @@ export function TaskActivityView({
         text,
         mentions: activeMentions,
         replyToMessageId: null,
-        model: selectedModel?.name ?? null,
+        model:
+          projectLocation !== 'local' && client.executeTaskComment
+            ? null
+            : (selectedModel?.name ?? null),
         ...(projectLocation === 'local' && executionProject
           ? { localProjectId: executionProject.id }
           : {}),
@@ -643,7 +652,15 @@ export function TaskActivityView({
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToTop()
       void persistConversationAttachments(attachments)
-      if (assignedAgent && !selfManagedExecution) {
+      if (projectLocation !== 'local' && client.executeTaskComment) {
+        const incoming = await client.executeTaskComment({
+          projectId: project.id,
+          taskId: task.id,
+          triggerMessageId: message.messageId,
+          attachmentIds: attachments.map(file => Number(file.id)),
+        })
+        setMessages(current => mergeProjectChatMessages(current, incoming))
+      } else if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
           services: taskAiServices,
@@ -746,7 +763,7 @@ export function TaskActivityView({
         }
         composer={
           <>
-            {linear ? (
+            {linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
               <TaskCommentComposer
                 key={task.id}
                 value={newCommentDraft}
@@ -757,6 +774,8 @@ export function TaskActivityView({
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
+                serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
+                agents={agents}
               />
             ) : (
               <div className="task-detail-comment-chat-input">
@@ -895,7 +914,14 @@ export function TaskActivityView({
             executionDetail.address.taskId,
             executionDetail.messageId,
           ])}
-          address={executionDetail.address}
+          address={
+            projectLocation === 'local' || project.project_store === 'local'
+              ? executionDetail.address
+              : {
+                  ...executionDetail.address,
+                  projectSession: { projectId: String(project.id), issueId: task.id },
+                }
+          }
           {...executionBinding.overlay}
           senderName={executionDetail.senderName}
           runId={executionDetail.runId}

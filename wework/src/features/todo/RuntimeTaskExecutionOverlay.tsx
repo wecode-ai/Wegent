@@ -84,7 +84,13 @@ export function RuntimeTaskExecutionOverlay({
           )
         }
         onRetryTranscript={session.reloadRuntimeTranscript}
-        executionRunning={session.status.taskExecution.running}
+        executionRunning={
+          session.status.taskExecution.running
+            ? true
+            : session.transcriptError || session.transcriptLoading
+              ? undefined
+              : false
+        }
         onStop={async () => {
           await cancelRuntimeTask(address)
           await session.reloadRuntimeTranscript()

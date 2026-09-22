@@ -43,6 +43,7 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.ghost_capabilities import (
     load_ghost_chain,
     merge_ghost_capabilities,
@@ -91,21 +92,22 @@ def require_project_execution_environment(
     project_id: int | str,
     execution_device_id: str,
 ) -> None:
-    configured = (
-        db.query(ResourceMember)
-        .join(Kind, Kind.id == ResourceMember.resource_id)
+    devices = (
+        db.query(Kind)
+        .join(ResourceMember, Kind.id == ResourceMember.resource_id)
         .filter(
             ResourceMember.resource_type == ResourceType.DEVICE.value,
             ResourceMember.entity_type == "project",
             ResourceMember.entity_id == str(project_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
             Kind.kind == "Device",
-            Kind.name == execution_device_id,
             Kind.is_active.is_(True),
         )
-        .first()
+        .all()
     )
-    if configured is None:
+    if not any(
+        runtime_device_route_id(device) == execution_device_id for device in devices
+    ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Execution environment is not configured in this Project",

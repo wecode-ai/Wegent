@@ -32,9 +32,11 @@ export function createRuntimeConversationApi(client: ConversationHttpClient) {
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return client.post('/runtime-work/goal/get', data)
     },
-    createRuntimeTask<Request extends RuntimeTaskCreateIntent>(
-      data: Request
+    async createRuntimeTask<Request extends RuntimeTaskCreateIntent>(
+      data: Request,
+      beforeDispatch?: () => Promise<void>
     ): Promise<RuntimeTaskCreateResponse> {
+      await beforeDispatch?.()
       return client.post('/runtime-work/create', data)
     },
     listRuntimeWork(options?: {

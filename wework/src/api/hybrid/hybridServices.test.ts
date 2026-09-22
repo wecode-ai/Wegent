@@ -157,6 +157,7 @@ const mocks = vi.hoisted(() => {
     deviceApi: cloudDeviceApi,
     runtimeWorkApi: {
       materializeRuntimeTask: cloudMaterializeRuntimeTask,
+      getRuntimeTranscript: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
@@ -491,6 +492,15 @@ describe('execution status write-back on history reads', () => {
     })
     await createServices().runtimeWorkApi!.getRuntimeTranscript(address)
     expect(sync).not.toHaveBeenCalled()
+  })
+
+  it('routes a bound project transcript through project authorization even for a local device alias', async () => {
+    const request = { ...address, projectSession: { projectId: 'project-1', issueId: 'issue-1' } }
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockClear()
+    await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
   })
 
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
@@ -1544,6 +1554,22 @@ describe('createHybridWorkbenchServices', () => {
     expect(runtimeWork?.projects.map(project => project.project.key)).toEqual(['cloud'])
     expect(runtimeWork?.chats).toEqual([])
     expect(runtimeWork?.totalTasks).toBe(1)
+  })
+
+  it('forwards the delivery fence to the selected runtime adapter', async () => {
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    const beforeDispatch = vi.fn(async () => undefined)
+    mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'local-task' })
+    mocks.cloudCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'cloud-task' })
+    for (const deviceId of ['local-device', 'cloud-device']) {
+      const request = { deviceId, wegentTeamId: 1, runtime: 'codex' as const, message: 'run' }
+      await services.runtimeWorkApi!.createRuntimeTask(request, beforeDispatch)
+      const create =
+        deviceId === 'local-device' ? mocks.localCreateRuntimeTask : mocks.cloudCreateRuntimeTask
+      expect(create).toHaveBeenCalledWith(expect.objectContaining(request), beforeDispatch)
+    }
+    expect(beforeDispatch).not.toHaveBeenCalled()
   })
 
   it('routes runtime task creation by device source', async () => {

@@ -102,6 +102,12 @@ export interface ProjectChatClient {
     triggerMessageId: string;
     managerMessageId: string;
   }) => Promise<ProjectChatMessage>;
+  executeTaskComment?: (input: {
+    projectId: string;
+    taskId: string;
+    triggerMessageId: string;
+    attachmentIds?: number[];
+  }) => Promise<ProjectChatMessage[]>;
   continueWegentTask?: (input: {
     projectId: string;
     taskId: string;
@@ -283,6 +289,14 @@ export function createProjectChatClient(
         input,
       );
     },
+    executeTaskComment(input) {
+      return emitWithAck<ProjectChatMessage[]>(
+        client,
+        "wework:project_chat:comment:execute",
+        input,
+        90_000,
+      );
+    },
     continueWegentTask(input) {
       return emitWithAck<ProjectChatMessage>(
         client,
@@ -305,12 +319,13 @@ async function emitWithAck<T>(
   client: AuthenticatedSocketClient,
   event: string,
   payload: Record<string, unknown>,
+  timeoutMs = ACK_TIMEOUT_MS,
 ): Promise<T> {
   await client.ensureConnected();
   return new Promise<T>((resolve, reject) => {
     const timeout = window.setTimeout(
       () => reject(new Error(`${event} timed out`)),
-      ACK_TIMEOUT_MS,
+      timeoutMs,
     );
     client.socket.emit(event, payload, (ack: SocketAck<T> | undefined) => {
       window.clearTimeout(timeout);

@@ -1373,7 +1373,7 @@ describe('CloudTodoWorkspace', () => {
       '先检查项目看板如何组织运行中的消息。'
     )
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass(
-      'line-clamp-3',
+      'line-clamp-2',
       'leading-5'
     )
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('h-15')
@@ -1411,7 +1411,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
     expect(screen.getByTestId('cloud-todo-column-pending')).toHaveClass('w-[292px]')
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass('line-clamp-[8]')
-    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-3')
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-2')
     expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBe('true')
 
     act(() => {
@@ -2570,7 +2570,9 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByText('Implement cloud MCP')).toBeInTheDocument()
     expect(screen.queryByText('WEG-1')).not.toBeInTheDocument()
     expect(screen.getByText('hongyu9')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('负责人')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).toHaveTextContent(
+      '负责人'
+    )
     expect(screen.getByTestId('cloud-todo-card-assignee-WEG-1')).toHaveTextContent('hongyu9')
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
@@ -2605,7 +2607,9 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
 
-    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
+    expect(
+      (await screen.findByTestId('cloud-todo-card-WEG-1')).closest('article')
+    ).toHaveTextContent('未指定')
     expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
   })
 
@@ -2635,8 +2639,12 @@ describe('CloudTodoWorkspace', () => {
     const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
     expect(assignee).toHaveTextContent('发布机器人')
     expect(assignee.querySelector('svg')).not.toBeNull()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).not.toHaveTextContent(
+      '未指定'
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).toHaveTextContent(
+      '发布机器人'
+    )
   })
 
   it('resolves a local robot assignee name from the project chat agents', async () => {
@@ -2697,8 +2705,12 @@ describe('CloudTodoWorkspace', () => {
     const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
     expect(assignee).toHaveTextContent('发布机器人')
     expect(assignee.querySelector('svg')).not.toBeNull()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).not.toHaveTextContent(
+      '未指定'
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).toHaveTextContent(
+      '发布机器人'
+    )
     expect(cloudServices.localProjectChatAgentApi!.list).toHaveBeenCalledWith(project.id)
   })
 

@@ -615,6 +615,10 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]`,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-markdown-window-placeholder]`,
   ].join(', ')
+  await control.command('waitFor', middleMarkdownSelector, {
+    text: WINDOW_LIFECYCLE_SCROLL_MARKER,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('scrollIntoViewAsUser', middleMarkdownSelector, {
     text: WINDOW_LIFECYCLE_SCROLL_MARKER,
   })

@@ -8,6 +8,9 @@ import { HostCapabilityRouter } from './capability-router.js'
 import { registerAppUpdateCapabilities } from './electron-capabilities.js'
 import { HostPipeServer } from './host-pipe.js'
 
+// Pipe tests inject host services and must not load the native Electron runtime.
+vi.mock('electron', () => ({}))
+
 describe('HostPipeServer', () => {
   test('requires a versioned handshake and returns capability responses', async () => {
     const router = new HostCapabilityRouter()

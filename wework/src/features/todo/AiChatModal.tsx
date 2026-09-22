@@ -189,6 +189,17 @@ export function AiChatModal({
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
     () => initialAddress ?? storedLastAddress(storageKey)
   )
+  const issueId = task?.id
+  const conversationAddress = useMemo(
+    () =>
+      currentAddress && issueId && project.project_store === 'backend'
+        ? {
+            ...currentAddress,
+            projectSession: { projectId: String(project.id), issueId },
+          }
+        : currentAddress,
+    [currentAddress, project.id, project.project_store, issueId]
+  )
   const notifiedInitialAddressRef = useRef(Boolean(initialAddress))
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
@@ -351,14 +362,18 @@ export function AiChatModal({
           onClose={onClose}
           onBack={onBack}
           translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
-          onOpenTask={onOpenRuntimeTask ? () => onOpenRuntimeTask(initialAddress) : undefined}
+          onOpenTask={
+            onOpenRuntimeTask
+              ? () => onOpenRuntimeTask(conversationAddress ?? initialAddress)
+              : undefined
+          }
         >
           <TemporaryChatPanel
             currentProject={selectedLocalProject}
             source={initialAddress}
             instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
             testId="work-item-task-chat-panel"
-            initialAddress={currentAddress}
+            initialAddress={conversationAddress}
             onAddressChange={rememberAddress}
             runtimeContext={runtimeContext}
             sendEphemeral={false}
@@ -445,7 +460,7 @@ export function AiChatModal({
                 <button
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
-                  onClick={() => void onOpenRuntimeTask(initialAddress)}
+                  onClick={() => void onOpenRuntimeTask(conversationAddress ?? initialAddress)}
                   className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary transition hover:bg-muted"
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
@@ -458,7 +473,7 @@ export function AiChatModal({
               source={initialAddress}
               instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
               testId="work-item-task-chat-panel"
-              initialAddress={currentAddress}
+              initialAddress={conversationAddress}
               onAddressChange={rememberAddress}
               runtimeContext={runtimeContext}
               sendEphemeral={false}

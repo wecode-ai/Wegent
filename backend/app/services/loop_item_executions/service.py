@@ -3263,6 +3263,19 @@ class LoopItemExecutionService:
     def _linked_activity(
         db: Session, execution: LoopItemExecution
     ) -> ProjectChatMessage | None:
+        trigger_id = execution.runtime_origin_context.get("comment_trigger_message_id")
+        if trigger_id:
+            return (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.project_id == execution.cloud_project_id,
+                    ProjectChatMessage.task_id == execution.loop_item_id,
+                    ProjectChatMessage.trigger_message_id == trigger_id,
+                    ProjectChatMessage.sender_type == "agent",
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .first()
+            )
         activity_message_id = LoopItemExecutionService._automation_activity_message_id(
             db, execution
         )

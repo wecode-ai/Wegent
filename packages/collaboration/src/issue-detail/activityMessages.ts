@@ -46,6 +46,7 @@ export const activityMessages: Record<
     "activity.task_activity_transcript_execution_continues":
       "任务仍在执行，可稍后重试或在任务页打开",
     "activity.task_activity_transcript_unavailable": "暂时无法加载会话",
+    "activity.task_activity_device_offline": "执行设备已离线，请恢复设备连接后重试。",
     "activity.task_activity_transcript_execution_idle":
       "执行器确认当前未运行，但执行记录无法读取。请重试或打开任务页查看。",
     "activity.task_activity_transcript_execution_unknown":
@@ -142,6 +143,8 @@ export const activityMessages: Record<
       "The task is still running. Retry later or open its task page.",
     "activity.task_activity_transcript_unavailable":
       "Conversation is temporarily unavailable",
+    "activity.task_activity_device_offline":
+      "The execution device is offline. Reconnect the device and try again.",
     "activity.task_activity_transcript_execution_idle":
       "The executor is idle, but execution history is unavailable. Retry or open the task page.",
     "activity.task_activity_transcript_execution_unknown":

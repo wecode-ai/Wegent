@@ -298,6 +298,7 @@ describe('TaskActivityView', () => {
           {
             id: '11',
             name: 'Wework',
+            location: 'local',
           } as never
         }
         task={
@@ -2314,6 +2315,7 @@ describe('TaskActivityView', () => {
       expect(cancelRuntimeTask).toHaveBeenCalledWith({
         deviceId: 'device-1',
         taskId: 'runtime-task-2',
+        projectSession: { projectId: '11', issueId: 'WEG-1' },
       })
     )
   })
@@ -2365,7 +2367,10 @@ describe('TaskActivityView', () => {
         'new-runtime-task'
       )
       await user.click(screen.getByTestId('runtime-execution-detail-open-page'))
-      expect(openRuntimeTask).toHaveBeenCalledWith(message.runtimeAddress)
+      expect(openRuntimeTask).toHaveBeenCalledWith({
+        ...message.runtimeAddress,
+        projectSession: { projectId: '11', issueId: 'WEG-1' },
+      })
     }
   )
 
@@ -3551,4 +3556,52 @@ describe('TaskActivityView', () => {
       '状态: 执行失败\n错误: Device went offline before dispatch'
     )
   })
+})
+
+it('starts a cloud issue comment through the project service when the assigned agent is hidden', async () => {
+  const user = userEvent.setup()
+  agentsMock.value = []
+  const client = {
+    subscribe: vi.fn(async () => ({
+      snapshot: { messages: [], latestSequence: 0, currentUserId: '2' },
+      unsubscribe: vi.fn(),
+    })),
+    send: vi.fn(async () => userMessage),
+    executeTaskComment: vi.fn(async () => [
+      { ...agentMessage, content: '已排队', status: 'pending' as const },
+    ]),
+    startAgentResponse: vi.fn(),
+    failAgentResponse: vi.fn(),
+    dispose: vi.fn(),
+  } satisfies ProjectChatClient
+  createProjectRuntimeTask.mockClear()
+  render(
+    <TaskActivityView
+      client={client}
+      currentUserId={2}
+      project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+      task={
+        {
+          id: 'WEG-1',
+          title: 'Member issue',
+          status: 'inbox',
+          version: 1,
+          assignee_agent_id: '12',
+        } as never
+      }
+    />
+  )
+  await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+  await user.click(screen.getByRole('button', { name: '发送消息' }))
+  await waitFor(() =>
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: '11',
+      taskId: 'WEG-1',
+      triggerMessageId: 'message-1',
+      attachmentIds: [],
+    })
+  )
+  expect(client.startAgentResponse).not.toHaveBeenCalled()
+  expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  expect(screen.queryByTestId('task-comment-settings-toggle')).not.toBeInTheDocument()
 })

@@ -45,7 +45,13 @@ const work = {
       workspacePath: '/repo',
       available: true,
       tasks: [
-        { taskId: 'task-1', title: 'pwd', workspacePath: '/repo', runtime: 'codex', running: true },
+        {
+          taskId: 'task-1',
+          title: 'pwd',
+          workspacePath: '/repo',
+          runtime: 'codex',
+          running: true,
+        },
       ],
     },
   ],
@@ -81,7 +87,10 @@ describe('Web board with the native runtime progress presentation', () => {
       addEventListener() {},
       removeEventListener() {},
     }))
-    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: vi.fn(),
+    })
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
@@ -154,7 +163,12 @@ describe('Web board with the native runtime progress presentation', () => {
             translate={translate}
             reference="COL-1"
             labels={createIssueBoardCardLabels(translate)}
-            display={{ showAssignee: false, showDate: false, showPriority: false, showTags: false }}
+            display={{
+              showAssignee: false,
+              showDate: false,
+              showPriority: false,
+              showTags: false,
+            }}
             previewDisabled={disabled}
           />
           {sidebar && (
@@ -225,6 +239,27 @@ describe('Web board with the native runtime progress presentation', () => {
     expect(close).toHaveBeenCalledOnce()
     expect(runtime.getTranscript).not.toHaveBeenCalled()
     expect(runtime.subscribe).not.toHaveBeenCalled()
+  })
+
+  it('reads project execution history without requiring ownership of the agent device', async () => {
+    runtime.checkDeviceAccess = vi.fn().mockResolvedValue({ 'device-1': 'unavailable' })
+    const address = {
+      deviceId: binding.deviceId,
+      taskId: binding.taskId,
+      projectSession: { projectId: binding.projectId, issueId: item.id },
+    }
+    await act(async () =>
+      root.render(
+        <IssueExecutionDetails
+          runtime={runtime}
+          translate={translate}
+          onClose={vi.fn()}
+          target={{ address, senderName: 'Codex' }}
+        />
+      )
+    )
+    expect(runtime.checkDeviceAccess).not.toHaveBeenCalled()
+    expect(runtime.getTranscript).toHaveBeenCalledWith(expect.objectContaining(address))
   })
 
   it('retries an access lookup failure and resumes the normal conversation for an allowed device', async () => {
