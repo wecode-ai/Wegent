@@ -88,15 +88,17 @@ class ExecutionEnvironmentDefinition(BaseModel):
             for right in paths[index + 1 :]
         ):
             raise ValueError("repository paths must not overlap")
-        for step in self.setup_steps:
-            working_directory = step.working_directory
-            if working_directory and not any(
-                working_directory == path or working_directory.startswith(f"{path}/")
-                for path in paths
-            ):
-                raise ValueError(
-                    "setup working directory must be inside a configured repository"
-                )
+        if paths:
+            for step in self.setup_steps:
+                working_directory = step.working_directory
+                if working_directory and not any(
+                    working_directory == path
+                    or working_directory.startswith(f"{path}/")
+                    for path in paths
+                ):
+                    raise ValueError(
+                        "setup working directory must be inside a configured repository"
+                    )
         return self
 
 

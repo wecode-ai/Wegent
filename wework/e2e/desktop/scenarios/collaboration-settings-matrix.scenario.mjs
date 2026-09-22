@@ -301,7 +301,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
 
     const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
-    await control.command('click', scoped('[data-testid="cloud-todo-start-default-assistant"]'))
+    if (project) {
+      await control.command('click', scoped('[data-testid="human-issue-start"]'))
+      await control.command('waitFor', scoped('[data-testid="human-issue-ai-assist"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="human-issue-ai-assist"]'))
+    } else {
+      const localAssistant = scoped('[data-testid="cloud-todo-start-default-assistant"]')
+      await control.command('waitFor', localAssistant, { timeoutMs: uiTimeoutMs })
+      await control.command('click', localAssistant)
+    }
     await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
     await selectE2EModel(control, undefined, undefined, taskPanel)
     const composer = `${taskPanel} [data-testid="chat-message-input"]`
@@ -325,10 +335,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       timeoutMs: uiTimeoutMs,
     })
     const status = scoped('[data-testid="cloud-todo-detail-status"]')
-    await control.command('select', status, { value: 'completed' })
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
+    if (project) {
+      await control.command('click', scoped('[data-testid="human-issue-submit"]'))
+      await control.command('fill', scoped('[data-testid="human-issue-work-text"]'), {
+        value: `${label} Issue 已完成 AI 辅助处理。`,
+      })
+      await control.command('click', scoped('[data-testid="human-issue-work-confirm"]'))
+      await control.command('waitFor', scoped('[data-testid="human-issue-accept"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="human-issue-accept"]'))
+    } else {
+      await waitForValue(
+        () => control.command('getValue', status),
+        value => value === 'in_review',
+        `${label} Issue did not reflect its completed AI task`,
+        uiTimeoutMs
+      )
+      await control.command('select', status, { value: 'completed' })
+      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+    }
     await waitForValue(
       () => control.command('getValue', status),
       value => value === 'completed',

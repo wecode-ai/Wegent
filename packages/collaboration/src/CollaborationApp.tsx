@@ -15,8 +15,10 @@ import {
 import { collaborationTestIds } from './testIds'
 import { CollaborationSettings } from './CollaborationSettings'
 import { IssueCreate, IssueDetail } from './IssueDetail'
+import { IssueExecutionEnvironmentNotice } from './execution-environment/IssueExecutionEnvironmentNotice'
+import { useProjectExecutionEnvironmentReadiness } from './execution-environment/issueEnvironmentReadiness'
 import { IssueDeleteDialog } from './issue-delete'
-import { CollaborationProjectViewShell } from './project-shell'
+import { CollaborationProjectViewShell, ProjectLoadingSkeleton } from './project-shell'
 import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
 import { MyWorkAdapter } from './web-adapter/MyWorkAdapter'
 import {
@@ -29,6 +31,7 @@ import type {
   CollaborationHostAdapter,
   CollaborationIssue,
   CollaborationProject,
+  ProjectSettingsSectionId,
   CollaborationStatus,
   CollaborationView,
 } from './types'
@@ -64,6 +67,7 @@ export interface CollaborationIssueDetailRenderContext {
 interface CollaborationAppProps {
   api: SharedWorkspaceApi
   host: CollaborationHostAdapter
+  initialProject?: CollaborationProject
   locale?: CollaborationLocale
   pollIntervalMs?: number
   createProjectRequestKey?: number
@@ -114,6 +118,7 @@ function projectStatuses(
 export function CollaborationApp({
   api,
   host,
+  initialProject,
   locale = 'zh-CN',
   pollIntervalMs = 15_000,
   createProjectRequestKey = 0,
@@ -130,13 +135,16 @@ export function CollaborationApp({
   const [createProjectOpen, setCreateProjectOpen] = useState(false)
   const [createIssueOpen, setCreateIssueOpen] = useState(false)
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
-  const [settingsSectionId, setSettingsSectionId] = useState('project')
+  const [settingsSectionId, setSettingsSectionId] = useState<ProjectSettingsSectionId>(
+    host.location.projectSettingsSection ?? 'project'
+  )
   const [deleteIssueTarget, setDeleteIssueTarget] = useState<CollaborationIssue | null>(null)
   const [deleteIssueBusy, setDeleteIssueBusy] = useState(false)
   const [deleteIssueError, setDeleteIssueError] = useState<string | null>(null)
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
+    initialProject,
     messages,
     myWorkEnabled: host.capabilities.myWork === true,
     pollIntervalMs,
@@ -162,7 +170,11 @@ export function CollaborationApp({
   const { assignmentsByIssueId, replaceIssueAssignments } = useIssueAssignmentsByIssueId({
     assignmentsApi: api.assignments,
     issues,
-    enabled: project !== null,
+    enabled: project !== null && host.location.view === 'table',
+  })
+  const environmentReadiness = useProjectExecutionEnvironmentReadiness({
+    api,
+    project,
   })
   useEffect(() => {
     host.onProjectsChange?.(projects)
@@ -177,8 +189,21 @@ export function CollaborationApp({
     void commands.loadProjectSnapshot(project.id)
   }, [commands, project?.id, refreshProjectRequestKey])
 
+  useEffect(() => {
+    setSettingsSectionId(
+      host.location.view === 'manage'
+        ? (host.location.projectSettingsSection ?? 'project')
+        : 'project'
+    )
+  }, [host.location.projectSettingsSection, host.location.view, project?.id])
+
   const navigateView = (view: CollaborationView) => {
-    host.navigate({ projectId: project?.id ?? null, issueId: null, view })
+    host.navigate({
+      projectId: project?.id ?? null,
+      issueId: null,
+      view,
+      projectSettingsSection: view === 'manage' ? settingsSectionId : null,
+    })
   }
 
   const requestIssueDelete = (issue: CollaborationIssue) => {
@@ -219,12 +244,29 @@ export function CollaborationApp({
     }
   }
   const issueDeleteAvailable = issueDeleteEnabled
+  const environmentNotice = project ? (
+    <IssueExecutionEnvironmentNotice
+      canManage={project.access_role === 'Owner' || project.access_role === 'Maintainer'}
+      onOpenEnvironmentSettings={() =>
+        host.navigate({
+          projectId: project.id,
+          issueId: null,
+          view: 'manage',
+          projectSettingsSection: 'environments',
+        })
+      }
+      readiness={environmentReadiness}
+      translate={translate}
+    />
+  ) : null
 
   if (loading) {
     return (
-      <div className="collaboration-loading" data-testid={collaborationTestIds.root}>
-        {messages.loading}
-      </div>
+      <ProjectLoadingSkeleton
+        testId={collaborationTestIds.root}
+        label={messages.loading}
+        layout={host.location.projectId && host.location.view === 'board' ? 'board' : 'list'}
+      />
     )
   }
 
@@ -580,7 +622,16 @@ export function CollaborationApp({
                 manage: (
                   <ProjectSettingsShell
                     ariaLabel={messages.settings}
-                    onSectionChange={setSettingsSectionId}
+                    onSectionChange={sectionId => {
+                      const nextSectionId = sectionId as ProjectSettingsSectionId
+                      setSettingsSectionId(nextSectionId)
+                      host.navigate({
+                        projectId: project.id,
+                        issueId: null,
+                        view: 'manage',
+                        projectSettingsSection: nextSectionId,
+                      })
+                    }}
                     selectedSectionId={settingsSectionId}
                     sections={[
                       {
@@ -669,6 +720,12 @@ export function CollaborationApp({
                         content: (
                           <ProjectExecutionEnvironments
                             api={api}
+                            onManageDevices={
+                              host.manageResource
+                                ? () => host.manageResource?.('environments')
+                                : undefined
+                            }
+                            onProjectChange={commands.replaceProject}
                             project={project}
                             translate={translate}
                           />
@@ -732,6 +789,7 @@ export function CollaborationApp({
               api={api}
               project={project}
               allIssues={issues}
+              environmentNotice={environmentNotice}
               messages={messages}
               translate={translate}
               onClose={() => setCreateIssueOpen(false)}

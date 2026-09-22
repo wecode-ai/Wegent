@@ -193,18 +193,20 @@ export function IssueMainCommentComposer({
       }
       actions={
         <>
-          <button
-            type="button"
-            data-testid={testIds.settings}
-            aria-label={labels.settings}
-            title={labels.settings}
-            disabled={!settings || disabled || sending}
-            aria-expanded={settingsOpen}
-            aria-controls={settingsId}
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-          </button>
+          {settings && (
+            <button
+              type="button"
+              data-testid={testIds.settings}
+              aria-label={labels.settings}
+              title={labels.settings}
+              disabled={!settings || disabled || sending}
+              aria-expanded={settingsOpen}
+              aria-controls={settingsId}
+              onClick={() => setSettingsOpen((open) => !open)}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </button>
+          )}
           <span className="flex-1" />
           <input
             ref={fileInput}

@@ -1505,6 +1505,7 @@ describe('createLocalAppServices', () => {
 
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'local-device',
+      executionDeviceId: 'app-record-1839',
       workspacePath: '/Users/me/project',
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
@@ -1551,6 +1552,7 @@ describe('createLocalAppServices', () => {
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.create', {
       deviceId: 'device-uuid',
+      executionDeviceId: 'app-record-1839',
       workspacePath: '/Users/me/project',
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
@@ -1589,6 +1591,9 @@ describe('createLocalAppServices', () => {
           local_preview_url: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
+      runtimeHandle: {
+        executionDeviceId: 'app-record-1839',
+      },
       executionRequest: expect.objectContaining({
         system_prompt: 'Run focused project tests.',
         project_plugin_ids: ['quality-gate@team-market'],
@@ -1631,6 +1636,7 @@ describe('createLocalAppServices', () => {
           },
         },
         device_id: 'device-uuid',
+        execution_device_id: 'app-record-1839',
         execution_target_type: 'local',
         workspace_source: 'local_path',
         project_workspace_path: '/Users/me/project',
@@ -3776,6 +3782,57 @@ describe('createLocalAppServices', () => {
       })
     )
     expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
+  })
+
+  test('prepares model identity before fencing and keeps transport failures after the fence', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example/api/runtime-work/llm-responses-proxy',
+        apiKey: 'test-token',
+      },
+    })
+    const data = {
+      deviceId: 'local-device',
+      workspacePath: '/tmp/project',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      message: 'run',
+      modelId: 'shared-model',
+      modelType: 'public' as const,
+    }
+    const beforeDispatch = vi.fn(async () => {
+      expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    })
+    await expect(services.runtimeWorkApi!.createRuntimeTask(data, beforeDispatch)).rejects.toThrow(
+      'Cloud model identity is incomplete'
+    )
+    expect(beforeDispatch).not.toHaveBeenCalled()
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    const valid = {
+      ...data,
+      modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+    }
+    const fenceError = new Error('Execution is no longer dispatchable')
+    await expect(
+      services.runtimeWorkApi!.createRuntimeTask(valid, async () => {
+        throw fenceError
+      })
+    ).rejects.toBe(fenceError)
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    const transportError = new Error('Runtime connection closed')
+    request.mockImplementation(async method => {
+      if (method === 'runtime.tasks.create') throw transportError
+      return { accepted: true }
+    })
+    await expect(services.runtimeWorkApi!.createRuntimeTask(valid, beforeDispatch)).rejects.toBe(
+      transportError
+    )
+    expect(beforeDispatch).toHaveBeenCalledOnce()
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(true)
   })
 
   test('builds cloud model gateway config without resolving credentials', async () => {

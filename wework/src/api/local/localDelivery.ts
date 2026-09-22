@@ -1062,6 +1062,8 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         workflow?: CloudLoopItem['workflow']
         execution_config?: CloudLoopItem['execution_config']
         automation_rule_id?: string | null
+        assignee_user_id?: number | null
+        notify_assignee?: boolean
       }
     ) {
       const localProjectLabel =
@@ -1082,6 +1084,9 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
           priority: data.priority ?? 'none',
           parent_id: data.parent_id ?? null,
           tags: [...(data.tags ?? []), ...localProjectLabel],
+          ...(data.assignee_user_id !== undefined
+            ? { assignee_user_id: data.assignee_user_id }
+            : {}),
           ...(data.workflow ? { workflow: data.workflow } : {}),
           ...(data.execution_config ? { execution_config: data.execution_config } : {}),
         },

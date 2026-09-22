@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState, type ChangeEventHandler } from "react";
+import {
+  useRef,
+  useState,
+  type ChangeEventHandler,
+  type ReactNode,
+} from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { Check, Search } from "lucide-react";
 
@@ -99,9 +104,17 @@ export interface IssueDetailSearchableSelectOption<
   searchText?: string;
 }
 
+export interface IssueDetailSearchableSelectAction {
+  label: string;
+  icon?: ReactNode;
+  testId: string;
+  onSelect(): void;
+}
+
 export interface IssueDetailSearchableSelectProps<TValue extends string> {
   value: TValue;
   options: IssueDetailSearchableSelectOption<TValue>[];
+  actions?: IssueDetailSearchableSelectAction[];
   testId: string;
   accessibleLabel: string;
   className?: string;
@@ -114,6 +127,7 @@ export interface IssueDetailSearchableSelectProps<TValue extends string> {
 export function IssueDetailSearchableSelect<TValue extends string>({
   value,
   options,
+  actions = [],
   testId,
   accessibleLabel,
   className,
@@ -157,8 +171,6 @@ export function IssueDetailSearchableSelect<TValue extends string>({
       <Popover.Portal>
         <Popover.Content
           {...portalTheme}
-          role="listbox"
-          aria-label={accessibleLabel}
           data-testid={`${testId}-menu`}
           sideOffset={4}
           collisionPadding={8}
@@ -181,7 +193,11 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
             />
           </label>
-          <div className="mt-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div
+            role="listbox"
+            aria-label={accessibleLabel}
+            className="mt-1 min-h-0 overflow-y-auto overscroll-contain"
+          >
             {visibleOptions.map((option, index) => {
               const previousGroup = visibleOptions[index - 1]?.group;
               const showGroup = Boolean(
@@ -223,6 +239,34 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               </p>
             ) : null}
           </div>
+          {actions.length > 0 ? (
+            <div className="mt-1 shrink-0 border-t border-border pt-1">
+              {actions.map((action) => (
+                <button
+                  key={action.testId}
+                  type="button"
+                  data-testid={action.testId}
+                  onClick={() => {
+                    setOpen(false);
+                    action.onSelect();
+                  }}
+                  className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                >
+                  {action.icon ? (
+                    <span
+                      aria-hidden="true"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center"
+                    >
+                      {action.icon}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate">
+                    {action.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

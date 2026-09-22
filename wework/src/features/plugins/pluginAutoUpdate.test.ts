@@ -1,3 +1,4 @@
+import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
   PluginAutoUpdateBatchResponse,
@@ -96,23 +97,52 @@ describe('runPluginAutoUpdate', () => {
       sync(installedPluginId !== 1, installedPluginId)
     )
     const syncDevice = vi.fn(async () => sync(true))
+    const events: OperationResult[] = []
+    const stop = subscribeOperationResults(event => events.push(event))
 
-    await expect(runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice })).resolves.toEqual({
-      updatedCount: 1,
-      failedCount: 1,
-      failures: [
-        expect.objectContaining({
-          installedPluginId: 1,
-          pluginName: 'plugin-1',
-          stage: 'codex_config',
-          errorCode: 'INVALID_CODEX_CONFIG',
-          message: 'Invalid Codex config',
-        }),
-      ],
-    })
-    expect(updateBatch).toHaveBeenCalledTimes(2)
-    expect(syncPlugin).toHaveBeenCalledTimes(2)
-    expect(syncDevice).not.toHaveBeenCalled()
+    try {
+      await expect(runPluginAutoUpdate({ updateBatch, syncPlugin, syncDevice })).resolves.toEqual({
+        updatedCount: 1,
+        failedCount: 1,
+        failures: [
+          expect.objectContaining({
+            installedPluginId: 1,
+            pluginName: 'plugin-1',
+            stage: 'codex_config',
+            errorCode: 'INVALID_CODEX_CONFIG',
+            message: 'Invalid Codex config',
+          }),
+        ],
+      })
+      expect(events).toEqual([
+        { key: 'plugin.auto_update', outcome: 'failed', failureStage: 'confirm' },
+      ])
+      expect(updateBatch).toHaveBeenCalledTimes(2)
+      expect(syncPlugin).toHaveBeenCalledTimes(2)
+      expect(syncDevice).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
+  })
+
+  test('classifies an auto-update request failure at the request boundary', async () => {
+    const failure = new Error('batch request failed')
+    const events: OperationResult[] = []
+    const stop = subscribeOperationResults(event => events.push(event))
+    try {
+      await expect(
+        runPluginAutoUpdate({
+          updateBatch: vi.fn().mockRejectedValue(failure),
+          syncPlugin: vi.fn(),
+          syncDevice: vi.fn(),
+        })
+      ).rejects.toThrow(failure)
+      expect(events).toEqual([
+        { key: 'plugin.auto_update', outcome: 'failed', failureStage: 'request' },
+      ])
+    } finally {
+      stop()
+    }
   })
 
   test('does not sync when no update is pending', async () => {

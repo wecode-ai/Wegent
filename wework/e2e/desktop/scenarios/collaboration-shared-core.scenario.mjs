@@ -381,6 +381,7 @@ export function createDesktopScenario({
           backendUrl,
           authToken,
           projectId: project.id,
+          agentId: agent.id,
         })
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')

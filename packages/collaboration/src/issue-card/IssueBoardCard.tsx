@@ -22,6 +22,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   | 'menu'
   | 'titleTrailing'
   | 'afterContent'
+  | 'summary'
   | 'detailFlushBottom'
   | 'renderAssigneeTooltip'
   | 'item'
@@ -108,12 +109,9 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   const showWorkflowRow = Boolean(
     workflowNode || (needsExecutionConfiguration && onConfigureExecution)
   )
-  const previewAvailable =
-    !previewDisabled &&
-    !drag.boardDragging &&
-    !dragging &&
-    progressTaskBindings.length > 0 &&
-    Boolean(renderTaskSummary)
+  const hasProgress =
+    item.can_view_detail !== false && progressTaskBindings.length > 0 && Boolean(renderTaskSummary)
+  const previewAvailable = hasProgress && !previewDisabled && !drag.boardDragging && !dragging
   const previewOpen = previewAvailable && requestedPreviewOpen
   const canOpenItem = item.can_view_detail !== false
   const openItem = canOpenItem ? onOpen : undefined
@@ -138,7 +136,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       labels={labels}
       agentNames={agentNames}
       renderAssigneeTooltip={(label, child) => (
-        <Tooltip label={label} align="end" className="ml-auto min-w-0 shrink">
+        <Tooltip label={label} align="start" className="min-w-0 max-w-full">
           {child}
         </Tooltip>
       )}
@@ -156,6 +154,15 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       afterContent={
         needsExecutionConfiguration ? (
           <IssueExecutionConfigurationBadge itemId={item.id} translate={t} />
+        ) : null
+      }
+      summary={
+        hasProgress ? (
+          <div data-testid={`cloud-todo-card-tasks-${item.id}`} className="min-w-0">
+            {progressTaskBindings.map(binding => (
+              <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
+            ))}
+          </div>
         ) : null
       }
       cardRef={drag.setNodeRef}
@@ -237,19 +244,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                 }
               />
             </span>
-          ) : null}
-          {progressTaskBindings.length > 0 ? (
-            <div
-              data-testid={`cloud-todo-card-tasks-${item.id}`}
-              className={cn(
-                'w-full px-3.5 pb-3',
-                openItem && 'min-h-7 pr-11 max-md:min-h-11 max-md:pr-14'
-              )}
-            >
-              {progressTaskBindings.map(binding => (
-                <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
-              ))}
-            </div>
           ) : null}
           {progressTaskBindings.length > 0 && openItem ? (
             <span className="absolute bottom-2 right-2 z-20">

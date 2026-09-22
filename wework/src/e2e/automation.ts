@@ -51,6 +51,12 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
+import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
+import type {
+  WeworkConversationAssetChunk,
+  WeworkConversationSnapshot,
+} from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
@@ -822,12 +828,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
-function pressDesktopControlPointer(selector: string): string {
-  const element = findDesktopControlElements(selector)[0]
+function pressDesktopControlPointer(selector: string, click = false): string {
+  const elements = findDesktopControlElements(selector)
+  const element = click ? elements.find(desktopControlElementVisible) : elements[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  if (click && !desktopControlElementEnabled(element))
+    throw new Error(`Pointer target is disabled: "${selector}"`)
   const options = desktopControlEventOptions(element)
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   dispatchDesktopControlPointerEvent(element, 'pointerup', options)
+  if (click) {
+    if (!element.isConnected) throw new Error(`Pointer target detached before click: "${selector}"`)
+    if (!desktopControlElementEnabled(element))
+      throw new Error(`Pointer target is disabled: "${selector}"`)
+    element.click()
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -1810,6 +1825,87 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
       return JSON.stringify(getRuntimeConversationMessagesForLogicalAddress(address))
     }
+    case 'openConversationExportFixture': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        assetPath?: string
+        fileSize?: number
+        filename?: string
+        imagePath?: string
+        imageSize?: number
+      }
+      if (
+        !input.assetPath ||
+        !input.filename ||
+        typeof input.fileSize !== 'number' ||
+        !input.imagePath ||
+        typeof input.imageSize !== 'number'
+      ) {
+        throw new Error(
+          'openConversationExportFixture requires assetPath, filename, fileSize, imagePath, and imageSize'
+        )
+      }
+      const snapshot: WeworkConversationSnapshot = {
+        reference: {
+          deviceId: 'desktop-e2e-device',
+          taskId: 'conversation-export-fixture',
+          workspacePath: '/conversation/workspace',
+        },
+        title: 'Conversation export fixture',
+        complete: true,
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'done',
+            items: [
+              {
+                id: 'user-1',
+                type: 'user_message',
+                content: 'Export the attached evidence.',
+                status: 'done',
+                attachments: [
+                  {
+                    id: 1,
+                    filename: input.filename,
+                    fileSize: input.fileSize,
+                    mimeType: 'text/plain',
+                    localPath: input.assetPath,
+                  },
+                  {
+                    id: 2,
+                    filename: 'outside-workspace.png',
+                    fileSize: input.imageSize,
+                    mimeType: 'image/png',
+                    localPath: input.imagePath,
+                  },
+                ],
+              },
+              {
+                id: 'assistant-1',
+                type: 'assistant_text',
+                content: 'The evidence is attached.',
+              },
+            ],
+          },
+        ],
+      }
+      bindDshConversationController({
+        getTranscript: async () => snapshot,
+        readAssetChunk: async (_reference, request) =>
+          readConversationAssetChunk(snapshot, request, chunkRequest =>
+            invokeDesktopHost<WeworkConversationAssetChunk>(
+              'filesystem.readFileChunk',
+              chunkRequest
+            )
+          ),
+      })
+      window.dispatchEvent(
+        new CustomEvent('wework:conversation-export:open', {
+          detail: snapshot.reference,
+        })
+      )
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
@@ -2658,6 +2754,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerClick':
+      // Keep one gesture together across transient hover UI, without transport gaps.
+      return pressDesktopControlPointer(command.selector, true)
     case 'pointerDownOnly': {
       await invokeDesktopHost('e2e.focusMainWindow')
       const result = startDesktopControlPointer(command.selector)

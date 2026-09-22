@@ -58,6 +58,7 @@ export function createLocalWorkspaceApi(
         id: `device:${device.device_id}`,
         device_id: device.id,
         device_key: device.device_id,
+        is_current_device: true,
         name: device.name,
         kind: 'local_device' as const,
         coding_tools: ['codex'],

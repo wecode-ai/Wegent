@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   WeworkConversationReference,
+  WeworkConversationService,
   WeworkConversationSnapshot,
   WeworkExtensionHost,
 } from '../../app-wework/client'
@@ -170,7 +171,12 @@ export default function ConversationExportDialog() {
     try {
       const backend = host.backend.scope(BACKEND_ID)
       await yieldToRenderer()
-      const prepared = await prepareConversationExport(snapshot, format, selection, backend)
+      const prepared = await prepareConversationExport(
+        snapshot,
+        format,
+        selection,
+        host.conversations
+      )
       const content = formatConversation(prepared.snapshot, format)
       const archive = prepared.assets.length > 0
       const documentName = conversationExportFilename(snapshot.title, format)
@@ -210,7 +216,14 @@ export default function ConversationExportDialog() {
           content: chunk,
         })
       }
-      await writeAssets(backend, exportTaskId, prepared.assets, setProgress)
+      await writeAssets(
+        backend,
+        host.conversations,
+        snapshot.reference,
+        exportTaskId,
+        prepared.assets,
+        setProgress
+      )
       await backend.request('finish', { exportTaskId })
       const finished = await waitForExport(backend, exportTaskId, setProgress)
       const expectedSize = new TextEncoder().encode(content).byteLength
@@ -437,6 +450,8 @@ async function waitForExport(
 
 async function writeAssets(
   backend: ExportBackend,
+  conversations: WeworkConversationService,
+  reference: WeworkConversationReference,
   exportTaskId: string,
   assets: readonly ConversationExportAsset[],
   setProgress: (message: string) => void
@@ -450,12 +465,15 @@ async function writeAssets(
       )
     )
     if (asset.kind === 'local') {
-      await backend.request('addAsset', {
+      await appendConversationAsset(
+        backend,
+        conversations,
+        reference,
         exportTaskId,
-        archivePath: asset.archivePath,
-        path: asset.path,
-        workspacePath: asset.workspacePath,
-      })
+        asset.archivePath,
+        asset.path,
+        asset.workspacePath
+      )
       continue
     }
     if (asset.kind === 'base64') {
@@ -463,6 +481,65 @@ async function writeAssets(
       continue
     }
     await appendRemoteAsset(backend, exportTaskId, asset.archivePath, asset.url, asset.label)
+  }
+}
+
+async function appendConversationAsset(
+  backend: ExportBackend,
+  conversations: WeworkConversationService,
+  reference: WeworkConversationReference,
+  exportTaskId: string,
+  archivePath: string,
+  path: string,
+  workspacePath: string | null
+): Promise<void> {
+  let offset = 0
+  let expectedSize: number | null = null
+  for (;;) {
+    const chunk = await conversations.readAssetChunk(reference, {
+      path,
+      workspacePath,
+      offset,
+      length: ASSET_BYTE_CHUNK_SIZE,
+    })
+    validateConversationAssetChunk(chunk, offset, expectedSize)
+    expectedSize = chunk.size
+    await backend.request('appendAsset', {
+      exportTaskId,
+      archivePath,
+      contentBase64: chunk.chunkBase64,
+    })
+    offset += chunk.bytesRead
+    if (chunk.eof) break
+  }
+  if (expectedSize === null || offset !== expectedSize) {
+    throw new Error('Conversation export could not read the complete asset')
+  }
+}
+
+function validateConversationAssetChunk(
+  chunk: {
+    chunkBase64: string
+    bytesRead: number
+    eof: boolean
+    size: number
+  },
+  offset: number,
+  expectedSize: number | null
+): void {
+  if (
+    !Number.isSafeInteger(chunk.bytesRead) ||
+    chunk.bytesRead < 0 ||
+    chunk.bytesRead > ASSET_BYTE_CHUNK_SIZE ||
+    !Number.isSafeInteger(chunk.size) ||
+    chunk.size < 0 ||
+    offset + chunk.bytesRead > chunk.size ||
+    (chunk.bytesRead === 0 && !chunk.eof)
+  ) {
+    throw new Error('Conversation export received an invalid asset chunk')
+  }
+  if (expectedSize !== null && chunk.size !== expectedSize) {
+    throw new Error('Conversation asset changed while the export was reading it')
   }
 }
 

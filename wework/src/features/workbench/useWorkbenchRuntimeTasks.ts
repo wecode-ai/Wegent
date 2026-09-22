@@ -676,6 +676,7 @@ function runtimeTranscriptRequestKey(
 ): string {
   return JSON.stringify({
     address: getRuntimeTaskRouteKey(address),
+    projectSession: address.projectSession ?? null,
     threadId: address.threadId ?? null,
     limit: options.limit ?? null,
     beforeCursor: options.beforeCursor ?? null,

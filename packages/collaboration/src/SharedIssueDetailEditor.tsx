@@ -1,4 +1,7 @@
 import {
+  collaborationIssueCardPriorityClasses as priorityBadgeClasses,
+} from './issue-card/priorityBadgeClasses'
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -28,9 +31,11 @@ import {
   Maximize2,
   Minimize2,
   Package,
+  Play,
   Plus,
   Tag,
   Trash2,
+  UserPlus,
   Waypoints,
   X,
 } from "lucide-react";
@@ -56,6 +61,7 @@ import {
   type SharedIssueDetailDeliveryDetail,
   type SharedIssueDetailPort,
   type SharedIssueDetailTaskBinding,
+  type SharedIssueDetailTaskExecutionState,
   type SharedIssueDetailWorkflowPlan,
 } from "./issue-detail";
 import { IssueWorkflowStages, type SharedWorkflowNode } from "./issue-detail";
@@ -66,7 +72,6 @@ import type {
   CollaborationDefaultAssistant,
   CollaborationIssue,
   CollaborationMember,
-  CollaborationPriority,
   CollaborationProject,
   CollaborationStatus,
 } from "./types";
@@ -214,13 +219,6 @@ const columnDotClasses: Record<string, string> = {
   in_review: "bg-violet-500",
   completed: "bg-emerald-500",
 };
-const priorityBadgeClasses: Record<CollaborationPriority, string> = {
-  none: "bg-muted text-text-secondary",
-  low: "bg-muted text-text-secondary",
-  medium: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  high: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  urgent: "bg-red-500/10 text-red-600 dark:text-red-400",
-};
 const memberAvatarClasses = [
   "bg-gradient-to-br from-indigo-400 to-indigo-500",
   "bg-gradient-to-br from-emerald-400 to-emerald-500",
@@ -260,6 +258,8 @@ type TodoDraft = {
   priority: CloudLoopItem["priority"];
   parentId: string;
   dueDate: string;
+  assigneeTarget: IssueAssigneeTarget;
+  notifyAssignee: boolean;
   tags: string[];
 };
 
@@ -275,6 +275,13 @@ const todoDraftPriorities: CloudLoopItem["priority"][] = [
 // draft. File objects cannot be serialized, so staged attachments live in
 // module memory under the same key.
 const draftAttachmentStore = new Map<string, File[]>();
+
+function isIssueAssigneeTarget(value: unknown): value is IssueAssigneeTarget {
+  if (value === "") return true;
+  if (typeof value !== "string") return false;
+  if (/^user:\d+$/.test(value) || /^team:\d+$/.test(value)) return true;
+  return /^(agent|group):.+$/.test(value);
+}
 
 function todoDraftKey(
   projectId: CloudProject["id"],
@@ -298,6 +305,13 @@ function readTodoDraft(key: string): TodoDraft | null {
         : "none",
       parentId: typeof parsed.parentId === "string" ? parsed.parentId : "",
       dueDate: typeof parsed.dueDate === "string" ? parsed.dueDate : "",
+      assigneeTarget: isIssueAssigneeTarget(parsed.assigneeTarget)
+        ? parsed.assigneeTarget
+        : "",
+      notifyAssignee:
+        typeof parsed.notifyAssignee === "boolean"
+          ? parsed.notifyAssignee
+          : true,
       tags: Array.isArray(parsed.tags)
         ? parsed.tags.filter((tag): tag is string => typeof tag === "string")
         : [],
@@ -583,6 +597,8 @@ export type TodoEditorProps = {
   showCurrentTaskOnly?: boolean;
   showAssignee?: boolean;
   canAssign?: boolean;
+  onAddAssigneeMember?: () => void;
+  onAddAssigneeAgent?: () => void;
   /**
    * Starting work is independent from editing the Issue. A visible Issue may
    * start a host execution even when its content is read-only.
@@ -591,6 +607,12 @@ export type TodoEditorProps = {
   defaultAssistant?: CollaborationDefaultAssistant;
   taskRefreshKey?: string | number;
   initialTaskBindings?: SharedIssueDetailTaskBinding[];
+  /** Live execution states keyed by the stable task-binding id. */
+  taskExecutionStates?: Readonly<
+    Record<string, SharedIssueDetailTaskExecutionState>
+  >;
+  /** Device display names keyed by the device ID stored in task bindings. */
+  deviceNamesById?: Readonly<Record<string, string>>;
   headerActions?: ReactNode;
   /**
    * Delete this Issue. Rendered inside the header overflow menu so the
@@ -603,6 +625,59 @@ export type TodoEditorProps = {
   onOpenChildTask?: (task: CloudLoopItem) => void;
   onWorkflowPlanChanged?: () => void | Promise<void>;
 } & (TodoEditorCreateProps | TodoEditorEditProps);
+
+function taskDeviceLabel(
+  task: SharedIssueDetailTaskBinding,
+  deviceNamesById: Readonly<Record<string, string>> | undefined,
+) {
+  return deviceNamesById?.[task.device_id]?.trim() || task.device_id;
+}
+
+function taskExecutionStatusLabel(
+  status: SharedIssueDetailTaskExecutionState["status"],
+  translate: (
+    key: string,
+    fallback?: string,
+    options?: Record<string, string | number>,
+  ) => string,
+): string {
+  const labels: Record<
+    SharedIssueDetailTaskExecutionState["status"],
+    [string, string]
+  > = {
+    waiting_approval: ["todo.execution_waiting_approval", "等待审批"],
+    queued: ["todo.execution_queued", "排队中"],
+    starting: ["todo.execution_starting", "启动中"],
+    waiting_runtime: ["todo.execution_waiting_runtime", "等待执行环境"],
+    running: ["todo.execution_running", "执行中"],
+    cancelling: ["todo.execution_cancelling", "取消中"],
+    succeeded: ["todo.execution_succeeded", "已完成"],
+    failed: ["todo.execution_failed", "失败"],
+    cancelled: ["todo.execution_cancelled", "已取消"],
+    skipped: ["todo.execution_skipped", "已跳过"],
+    unknown: ["todo.execution_unknown", "状态待同步"],
+  };
+  const [key, fallback] = labels[status];
+  return translate(key, fallback);
+}
+
+function taskExecutionDotClass(
+  status: SharedIssueDetailTaskExecutionState["status"] | undefined,
+): string {
+  if (status === "running") return "is-running";
+  if (status === "succeeded" || status === "skipped") return "is-success";
+  if (status === "failed" || status === "cancelled") return "is-failed";
+  if (
+    status === "waiting_approval" ||
+    status === "queued" ||
+    status === "starting" ||
+    status === "waiting_runtime" ||
+    status === "cancelling"
+  ) {
+    return "is-queued";
+  }
+  return "is-idle";
+}
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
 // local draft and stages attachments until the item exists; edit mode loads the
@@ -637,6 +712,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const canAddEvidence = item?.human_work?.can_submit === true;
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
@@ -666,6 +742,7 @@ export function TodoEditor(props: TodoEditorProps) {
       priority: draft?.priority ?? "none",
       parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
       dueDate: draft?.dueDate ?? "",
+      assigneeTarget: draft?.assigneeTarget ?? "",
       tags: draft?.tags ?? [],
     },
     normalizeDescription: extensions?.normalizeDescription,
@@ -700,7 +777,9 @@ export function TodoEditor(props: TodoEditorProps) {
     setIssueDraftField("assigneeTarget", value);
   const setTags = (value: SetStateAction<string[]>) =>
     setIssueDraftField("tags", value);
-  const [notifyAssignee, setNotifyAssignee] = useState(true);
+  const [notifyAssignee, setNotifyAssignee] = useState(
+    draft?.notifyAssignee ?? true,
+  );
   const [notificationChoiceOpen, setNotificationChoiceOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   // A create draft or initial parent can reference a task that was archived
@@ -778,6 +857,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const [statusHistoryOpen, setStatusHistoryOpen] = useState(false);
   const statusHistoryTriggerRef = useRef<HTMLButtonElement>(null);
   const detailScrollRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
 
   const editItemId = item?.id ?? null;
@@ -895,6 +975,37 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!node) return;
     node.scrollTop = 0;
   }, [editItemId, isCreate]);
+
+  useLayoutEffect(() => {
+    const textarea = titleRef.current;
+    if (!textarea) return;
+
+    const resize = () => {
+      textarea.style.height = "auto";
+      if (textarea.scrollHeight > 0) {
+        textarea.style.height = `${textarea.scrollHeight}px`;
+      }
+    };
+    resize();
+
+    let observedWidth = textarea.parentElement?.clientWidth ?? 0;
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" || !textarea.parentElement
+        ? null
+        : new ResizeObserver((entries) => {
+            const width = entries[0]?.contentRect.width ?? 0;
+            if (width === observedWidth) return;
+            observedWidth = width;
+            resize();
+          });
+    if (textarea.parentElement) resizeObserver?.observe(textarea.parentElement);
+    window.addEventListener("resize", resize);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", resize);
+    };
+  }, [editItemId, editingContent, fullScreen, title, workspacePanel]);
 
   useEffect(() => {
     if (!workspacePanel || descriptionExpanded) return;
@@ -1090,7 +1201,7 @@ export function TodoEditor(props: TodoEditorProps) {
     });
   }, [createProjectId, editorPort, props.loadTeams]);
 
-  // Persist the text draft on every edit; a fully cleared form removes it.
+  // Persist the create draft on every edit; a fully cleared form removes it.
   useEffect(() => {
     if (!draftKey) return;
     if (
@@ -1099,6 +1210,7 @@ export function TodoEditor(props: TodoEditorProps) {
       priority === "none" &&
       !parentId &&
       !dueDate &&
+      !assigneeTarget &&
       !tags.length
     ) {
       localStorage.removeItem(draftKey);
@@ -1110,10 +1222,22 @@ export function TodoEditor(props: TodoEditorProps) {
       priority,
       parentId,
       dueDate,
+      assigneeTarget,
+      notifyAssignee,
       tags,
     };
     localStorage.setItem(draftKey, JSON.stringify(snapshot));
-  }, [draftKey, title, description, priority, parentId, dueDate, tags]);
+  }, [
+    assigneeTarget,
+    description,
+    draftKey,
+    dueDate,
+    notifyAssignee,
+    parentId,
+    priority,
+    tags,
+    title,
+  ]);
 
   useEffect(() => {
     if (!draftKey) return;
@@ -1205,7 +1329,9 @@ export function TodoEditor(props: TodoEditorProps) {
     title ||
     description ||
     priority !== "none" ||
+    parentId ||
     dueDate ||
+    assigneeTarget ||
     tags.length > 0 ||
     pendingFiles.length > 0,
   );
@@ -1324,10 +1450,18 @@ export function TodoEditor(props: TodoEditorProps) {
     const creatorName =
       props.project.current_user_name ||
       memberNameById(projectMembers, props.project.current_user_id ?? null);
+    const createAssignee = parseIssueAssigneeTarget(assigneeTarget);
+    const hasHumanAssignee = assigneeTarget.startsWith("user:");
     Object.assign(createInput, {
       ...(parentId ? { parent_id: parentId } : {}),
       ...(dueAt ? { due_at: dueAt } : {}),
       ...(creatorName ? { creator_name: creatorName } : {}),
+      ...(hasHumanAssignee
+        ? {
+            assignee_user_id: createAssignee.assigneeUserId,
+            notify_assignee: notifyAssignee,
+          }
+        : {}),
     });
     const create = async (
       overrides: Partial<SharedIssueDetailCreateInput> = {},
@@ -1336,9 +1470,9 @@ export function TodoEditor(props: TodoEditorProps) {
         ...createInput,
         ...overrides,
       });
-      // The create API intentionally does not assign. Assigning after creation
-      // records the assignment chain and applies notification policy once.
-      if (assigneeTarget) {
+      // Human ownership must be part of creation so task.created automation
+      // cannot start AI work before a follow-up assignment reaches the server.
+      if (assigneeTarget && !hasHumanAssignee) {
         created = await editorPort.issues.assign(props.project.id, created.id, {
           version: created.version,
           assigneeType: assigneeTarget.split(":", 1)[0] as
@@ -1571,7 +1705,13 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function addAttachments(files: FileList | null) {
-    if (!editable || !editItemId || !files?.length || attachmentBusy) return;
+    if (
+      (!editable && !canAddEvidence) ||
+      !editItemId ||
+      !files?.length ||
+      attachmentBusy
+    )
+      return;
     const itemId = editItemId;
     const itemLoadGeneration = itemLoadGenerationRef.current;
     attachmentsRequestIdRef.current += 1;
@@ -1736,7 +1876,8 @@ export function TodoEditor(props: TodoEditorProps) {
   function handleDrop(event: React.DragEvent) {
     event.preventDefault();
     if (isCreate) void stageFiles(event.dataTransfer.files);
-    else if (editable) void addAttachments(event.dataTransfer.files);
+    else if (editable || canAddEvidence)
+      void addAttachments(event.dataTransfer.files);
   }
 
   function commitTagDraft() {
@@ -1842,7 +1983,7 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.issue_status", "状态")}
       value={status}
       onChange={setStatus}
-      disabled={!editable}
+      disabled={!editable || Boolean(item?.human_work)}
       className={overlayControlClass}
       statuses={statusOptions}
       includeUnset={status === ""}
@@ -1928,6 +2069,32 @@ export function TodoEditor(props: TodoEditorProps) {
         className={overlayControlClass}
         searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
         emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
+        actions={
+          isCreate && canAssign
+            ? [
+                ...(props.onAddAssigneeMember
+                  ? [
+                      {
+                        label: t("todo.assignee_add_member", "添加人员"),
+                        icon: <UserPlus className="h-4 w-4" />,
+                        testId: "cloud-todo-create-assignee-add-member",
+                        onSelect: props.onAddAssigneeMember,
+                      },
+                    ]
+                  : []),
+                ...(props.onAddAssigneeAgent
+                  ? [
+                      {
+                        label: t("todo.assignee_add_agent", "添加智能体"),
+                        icon: <Bot className="h-4 w-4" />,
+                        testId: "cloud-todo-create-assignee-add-agent",
+                        onSelect: props.onAddAssigneeAgent,
+                      },
+                    ]
+                  : []),
+              ]
+            : undefined
+        }
         options={[
           {
             value: "",
@@ -2633,6 +2800,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 </div>
               ) : null}
               <textarea
+                ref={titleRef}
                 data-testid={
                   isCreate ? "cloud-todo-title" : "cloud-todo-detail-title"
                 }
@@ -2845,7 +3013,9 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
-                  {visibleAttachments.length > 0 || editingContent ? (
+                  {visibleAttachments.length > 0 ||
+                  editingContent ||
+                  canAddEvidence ? (
                     <section
                       className="task-detail-context-attachments"
                       data-testid="cloud-todo-attachment-footer"
@@ -2854,7 +3024,9 @@ export function TodoEditor(props: TodoEditorProps) {
                         attachments={visibleAttachments}
                         busy={attachmentBusy}
                         error={attachmentError}
-                        editable={editable && editingContent}
+                        editable={
+                          (editable && editingContent) || canAddEvidence
+                        }
                         compactRail
                         downloadingId={downloadingAttachmentId}
                         onAdd={addAttachments}
@@ -2975,8 +3147,9 @@ export function TodoEditor(props: TodoEditorProps) {
                         type="button"
                         data-testid="cloud-todo-create-task"
                         onClick={() => props.onCreateTask?.()}
-                        className="task-detail-state-action"
+                        className="task-detail-state-action task-detail-state-action-primary"
                       >
+                        <Play aria-hidden="true" size={14} />
                         {t("todo.start_work", "开始处理")}
                       </button>
                     ) : null}
@@ -3035,6 +3208,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       fallbackStatus={workflowPlanStatus}
                       error={workflowPlanError}
                       busy={workflowPlanBusy}
+                      deviceNamesById={props.deviceNamesById}
                       availableActions={{
                         approve:
                           editable &&
@@ -3197,6 +3371,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             displayedWorkflow.nodes as SharedWorkflowNode[]
                           }
                           tasks={effectiveTasks}
+                          deviceNamesById={props.deviceNamesById}
                           deliveries={deliveries}
                           executionError={item.execution_error}
                           selectedTaskId={props.selectedTaskId}
@@ -3316,6 +3491,18 @@ export function TodoEditor(props: TodoEditorProps) {
                           {displayedTasks.map((task) => {
                             const selected =
                               props.selectedTaskId === task.task_id;
+                            const executionState =
+                              props.taskExecutionStates?.[String(task.id)];
+                            const executionStatusLabel = executionState
+                              ? taskExecutionStatusLabel(
+                                  executionState.status,
+                                  t,
+                                )
+                              : null;
+                            const deviceLabel = taskDeviceLabel(
+                              task,
+                              props.deviceNamesById,
+                            );
                             return (
                               <button
                                 key={task.id}
@@ -3330,7 +3517,13 @@ export function TodoEditor(props: TodoEditorProps) {
                                 <span
                                   className={cn(
                                     "task-detail-flat-task-dot",
-                                    selected ? "is-selected" : "is-idle",
+                                    executionState
+                                      ? taskExecutionDotClass(
+                                          executionState.status,
+                                        )
+                                      : selected
+                                        ? "is-selected"
+                                        : "is-idle",
                                   )}
                                 />
                                 <span className="min-w-0 flex-1">
@@ -3340,8 +3533,11 @@ export function TodoEditor(props: TodoEditorProps) {
                                   >
                                     {task.task_title || task.task_id}
                                   </span>
-                                  <span className="mt-0.5 block truncate text-xs text-text-muted">
-                                    {task.device_id} ·{" "}
+                                  <span
+                                    className="mt-0.5 block truncate text-xs text-text-muted"
+                                    title={deviceLabel}
+                                  >
+                                    {deviceLabel} ·{" "}
                                     {selected
                                       ? t(
                                           "todo.current_conversation",
@@ -3353,6 +3549,19 @@ export function TodoEditor(props: TodoEditorProps) {
                                         )}
                                   </span>
                                 </span>
+                                {executionState && executionStatusLabel ? (
+                                  <span
+                                    className="task-detail-flat-task-status"
+                                    data-status={executionState.status}
+                                    data-testid={`cloud-todo-task-status-${task.id}`}
+                                  >
+                                    <span
+                                      className="task-detail-flat-task-status-dot"
+                                      aria-hidden="true"
+                                    />
+                                    {executionStatusLabel}
+                                  </span>
+                                ) : null}
                                 <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
                               </button>
                             );
@@ -3446,7 +3655,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             <span className="min-w-0 flex-1 truncate">
                               交付结果
                               {delivery.assets.length > 0
-                                  ? ` · ${t(
+                                ? ` · ${t(
                                     "todo.attachment_count",
                                     "{{count}} 个附件",
                                     { count: delivery.assets.length },
@@ -3501,7 +3710,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     }
                     busy={attachmentBusy}
                     error={attachmentError}
-                    editable={editable}
+                    editable={editable || canAddEvidence}
                     downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onOpen={isCreate ? undefined : openAttachment}
@@ -3736,7 +3945,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                   {task.task_title || task.task_id}
                                 </span>
                                 <span className="shrink-0 text-text-muted">
-                                  {task.device_id}
+                                  {taskDeviceLabel(task, props.deviceNamesById)}
                                 </span>
                               </div>
                             ))}
@@ -3881,7 +4090,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     attachments={visibleAttachments}
                     busy={attachmentBusy}
                     error={attachmentError}
-                    editable={editable}
+                    editable={editable || canAddEvidence}
                     compactRail
                     downloadingId={downloadingAttachmentId}
                     onAdd={addAttachments}
@@ -3935,7 +4144,12 @@ export function TodoEditor(props: TodoEditorProps) {
                                   {task.task_title || task.task_id}
                                 </span>
                                 <span className="task-detail-rail-detail">
-                                  <span>{task.device_id}</span>
+                                  <span>
+                                    {taskDeviceLabel(
+                                      task,
+                                      props.deviceNamesById,
+                                    )}
+                                  </span>
                                   <span>{t("todo.linked", "已关联")}</span>
                                 </span>
                               </span>

@@ -156,6 +156,7 @@ def api(test_db, test_user, monkeypatch):
             taskId=address.local_task_id,
             workspacePath="/chats/test",
             runtime="codex",
+            turns=[],
             messages=messages[start:end],
             hasMoreBefore=start > 0,
             beforeCursor=str(start) if start else None,

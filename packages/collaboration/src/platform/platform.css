@@ -54,6 +54,19 @@
   padding-top: 12px;
 }
 
+.collaboration-navigation-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+}
+
+.collaboration-navigation-error > button {
+  flex-shrink: 0;
+}
+
 .collaboration-platform-brand {
   padding: 4px 10px 12px;
   font-size: 16px;
@@ -861,6 +874,17 @@
   color: rgb(var(--color-text-secondary));
   background: rgb(var(--color-bg-subtle));
   font-size: 11px;
+  font-weight: 600;
+}
+
+.collaboration-home-work-groups > section + section {
+  margin-top: 20px;
+}
+
+.collaboration-home-work-group-title {
+  margin: 0 0 8px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 

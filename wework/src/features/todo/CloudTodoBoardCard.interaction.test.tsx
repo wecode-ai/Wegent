@@ -67,7 +67,7 @@ describe('board progress activation', () => {
     }
   )
 
-  it('keeps disabled Issue previews unavailable from the card background and summary', async () => {
+  it('disables Issue details and hides progress when detail access is unavailable', async () => {
     const onClick = vi.fn()
     render(
       <CloudTodoBoardCard
@@ -80,7 +80,10 @@ describe('board progress activation', () => {
       />
     )
     await userEvent.click(screen.getByTestId('cloud-todo-card-drop-WEG-85'))
-    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-85'))
+    expect(screen.getByTestId('cloud-todo-card-WEG-85')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
+    expect(screen.queryByTestId('cloud-todo-card-tasks-WEG-85')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-WEG-85')).not.toHaveAttribute('aria-haspopup')
     expect(onClick).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-drop-WEG-85')).toHaveClass('cursor-default')

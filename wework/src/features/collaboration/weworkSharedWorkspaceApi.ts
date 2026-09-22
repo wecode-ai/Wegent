@@ -524,6 +524,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
                 DeliveryApi['createLoopItem']
               >[1]['execution_config'],
               automation_rule_id: input.automationRuleId,
+              assignee_user_id: input.assigneeUserId,
+              notify_assignee: input.notifyAssignee,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
           )
           .then(toIssue)

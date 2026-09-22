@@ -27,7 +27,10 @@ import {
 } from "lucide-react";
 
 import { CollaborationApp } from "../CollaborationApp";
+import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
+import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueExecutionEnvironmentNotice";
+import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
 import { Tooltip } from "../issue-detail/Tooltip";
@@ -74,6 +77,7 @@ import type {
   CollaborationPlatformLocation,
   CollaborationWorkspaceView,
 } from "./types";
+import { buildWorkspaceNavigation } from "./workspaceNavigation";
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
 import {
   createWorkspaceOperationsSnapshot,
@@ -260,6 +264,8 @@ const platformMessages = {
     ownerHint: "决定空间内新建智能体和其他资源的默认归属。",
     workspaceSettingsHint: "管理空间基本信息、成员和协作资源。",
     loadFailed: "加载协作空间失败",
+    navigationLoadFailed: "部分空间或项目加载失败，列表可能不完整。",
+    retryNavigation: "重试",
     searchSpaces: "搜索空间",
     firstUseProgress: "开始协作",
     firstProjectTitle: "创建第一个项目",
@@ -492,6 +498,9 @@ const platformMessages = {
     workspaceSettingsHint:
       "Manage the workspace profile, members, and collaboration resources.",
     loadFailed: "Failed to load collaboration spaces",
+    navigationLoadFailed:
+      "Some spaces or projects could not load. The list may be incomplete.",
+    retryNavigation: "Retry",
     searchSpaces: "Search spaces",
     firstUseProgress: "Getting started",
     firstProjectTitle: "Create your first project",
@@ -543,7 +552,11 @@ function navigateWithin(
   host: CollaborationPlatformHostAdapter,
   patch: Partial<CollaborationPlatformLocation>,
 ) {
-  host.navigate({ ...host.location, ...patch });
+  const location = { ...host.location, ...patch };
+  if (patch.projectView && patch.projectView !== "manage") {
+    location.projectSettingsSection = null;
+  }
+  host.navigate(location);
 }
 
 function workspaceAgentRecord(
@@ -611,6 +624,8 @@ function CollaborationPlatformNavigation({
   workspaces,
   workspaceNavigationContext,
   projects,
+  navigationIncomplete,
+  onRetryNavigation,
   onCreateWorkspace,
   onImportExistingProject,
   onAddFolder,
@@ -623,6 +638,8 @@ function CollaborationPlatformNavigation({
   workspaces: CollaborationWorkspace[];
   workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
   projects: CollaborationProject[];
+  navigationIncomplete: boolean;
+  onRetryNavigation(): Promise<void>;
   onCreateWorkspace(): void;
   onImportExistingProject(workspaceId: string): void;
   onAddFolder(workspaceId: string): void;
@@ -630,19 +647,14 @@ function CollaborationPlatformNavigation({
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
-  const navigationWorkspaces = useMemo(
+  const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
-      workspaceNavigationContext
-        ? [
-            ...workspaces.map((workspace) => ({ workspace, canOpen: true })),
-            ...(workspaces.some(
-              (workspace) => workspace.id === workspaceNavigationContext.id,
-            )
-              ? []
-              : [{ workspace: workspaceNavigationContext, canOpen: false }]),
-          ]
-        : workspaces.map((workspace) => ({ workspace, canOpen: true })),
-    [workspaceNavigationContext, workspaces],
+      buildWorkspaceNavigation(
+        workspaces,
+        projects,
+        workspaceNavigationContext,
+      ),
+    [workspaces, projects, workspaceNavigationContext],
   );
   const selectedProjectWorkspaceId = projects.find(
     (project) => project.id === host.location.projectId,
@@ -660,6 +672,7 @@ function CollaborationPlatformNavigation({
       ),
   );
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
+  const [retryingNavigation, setRetryingNavigation] = useState(false);
   const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
@@ -876,6 +889,31 @@ function CollaborationPlatformNavigation({
           </button>
         </div>
       </div>
+      {navigationIncomplete ? (
+        <div
+          className="collaboration-navigation-error"
+          role="alert"
+          data-testid="collaboration-navigation-error"
+        >
+          <span>{messages.navigationLoadFailed}</span>
+          <button
+            type="button"
+            className="collaboration-link-button"
+            data-testid="collaboration-navigation-retry"
+            disabled={retryingNavigation}
+            onClick={async () => {
+              setRetryingNavigation(true);
+              try {
+                await onRetryNavigation();
+              } finally {
+                setRetryingNavigation(false);
+              }
+            }}
+          >
+            {messages.retryNavigation}
+          </button>
+        </div>
+      ) : null}
       {fullSidebar || workspacesExpanded ? (
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
@@ -886,9 +924,8 @@ function CollaborationPlatformNavigation({
               candidate.location === "local"
                 ? messages.localSource
                 : messages.cloudSource;
-            const candidateProjects = projects.filter(
-              (project) => project.workspace_id === candidate.id,
-            );
+            const candidateProjects =
+              projectsByWorkspace.get(candidate.id) ?? [];
             const workspaceActive =
               host.location.workspaceId === candidate.id &&
               !host.location.projectId;
@@ -2573,6 +2610,7 @@ function IssueHomeLauncher({
   selectedProjectId,
   onSelectProject,
   onCreateIssue,
+  onOpenExecutionEnvironments,
   pending,
   api,
   locale,
@@ -2588,6 +2626,7 @@ function IssueHomeLauncher({
     owner: IssueHomeOwner | null,
     files: File[],
   ): Promise<boolean>;
+  onOpenExecutionEnvironments(project: CollaborationProject): void;
   pending: boolean;
   api: SharedWorkspaceApi;
   locale: CollaborationLocale;
@@ -2604,6 +2643,17 @@ function IssueHomeLauncher({
   >([]);
   const [memberError, setMemberError] = useState<string | null>(null);
   const composerRef = useRef<ComposerInputHandle>(null);
+  const selectedProject = projects.find(
+    (project) => project.id === selectedProjectId,
+  );
+  const translate = useMemo(
+    () => createCollaborationTranslator(locale),
+    [locale],
+  );
+  const environmentReadiness = useProjectExecutionEnvironmentReadiness({
+    api,
+    project: selectedProject,
+  });
   useEffect(() => {
     let active = true;
     setMembers([]);
@@ -2671,11 +2721,26 @@ function IssueHomeLauncher({
         setMentionIssues([]);
         onSelectProject(id);
       }}
-      translate={createCollaborationTranslator(locale)}
+      translate={translate}
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
       memberLabel={messages.members}
       error={memberError}
+      environmentNotice={
+        selectedProject ? (
+          <IssueExecutionEnvironmentNotice
+            canManage={
+              selectedProject.access_role === "Owner" ||
+              selectedProject.access_role === "Maintainer"
+            }
+            onOpenEnvironmentSettings={() =>
+              onOpenExecutionEnvironments(selectedProject)
+            }
+            readiness={environmentReadiness}
+            translate={translate}
+          />
+        ) : null
+      }
     />
   );
   if (renderTaskComposer)
@@ -2738,19 +2803,55 @@ function WorkItemsPage({
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
 }) {
+  const toHandle = items.filter(
+    (item) => item.human_work?.can_start || item.human_work?.can_submit,
+  );
+  const toReview = items.filter((item) => item.human_work?.can_review);
+  const remaining = items.filter(
+    (item) => !toHandle.includes(item) && !toReview.includes(item),
+  );
+  const sections = [
+    {
+      id: "assigned",
+      title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
+      items: toHandle,
+    },
+    {
+      id: "review",
+      title: locale === "zh-CN" ? "待我验收" : "To review",
+      items: toReview,
+    },
+    {
+      id: "other",
+      title: locale === "zh-CN" ? "其他工作" : "Other work",
+      items: remaining,
+    },
+  ].filter((section) => section.items.length);
   return (
     <div className="collaboration-platform-page">
       <PageHeader title={title} subtitle={subtitle} />
       {items.length ? (
-        <div className="collaboration-home-work-list">
-          {items.map((item) => (
-            <WorkItemRow
-              item={item}
-              locale={locale}
-              messages={messages}
-              key={item.id}
-              onOpen={onOpenItem}
-            />
+        <div className="collaboration-home-work-groups">
+          {sections.map((section) => (
+            <section
+              key={section.id}
+              data-testid={`collaboration-work-group-${section.id}`}
+            >
+              <h2 className="collaboration-home-work-group-title">
+                {section.title}
+              </h2>
+              <div className="collaboration-home-work-list">
+                {section.items.map((item) => (
+                  <WorkItemRow
+                    item={item}
+                    locale={locale}
+                    messages={messages}
+                    key={item.id}
+                    onOpen={onOpenItem}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       ) : (
@@ -3292,6 +3393,12 @@ export function CollaborationPlatformApp({
       const created = await api.issues.create(rootIssueProject.id, {
         title: truncateRuntimeTaskTitle(content.replace(/\s+/g, " "))!,
         description: content,
+        ...(owner?.kind === "user"
+          ? {
+              assigneeUserId: Number(owner.id),
+              notifyAssignee: true,
+            }
+          : {}),
       });
       let assignmentFailed = false;
       for (const file of files) {
@@ -3304,16 +3411,14 @@ export function CollaborationPlatformApp({
           );
         }
       }
-      if (owner) {
+      if (owner && owner.kind !== "user") {
         try {
           const current = await api.issues.get(created.id);
           await api.issues.update(created.id, {
             version: current.version,
-            ...(owner.kind === "user"
-              ? { assigneeUserId: Number(owner.id) }
-              : owner.kind === "agent"
-                ? { assigneeAgentId: owner.id }
-                : { assigneeGroupId: owner.id }),
+            ...(owner.kind === "agent"
+              ? { assigneeAgentId: owner.id }
+              : { assigneeGroupId: owner.id }),
           });
         } catch {
           assignmentFailed = true;
@@ -3477,9 +3582,14 @@ export function CollaborationPlatformApp({
   let content: React.ReactNode;
   if (state.loading) {
     content = (
-      <div className="collaboration-loading">
-        {translate("common.loading", "正在加载…")}
-      </div>
+      <ProjectLoadingSkeleton
+        label={translate("common.loading", "正在加载…")}
+        layout={
+          host.location.projectId && host.location.projectView === "board"
+            ? "board"
+            : "list"
+        }
+      />
     );
   } else if (state.error) {
     content = (
@@ -3503,6 +3613,7 @@ export function CollaborationPlatformApp({
       ) : (
         <CollaborationApp
           api={scopedApi}
+          initialProject={selectedProject ?? undefined}
           locale={locale}
           showProjectBack={false}
           host={{
@@ -3515,12 +3626,14 @@ export function CollaborationPlatformApp({
               projectId: host.location.projectId,
               issueId: host.location.issueId,
               view: host.location.projectView,
+              projectSettingsSection: host.location.projectSettingsSection,
             },
             navigate: (location) =>
               navigateWithin(host, {
                 projectId: location.projectId,
                 issueId: location.issueId,
                 projectView: location.view,
+                projectSettingsSection: location.projectSettingsSection,
                 workspaceView: "projects",
               }),
             notify: host.notify,
@@ -3543,7 +3656,14 @@ export function CollaborationPlatformApp({
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return item.is_unread || operation === "failed" || operation === "review";
+      return (
+        item.human_work?.can_start ||
+        item.human_work?.can_submit ||
+        item.human_work?.can_review ||
+        item.is_unread ||
+        operation === "failed" ||
+        operation === "review"
+      );
     });
     content =
       rootView === "agents" ||
@@ -3673,6 +3793,16 @@ export function CollaborationPlatformApp({
               pending={rootIssueLoading}
               onCreateIssue={(content, memberIds, files) =>
                 startRootIssueCreation(content, memberIds, files)
+              }
+              onOpenExecutionEnvironments={(project) =>
+                navigateWithin(host, {
+                  workspaceId: project.workspace_id ?? null,
+                  workspaceView: "projects",
+                  projectId: project.id,
+                  projectView: "manage",
+                  projectSettingsSection: "environments",
+                  issueId: null,
+                })
               }
             />
           )}
@@ -3999,6 +4129,8 @@ export function CollaborationPlatformApp({
       workspaces={state.workspaces}
       workspaceNavigationContext={state.workspaceNavigationContext}
       projects={state.navigationProjects}
+      navigationIncomplete={state.navigationIncomplete}
+      onRetryNavigation={commands.reload}
       onCreateWorkspace={() => {
         setCreateProjectAfterWorkspace(false);
         setWorkspaceDialogOpen(true);

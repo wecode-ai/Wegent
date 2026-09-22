@@ -63,6 +63,8 @@ export interface CollaborationWorkspaceControllerMessages {
 export interface CollaborationWorkspaceControllerOptions {
   api: SharedWorkspaceApi | null | undefined;
   location: CollaborationLocation;
+  /** Seed a project already authorized and loaded by the parent navigation. */
+  initialProject?: CollaborationProject;
   messages: CollaborationWorkspaceControllerMessages;
   myWorkEnabled?: boolean;
   pollIntervalMs?: number;
@@ -80,7 +82,11 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProjects(): Promise<void>;
   loadProjectCatalog(options?: { isCurrent?(): boolean }): Promise<void>;
   loadMyWork(): Promise<void>;
-  loadProject(projectId: string, showLoading?: boolean): Promise<void>;
+  loadProject(
+    projectId: string,
+    showLoading?: boolean,
+    options?: { isCurrent?(): boolean },
+  ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
   ): Promise<WorkspaceBoardSnapshot | null>;
@@ -915,8 +921,14 @@ export function createCollaborationWorkspaceControllerCommands({
     pendingReadRequests.set(issue.id, request);
     return request;
   };
-  const loadProject = async (projectId: string, showLoading = true) => {
+  const loadProject = async (
+    projectId: string,
+    showLoading = true,
+    options?: { isCurrent?(): boolean },
+  ) => {
     const revision = ++projectLoadRevision;
+    const isCurrent = () =>
+      revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
     const mutationGeneration = projectMutationGeneration(projectId);
     if (showLoading) dispatch({ type: "loading", value: true });
     try {
@@ -924,7 +936,7 @@ export function createCollaborationWorkspaceControllerCommands({
         catalogProjects.find((item) => item.id === projectId) ??
         (await api.projects.get(projectId));
       if (
-        revision !== projectLoadRevision ||
+        !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
@@ -951,7 +963,7 @@ export function createCollaborationWorkspaceControllerCommands({
         homeSnapshot ??
         (await loadStandardSnapshot(projectId));
       if (
-        revision !== projectLoadRevision ||
+        !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
@@ -967,10 +979,10 @@ export function createCollaborationWorkspaceControllerCommands({
           : undefined,
       });
     } catch {
-      if (revision !== projectLoadRevision) return;
+      if (!isCurrent()) return;
       reportError(messages.loadFailed, "load");
     } finally {
-      if (showLoading && revision === projectLoadRevision) {
+      if (showLoading && isCurrent()) {
         dispatch({ type: "loading", value: false });
       }
     }
@@ -1103,7 +1115,7 @@ export function createCollaborationWorkspaceControllerCommands({
                   getProjectSnapshot(projectId),
                 )
               ).snapshot
-            : await api.issues.getBoardSnapshot(projectId);
+            : await loadStandardSnapshot(projectId);
         if (mutationGeneration !== projectMutationGeneration(projectId))
           return null;
         dispatch({ type: "project-snapshot-loaded", projectId, snapshot });
@@ -1498,6 +1510,7 @@ export function createCollaborationWorkspaceControllerCommands({
 export function useCollaborationWorkspaceController({
   api,
   location,
+  initialProject,
   messages,
   myWorkEnabled = api?.myWork !== undefined,
   pollIntervalMs = 15_000,
@@ -1512,7 +1525,12 @@ export function useCollaborationWorkspaceController({
 }: CollaborationWorkspaceControllerOptions): CollaborationWorkspaceController {
   const [state, dispatch] = useReducer(
     collaborationWorkspaceControllerReducer,
-    initialCollaborationWorkspaceControllerState,
+    initialProject
+      ? {
+          ...initialCollaborationWorkspaceControllerState,
+          projects: [initialProject],
+        }
+      : initialCollaborationWorkspaceControllerState,
   );
   const selectedIssueRef = useRef(state.selectedIssue);
   const projectsRef = useRef(state.projects);
@@ -1563,10 +1581,11 @@ export function useCollaborationWorkspaceController({
     const isCurrent = () => locationLoadRevisionRef.current === revision;
     if (location.projectId) {
       const projectId = location.projectId;
-      void commands.loadProjectCatalog({ isCurrent }).then(() => {
-        if (!isCurrent() || !loadProjectOnLocation) return;
-        return commands.loadProject(projectId);
-      });
+      if (loadProjectOnLocation) {
+        void commands.loadProject(projectId, true, { isCurrent });
+      } else {
+        void commands.loadProjectCatalog({ isCurrent });
+      }
       if (myWorkEnabled && location.rootView === "my-work")
         void commands.loadMyWork();
     } else if (myWorkEnabled && location.rootView === "my-work") {

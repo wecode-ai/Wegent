@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { CLOUD_PUBLIC_MODEL_NAME, selectE2EModel } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -13,15 +13,95 @@ import {
 } from './response-protocol.mjs'
 
 const INITIAL = 'BOARD_REPLY_CLOUD_MODEL_INITIAL'
+const INVALID_MODEL = 'BOARD_REPLY_CLOUD_MODEL_INVALID'
 const REPLY = 'BOARD_REPLY_CLOUD_MODEL_CONTINUE'
+const MEMBER_REPLY = 'BOARD_MEMBER_CONTINUE'
 const PUBLIC_MODEL_ID = 'desktop-e2e-public-upstream-model'
+
+async function requestJson(cloud, path, options = {}) {
+  const response = await fetch(`${cloud.backendUrl}${path}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+  })
+  const body = await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${path} returned ${response.status}: ${JSON.stringify(body.detail)}`
+  )
+  return body
+}
+
+async function verifyMemberReply(cloud, issue, rootId) {
+  const userName = `board-member-${process.pid}`
+  const password = 'board-member-e2e-password'
+  const member = await requestJson(cloud, '/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({ user_name: userName, password, role: 'user', auth_source: 'password' }),
+  })
+  await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}/members`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: member.id, role: 'Developer' }),
+  })
+  const login = await requestJson(cloud, '/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ user_name: userName, password }),
+  })
+  const memberCloud = { ...cloud, authToken: login.access_token }
+  const agents = await requestJson(
+    memberCloud,
+    `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`
+  )
+  assert.ok(
+    !agents.some(agent => agent.id === cloud.agentId),
+    'The regression member must not see the admin-only agent'
+  )
+  const { io } = createRequire(
+    new URL('../../../../packages/chat-core/package.json', import.meta.url)
+  )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
+  const socket = io(`${cloud.backendUrl}/wework-runtime`, {
+    path: '/socket.io',
+    transports: ['websocket'],
+    auth: { token: login.access_token },
+    autoConnect: false,
+    forceNew: true,
+    reconnection: false,
+  })
+  try {
+    await new Promise((resolve, reject) => {
+      socket.once('connect', resolve)
+      socket.once('connect_error', reject)
+      socket.connect()
+    })
+    const sent = await socket.timeout(10_000).emitWithAck('wework:project_chat:message:send', {
+      projectId: cloud.projectId,
+      taskId: issue.id,
+      clientMessageId: crypto.randomUUID(),
+      content: MEMBER_REPLY,
+      replyToMessageId: rootId,
+      mentions: [],
+    })
+    assert.equal(sent.ok, true)
+    const execution = await socket
+      .timeout(10_000)
+      .emitWithAck('wework:project_chat:comment:execute', {
+        projectId: cloud.projectId,
+        taskId: issue.id,
+        triggerMessageId: sent.result.messageId,
+      })
+    assert.equal(execution.ok, true, execution.error?.message)
+    return memberCloud
+  } finally {
+    socket.disconnect()
+  }
+}
 
 async function readPersistedExecutions(
   { backendUrl, authToken, projectId },
   taskId,
   prompts,
   timeoutMs,
-  requireCompleted = false
+  expectedStatus = null
 ) {
   const { io } = createRequire(
     new URL('../../../../packages/chat-core/package.json', import.meta.url)
@@ -65,14 +145,42 @@ async function readPersistedExecutions(
       if (
         runs.every(
           message =>
-            message?.runtimeAddress?.taskId &&
-            (!requireCompleted ||
-              (message.status === 'completed' && message.metadata.run_status === 'completed'))
+            message &&
+            (expectedStatus === 'failed' || message.runtimeAddress?.taskId) &&
+            (!expectedStatus ||
+              (message.status === expectedStatus && message.metadata.run_status === expectedStatus))
         )
       )
         return runs
       await new Promise(resolve => setTimeout(resolve, 100))
     }
+    const cloud = { backendUrl, authToken }
+    const [devices, executions] = await Promise.all([
+      requestJson(cloud, '/api/devices/online'),
+      requestJson(cloud, `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`),
+    ])
+    console.error(
+      '[board-reply-model] Runtime delivery diagnostics',
+      JSON.stringify({
+        devices: devices.items.map(device => ({
+          id: device.id,
+          deviceId: device.device_id,
+          type: device.device_type,
+          instance: device.runtime_instance_id,
+          used: device.slot_used,
+          limit: device.slot_max,
+        })),
+        executions: executions.items.map(execution => ({
+          id: execution.id,
+          status: execution.status,
+          deviceId: execution.executionDeviceId,
+          runtimeDeviceId: execution.runtimeDeviceId,
+          runtimeTaskId: execution.runtimeTaskId,
+          approvalStatus: execution.approvalStatus,
+          error: execution.errorMessage,
+        })),
+      })
+    )
     assert.fail(`A fresh client could not read persisted executions for ${prompts.join(', ')}`)
   } finally {
     socket.disconnect()
@@ -118,7 +226,13 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
       }
       const body = await readRequestBody(request)
       const text = latestModelInputText(body)
-      const marker = text.includes(REPLY) ? REPLY : text.includes(INITIAL) ? INITIAL : null
+      const marker = text.includes(MEMBER_REPLY)
+        ? MEMBER_REPLY
+        : text.includes(REPLY)
+          ? REPLY
+          : text.includes(INITIAL)
+            ? INITIAL
+            : null
       if (marker) upstreamModels.set(marker, body.model)
       const id = `board-reply-model-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -137,12 +251,74 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
       try {
         const activity = scope(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const composer = `${activity} [data-testid="cloud-task-activity-composer"]`
-        await control.command('click', `${activity} [data-testid="task-comment-settings-toggle"]`)
-        await selectE2EModel(
-          control,
-          CLOUD_PUBLIC_MODEL_NAME,
-          PUBLIC_MODEL_ID,
-          `${activity} footer`
+        const agents = await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`
+        )
+        const agent = agents.find(item => item.id === cloud.agentId)
+        assert.ok(agent, 'The configured agent must exist')
+        const devices = await requestJson(cloud, '/api/devices/online')
+        const device = devices.items.find(item => item.device_type === 'app')
+        assert.ok(device, 'The real desktop executor must be registered')
+        const environment = await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/execution-environments`,
+          { method: 'POST', body: JSON.stringify({ device_id: device.id }) }
+        )
+        assert.ok(
+          environment.device_key,
+          'The project execution environment must have a device key'
+        )
+        const configured = await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              version: agent.version,
+              model: CLOUD_PUBLIC_MODEL_NAME,
+              modelType: 'public',
+              modelOptions: {},
+              executionMode: 'auto',
+              executionDeviceId: environment.device_key,
+            }),
+          }
+        )
+        await control.command('fill', composer, { value: INVALID_MODEL })
+        await control.command('press', composer, { key: 'Enter' })
+        const [failedRun] = await readPersistedExecutions(
+          cloud,
+          issue.id,
+          [INVALID_MODEL],
+          uiTimeoutMs,
+          'failed'
+        )
+        assert.ok(
+          JSON.stringify(failedRun).includes('Cloud model identity is incomplete'),
+          'The execution must preserve the preflight failure reason'
+        )
+        const catalog = await requestJson(
+          cloud,
+          '/api/models/unified?scope=all&model_category_type=llm&client_origin=wework'
+        )
+        const model = catalog.data.find(
+          item => item.name === CLOUD_PUBLIC_MODEL_NAME && item.type === 'public'
+        )
+        assert.ok(model?.namespace, 'The cloud model must expose its namespace')
+        assert.equal(typeof model.resourceUserId, 'number')
+        await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              version: configured.version,
+              modelOptions: {
+                weworkCloudModelNamespace: model.namespace,
+                weworkCloudModelResourceUserId: String(model.resourceUserId),
+              },
+            }),
+          }
         )
         await control.command('fill', composer, { value: INITIAL })
         await control.command('press', composer, { key: 'Enter' })
@@ -170,8 +346,6 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         const rootId = original.runtime_handle.origin.rootCommentId
         assert.ok(rootId, 'The runtime task has no owning comment')
         assert.equal(rootId, initialRun.triggerMessageId)
-        // An unrelated new-comment selection must not override this card's model.
-        await selectE2EModel(control, undefined, undefined, `${activity} footer`)
         const reply = `${activity} [data-testid="cloud-task-activity-card-composer-${rootId}"]`
         await control.command('fill', reply, { value: REPLY })
         await control.command('press', reply, { key: 'Enter' })
@@ -192,12 +366,31 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           issue.id,
           [INITIAL, REPLY],
           uiTimeoutMs,
-          true
+          'completed'
         )
         assert.deepEqual(
           persisted.map(run => run.messageId),
           [initialRun.messageId, replyRun.messageId]
         )
+        const memberCloud = await verifyMemberReply(cloud, issue, rootId)
+        const [memberRun] = await readPersistedExecutions(
+          memberCloud,
+          issue.id,
+          [MEMBER_REPLY],
+          uiTimeoutMs,
+          'completed'
+        )
+        assert.deepEqual(memberRun.runtimeAddress, initialRun.runtimeAddress)
+        const transcript = await requestJson(memberCloud, '/api/runtime-work/transcript', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...memberRun.runtimeAddress,
+            projectSession: { projectId: String(cloud.projectId), issueId: issue.id },
+          }),
+        })
+        assert.equal(transcript.taskId, initialRun.runtimeAddress.taskId)
+        assert.ok(transcript.turns.length > 0, 'A member must read the admin-owned session history')
+        assert.equal(upstreamModels.get(MEMBER_REPLY), PUBLIC_MODEL_ID)
       } finally {
         active = false
       }

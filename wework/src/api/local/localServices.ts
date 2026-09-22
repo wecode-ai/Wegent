@@ -1256,6 +1256,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
+  executionDeviceId?: string
   workspacePath?: string | null
   standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
@@ -1412,6 +1413,7 @@ async function buildLocalRuntimeExecutionRequest(
     ...(input.origin ? { origin: input.origin } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
+    ...(input.executionDeviceId ? { execution_device_id: input.executionDeviceId } : {}),
     new_session: input.newSession,
     ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
@@ -1702,7 +1704,16 @@ async function createLocalRuntimeTaskPayload(
 
   return {
     ...payload,
-    ...(materialized?.runtimeHandle ? { runtimeHandle: materialized.runtimeHandle } : {}),
+    ...(materialized?.runtimeHandle || normalizedData.executionDeviceId
+      ? {
+          runtimeHandle: {
+            ...(materialized?.runtimeHandle ?? {}),
+            ...(normalizedData.executionDeviceId
+              ? { executionDeviceId: normalizedData.executionDeviceId }
+              : {}),
+          },
+        }
+      : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
@@ -1732,6 +1743,7 @@ async function createLocalRuntimeTaskPayload(
         additionalContext: normalizedData.additionalContext,
         attachments: normalizedData.attachments,
         localDeviceId,
+        executionDeviceId: normalizedData.executionDeviceId,
         workspacePath: runtimeWorkspace?.workspacePath,
         standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
         runtimeProjectKey: normalizedData.runtimeProjectKey,
@@ -1805,6 +1817,8 @@ async function createLocalRuntimeSendPayload(
     stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
     'codex'
   const teamBinding = recordValue(recordValue(normalizedAddress.runtimeHandle).wegentTeam)
+  const executionDeviceId =
+    stringValue(recordValue(normalizedAddress.runtimeHandle).executionDeviceId) ?? undefined
   const wegentTeamId =
     typeof teamBinding.id === 'number' && teamBinding.id > 0 ? teamBinding.id : null
   const materializedExecutionRequest =
@@ -1862,6 +1876,7 @@ async function createLocalRuntimeSendPayload(
         cloudProjectId: normalizedData.cloudProjectId,
         origin: normalizedData.origin,
         localDeviceId,
+        executionDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
@@ -1913,6 +1928,7 @@ async function createLocalRuntimeSendPayload(
         cloudProjectId: normalizedData.cloudProjectId,
         origin: normalizedData.origin,
         localDeviceId,
+        executionDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
@@ -2927,7 +2943,10 @@ export function createRuntimeWorkApiFromIpc(
     cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
-    async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+    async createRuntimeTask(
+      data: RuntimeTaskCreateRequest,
+      beforeDispatch?: () => Promise<void>
+    ): Promise<RuntimeTaskCreateResponse> {
       const startedAt = Date.now()
       logRuntimeTaskCreateStage('local-create-started', {
         taskId: data.taskId ?? null,
@@ -3003,6 +3022,8 @@ export function createRuntimeWorkApiFromIpc(
         userId: executionRequest.user_id ?? null,
         userName: stringValue(executionRequest.user_name),
       })
+      // Fence delivery only after preparation succeeds and before Runtime can accept the task.
+      await beforeDispatch?.()
       logRuntimeTaskCreateStage('local-rpc-dispatched', {
         taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,

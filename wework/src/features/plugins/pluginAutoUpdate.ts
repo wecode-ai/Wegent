@@ -1,3 +1,4 @@
+import { beginOperation } from '@/telemetry/operationBus'
 import type {
   PluginAutoUpdateBatchResponse,
   PluginDeviceSyncResponse,
@@ -56,6 +57,8 @@ export interface CurrentDevicePluginAutoUpdateResult {
   deviceSyncPerformed: boolean
 }
 
+class PluginAutoUpdateConfirmationError extends Error {}
+
 export const PLUGIN_AUTO_UPDATE_FAILURE_LIMIT = 3
 
 type PluginUpdateState = Pick<
@@ -98,6 +101,32 @@ export async function runPluginAutoUpdate({
   syncWhenNoUpdates = false,
   onProgress,
 }: PluginAutoUpdateDependencies): Promise<PluginAutoUpdateResult> {
+  const attempt = beginOperation('plugin.auto_update')
+  try {
+    const result = await runPluginAutoUpdatePass({
+      updateBatch,
+      syncPlugin,
+      syncDevice,
+      syncWhenNoUpdates,
+      onProgress,
+    })
+    if (result.failedCount > 0) attempt.fail('confirm')
+    else if (result.updatedCount > 0 || syncWhenNoUpdates) attempt.succeed()
+    else attempt.cancel()
+    return result
+  } catch (error) {
+    attempt.fail(error instanceof PluginAutoUpdateConfirmationError ? 'confirm' : 'request')
+    throw error
+  }
+}
+
+async function runPluginAutoUpdatePass({
+  updateBatch,
+  syncPlugin,
+  syncDevice,
+  syncWhenNoUpdates = false,
+  onProgress,
+}: PluginAutoUpdateDependencies): Promise<PluginAutoUpdateResult> {
   let processedCount = 0
   let updatedCount = 0
   const failures: PluginAutoUpdateFailure[] = []
@@ -105,7 +134,7 @@ export async function runPluginAutoUpdate({
     const batch = await updateBatch()
     if (batch.updatedCount === 0) {
       if (batch.remainingCount > 0) {
-        throw new Error('Plugin auto-update made no progress')
+        throw new PluginAutoUpdateConfirmationError('Plugin auto-update made no progress')
       }
       if (processedCount > 0 || !syncWhenNoUpdates) {
         return { updatedCount, failedCount: failures.length, failures }

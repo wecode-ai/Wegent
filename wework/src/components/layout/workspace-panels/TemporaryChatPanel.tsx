@@ -20,6 +20,7 @@ import {
   type ReactNode,
 } from 'react'
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
@@ -151,7 +152,9 @@ export function TemporaryChatPanel({
   scrollOrigin = 'bottom',
   onOpenRuntimeTask,
 }: TemporaryChatPanelProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+  const conversationTranslate = useMemo(() => createCollaborationTranslator(locale), [locale])
   const {
     services,
     state,
@@ -268,6 +271,9 @@ export function TemporaryChatPanel({
   )
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(Boolean(initialAddress && !sendEphemeral))
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyRevision, setHistoryRevision] = useState(0)
   const [sending, setSending] = useState(false)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -343,6 +349,8 @@ export function TemporaryChatPanel({
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
     const hydrationToken = beginRuntimeConversationHydration(address)
+    setHistoryLoading(true)
+    setHistoryError(null)
     const usageRevision = contextUsageStore.getRevision()
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
@@ -364,14 +372,24 @@ export function TemporaryChatPanel({
       .catch(caughtError => {
         abortRuntimeConversationHydration(address, hydrationToken)
         if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
-          setError(caughtError instanceof Error ? caughtError.message : '加载临时聊天失败')
+          setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
         }
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
       })
     return () => {
       cancelled = true
       abortRuntimeConversationHydration(address, hydrationToken)
     }
-  }, [address, contextUsageStore, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
+  }, [
+    address,
+    contextUsageStore,
+    lifecycleStore,
+    loadRuntimeTranscriptForPane,
+    sendEphemeral,
+    historyRevision,
+  ])
 
   useEffect(() => {
     if (!address) return
@@ -551,7 +569,7 @@ export function TemporaryChatPanel({
           optimisticAddress = nextAddress
           createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
           setMessages(getRuntimeConversationMessages(nextAddress))
-          updateAddress(nextAddress)
+          setAddress(nextAddress)
         }
         targetAddress = createTask
           ? await createTask(message, {
@@ -658,7 +676,6 @@ export function TemporaryChatPanel({
       currentProject,
       input,
       busy,
-      lifecycleStore,
       queuedMessages.length,
       conversationQueue,
       sideChatProjectChat,
@@ -798,12 +815,15 @@ export function TemporaryChatPanel({
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
+      loading={historyLoading}
+      loadError={historyError}
+      onRetry={() => setHistoryRevision(value => value + 1)}
       testId={testId}
       emptyStateText={emptyStateText}
       expanded={expanded}
       wideComposer={wideComposer}
       onRestoreConversation={onRestoreConversation}
-      translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
+      translate={conversationTranslate}
       composer={
         <ComposerCatalogContext.Provider value={composerCatalog}>
           <BufferedChatInput

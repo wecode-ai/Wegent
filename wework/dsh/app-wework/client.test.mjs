@@ -649,11 +649,28 @@ test('binds the conversation transcript controller for client plugins', async ()
       assert.deepEqual(value, reference)
       return snapshot
     },
+    async readAssetChunk(value, request) {
+      assert.deepEqual(value, reference)
+      assert.deepEqual(request, { path: '/tmp/image.png', offset: 0, length: 4 })
+      return { chunkBase64: 'AQIDBA==', bytesRead: 4, eof: true, size: 4 }
+    },
   })
 
   assert.deepEqual(
     JSON.parse(JSON.stringify(await runtime.service.conversations.getTranscript(reference))),
     snapshot
+  )
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await runtime.service.conversations.readAssetChunk(reference, {
+          path: '/tmp/image.png',
+          offset: 0,
+          length: 4,
+        })
+      )
+    ),
+    { chunkBase64: 'AQIDBA==', bytesRead: 4, eof: true, size: 4 }
   )
   assert.equal(runtime.host.conversations.bind, undefined)
   dispose()

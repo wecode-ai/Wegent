@@ -8,19 +8,27 @@ import { BrowserTaskConversationContent } from './BrowserTaskConversationContent
 export function IssueTaskConversation({
   binding,
   issueId,
+  projectStore,
   runtime,
   translate,
   onClose,
 }: {
   binding: SharedIssueDetailTaskBinding
   issueId: string
+  projectStore?: 'local' | 'backend'
   runtime: SharedWorkspaceRuntimeApi
   translate: CollaborationTranslate
   onClose(): void
 }) {
   const address = useMemo(
-    () => ({ deviceId: binding.device_id, taskId: binding.task_id }),
-    [binding.device_id, binding.task_id]
+    () => ({
+      deviceId: binding.device_id,
+      taskId: binding.task_id,
+      ...(projectStore === 'backend'
+        ? { projectSession: { projectId: binding.cloud_project_id, issueId } }
+        : {}),
+    }),
+    [binding.device_id, binding.task_id, binding.cloud_project_id, issueId, projectStore]
   )
   return (
     <IssueTaskConversationPanel

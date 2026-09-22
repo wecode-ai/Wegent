@@ -11,6 +11,7 @@ import type {
 import type { IssueWorkflowPlanView } from "./IssueWorkflowPlanSection";
 import type { WorkflowDeliverableDraft } from "./WorkflowStageCompletionDialog";
 import type { SharedWorkflowNode } from "./workflowTypes";
+import type { ExecutionDisplayStatus } from "./executionStatus";
 
 export interface SharedIssueDetailTaskBinding {
   id: string;
@@ -25,6 +26,11 @@ export interface SharedIssueDetailTaskBinding {
   workflow_node_id?: string | null;
   binding_type?: "system" | "user";
   linked_at: string;
+}
+
+export interface SharedIssueDetailTaskExecutionState {
+  status: ExecutionDisplayStatus;
+  queuePosition?: number | null;
 }
 
 export interface SharedIssueDetailCollaborator {
@@ -103,6 +109,8 @@ export interface SharedIssueDetailCreateInput {
   workflow?: Record<string, unknown> | null;
   execution_config?: Record<string, unknown> | null;
   automation_rule_id?: string | null;
+  assignee_user_id?: number | null;
+  notify_assignee?: boolean;
   creator_name?: string;
 }
 
@@ -507,6 +515,12 @@ export function createSharedIssueDetailPort(
             : {}),
           ...(input.automation_rule_id !== undefined
             ? { automationRuleId: input.automation_rule_id }
+            : {}),
+          ...(input.assignee_user_id !== undefined
+            ? { assigneeUserId: input.assignee_user_id }
+            : {}),
+          ...(input.notify_assignee !== undefined
+            ? { notifyAssignee: input.notify_assignee }
             : {}),
         }),
       update: (issueId, input) =>

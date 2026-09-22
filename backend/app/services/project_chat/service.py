@@ -43,6 +43,7 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.ghost_capabilities import (
     load_ghost_chain,
     merge_ghost_capabilities,
@@ -91,21 +92,22 @@ def require_project_execution_environment(
     project_id: int | str,
     execution_device_id: str,
 ) -> None:
-    configured = (
-        db.query(ResourceMember)
-        .join(Kind, Kind.id == ResourceMember.resource_id)
+    devices = (
+        db.query(Kind)
+        .join(ResourceMember, Kind.id == ResourceMember.resource_id)
         .filter(
             ResourceMember.resource_type == ResourceType.DEVICE.value,
             ResourceMember.entity_type == "project",
             ResourceMember.entity_id == str(project_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
             Kind.kind == "Device",
-            Kind.name == execution_device_id,
             Kind.is_active.is_(True),
         )
-        .first()
+        .all()
     )
-    if configured is None:
+    if not any(
+        runtime_device_route_id(device) == execution_device_id for device in devices
+    ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Execution environment is not configured in this Project",
@@ -734,7 +736,9 @@ class ProjectChatService:
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
-            required_role=BaseRole.Developer,
+            required_role=(
+                BaseRole.Reporter if request.task_id else BaseRole.Developer
+            ),
         )
         self._validate_agent_mentions(db, project, request)
         existing = (
@@ -1779,11 +1783,18 @@ class ProjectChatService:
             next_state["lease_expires_at"] = lease_expires_at.isoformat()
             next_state["completed_at"] = None
             next_state["last_error"] = None
-            if not external_index and task.status not in {
-                "in_progress",
-                "in_review",
-                "completed",
-            }:
+            from app.services.human_issue_work import human_issue_work_service
+
+            if (
+                not external_index
+                and not human_issue_work_service.is_direct_human_assignment(db, task)
+                and task.status
+                not in {
+                    "in_progress",
+                    "in_review",
+                    "completed",
+                }
+            ):
                 project = db.get(CloudProject, task.cloud_project_id)
                 if project is not None:
                     write_status_change(

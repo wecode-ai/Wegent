@@ -108,6 +108,44 @@ function createKnowledgeBase(
 }
 
 describe('KnowledgeGroupListPage category filter', () => {
+  it('shows the advanced toggle and forwards changes', async () => {
+    const user = userEvent.setup()
+    const onShowAdvancedKnowledgeChange = jest.fn()
+    render(
+      <KnowledgeGroupListPage
+        groupId="engineering"
+        groupName="Engineering"
+        knowledgeBases={[createKnowledgeBase(1, 'Notebook', 'notebook')]}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        hasAdvancedKnowledge
+        onShowAdvancedKnowledgeChange={onShowAdvancedKnowledgeChange}
+      />
+    )
+
+    const toggle = screen.getByTestId('show-advanced-knowledge-toggle')
+    expect(toggle).toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(onShowAdvancedKnowledgeChange).toHaveBeenCalledWith(true)
+  })
+
+  it('does not show the advanced toggle when no advanced knowledge is available', () => {
+    render(
+      <KnowledgeGroupListPage
+        groupId="engineering"
+        groupName="Engineering"
+        knowledgeBases={[createKnowledgeBase(1, 'Notebook', 'notebook')]}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        onShowAdvancedKnowledgeChange={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('show-advanced-knowledge-toggle')).not.toBeInTheDocument()
+  })
+
   it('groups notebook and classic bases as documents, separately from code wikis', async () => {
     const user = userEvent.setup()
     render(
@@ -121,6 +159,7 @@ describe('KnowledgeGroupListPage category filter', () => {
         ]}
         isLoading={false}
         onSelectKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -146,6 +185,7 @@ describe('KnowledgeGroupListPage category filter', () => {
         knowledgeBases={[createKnowledgeBase(1, 'Notebook', 'notebook')]}
         isLoading={false}
         onSelectKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -163,6 +203,7 @@ describe('KnowledgeGroupListPage category filter', () => {
         knowledgeBases={[createKnowledgeBase(1, 'Notebook', 'notebook')]}
         isLoading={false}
         onSelectKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -176,6 +217,7 @@ describe('KnowledgeGroupListPage category filter', () => {
       groupName: 'Personal',
       isLoading: false,
       onSelectKb: jest.fn(),
+      showAdvancedKnowledge: true,
     }
     const { rerender } = render(
       <KnowledgeGroupListPage

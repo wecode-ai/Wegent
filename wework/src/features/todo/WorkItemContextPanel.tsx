@@ -12,6 +12,7 @@ interface WorkItemContextPanelProps {
   project: CloudProject
   item: CloudLoopItem
   currentTask: RuntimeTaskAddress
+  deviceNamesById?: Readonly<Record<string, string>>
   onOpenBoard: () => void
   onOpenTask: (address: RuntimeTaskAddress) => Promise<void> | void
 }
@@ -21,6 +22,7 @@ export function WorkItemContextPanel({
   project,
   item,
   currentTask,
+  deviceNamesById,
   onOpenBoard,
   onOpenTask,
 }: WorkItemContextPanelProps) {
@@ -68,6 +70,7 @@ export function WorkItemContextPanel({
             </button>
           }
           selectedTaskId={currentTask.taskId}
+          deviceNamesById={deviceNamesById}
           api={api}
           item={currentItem}
           project={project}

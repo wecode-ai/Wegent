@@ -16,6 +16,7 @@
   "error_task_deleted_desc": "This shared task has been deleted by the owner and is no longer available.",
   "error_load_failed": "Failed to Load",
   "error_load_failed_desc": "Unable to load the shared task. Please try again later.",
+  "status_cancelled": "Cancelled",
   "go_home": "Go to Chat",
   "share_success_title": "Share Task Successfully",
   "share_success_message": "Your task {taskTitle} has been shared successfully!",
