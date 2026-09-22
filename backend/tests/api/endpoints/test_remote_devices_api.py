@@ -88,8 +88,24 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert response.env["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.current.example"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://localhost:17888"
+    assert response.env["DEVICE_SESSION_GATEWAY_PORT"] == "17888"
     assert response.image == "ghcr.io/wecode-ai/wegent-device:latest"
-    assert "-p 17888:17888" in response.command
+    assert (
+        'DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"'
+        in response.command
+    )
+    assert (
+        '-e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT"'
+        in response.command
+    )
+    assert (
+        '-e DEVICE_PUBLIC_BASE_URL=http://localhost:"$DEVICE_SESSION_GATEWAY_PORT"'
+        in response.command
+    )
+    assert (
+        '-p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT"'
+        in response.command
+    )
     assert "--network host" not in response.command
     assert [command.kind for command in response.commands] == ["docker", "process"]
     assert response.commands[0].command == response.command

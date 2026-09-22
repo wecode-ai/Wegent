@@ -73,6 +73,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
         transport.clone(),
         StaticCapabilityReporter,
     );
+    client.set_runtime_transfer_port(Some(17888));
 
     let registered = client
         .register_device(Duration::from_secs(2))
@@ -91,6 +92,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
+    assert_eq!(calls[0].payload["runtime_transfer_port"], 17888);
     assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
     assert_eq!(
         calls[0].payload["runtime_features"]["interactiveSessions"],
@@ -128,6 +130,25 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
 }
 
 #[tokio::test]
+async fn standalone_runner_reports_actual_dynamic_gateway_port() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+
+    let runner_task = tokio::spawn(runner.run_forever());
+    let calls = transport.wait_for_calls(1).await;
+    runner_task.abort();
+    let _ = runner_task.await;
+
+    let reported_port = calls[0].payload["runtime_transfer_port"]
+        .as_u64()
+        .expect("dynamic gateway should report its actual bound port");
+    assert!((1..=u16::MAX as u64).contains(&reported_port));
+}
+
+#[tokio::test]
 async fn local_backend_accepts_socketio_wrapped_registration_ack() {
     let transport = RecordingTransport::with_responses(vec![json!([
         {"success": true, "device_id": "device-1"}
@@ -161,6 +182,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         transport.clone(),
         StaticCapabilityReporter,
     );
+    client.set_runtime_transfer_port(Some(23456));
     client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
@@ -173,6 +195,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["device_id"], "device-1");
     assert_eq!(calls[0].payload["running_task_ids"], json!(["10", "20"]));
     assert_eq!(calls[0].payload["executor_version"], "test-version");
+    assert_eq!(calls[0].payload["runtime_transfer_port"], 23456);
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
     assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 4);
