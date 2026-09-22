@@ -126,6 +126,7 @@ import {
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
+  reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationGoal,
   setRuntimeConversationTaskPlan,
@@ -1925,6 +1926,7 @@ export function WorkbenchProvider({
                 refresh: true,
               })
               if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+              reconcileRuntimeConversationSnapshot(address, transcript.turns)
               lifecycleStore.syncTranscript(address, transcript)
               if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return
               continue

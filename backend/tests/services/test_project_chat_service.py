@@ -51,6 +51,7 @@ from app.schemas.project_chat import (
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
 from app.services.ghost_capabilities import MergedGhostCapabilities
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
     TaskContext,
@@ -2870,6 +2871,81 @@ def test_device_runtime_event_projects_directly_bound_issue_status(
         (task.id, "runtime_execution_status"),
         (task.id, "runtime_execution_status"),
     ]
+
+
+def test_device_runtime_event_preserves_direct_human_issue_status(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-HUMAN-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Human Issue with AI assistance",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        assignee_user_id=test_user.id,
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=task.id,
+        task_user_id=test_user.id,
+        device_id="local-device",
+        task_id="runtime-human-1",
+        linked_by_user_id=test_user.id,
+    )
+    test_db.add_all([task, binding])
+    test_db.flush()
+    issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=task.id,
+        member_type="human",
+        member_id=str(test_user.id),
+        assigned_by_user_id=test_user.id,
+        workflow_step=None,
+        notify=False,
+        trigger="test",
+    )
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    for sequence, event_name in enumerate(
+        ("response.created", "response.completed"), start=1
+    ):
+        _project_chat_runtime_event_sync(
+            "local-device",
+            {
+                "event": event_name,
+                "payload": {
+                    "taskId": binding.task_id,
+                    "eventSeq": sequence,
+                    "data": {"value": "Done"},
+                },
+            },
+            test_user.id,
+        )
+        test_db.refresh(task)
+        assert task.status == "in_progress"
+
+    test_db.refresh(binding)
+    assert binding.metadata_json["runtime_status_event_seq"] == 2
+    assert not any(
+        entry.get("trigger") == "runtime_succeeded"
+        for entry in (task.metadata_json or {}).get("status_history", [])
+    )
 
 
 def test_device_runtime_event_projects_bound_workflow_task_status(

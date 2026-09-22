@@ -22,6 +22,7 @@ core_segments=(
   offline-local-project-space
   board-focus-view
   cloud-context-resilience
+  cloud-login-proxy
   core-dsh-plugin-management
   plugin-development
   project-ai-settings
@@ -157,7 +158,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,fork-provider-preservation,computer-use,codex-account-login
+  model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
 )
 
 validate_core_shards() {
@@ -342,6 +343,17 @@ classify_wework_path() {
       select_target "core:codex-account-login"
       return
       ;;
+
+    # Desktop sign-in travels through the operating system proxy, so the main
+    # process and the renderer must share one network path.
+    wework/electron/src/host/cloud-http* | \
+      wework/electron/src/host/cloud-credential-service* | \
+      wework/e2e/desktop/modules/cloud-login-proxy-fixtures.mjs | \
+      wework/e2e/desktop/scenarios/cloud-login-proxy.scenario.mjs)
+      select_target "core:cloud-login-proxy"
+      return
+      ;;
+
     # Documentation does not change the packaged desktop application.
     wework/*.md)
       return

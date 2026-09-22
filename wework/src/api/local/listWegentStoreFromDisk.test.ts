@@ -83,6 +83,45 @@ describe('listWegentStorePluginsFromDisk', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.store.list')
   })
 
+  test('keeps a managed personal share linked to its cloud catalog identity', async () => {
+    mocks.requestLocalExecutor.mockResolvedValue({
+      storePath: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins',
+      plugins: [
+        {
+          name: 'dailydata-monitor',
+          packageId: '524804-wework-personal-dailydata-monitor-0.16.3',
+          installedPluginId: 524804,
+          cloudPluginId: 32,
+          marketplace: 'wework-personal',
+          version: '0.16.3',
+          enabled: true,
+          displayName: 'Daily Data Monitor',
+          pluginPath:
+            '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/524804-wework-personal-dailydata-monitor-0.16.3',
+        },
+      ],
+    })
+
+    const plugins = await listWegentStorePluginsFromDisk()
+
+    expect(plugins).toHaveLength(1)
+    expect(plugins[0]).toMatchObject({
+      spec: {
+        origin: 'market',
+        source: {
+          type: 'marketplace',
+          marketplace: 'wework-personal',
+          pluginKey: 'dailydata-monitor',
+        },
+        sourcePayload: {
+          managedByWegent: true,
+          cloudPluginId: 32,
+          cloudInstalledPluginId: 524804,
+        },
+      },
+    })
+  })
+
   test('treats a missing disk listing as empty membership', async () => {
     mocks.requestLocalExecutor.mockResolvedValue(undefined)
 

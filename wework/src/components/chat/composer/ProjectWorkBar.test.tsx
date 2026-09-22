@@ -180,6 +180,25 @@ describe('ProjectWorkBar', () => {
     ])
   })
 
+  test('keeps execution controls while hiding a fixed project selector', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={null}
+        showProjectSelector={false}
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        middleContext={<button data-testid="workspace-context">我的任务</button>}
+        trailingContext={<button data-testid="execution-context">Codex</button>}
+      />
+    )
+
+    expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-context')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-context')).toBeInTheDocument()
+  })
+
   test('renders the work-item dropdown after execution mode and branch controls', () => {
     render(
       <ProjectWorkBar
@@ -292,6 +311,9 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
 
     expect(screen.getByText('暂无项目')).toBeInTheDocument()
+    expect(screen.getByTestId('project-empty-state')).toHaveTextContent(
+      '请添加本地项目或远程项目后重试。'
+    )
     expect(screen.getByTestId('add-local-project-option')).toHaveTextContent('添加本地项目')
     expect(screen.getByTestId('add-remote-project-option')).toHaveTextContent('添加远程项目')
     expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
@@ -706,6 +728,79 @@ describe('ProjectWorkBar', () => {
     )
   })
 
+  test('portals the desktop project chooser outside clipping ancestors', async () => {
+    const heightSpy = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
+    const widthSpy = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1200)
+
+    try {
+      render(
+        <div className="overflow-hidden">
+          <ProjectWorkBar
+            projects={[project]}
+            devices={[localDevice]}
+            runtimeWork={runtimeWork}
+            currentProject={project}
+            currentProjectId={project.id}
+            executionMode="current_workspace"
+            onSelectProject={vi.fn()}
+            onSelectStandaloneDevice={vi.fn()}
+            onExecutionModeChange={vi.fn()}
+          />
+        </div>
+      )
+
+      const projectButton = screen.getByTestId('project-work-button')
+      const projectSelector = projectButton.closest(
+        '[data-testid="project-work-bar"]'
+      )?.firstElementChild
+      if (!projectSelector) throw new Error('Project selector container was not rendered')
+      vi.spyOn(projectSelector, 'getBoundingClientRect').mockReturnValue({
+        x: 760,
+        y: 700,
+        top: 700,
+        right: 880,
+        bottom: 732,
+        left: 760,
+        width: 120,
+        height: 32,
+        toJSON: () => ({}),
+      })
+
+      await userEvent.click(projectButton)
+
+      await waitFor(() => {
+        const menu = screen.getByTestId('project-work-menu')
+        expect(menu.parentElement).toBe(document.body)
+        expect(menu).toHaveClass('fixed')
+        expect(Number.parseFloat(menu.style.maxHeight)).toBeGreaterThan(100)
+      })
+    } finally {
+      heightSpy.mockRestore()
+      widthSpy.mockRestore()
+    }
+  })
+
+  test('lists configured projects while runtime work is still empty', async () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={{ projects: [], chats: [], totalTasks: 0 }}
+        currentProject={project}
+        currentProjectId={project.id}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-option-7')).toHaveTextContent('Wegent')
+    expect(screen.queryByTestId('project-empty-state')).not.toBeInTheDocument()
+  })
+
   test('resolves the selected workspace within the current project before showing remote state', () => {
     const localDevice: DeviceInfo = {
       ...device,
@@ -868,6 +963,63 @@ describe('ProjectWorkBar', () => {
     expect(option).toHaveTextContent('在线')
   })
 
+  test('identifies project directories and unbound projects before selection', async () => {
+    const onBindProjectWorkspace = vi.fn()
+    const work: RuntimeWorkListResponse = {
+      ...runtimeWork,
+      projects: [
+        runtimeWork.projects[1],
+        {
+          project: {
+            id: 9,
+            key: 'desktop-project',
+            name: 'Desktop',
+            roots: [{ kind: 'local', path: '/Users/test/Workspace/Desktop' }],
+          },
+          deviceWorkspaces: [],
+        },
+      ],
+    }
+
+    render(
+      <ProjectWorkBar
+        projects={[]}
+        devices={[device]}
+        runtimeWork={work}
+        currentProjectId={undefined}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onBindProjectWorkspace={onBindProjectWorkspace}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    expect(screen.getByTestId('project-option-detail-8')).toHaveTextContent('/workspace/notes')
+    expect(screen.getByTestId('project-option-detail-8')).toHaveAttribute(
+      'title',
+      '/workspace/notes'
+    )
+    expect(screen.getByTestId('project-option-9')).toHaveTextContent('未绑定设备工作区')
+    expect(screen.getByTestId('project-option-detail-9')).toHaveTextContent('…/Workspace/Desktop')
+    expect(screen.getByTestId('project-option-detail-9')).toHaveAttribute(
+      'title',
+      '/Users/test/Workspace/Desktop'
+    )
+    expect(screen.getByTestId('project-bind-workspace-9')).toHaveTextContent('绑定设备工作区')
+
+    await userEvent.type(screen.getByTestId('project-search-input'), '/workspace/notes')
+    expect(screen.getByTestId('project-option-8')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-option-9')).not.toBeInTheDocument()
+    await userEvent.clear(screen.getByTestId('project-search-input'))
+    await userEvent.click(screen.getByTestId('project-option-9'))
+    expect(onBindProjectWorkspace).toHaveBeenCalledWith(9)
+  })
+
   test('expands a multi-workspace project before selection', async () => {
     const onSelectProjectWorkspace = vi.fn()
 
@@ -955,7 +1107,7 @@ describe('ProjectWorkBar', () => {
     expect(onSelectProjectWorkspace).toHaveBeenCalledWith(7, 301)
   })
 
-  test('does not read project rows without runtime workspaces', async () => {
+  test('offers workspace binding for configured projects without runtime workspaces', async () => {
     const onBindProjectWorkspace = vi.fn()
     const emptyProject: ProjectWithTasks = {
       id: 9,
@@ -987,9 +1139,12 @@ describe('ProjectWorkBar', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByText('暂无项目')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-bind-workspace-9')).not.toBeInTheDocument()
-    expect(onBindProjectWorkspace).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-option-9')).toHaveTextContent('Empty Project')
+    expect(screen.getByTestId('project-option-detail-9')).toHaveTextContent('未绑定设备工作区')
+
+    await userEvent.click(screen.getByTestId('project-bind-workspace-9'))
+
+    expect(onBindProjectWorkspace).toHaveBeenCalledWith(9)
   })
 
   test('shows worktree controls for Git workspaces even when current branch is empty', async () => {

@@ -17,8 +17,14 @@ const chatCallbacks = vi.hoisted(
   () => new Map<string, ComponentProps<typeof AiChatModal>['onAddressChange']>()
 )
 
-const issue = { id: 'TEST-1', title: 'Execute pwd', status: 'pending' } as CollaborationIssue
+const issue = {
+  id: 'TEST-1',
+  title: 'Execute pwd',
+  status: 'pending',
+  can_edit: true,
+} as CollaborationIssue
 let taskBindings: WorkspaceTaskBinding[] = []
+let chatMountCount = 0
 const getAnimations = vi.fn((): Partial<Animation>[] => [])
 const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, 'getAnimations')
 
@@ -31,6 +37,7 @@ beforeAll(() => {
 beforeEach(() => {
   getAnimations.mockReset().mockReturnValue([])
   taskBindings = []
+  chatMountCount = 0
 })
 afterAll(() => {
   if (originalGetAnimations) {
@@ -112,6 +119,10 @@ vi.mock('./TodoEditor', () => ({
     return (
       <section
         data-testid="cloud-todo-detail"
+        data-has-global-team-directory={props.teamApi ? 'true' : 'false'}
+        data-read-first={props.readFirst ? 'true' : 'false'}
+        data-selected-task-id={props.selectedTaskId ?? ''}
+        data-task-status={props.taskExecutionStates?.['binding-1']?.status ?? ''}
         onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -128,6 +139,7 @@ vi.mock('./TodoEditor', () => ({
           onChange={event => setDraft(event.target.value)}
         />
         <div data-testid="cloud-todo-detail-scroll" />
+        <div data-testid="cloud-todo-detail-device-name">{props.deviceNamesById?.device ?? ''}</div>
         {props.showAdditionalTaskAction && (
           <button onClick={() => props.onCreateTask?.()}>Add task</button>
         )}
@@ -153,9 +165,16 @@ vi.mock('./AiChatModal', () => ({
   AiChatModal: (props: ComponentProps<typeof AiChatModal>) => {
     // Like the real composer, the conversation address is initialized on mount.
     const [address] = useState(props.initialAddress)
+    const [mountId] = useState(() => ++chatMountCount)
     chatCallbacks.set(address?.taskId ?? 'new', props.onAddressChange)
     return (
-      <aside data-testid="ai-chat-modal" data-address={props.initialAddress?.taskId}>
+      <aside
+        data-testid="ai-chat-modal"
+        data-address={props.initialAddress?.taskId}
+        data-device-id={props.initialTaskRequest?.deviceId}
+        data-mount-id={mountId}
+        data-workspace-path={props.initialTaskRequest?.workspacePath}
+      >
         <span>Conversation: {address?.taskId}</span>
         <button data-testid="ai-chat-modal-close" onClick={props.onClose}>
           Close conversation
@@ -165,7 +184,15 @@ vi.mock('./AiChatModal', () => ({
   },
 }))
 
-function Project() {
+function Project({
+  executionEnvironment,
+  runtimeWork,
+}: {
+  executionEnvironment?: ComponentProps<
+    typeof WeworkSharedProject
+  >['project']['execution_environment']
+  runtimeWork?: ComponentProps<typeof WeworkSharedProject>['runtimeWork']
+} = {}) {
   const [location, setLocation] = useState<ComponentProps<typeof WeworkSharedProject>['location']>({
     platformView: 'spaces',
     workspaceId: 'workspace',
@@ -176,14 +203,47 @@ function Project() {
   })
   return (
     <WeworkSharedProject
-      api={{ projects: {}, issues: {} } as never}
-      project={{ id: 'project', name: 'Project', project_store: 'backend' } as never}
+      api={
+        {
+          projects: {
+            listExecutionEnvironments: vi.fn(async () => [
+              {
+                id: 'environment-22',
+                device_id: 22,
+                device_key: 'shared-runtime-device',
+                name: 'Shared runtime',
+                kind: 'cloud_host',
+                coding_tools: ['codex'],
+                owner_type: 'workspace',
+                owner_id: 'workspace',
+                owner_name: 'Workspace',
+                status: 'online',
+                updated_at: '2026-09-21T00:00:00Z',
+              },
+            ]),
+          },
+          issues: {},
+        } as never
+      }
+      project={
+        {
+          id: 'project',
+          name: 'Project',
+          project_store: 'backend',
+          execution_environment: executionEnvironment,
+        } as never
+      }
       workspace={{ id: 'workspace' } as never}
       localProjects={[]}
       locale="zh-CN"
       location={location}
       setLocation={setLocation}
-      services={{} as never}
+      services={
+        {
+          teamApi: { listTeams: vi.fn(async () => []) },
+        } as never
+      }
+      runtimeWork={runtimeWork}
       runtimePort={{ bindTask: vi.fn(), unbindTask: vi.fn() }}
       userId={1}
     />
@@ -191,6 +251,99 @@ function Project() {
 }
 
 describe('Wework Issue conversation drawers', () => {
+  it('opens an editable Issue without the read-first content lock', async () => {
+    render(<Project />)
+
+    await userEvent.click(screen.getByText('Open Issue'))
+
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'false')
+  })
+
+  it('keeps the assignee directory scoped to the current project', async () => {
+    render(<Project />)
+
+    await userEvent.click(screen.getByText('Open Issue'))
+
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute(
+      'data-has-global-team-directory',
+      'false'
+    )
+  })
+
+  it('passes runtime device names to the Issue task list', async () => {
+    render(
+      <Project
+        runtimeWork={
+          {
+            projects: [
+              {
+                project: { id: 1, key: 'project', name: 'Project' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'device',
+                    deviceName: 'Wework 开发设备',
+                    workspacePath: '/tmp/project',
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 0,
+          } as never
+        }
+      />
+    )
+
+    await userEvent.click(screen.getByText('Open Issue'))
+
+    expect(screen.getByTestId('cloud-todo-detail-device-name')).toHaveTextContent('Wework 开发设备')
+  })
+
+  it('starts manual work in the project prepared execution environment', async () => {
+    taskBindings = [
+      {
+        id: 'binding-existing',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'previous-device',
+        taskId: 'previous-task',
+        taskTitle: 'Previous execution',
+        backendTaskId: null,
+        linkedAt: '2026-09-20T00:00:00Z',
+      },
+    ]
+    const user = userEvent.setup()
+    render(
+      <Project
+        executionEnvironment={{
+          repositories: [],
+          setup_steps: [],
+          devices: {
+            'shared-runtime-device': {
+              status: 'ready',
+              workspace_path: '/srv/collaboration/project',
+            },
+          },
+        }}
+      />
+    )
+
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-device-id',
+      'shared-runtime-device'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-workspace-path',
+      '/srv/collaboration/project'
+    )
+  })
+
   it('can start another task after returning from an existing execution', async () => {
     taskBindings = [
       {
@@ -216,6 +369,95 @@ describe('Wework Issue conversation drawers', () => {
       'data-has-conversation',
       'true'
     )
+  })
+
+  it('mounts a fresh composer for every consecutive new task request', async () => {
+    taskBindings = [
+      {
+        id: 'binding-1',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'device',
+        taskId: 'run-1',
+        taskTitle: 'Existing execution',
+        backendTaskId: null,
+        linkedAt: '2026-09-18T00:00:00Z',
+      },
+    ]
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+    const firstMountId = screen.getByTestId('ai-chat-modal').getAttribute('data-mount-id')
+
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-mount-id', firstMountId)
+  })
+
+  it('marks the opened execution as the current Issue conversation', async () => {
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+
+    await user.click(screen.getByRole('button', { name: 'run-2' }))
+
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute(
+      'data-selected-task-id',
+      'run-2'
+    )
+  })
+
+  it('passes the live execution status to the Issue task list', async () => {
+    taskBindings = [
+      {
+        id: 'binding-1',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'device',
+        taskId: 'run-1',
+        taskTitle: 'Running execution',
+        backendTaskId: null,
+        linkedAt: '2026-09-18T00:00:00Z',
+      },
+    ]
+    render(
+      <Project
+        runtimeWork={
+          {
+            projects: [
+              {
+                project: { id: 1, key: 'project', name: 'Project' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'device',
+                    workspacePath: '/tmp/project',
+                    available: true,
+                    tasks: [
+                      {
+                        taskId: 'run-1',
+                        workspacePath: '/tmp/project',
+                        title: 'Running execution',
+                        runtime: 'codex',
+                        running: true,
+                        status: 'running',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 1,
+          } as never
+        }
+      />
+    )
+    await userEvent.click(screen.getByText('Open Issue'))
+
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-task-status', 'running')
   })
 
   it('dismisses board previews when entering details without resurrecting them on return', async () => {

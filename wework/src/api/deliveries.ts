@@ -1,4 +1,5 @@
 import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
+import type { CollaborationHumanWork } from '@wegent/collaboration'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
@@ -110,6 +111,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  human_work?: CollaborationHumanWork | null
   assignee_group_id?: string | null
   assignee_group_name?: string | null
   id: string
@@ -168,6 +170,12 @@ export interface CloudLoopItem {
       | 'workflow_replanned'
       | 'workflow_paused'
       | 'workflow_resumed'
+      | 'human_started'
+      | 'human_submitted'
+      | 'human_accepted'
+      | 'human_changes_requested'
+      | 'reassignment'
+      | 'unassigned'
     by_user_id: number | null
     at: string
   }>
@@ -1010,6 +1018,35 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
+    startHumanIssueWork(itemId: string, version: number): Promise<{ issue: CloudLoopItem }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/start`, { version })
+    },
+    submitHumanIssueWork(
+      itemId: string,
+      version: number,
+      summary: string,
+      requestId: string
+    ): Promise<{ issue: CloudLoopItem }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/submit`, {
+        version,
+        summary,
+        request_id: requestId,
+      })
+    },
+    reviewHumanIssueWork(
+      itemId: string,
+      version: number,
+      decision: 'accept' | 'request_changes',
+      requestId: string,
+      reason?: string
+    ): Promise<{ issue: CloudLoopItem }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/review`, {
+        version,
+        decision,
+        request_id: requestId,
+        reason: reason ?? null,
+      })
+    },
     getWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan`)
     },
@@ -1054,6 +1091,8 @@ export function createDeliveryApi(client: HttpClient) {
         workflow?: IssueWorkflowInstance | null
         execution_config?: WorkflowExecutionConfig | null
         automation_rule_id?: string | null
+        assignee_user_id?: number | null
+        notify_assignee?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)

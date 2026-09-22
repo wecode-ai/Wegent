@@ -535,3 +535,26 @@ test('personal copy links to the cloud catalog only through explicit identity', 
   local.spec.sourcePayload.cloudPluginId = 99
   expect(mergeInstalledPlugins([cloud], [local], 'device')).toHaveLength(2)
 })
+
+test('managed personal package replaces its duplicate cloud installation row', () => {
+  const cloud = cloudPlugin({ id: 524804, pluginId: 4 })
+  const store = localCodexPlugin({
+    id: '524804-wework-personal-github-1.0.0',
+    name: 'github',
+    marketplace: 'wework-personal',
+  })
+  store.spec.sourcePayload = {
+    managedByWegent: true,
+    cloudPluginId: 4,
+    cloudInstalledPluginId: 524804,
+  }
+
+  const merged = mergeInstalledPlugins([cloud], [store], 'device')
+
+  expect(merged).toHaveLength(1)
+  expect(merged[0].spec.pluginId).toBe(4)
+  expect(merged[0].spec.sourcePayload).toMatchObject({
+    localPresent: true,
+    cloudInstalledPluginId: '524804',
+  })
+})

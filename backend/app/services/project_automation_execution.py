@@ -1939,6 +1939,15 @@ class ProjectAutomationProcessor:
 
         if not supported_event_type(event.event_type):
             return []
+        if isinstance(event.payload.get("human_work"), dict):
+            logger.info(
+                "[ProjectAutomation] Ignoring event for human-assigned Issue "
+                "project=%s subject=%s event=%s",
+                event.project_id,
+                event.subject_id,
+                event.event_type,
+            )
+            return []
         query = db.query(ProjectAutomationRule).filter(
             ProjectAutomationRule.cloud_project_id == event.project_id,
             ProjectAutomationRule.status == "enabled",

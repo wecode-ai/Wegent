@@ -2,6 +2,8 @@ import type {
   WeworkCommandDefinition,
   WeworkCommandHandler,
   WeworkComposerReferenceContribution,
+  WeworkConversationAssetChunk,
+  WeworkConversationAssetChunkRequest,
   WeworkConversationReference,
   WeworkConversationSnapshot,
   WeworkContextPrimitive,
@@ -26,6 +28,10 @@ declare global {
 
 interface DshConversationController {
   getTranscript(reference: WeworkConversationReference): Promise<WeworkConversationSnapshot>
+  readAssetChunk(
+    reference: WeworkConversationReference,
+    request: WeworkConversationAssetChunkRequest
+  ): Promise<WeworkConversationAssetChunk>
 }
 
 export function getDshExtensionHost(): WeworkExtensionHost | null {

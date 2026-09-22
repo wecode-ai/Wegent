@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import type { DeviceInfo } from '@/types/api'
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import {
   getExecutorOfflineDeviceId,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceIds,
+  getWorkbenchDeviceNamesById,
+  getRuntimeWorkDeviceNamesById,
   findWorkbenchDevice,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
@@ -116,6 +118,35 @@ describe('workbench-device', () => {
       'cloud-device',
       'runtime-device',
     ])
+    expect(getWorkbenchDeviceNamesById(devices)).toMatchObject({
+      'logical-device': 'Local Executor',
+      'app-device': 'Local Executor',
+      'socket-device': 'Local Executor',
+      'runtime-instance': 'Local Executor',
+      'cloud-device': 'Local Executor',
+      'runtime-device': 'Local Executor',
+    })
+  })
+
+  test('indexes runtime workspace names by the routed device id', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          deviceWorkspaces: [
+            {
+              deviceId: 'runtime-device',
+              deviceName: 'Local Executor',
+            },
+          ],
+        },
+      ],
+      chats: [{ deviceId: 'chat-device', deviceName: 'Chat Executor' }],
+    } as RuntimeWorkListResponse
+
+    expect(getRuntimeWorkDeviceNamesById(runtimeWork)).toEqual({
+      'runtime-device': 'Local Executor',
+      'chat-device': 'Chat Executor',
+    })
   })
 
   test('uses the device IP for unavailable messages without exposing the device id', () => {

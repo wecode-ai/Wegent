@@ -387,6 +387,23 @@ class DeliveryService:
                     actor_user_id=user_id,
                 )
                 return delivery
+            from app.services.human_issue_work import human_issue_work_service
+
+            if human_issue_work_service.is_direct_human_assignment(db, item):
+                item.current_delivery_id = delivery.id
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
+                item.version += 1
+                db.commit()
+                db.refresh(delivery)
+                publish_loop_item_changed(
+                    db,
+                    item=item,
+                    reason="delivery_finalized",
+                    actor_user_id=user_id,
+                )
+                return delivery
             previous_status = item.status
             if previous_status != "completed":
                 project = db.get(CloudProject, item.cloud_project_id)

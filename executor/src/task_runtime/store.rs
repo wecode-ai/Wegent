@@ -492,9 +492,9 @@ impl LocalTaskStore {
                 id, resource_type, project_space, cloud_project_id, parent_id,
                 title, description, sequence_number, status, priority, sort_order,
                 metadata, version, created_at, updated_at, completed_at,
-                assignee_agent_id
+                assignee_agent_id, assignee_user_id
              ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                       0, ?9, 1, ?10, ?10, ?11, ?12)",
+                       0, ?9, 1, ?10, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 project_id,
@@ -508,6 +508,7 @@ impl LocalTaskStore {
                 now,
                 completed_at,
                 None::<String>,
+                input.assignee_user_id,
             ],
         )?;
         if metadata.get("workflow").is_some_and(Value::is_object) {
@@ -4917,6 +4918,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5094,6 +5096,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5209,6 +5212,7 @@ mod tests {
                     priority: "medium".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5335,6 +5339,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5433,6 +5438,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5517,6 +5523,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5578,6 +5585,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5628,6 +5636,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5696,6 +5705,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5843,6 +5853,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6078,6 +6089,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -6184,6 +6196,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -6266,6 +6279,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6328,6 +6342,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6405,6 +6420,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6475,6 +6491,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6525,6 +6542,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6588,6 +6606,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6666,6 +6685,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -6751,6 +6771,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6824,6 +6845,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7041,6 +7063,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7088,6 +7111,43 @@ mod tests {
                 provider_config: json!({}),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn create_task_persists_the_initial_human_assignee() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    automatic_processing_rules: Some(json!([{
+                        "id": "assign-another-human",
+                        "enabled": true,
+                        "triggerType": "event",
+                        "eventType": "task.created",
+                        "targetKind": "human",
+                        "targetId": "8"
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let input: TaskCreate = serde_json::from_value(json!({
+            "title": "Human-owned issue",
+            "status": "inbox",
+            "priority": "none",
+            "parent_id": null,
+            "assignee_user_id": 9001
+        }))
+        .unwrap();
+
+        let created = store.create_task(&project.id, input).unwrap();
+        let persisted = store.get_task(&project.id, &created.id).unwrap();
+
+        assert_eq!(created.assignee_user_id, Some(9001));
+        assert_eq!(persisted.assignee_user_id, Some(9001));
     }
 
     #[test]
@@ -7506,6 +7566,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7520,6 +7581,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: Some(parent.id.clone()),
                     tags: vec!["nested".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7556,6 +7618,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7570,6 +7633,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7611,6 +7675,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7676,6 +7741,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7967,6 +8033,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8005,6 +8072,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8019,6 +8087,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8073,6 +8142,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8087,6 +8157,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8202,6 +8273,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8303,6 +8375,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8473,6 +8546,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: Some(json!({
                         "version": 1,
                         "nodes": [{

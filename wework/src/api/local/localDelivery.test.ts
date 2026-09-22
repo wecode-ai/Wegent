@@ -598,6 +598,37 @@ describe('local delivery API', () => {
     })
   })
 
+  test('passes the initial human assignee when creating a local task', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.create') {
+        return { ...taskRecord, assignee_user_id: 7 }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.createLoopItem('project-1', {
+        title: 'Assigned task',
+        assignee_user_id: 7,
+        notify_assignee: false,
+      })
+    ).resolves.toMatchObject({ assignee_user_id: 7 })
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'Assigned task',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+        assignee_user_id: 7,
+      },
+    })
+  })
+
   test('preserves a local project version conflict for field-aware resolution', async () => {
     const conflict = Object.assign(new Error('task changed'), {
       code: 'version_conflict',

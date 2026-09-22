@@ -749,7 +749,9 @@ class ProjectChatService:
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
-            required_role=BaseRole.Developer,
+            required_role=(
+                BaseRole.Reporter if request.task_id else BaseRole.Developer
+            ),
         )
         self._validate_agent_mentions(db, project, request)
         existing = (
@@ -1812,11 +1814,18 @@ class ProjectChatService:
             next_state["lease_expires_at"] = lease_expires_at.isoformat()
             next_state["completed_at"] = None
             next_state["last_error"] = None
-            if not external_index and task.status not in {
-                "in_progress",
-                "in_review",
-                "completed",
-            }:
+            from app.services.human_issue_work import human_issue_work_service
+
+            if (
+                not external_index
+                and not human_issue_work_service.is_direct_human_assignment(db, task)
+                and task.status
+                not in {
+                    "in_progress",
+                    "in_review",
+                    "completed",
+                }
+            ):
                 project = db.get(CloudProject, task.cloud_project_id)
                 if project is not None:
                     write_status_change(

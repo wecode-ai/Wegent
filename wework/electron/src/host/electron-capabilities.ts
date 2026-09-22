@@ -70,6 +70,15 @@ export function e2eOpenDialogOverride(
   return { canceled: false, filePaths: [resolve(selectedPath)] }
 }
 
+export function e2eSaveDialogOverride(
+  environment: NodeJS.ProcessEnv = process.env
+): { canceled: false; filePath: string } | null {
+  const controlUrl = environment.WEWORK_E2E_CONTROL_URL?.trim()
+  const selectedPath = environment.WEWORK_E2E_SAVE_DIALOG_PATH?.trim()
+  if (!controlUrl || !selectedPath) return null
+  return { canceled: false, filePath: resolve(selectedPath) }
+}
+
 /** Owner-view region capture limits (8K frame envelope). */
 const MAX_CAPTURE_WIDTH = 7680
 const MAX_CAPTURE_HEIGHT = 4320
@@ -699,9 +708,10 @@ export function createElectronCapabilityRouter(
     const override = e2eOpenDialogOverride()
     return override ?? dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
   })
-  router.register('dialog.save', params =>
-    dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
-  )
+  router.register('dialog.save', params => {
+    const override = e2eSaveDialogOverride()
+    return override ?? dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
+  })
   router.register('dialog.message', params =>
     dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   )

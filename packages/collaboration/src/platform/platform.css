@@ -877,6 +877,17 @@
   font-weight: 600;
 }
 
+.collaboration-home-work-groups > section + section {
+  margin-top: 20px;
+}
+
+.collaboration-home-work-group-title {
+  margin: 0 0 8px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
 .collaboration-home-attention-list,
 .collaboration-home-work-list,
 .collaboration-run-center-list {

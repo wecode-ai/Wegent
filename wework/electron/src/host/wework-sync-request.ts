@@ -1,4 +1,5 @@
 import { CloudCredentialError } from './cloud-credential-service.js'
+import { cloudFetch } from './cloud-http.js'
 import { createWriteStream, openAsBlob } from 'node:fs'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -184,6 +185,37 @@ export async function createWeworkSyncFetchInit(
       ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+  }
+}
+
+export async function requestWeworkSync(
+  request: WeworkSyncRequest,
+  authorization: string,
+  fetchImplementation: typeof fetch = cloudFetch
+): Promise<{ status: number; body: unknown }> {
+  const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
+  const path = normalizeWeworkSyncPath(request.path)
+  const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
+  try {
+    let response: Response
+    try {
+      response = await fetchImplementation(
+        `${apiBaseUrl}${path}`,
+        await createWeworkSyncFetchInit(request, authorization, downloadTimeout?.signal)
+      )
+    } catch (error) {
+      // Report the concrete transport failure without leaking the request URL.
+      throw new CloudCredentialError('request_failed', describeWeworkSyncRequestFailure(error))
+    }
+    const body = await readWeworkSyncResponse(
+      response,
+      request.downloadPath,
+      request.downloadSizeBytes,
+      downloadTimeout?.refresh
+    )
+    return { status: response.status, body }
+  } finally {
+    downloadTimeout?.clear()
   }
 }
 

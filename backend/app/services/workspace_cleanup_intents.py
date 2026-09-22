@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,9 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.models.loop_item_execution import LoopItemExecution
+
+if TYPE_CHECKING:
+    from app.services.device.runtime_route import RuntimeRouteIdentity
 
 STATUS_PENDING = "pending"
 STATUS_EXECUTING = "executing"
@@ -38,25 +41,60 @@ def _runtime_device_id(
     owner_user_id: int,
     device_id: str,
 ) -> str:
+    identity = _runtime_route_identity(
+        db,
+        owner_user_id=owner_user_id,
+        device_id=device_id,
+    )
+    return identity.runtime_device_id if identity is not None else device_id
+
+
+def _runtime_route_identity(
+    db: Session,
+    *,
+    owner_user_id: int,
+    device_id: str,
+) -> RuntimeRouteIdentity | None:
     from app.services.device.runtime_route import resolve_runtime_route_identity
 
-    identity = resolve_runtime_route_identity(
+    return resolve_runtime_route_identity(
         db,
         user_id=owner_user_id,
         submitted_device_id=device_id,
     )
-    return identity.runtime_device_id if identity is not None else device_id
+
+
+def _execution_target_id(
+    db: Session,
+    *,
+    owner_user_id: int,
+    device_id: str,
+) -> str:
+    identity = _runtime_route_identity(
+        db,
+        owner_user_id=owner_user_id,
+        device_id=device_id,
+    )
+    return identity.app_device_id if identity and identity.app_device_id else device_id
 
 
 def _canonicalize_intent_route(db: Session, intent: WorkspaceCleanupIntent) -> None:
     if not intent.task_user_id or not intent.device_id:
         return
+    source_device_id = str(intent.device_id)
     runtime_device_id = _runtime_device_id(
         db,
         owner_user_id=int(intent.task_user_id),
-        device_id=str(intent.device_id),
+        device_id=source_device_id,
     )
     intent.device_id = runtime_device_id
+    metadata = dict(intent.metadata_json or {})
+    metadata["execution_target_id"] = _execution_target_id(
+        db,
+        owner_user_id=int(intent.task_user_id),
+        device_id=source_device_id,
+    )
+    intent.metadata_json = metadata
 
 
 def _execution_target_by_runtime(
@@ -83,9 +121,14 @@ def _execution_target_by_runtime(
         if not owner_user_id or not runtime_device_id or not runtime_task_id:
             continue
         key = (int(owner_user_id), runtime_device_id, runtime_task_id)
+        submitted_device_id = str(execution.execution_device_id or runtime_device_id)
         targets.setdefault(
             key,
-            str(execution.execution_device_id or runtime_device_id),
+            _execution_target_id(
+                db,
+                owner_user_id=int(owner_user_id),
+                device_id=submitted_device_id,
+            ),
         )
     return targets
 
@@ -147,8 +190,11 @@ def sync_issue_status(
         group = grouped[(owner_user_id, runtime_device_id)]
         group["task_ids"].append(runtime_task_id)
         target = targets.get(
-            (owner_user_id, binding_device_id, runtime_task_id),
-            binding_device_id,
+            (owner_user_id, binding_device_id, runtime_task_id)
+        ) or _execution_target_id(
+            db,
+            owner_user_id=owner_user_id,
+            device_id=binding_device_id,
         )
         group["execution_target_id"] = target
 

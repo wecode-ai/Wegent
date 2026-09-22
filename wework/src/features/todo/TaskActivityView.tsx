@@ -47,6 +47,7 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import {
   ChatInput,
   type ProjectChatControls,
@@ -92,6 +93,7 @@ interface TaskActivityViewProps {
   rail?: boolean
   linear?: boolean
   workflowManagerRunId?: string | null
+  deviceNamesById?: Readonly<Record<string, string>>
   onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
   onWorkflowManagerFinished?: () => void
   taskBindings?: LoopItemTaskBinding[]
@@ -121,6 +123,7 @@ export function TaskActivityView({
   rail = false,
   linear = false,
   workflowManagerRunId = null,
+  deviceNamesById,
   onWorkflowManagerExecutionChange,
   onWorkflowManagerFinished,
   taskBindings = [],
@@ -505,6 +508,14 @@ export function TaskActivityView({
     )
   }
 
+  function deviceNameForMessage(message: ProjectChatMessage): string | null {
+    const deviceId = message.runtimeAddress?.deviceId
+    if (!deviceId) return null
+    const mappedName = deviceNamesById?.[deviceId]?.trim()
+    if (mappedName) return mappedName
+    return findWorkbenchDevice(state.devices, deviceId)?.name.trim() || null
+  }
+
   async function acceptTask() {
     if (!projectDeliveryApi) return
     setError(null)
@@ -751,6 +762,7 @@ export function TaskActivityView({
         plain
         eventOnly={eventOnly}
         taskAiState={task.ai_state}
+        executionDeviceName={deviceNameForMessage(message)}
         taskSummary={taskSummaryForMessage(message)}
         onOpenExecution={
           address
@@ -927,6 +939,7 @@ export function TaskActivityView({
                   }
                   compact={compact}
                   taskAiState={task.ai_state}
+                  executionDeviceName={deviceNameForMessage(message)}
                   taskSummary={taskSummaryForMessage(message)}
                   onOpenExecution={
                     runtimeAddress

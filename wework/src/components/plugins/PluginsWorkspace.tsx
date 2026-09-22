@@ -115,6 +115,7 @@ import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginImportDialog } from './PluginImportDialog'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+import { pluginOperationNoticeAutoDismissDelay } from './pluginOperationNoticePolicy'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginPublicationProgressDrawer } from './PluginPublicationProgressDrawer'
 import { PluginShareDialog } from './PluginShareDialog'
@@ -125,7 +126,6 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo } from './plugin-assets'
 import {
   isCloudManagedInstalledPlugin,
-  linkedCloudPluginId,
   linkedCloudInstalledPluginId,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
@@ -184,6 +184,7 @@ import {
   preferNonEmptyCatalogRows,
   rememberMarketplaceKey,
   rememberedMarketplaceKey,
+  resolveMarketplaceUninstallId,
   requiredConnectionNames,
   toInstalledPluginItem,
   toMarketplaceInstalledPluginItem,
@@ -409,6 +410,7 @@ export function PluginsWorkspace({
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(
     () => initialMarketplaceCache?.selectedMarketplaceKey || rememberedMarketplaceKey()
   )
+  const authoritativeInventoryRefreshRef = useRef(false)
   // Always open the marketplace on the "全部" distribution tab; do not restore a
   // previously selected local marketplace filter when navigating back from another route.
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
@@ -1626,6 +1628,7 @@ export function PluginsWorkspace({
       },
     },
     onComplete: () => {
+      authoritativeInventoryRefreshRef.current = true
       setReconciliationRevision(previous => previous + 1)
       refreshLocalMarketplace()
       setPluginOperationNotice({
@@ -2313,19 +2316,7 @@ export function PluginsWorkspace({
   }
 
   const marketplaceUninstallId = (item: PluginMarketplaceItem): string | number => {
-    const linkedLocal = installedPlugins.find(plugin => {
-      if (isCloudManagedInstalledPlugin(plugin.raw)) return false
-      const cloudPluginId = linkedCloudPluginId(plugin.raw)
-      return cloudPluginId !== null && String(cloudPluginId) === String(item.id)
-    })
-    if (linkedLocal) return linkedLocal.id
-    if (item.installedPluginId !== null && item.installedPluginId !== undefined) {
-      return item.installedPluginId
-    }
-    if (typeof item.manifest?.marketplaceId === 'string' && item.manifest.marketplaceId) {
-      return `${item.name}@${item.manifest.marketplaceId}`
-    }
-    return item.id
+    return resolveMarketplaceUninstallId(item, installedPlugins)
   }
 
   const confirmUninstallPlugin = () => {
@@ -2782,6 +2773,9 @@ export function PluginsWorkspace({
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
+    const authoritativeInventoryRefresh =
+      isExplicitRefresh && authoritativeInventoryRefreshRef.current
+    authoritativeInventoryRefreshRef.current = false
     if (isExplicitRefresh) {
       lastMarketplaceRefreshTickRef.current = marketplaceRefreshTick
     }
@@ -2946,6 +2940,8 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+        authoritativeInstalledState:
+          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3175,6 +3171,8 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+        authoritativeInstalledState:
+          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3292,6 +3290,8 @@ export function PluginsWorkspace({
             nextInstalled: nextInstalledRaw,
             previousStateMatchesScope:
               marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+            authoritativeInstalledState:
+              authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
           })
           const heldBack = holdBackInFlightMarketplaceInstalls({
             items: retained.items,
@@ -4219,11 +4219,12 @@ export function PluginsWorkspace({
   }, [selectedMarketplacePluginId])
 
   useEffect(() => {
-    if (pluginOperationNotice?.kind !== 'success' || pluginOperationNotice.actionLabel) return
-    const noticeId = pluginOperationNotice.id
+    const autoDismissDelay = pluginOperationNoticeAutoDismissDelay(pluginOperationNotice)
+    const noticeId = pluginOperationNotice?.id
+    if (autoDismissDelay === null || !noticeId) return
     const timeoutId = window.setTimeout(() => {
       setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
-    }, 4_000)
+    }, autoDismissDelay)
     return () => window.clearTimeout(timeoutId)
   }, [pluginOperationNotice])
 

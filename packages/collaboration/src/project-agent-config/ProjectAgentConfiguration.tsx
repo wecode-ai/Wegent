@@ -32,6 +32,8 @@ export function ProjectAgentConfiguration({
   resourceContext,
   onError,
   onAgentsChange,
+  openComposerRequestId,
+  onOpenComposerRequestConsumed,
   scope = "project",
   translate,
 }: {
@@ -51,6 +53,8 @@ export function ProjectAgentConfiguration({
   };
   onError(): void;
   onAgentsChange?(): void;
+  openComposerRequestId?: number;
+  onOpenComposerRequestConsumed?(requestId: number): void;
   scope?: "project" | "workspace";
   translate: CollaborationTranslate;
 }) {
@@ -153,6 +157,20 @@ export function ProjectAgentConfiguration({
     project.project_store,
     supportsExistingAgentSelection,
     workspaceId,
+  ]);
+
+  useEffect(() => {
+    if (openComposerRequestId === undefined) return;
+    if (canManage) {
+      setMode(defaultMode);
+      setComposerOpen(true);
+    }
+    onOpenComposerRequestConsumed?.(openComposerRequestId);
+  }, [
+    canManage,
+    defaultMode,
+    onOpenComposerRequestConsumed,
+    openComposerRequestId,
   ]);
 
   useEffect(() => {

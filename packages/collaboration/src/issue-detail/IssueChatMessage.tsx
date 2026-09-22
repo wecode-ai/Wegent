@@ -222,6 +222,7 @@ export function IssueChatMessage({
   eventOnly = false,
   taskAiState,
   executionStatus,
+  executionDeviceName,
   taskSummary,
   onOpenExecution,
   onStopExecution,
@@ -242,6 +243,8 @@ export function IssueChatMessage({
   taskAiState?: IssueActivityAiState | null;
   /** Presentation only; never changes comment lifecycle or content. */
   executionStatus?: string;
+  /** Human-readable device name for this execution. */
+  executionDeviceName?: string | null;
   taskSummary?: ExecutionTaskSummary;
   onOpenExecution?: () => void;
   onStopExecution?: () => void;
@@ -260,6 +263,7 @@ export function IssueChatMessage({
     typeof message.metadata.run_id === "string"
       ? message.metadata.run_id
       : null;
+  const deviceName = executionDeviceName?.trim() || null;
   const modelName =
     typeof message.metadata.model === "string" ? message.metadata.model : null;
   const runStatus =
@@ -300,7 +304,7 @@ export function IssueChatMessage({
               onStopExecution={onStopExecution}
               stopping={stopping}
             />
-            {runId || modelName ? (
+            {deviceName || runId || modelName ? (
               <details>
                 <summary
                   data-testid={`task-activity-run-details-${message.messageId}`}
@@ -312,7 +316,11 @@ export function IssueChatMessage({
                   )}
                 </summary>
                 <div className="task-detail-thread-run-metadata">
-                  {runId ? <span>Run {runId}</span> : null}
+                  {deviceName ? (
+                    <span>{deviceName}</span>
+                  ) : runId ? (
+                    <span>Run {runId}</span>
+                  ) : null}
                   {modelName ? <span>{modelName}</span> : null}
                 </div>
               </details>
@@ -472,7 +480,11 @@ export function IssueChatMessage({
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-text-muted">
                 <span>{message.createdAt.slice(5, 16).replace("T", " ")}</span>
-                {runId ? <span>Run {runId.slice(0, 8)}</span> : null}
+                {deviceName ? (
+                  <span>{deviceName}</span>
+                ) : runId ? (
+                  <span>Run {runId.slice(0, 8)}</span>
+                ) : null}
                 {modelName ? <span>{modelName}</span> : null}
               </div>
             </div>
