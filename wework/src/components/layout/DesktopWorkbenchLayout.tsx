@@ -77,7 +77,16 @@ import {
 import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
-import { loadDshConversationTranscript } from '@/features/dsh-runtime/dshConversationTranscript'
+import {
+  conversationReferenceKey,
+  loadDshConversationTranscript,
+  readConversationAssetChunk,
+} from '@/features/dsh-runtime/dshConversationTranscript'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import type {
+  WeworkConversationAssetChunk,
+  WeworkConversationSnapshot,
+} from '../../../dsh/app-wework/client'
 import {
   readSettingsReturnPath,
   writeSettingsReturnPath,
@@ -190,6 +199,7 @@ export function DesktopWorkbenchLayout({
     [state.projects, state.runtimeWork]
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
+  const dshConversationSnapshots = useRef(new Map<string, WeworkConversationSnapshot>())
   const workspaceTabs = useOptionalWorkspaceTabs()
   const ownedWorkspaceTab = workspaceTabs
     ? workspaceTabId
@@ -223,8 +233,24 @@ export function DesktopWorkbenchLayout({
   useEffect(() => {
     if (!routeActive || surfaceKind === 'board') return
     return bindDshConversationController({
-      getTranscript: reference =>
-        loadDshConversationTranscript(reference, state.runtimeWork, onLoadRuntimeTranscriptForPane),
+      getTranscript: async reference => {
+        const snapshot = await loadDshConversationTranscript(
+          reference,
+          state.runtimeWork,
+          onLoadRuntimeTranscriptForPane
+        )
+        dshConversationSnapshots.current.set(conversationReferenceKey(reference), snapshot)
+        return snapshot
+      },
+      readAssetChunk: async (reference, request) => {
+        const snapshot = dshConversationSnapshots.current.get(conversationReferenceKey(reference))
+        if (!snapshot) {
+          throw new Error('Conversation asset is not part of the exported conversation')
+        }
+        return readConversationAssetChunk(snapshot, request, input =>
+          invokeDesktopHost<WeworkConversationAssetChunk>('filesystem.readFileChunk', input)
+        )
+      },
     })
   }, [onLoadRuntimeTranscriptForPane, routeActive, state.runtimeWork, surfaceKind])
   const { activatePane: activateSplitPane } = splitGroups
