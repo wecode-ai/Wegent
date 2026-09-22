@@ -6,6 +6,8 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-space-mention',
   'collaboration-shared-core',
   'collaboration-settings-matrix',
+  'collaboration-first-use',
+  'collaboration-local-agent-capabilities',
   'collaboration-agent-automation-chain',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',

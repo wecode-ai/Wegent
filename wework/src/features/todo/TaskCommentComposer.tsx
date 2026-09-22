@@ -23,6 +23,7 @@ export function TaskCommentComposer({
   mentionGroups,
   controls,
   projectWork,
+  serverExecution = false,
 }: {
   value: string
   onChange: (value: string) => void
@@ -33,6 +34,7 @@ export function TaskCommentComposer({
   mentionGroups?: IssueMentionGroup[]
   controls: ProjectChatControls
   projectWork: ProjectWorkControls
+  serverExecution?: boolean
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -64,24 +66,31 @@ export function TaskCommentComposer({
         />
       }
       settings={
-        <>
-          {projectWork.projects.length > 0 ? (
-            <ProjectWorkBar {...projectWork} showClearButton={projectWork.showProjectClearButton} />
-          ) : null}
-          <ModelSelector
-            models={controls.models}
-            selectedModel={controls.selectedModel}
-            selectedModelOptions={controls.selectedModelOptions}
-            disabled={disabled || sending}
-            onSelectModel={controls.setSelectedModel}
-            onSelectModelOption={controls.setSelectedModelOption}
-          />
-          <PermissionModeSelector
-            value={runtimePermissionMode(controls.selectedModelOptions)}
-            disabled={disabled || sending}
-            onChange={mode => controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-          />
-        </>
+        serverExecution ? undefined : (
+          <>
+            {projectWork.projects.length > 0 ? (
+              <ProjectWorkBar
+                {...projectWork}
+                showClearButton={projectWork.showProjectClearButton}
+              />
+            ) : null}
+            <ModelSelector
+              models={controls.models}
+              selectedModel={controls.selectedModel}
+              selectedModelOptions={controls.selectedModelOptions}
+              disabled={disabled || sending}
+              onSelectModel={controls.setSelectedModel}
+              onSelectModelOption={controls.setSelectedModelOption}
+            />
+            <PermissionModeSelector
+              value={runtimePermissionMode(controls.selectedModelOptions)}
+              disabled={disabled || sending}
+              onChange={mode =>
+                controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+              }
+            />
+          </>
+        )
       }
     />
   )

@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, ProjectChatAgent
+from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -25,7 +26,7 @@ from app.schemas.project_chat import (
 )
 from app.services.chat.storage.task_manager import TaskCreationParams, create_chat_task
 from app.services.project_chat.push import push_project_chat_message
-from app.services.project_chat.service import bot_config, project_chat_service
+from app.services.project_chat.service import project_chat_service
 from app.stores.tasks import task_store
 
 CONTINUATION_SOURCE = "board_team_continuation"
@@ -231,15 +232,22 @@ class BoardTeamContinuationService:
         request: ProjectChatWegentContinuation,
         trigger: ProjectChatMessage,
     ) -> ProjectChatMessage:
+        root_id = trigger.thread_root_message_id or trigger.reply_to_message_id
         row = (
             db.query(ProjectChatMessage)
             .filter(
-                ProjectChatMessage.message_id == trigger.reply_to_message_id,
+                or_(
+                    ProjectChatMessage.message_id == root_id,
+                    ProjectChatMessage.thread_root_message_id == root_id,
+                    ProjectChatMessage.message_id == trigger.reply_to_message_id,
+                ),
                 ProjectChatMessage.project_id == request.project_id,
                 ProjectChatMessage.task_id == request.task_id,
                 ProjectChatMessage.sender_type == "agent",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
-            .one_or_none()
+            .order_by(ProjectChatMessage.id.desc())
+            .first()
         )
         metadata = (
             row.metadata_json if row and isinstance(row.metadata_json, dict) else {}
@@ -292,7 +300,6 @@ class BoardTeamContinuationService:
             item is None
             or agent is None
             or item.cloud_project_id != request.project_id
-            or item.assignee_agent_id != request.agent_id
             or execution.agent_id != request.agent_id
             or agent.cloud_project_id != request.project_id
             or agent.status != "active"
@@ -300,16 +307,6 @@ class BoardTeamContinuationService:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Wegent robot no longer matches the board assignment",
-            )
-        config = bot_config(agent)
-        if (
-            config.get("runtime") != "wegent"
-            or config.get("wegent_team_id") is None
-            or int(config["wegent_team_id"]) != execution.team_id
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Wegent robot runtime configuration changed",
             )
         team = db.get(Kind, execution.team_id)
         owner = db.get(User, execution.executor_owner_user_id)

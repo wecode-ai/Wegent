@@ -123,12 +123,15 @@ function services(
   const reconcile = overrides.reconcile ?? vi.fn(async () => execution({ sync_state: 'in_sync' }))
   const createRuntimeTask =
     overrides.createRuntimeTask ??
-    vi.fn(async () => ({
-      accepted: true,
-      deviceId: 'local-device',
-      taskId: 'codex-queue-1',
-      workspacePath: '/tmp/workspace',
-    }))
+    vi.fn(async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+      await beforeDispatch?.()
+      return {
+        accepted: true,
+        deviceId: 'local-device',
+        taskId: 'codex-queue-1',
+        workspacePath: '/tmp/workspace',
+      }
+    })
   const listDevices =
     overrides.listDevices ??
     vi.fn(async () => overrides.devices ?? [{ device_id: 'local-device', device_type: 'local' }])
@@ -274,7 +277,10 @@ describe('startLocalRobotQueueDispatcher', () => {
         execution({ runtime_payload: runtimePayload({ runtime: 'claude_code' }) })
       ),
     })
-    const createLocal = vi.fn(async () => ({ taskId: 'codex-queue-1' }))
+    const createLocal = vi.fn(async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+      await beforeDispatch?.()
+      return { taskId: 'codex-queue-1' }
+    })
     fixture.services.localExecutionServices = {
       deviceApi: fixture.services.deviceApi,
       runtimeWorkApi: {
@@ -284,7 +290,10 @@ describe('startLocalRobotQueueDispatcher', () => {
     }
     const stop = startLocalRobotQueueDispatcher(fixture.services)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
-    expect(createLocal).toHaveBeenCalledWith(expect.objectContaining({ runtime: 'claude_code' }))
+    expect(createLocal).toHaveBeenCalledWith(
+      expect.objectContaining({ runtime: 'claude_code' }),
+      expect.any(Function)
+    )
     expect(fixture.mocks.createRuntimeTask).not.toHaveBeenCalled()
     expect(fixture.mocks.runtimeStart).toHaveBeenCalledOnce()
     stop()
@@ -340,12 +349,17 @@ describe('startLocalRobotQueueDispatcher', () => {
       .fn()
       .mockResolvedValueOnce(execution({ execution_device_id: 'local-device' }))
       .mockResolvedValue(null)
-    const createRuntimeTask = vi.fn(async () => ({
-      accepted: true,
-      deviceId: 'local-device',
-      taskId: 'codex-queue-1',
-      workspacePath: '/tmp/workspace',
-    }))
+    const createRuntimeTask = vi.fn(
+      async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+        await beforeDispatch?.()
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'codex-queue-1',
+          workspacePath: '/tmp/workspace',
+        }
+      }
+    )
     const { services: svc, mocks } = services({
       claimNext,
       createRuntimeTask,
@@ -418,12 +432,17 @@ describe('startLocalRobotQueueDispatcher', () => {
       )
       .mockResolvedValue(null)
     const runtimeStart = vi.fn(async () => execution({ status: 'running' }))
-    const createRuntimeTask = vi.fn(async () => ({
-      accepted: true,
-      deviceId: 'local-device',
-      taskId: 'codex-queue-7',
-      workspacePath: '/tmp/workspace',
-    }))
+    const createRuntimeTask = vi.fn(
+      async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+        await beforeDispatch?.()
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'codex-queue-7',
+          workspacePath: '/tmp/workspace',
+        }
+      }
+    )
     const { services: svc, mocks } = services({
       cloudClaimNext,
       runtimeStart,
@@ -505,7 +524,8 @@ describe('startLocalRobotQueueDispatcher', () => {
         modelOptions: { collaborationMode: 'default' },
         bot: [{ id: testCase.botId, name: testCase.agentName, shell_type: 'codex' }],
         standaloneChatWorkspace: true,
-      })
+      }),
+      expect.any(Function)
     )
     expect(mocks.createRuntimeTask.mock.calls[0][0].executionRequest).toBeUndefined()
     expect(mocks.fail).not.toHaveBeenCalled()
@@ -532,7 +552,8 @@ describe('startLocalRobotQueueDispatcher', () => {
       expect.objectContaining({
         modelId: 'removed-local-model',
         modelType: 'runtime',
-      })
+      }),
+      expect.any(Function)
     )
     stop()
   })
@@ -630,13 +651,18 @@ describe('startLocalRobotQueueDispatcher', () => {
         totalTasks: 0,
       },
     ]
-    const createRuntimeTask = vi.fn(async () => ({
-      accepted: true,
-      deviceId: 'local-device',
-      taskId: 'codex-queue-1',
-      workspacePath: '/Users/me/A2A',
-      runtime: 'codex',
-    }))
+    const createRuntimeTask = vi.fn(
+      async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+        await beforeDispatch?.()
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'codex-queue-1',
+          workspacePath: '/Users/me/A2A',
+          runtime: 'codex',
+        }
+      }
+    )
     const { services: svc, mocks } = services({
       claimNext,
       createRuntimeTask,
@@ -742,7 +768,10 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
 
-    expect(mocks.createRuntimeTask).toHaveBeenCalledWith(expect.objectContaining({ projectId: 7 }))
+    expect(mocks.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 7 }),
+      expect.any(Function)
+    )
     expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
     stop()
   })
@@ -765,10 +794,40 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
+  it.each(['local', 'cloud'] as const)(
+    'fails %s preparation before fencing delivery',
+    async source => {
+      const claim = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)
+      const { services: svc, mocks } = services({
+        claimNext: source === 'local' ? claim : vi.fn().mockResolvedValue(null),
+        cloudClaimNext: source === 'cloud' ? claim : vi.fn().mockResolvedValue(null),
+        createRuntimeTask: vi
+          .fn()
+          .mockRejectedValue(new Error('Cloud model identity is incomplete')),
+      })
+      const stop = startLocalRobotQueueDispatcher(svc)
+      await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+      await vi.runOnlyPendingTimersAsync()
+      expect(mocks.startRequested).not.toHaveBeenCalled()
+      expect(mocks.cloudStartRequested).not.toHaveBeenCalled()
+      expect(mocks.dispatchUnknown).not.toHaveBeenCalled()
+      expect(mocks.cloudDispatchUnknown).not.toHaveBeenCalled()
+      expect(mocks.fail).toHaveBeenCalledWith(
+        source === 'local' ? 1 : expect.objectContaining({ id: 1 }),
+        'Cloud model identity is incomplete'
+      )
+      expect(mocks.runtimeStart).not.toHaveBeenCalled()
+      stop()
+    }
+  )
+
   it('marks the fenced execution unknown when runtime task creation throws', async () => {
-    const createRuntimeTask = vi.fn(async () => {
-      throw new Error('workspace unavailable')
-    })
+    const createRuntimeTask = vi.fn(
+      async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+        await beforeDispatch?.()
+        throw new Error('Runtime connection closed')
+      }
+    )
     const fail = vi.fn(async () => execution({ status: 'failed' }))
     const dispatchUnknown = vi.fn(async () => execution({ sync_state: 'stale' }))
     const claimNext = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)
@@ -785,7 +844,7 @@ describe('startLocalRobotQueueDispatcher', () => {
       1,
       'local-device',
       'codex-queue-1',
-      expect.stringContaining('workspace unavailable')
+      expect.stringContaining('Runtime connection closed')
     )
     expect(fail).not.toHaveBeenCalled()
     expect(mocks.heartbeat).not.toHaveBeenCalled()

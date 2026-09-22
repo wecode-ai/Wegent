@@ -10,7 +10,10 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -197,6 +200,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   }
 
   async function createProject(control, workspace, name) {
+    if (workspace.location === 'local') {
+      await createLocalCollaborationProject(control, ACTIVE_WORKBENCH_SELECTOR, name)
+      return null
+    }
     await openWorkspace(control, workspace.id)
     await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
     await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
@@ -214,7 +221,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       text: name,
       timeoutMs: uiTimeoutMs,
     })
-    if (workspace.location === 'local') return null
     const project = await waitForValue(
       async () => {
         const response = await request(`/api/v1/workspaces/${workspace.id}/projects`)
@@ -295,7 +301,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
 
     const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
-    await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
+    await control.command('click', scoped('[data-testid="cloud-todo-start-default-assistant"]'))
     await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
     await selectE2EModel(control, undefined, undefined, taskPanel)
     const composer = `${taskPanel} [data-testid="chat-message-input"]`
@@ -360,20 +366,42 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         scoped(`[data-testid="collaboration-${kind}-create-local"]`),
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command(
-        'waitFor',
-        scoped(`[data-testid="collaboration-${kind}-create-cloud-personal"]`),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'waitFor',
-        scoped(
-          kind === 'teams'
-            ? `[data-testid="collaboration-teams-create-workspace-${groupWorkspace.id}"]`
-            : `[data-testid="collaboration-agents-create-owner-${ownerGroup.name}"]`
-        ),
-        { timeoutMs: uiTimeoutMs }
-      )
+      if (kind === 'agents') {
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-agents-create-cloud"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('click', scoped('[data-testid="collaboration-agents-create-cloud"]'))
+        await control.command('waitFor', '[data-testid="wework-agent-owner"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('select', '[data-testid="wework-agent-owner"]', {
+          value: ownerGroup.name,
+        })
+        assert.equal(
+          await control.command('getValue', '[data-testid="wework-agent-owner"]'),
+          ownerGroup.name,
+          'Cloud Agent creation did not expose the group ownership choice in the form'
+        )
+        await control.command('click', '[data-testid="wework-agent-resource-creator-close"]')
+        continue
+      } else {
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-teams-create-cloud-personal"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'click',
+          scoped('[data-testid="collaboration-teams-create-cloud-groups"]')
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="collaboration-teams-create-workspace-${groupWorkspace.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
+      }
       await closeDestinationDialog(control)
     }
 
@@ -398,6 +426,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       'waitFor',
       scoped('[data-testid="collaboration-devices-create-cloud-personal"]'),
       { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'click',
+      scoped('[data-testid="collaboration-devices-create-cloud-groups"]')
     )
     await control.command(
       'waitFor',

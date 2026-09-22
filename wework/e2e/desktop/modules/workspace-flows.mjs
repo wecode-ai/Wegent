@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import {
@@ -97,71 +98,59 @@ async function enterLocalCollaborationWorkspace(control, contentSelector) {
   )
 }
 
-async function createLocalCollaborationProject(control, contentSelector, projectName) {
+export async function createLocalCollaborationProject(control, contentSelector, projectName) {
   await enterLocalCollaborationWorkspace(control, contentSelector)
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-workspace-project-create"]`
   )
-  const dialogSelector = `${contentSelector} [data-testid="collaboration-project-create-dialog"]`
-  const nameSelector = `${dialogSelector} [data-testid="collaboration-project-name-input"]`
-  const localLocationSelector = `${dialogSelector} [data-testid="cloud-project-location-local"]`
-  await control.command('waitFor', dialogSelector, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', localLocationSelector, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.match(
-    (await control.command('getAttribute', localLocationSelector, {
-      value: 'class',
-    })) ?? '',
-    /collaboration-project-create-location-summary/,
-    'The local project location was rendered as a switchable choice instead of a fixed summary'
-  )
-  assert.equal(
-    Number(
-      await control.command(
-        'getElementCount',
-        `${dialogSelector} [data-testid="cloud-project-location-cloud"]`
-      )
-    ),
-    0,
-    'The local workspace project dialog exposed an invalid cloud location choice'
-  )
-  const localTaskProviderSelector = `${dialogSelector} [data-testid="cloud-project-task-provider-local"]`
-  await control.command('waitFor', localTaskProviderSelector, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', localTaskProviderSelector, {
-      value: 'aria-pressed',
-    }),
-    'true',
-    'The local workspace project dialog did not default to its built-in task provider'
-  )
-  await control.command('fill', nameSelector, {
-    value: projectName,
-  })
-  await control.command(
-    'clickWhenEnabled',
-    `${dialogSelector} [data-testid="collaboration-project-create-confirm"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('click', '[data-testid="collaboration-workspace-project-import-folder"]')
+  await completeLocalCollaborationFolderImport(control, projectName)
   await control.command(
     'waitFor',
-    `${contentSelector} [data-testid="cloud-project-header-title"]`,
+    inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]', contentSelector),
     {
       text: projectName,
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+export async function completeLocalCollaborationFolderImport(control, projectName) {
+  const workspacePath = join(
+    resultDir,
+    'local-collaboration-projects',
+    projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
+  )
+  await mkdir(workspacePath, { recursive: true })
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForFolderPickerInitialized(control)
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: projectName,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function waitForFolderPathReady(control, expectedPath) {
@@ -1002,6 +991,45 @@ async function verifyTrackedTaskSettledStatus(control) {
   )
 }
 
+async function openBoardTaskPageByText(control, activeBoardContentSelector, text, marker) {
+  const boardCardId = await control.command(
+    'markElementWithText',
+    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]`,
+    {
+      text,
+      value: marker,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
+  const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
+  const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
+  await control.command(
+    'click',
+    `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`,
+    {
+      visible: true,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `[data-testid="cloud-todo-card-progress-popup-${boardItemId}"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+}
+
 async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
@@ -1014,18 +1042,12 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     control,
     'The default Issue context test did not open its My Tasks tab'
   )
-  const boardCardSelector = [
-    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
-    ':not([data-testid^="cloud-todo-card-task-"])',
-    ':not([data-testid^="cloud-todo-card-more-"])',
-    ':not([data-testid^="cloud-todo-card-archive-"])',
-    ':not([data-testid^="cloud-todo-card-add-child-"])',
-  ].join('')
-  await control.command('clickElementWithText', boardCardSelector, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await openBoardTaskPageByText(
+    control,
+    activeBoardContentSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'enrich-default-issue-board-card'
+  )
   const titleSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
   await control.command('waitFor', titleSelector, {
     visible: true,
@@ -1096,18 +1118,12 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
-  const boardCardSelector = [
-    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
-    ':not([data-testid^="cloud-todo-card-task-"])',
-    ':not([data-testid^="cloud-todo-card-more-"])',
-    ':not([data-testid^="cloud-todo-card-archive-"])',
-    ':not([data-testid^="cloud-todo-card-add-child-"])',
-  ].join('')
-  await control.command('clickElementWithText', boardCardSelector, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await openBoardTaskPageByText(
+    control,
+    activeBoardContentSelector,
+    'WEWORK_DESKTOP_E2E_TASK',
+    'tracked-task-board-card'
+  )
   await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,

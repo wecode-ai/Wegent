@@ -504,6 +504,69 @@
   margin: 0 0 6px;
 }
 
+.task-detail-default-assistant {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 10px;
+  padding: 14px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 14px;
+  background: rgb(var(--color-bg-subtle));
+}
+
+.task-detail-default-assistant-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 11px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+}
+
+.task-detail-default-assistant-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-detail-default-assistant-copy strong {
+  color: rgb(var(--color-text-primary));
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.task-detail-default-assistant-copy small,
+.task-detail-default-assistant-copy span {
+  overflow: hidden;
+  color: rgb(var(--color-text-muted));
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-detail-default-assistant-copy span {
+  color: rgb(var(--color-text-secondary));
+}
+
+.task-detail-default-assistant > button {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  color: rgb(var(--color-bg-base));
+  background: rgb(var(--color-text-primary));
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .task-detail-state-line {
   display: flex;
   min-height: 52px;

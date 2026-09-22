@@ -212,6 +212,30 @@ describe("collaboration workspace controller", () => {
     expect(state.error).toBeNull();
   });
 
+  it("shares an in-flight board load with refresh requests and fetches again after completion", async () => {
+    state = { ...state, projects: [project] };
+    const { api, commands } = createController();
+    const snapshot = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const pending = deferred<typeof snapshot>();
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(pending.promise);
+
+    const initialLoad = commands.loadProject(project.id);
+    const refresh = commands.loadProjectSnapshot(project.id);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+    pending.resolve(snapshot);
+    await Promise.all([initialLoad, refresh]);
+    expect(state.issues).toEqual([issue]);
+    expect(state.loading).toBe(false);
+
+    await commands.loadProjectSnapshot(project.id);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a successful project catalog when My Work fails", async () => {
     const api = createApi();
     api.myWork!.list = vi
@@ -1200,6 +1224,49 @@ describe("collaboration workspace controller", () => {
     expect(state.issues).toEqual([
       { ...movedIssue, version: 3 },
       concurrentlyMovedIssue,
+    ]);
+    expect(state.projectItems[project.id]).toEqual(state.issues);
+  });
+
+  it("merges queued reorder responses against reducer state", () => {
+    const secondIssue: CollaborationIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Second issue",
+      sort_order: 1,
+    };
+    const acknowledgedIssue = {
+      ...issue,
+      title: "Server acknowledged",
+      status: "completed",
+      version: 3,
+    };
+    const staleIssue = {
+      ...issue,
+      status: "completed",
+      version: 2,
+    };
+    state = {
+      ...state,
+      project,
+      projects: [project],
+      issues: [issue, secondIssue],
+      projectItems: { [project.id]: [issue, secondIssue] },
+    };
+
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "merge-reorder-issues",
+      issues: [acknowledgedIssue, secondIssue],
+    });
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "merge-reorder-issues",
+      issues: [staleIssue, { ...secondIssue, status: "completed", version: 2 }],
+    });
+
+    expect(state.issues).toEqual([
+      acknowledgedIssue,
+      { ...secondIssue, status: "completed", version: 2 },
     ]);
     expect(state.projectItems[project.id]).toEqual(state.issues);
   });

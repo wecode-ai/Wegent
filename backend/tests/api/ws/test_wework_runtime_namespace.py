@@ -1145,3 +1145,69 @@ async def test_project_chat_manager_continue_opens_custom_manager_reply(monkeypa
         message,
         room="wework-project-chat:task:project-1:task-1",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["success", "forbidden", "configuration", "unexpected"]
+)
+async def test_project_comment_execute_acknowledges_identity_and_failures(
+    monkeypatch, outcome
+):
+    from fastapi import HTTPException
+
+    from app.services.loop_item_executions.service import (
+        WeworkRuntimeConfigurationError,
+    )
+
+    namespace = WeworkRuntimeNamespace()
+    assert (
+        namespace._event_handlers["wework:project_chat:comment:execute"]
+        == "on_project_chat_comment_execute"
+    )
+    monkeypatch.setattr(
+        namespace, "get_session", AsyncMock(return_value={"user_id": 7})
+    )
+    execute = AsyncMock(return_value=[])
+    errors = {
+        "forbidden": HTTPException(403, "Insufficient permission"),
+        "configuration": WeworkRuntimeConfigurationError("Device unavailable"),
+        "unexpected": RuntimeError("Internal failure"),
+    }
+    if outcome in errors:
+        execute.side_effect = errors[outcome]
+    monkeypatch.setattr(
+        "app.services.project_chat.comment_execution.execute_comment", execute
+    )
+    result = await namespace.on_project_chat_comment_execute(
+        "member-sid",
+        {
+            "projectId": "p",
+            "taskId": "t",
+            "triggerMessageId": "m",
+            "userId": 1,
+            "deviceId": "forged-device",
+        },
+    )
+    assert execute.call_args.kwargs["user_id"] == 7
+    request = execute.call_args.kwargs["request"]
+    assert request.model_dump() == {
+        "project_id": "p",
+        "task_id": "t",
+        "trigger_message_id": "m",
+        "attachment_ids": [],
+    }
+    if outcome == "success":
+        assert result == {"ok": True, "result": []}
+    else:
+        assert result["ok"] is False
+        assert result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_project_comment_execution_requires_authentication(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    monkeypatch.setattr(namespace, "get_session", AsyncMock(return_value={}))
+    result = await namespace.on_project_chat_comment_execute("anonymous", {})
+    assert result["ok"] is False
+    assert result["error"]["code"] == "UNAUTHENTICATED"

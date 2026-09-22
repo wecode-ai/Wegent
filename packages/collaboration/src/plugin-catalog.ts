@@ -14,6 +14,7 @@ export interface InstalledPluginCatalogItem {
       providerKey?: unknown;
     };
     displayName?: unknown;
+    description?: unknown;
     installState?: unknown;
     enabled?: unknown;
     manifest?: Record<string, unknown>;
@@ -50,11 +51,16 @@ export function normalizeInstalledPluginProjectRef(
   if (!pluginName || !marketplaceId) return null;
 
   const displayName = trimmedString(spec.displayName) || pluginName;
+  const description =
+    trimmedString(spec.description) ||
+    trimmedString(spec.manifest?.shortDescription) ||
+    trimmedString(spec.manifest?.description);
   return {
     id: `${pluginName}@${marketplaceId}`,
     pluginName,
     marketplaceId,
     displayName,
+    ...(description ? { description } : {}),
   };
 }
 
@@ -66,18 +72,37 @@ export function mergeProjectPluginCatalogs(
     const key = `${normalized(plugin.pluginName)}@${normalized(plugin.marketplaceId)}`;
     if (key === "@") return;
     const current = merged.get(key);
-    merged.set(key, {
+    const description = current?.description || plugin.description;
+    const catalogSource = mergeCatalogSource(
+      current?.catalogSource,
+      plugin.catalogSource,
+    );
+    const next = {
       ...(current ?? plugin),
       ...plugin,
       displayName:
         current && current.displayName !== current.pluginName
           ? current.displayName
           : plugin.displayName,
+    };
+    merged.set(key, {
+      ...next,
+      ...(description ? { description } : {}),
+      ...(catalogSource ? { catalogSource } : {}),
     });
   });
   return Array.from(merged.values()).sort((left, right) =>
     left.displayName.localeCompare(right.displayName),
   );
+}
+
+function mergeCatalogSource(
+  left: WorkflowProjectPluginRef["catalogSource"],
+  right: WorkflowProjectPluginRef["catalogSource"],
+): WorkflowProjectPluginRef["catalogSource"] {
+  if (!left) return right;
+  if (!right || left === right) return left;
+  return "local_cloud";
 }
 
 export function buildInstalledPluginProjectCatalog(

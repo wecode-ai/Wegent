@@ -406,6 +406,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleModelType, setSimpleModelType] = useState<ModelTypeEnum | undefined>(undefined)
   const [simpleModelNamespace, setSimpleModelNamespace] = useState<string | undefined>(undefined)
   const [simplePrompt, setSimplePrompt] = useState('')
+  const [simpleInheritBaseCapabilities, setSimpleInheritBaseCapabilities] = useState(true)
   const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
   const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
     Record<string, SkillRefMeta>
@@ -605,6 +606,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleCustomShellName(executor.customShellName)
       setSimpleBotName(fullLeaderBot?.name || '')
       setSimplePrompt(fullLeaderBot?.system_prompt || '')
+      setSimpleInheritBaseCapabilities(fullLeaderBot?.inherit_base_capabilities === true)
       setSimpleSelectedSkills(fullLeaderBot?.skills || [])
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
@@ -677,6 +679,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleModelType(undefined)
       setSimpleModelNamespace(undefined)
       setSimplePrompt('')
+      setSimpleInheritBaseCapabilities(true)
       setSimpleSelectedSkills([])
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
@@ -1050,6 +1053,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           modelType: simpleModelType,
           modelNamespace: simpleModelNamespace,
           prompt: simplePrompt,
+          inheritBaseCapabilities: simpleInheritBaseCapabilities,
           selectedSkills: simpleSelectedSkills,
           selectedSkillRefs: simpleSelectedSkillRefs,
           preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
@@ -1581,6 +1585,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   mcpAgentType={simpleMcpAgentType}
                   prompt={simplePrompt}
                   onPromptChange={setSimplePrompt}
+                  inheritBaseCapabilities={simpleInheritBaseCapabilities}
+                  onInheritBaseCapabilitiesChange={setSimpleInheritBaseCapabilities}
                   toast={toast}
                   scope={scope}
                   groupName={groupName}

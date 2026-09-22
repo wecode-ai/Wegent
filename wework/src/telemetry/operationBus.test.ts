@@ -30,9 +30,33 @@ describe('operation bus', () => {
     unsubscribe()
   })
 
+  test('carries stable plugin identity from operation start to completion', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeOperationResults(listener)
+    const attempt = beginOperation('plugin.authorize', {
+      properties: {
+        plugin_distribution: 'official',
+        plugin_id: 'openai-curated-remote/gmail',
+      },
+    })
+
+    attempt.fail('confirm')
+
+    expect(listener).toHaveBeenCalledWith({
+      key: 'plugin.authorize',
+      outcome: 'failed',
+      failureStage: 'confirm',
+      properties: {
+        plugin_distribution: 'official',
+        plugin_id: 'openai-curated-remote/gmail',
+      },
+    })
+    unsubscribe()
+  })
+
   test('rejects unknown operation keys', () => {
     expect(() => beginOperation('smart_app.remove' as 'smart_app.install')).toThrow(
-      'Unknown Smart App operation: smart_app.remove'
+      'Unknown telemetry operation: smart_app.remove'
     )
   })
 })

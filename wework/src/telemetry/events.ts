@@ -1,3 +1,8 @@
+import {
+  PLUGIN_EVENT_PROPERTY_KEYS,
+  PLUGIN_EVENT_VALUE_CONSTRAINTS,
+  type PluginGeneratedEventMap,
+} from './generated/pluginEvents'
 import { KNOWN_AI_PROVIDERS, type KnownAiProvider } from './modelCatalog'
 import {
   SMART_APP_EVENT_PROPERTY_KEYS,
@@ -11,7 +16,7 @@ export type TelemetryResult = 'success' | 'cancelled' | 'failure'
 export type TelemetryFailureReason = 'network_error' | 'model_error' | 'runtime_error' | 'unknown'
 export type TelemetryDataSource = 'local' | 'cloud' | 'unknown'
 
-export interface AnalyticsEventMap extends SmartAppGeneratedEventMap {
+export interface AnalyticsEventMap extends SmartAppGeneratedEventMap, PluginGeneratedEventMap {
   $ai_trace: {
     $ai_trace_id: string
     $ai_trace_phase: 'start' | 'end'
@@ -72,20 +77,6 @@ export interface AnalyticsEventMap extends SmartAppGeneratedEventMap {
   board_item_moved: {
     group_by: 'status' | 'priority' | 'assignee' | 'tag'
     reordered: boolean
-    source: TelemetryDataSource
-  }
-  plugin_center_opened: {
-    surface: 'catalog' | 'management'
-  }
-  plugin_installed: {
-    source: TelemetryDataSource
-  }
-  plugin_enabled_changed: {
-    enabled: boolean
-    scope: 'plugin' | 'component'
-    source: TelemetryDataSource
-  }
-  plugin_uninstalled: {
     source: TelemetryDataSource
   }
   feature_opened: {
@@ -304,10 +295,6 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   board_view_opened: ['source', 'view'],
   board_item_created: ['has_parent', 'source'],
   board_item_moved: ['group_by', 'reordered', 'source'],
-  plugin_center_opened: ['surface'],
-  plugin_installed: ['source'],
-  plugin_enabled_changed: ['enabled', 'scope', 'source'],
-  plugin_uninstalled: ['source'],
   feature_opened: ['feature'],
   project_created: ['kind'],
   project_removed: ['source'],
@@ -331,6 +318,7 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   setting_changed: ['setting', 'value'],
   workspace_panel_removed: ['panel'],
   ...SMART_APP_EVENT_PROPERTY_KEYS,
+  ...PLUGIN_EVENT_PROPERTY_KEYS,
 }
 
 type PropertyValueConstraint<Property> =
@@ -396,14 +384,6 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     reordered: [true, false],
     source: ['local', 'cloud', 'unknown'],
   },
-  plugin_center_opened: { surface: ['catalog', 'management'] },
-  plugin_installed: { source: ['local', 'cloud', 'unknown'] },
-  plugin_enabled_changed: {
-    enabled: [true, false],
-    scope: ['plugin', 'component'],
-    source: ['local', 'cloud', 'unknown'],
-  },
-  plugin_uninstalled: { source: ['local', 'cloud', 'unknown'] },
   feature_opened: {
     feature: [
       'workbench',
@@ -565,6 +545,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     panel: ['review', 'terminal', 'browser', 'chat', 'files', 'desktop', 'other'],
   },
   ...SMART_APP_EVENT_VALUE_CONSTRAINTS,
+  ...PLUGIN_EVENT_VALUE_CONSTRAINTS,
 }
 
 export type AnalyticsEvent = {

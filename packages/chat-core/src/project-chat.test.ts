@@ -251,3 +251,29 @@ describe('createProjectChatClient', () => {
     ).resolves.toEqual(message)
   })
 })
+
+it('requests comment execution using only the saved project comment identity', async () => {
+  socket.emit.mockImplementation((event, payload, ack) => {
+    expect(event).toBe('wework:project_chat:comment:execute')
+    expect(payload).toEqual({
+      projectId: 'p',
+      taskId: 't',
+      triggerMessageId: 'm',
+      attachmentIds: [9],
+    })
+    ack({ ok: true, result: [message] })
+  })
+  const client = createProjectChatClient({
+    socketBaseUrl: 'https://cloud.example.com',
+    socketPath: '/socket.io',
+    getToken: () => 'token',
+  })
+  await expect(
+    client.executeTaskComment!({
+      projectId: 'p',
+      taskId: 't',
+      triggerMessageId: 'm',
+      attachmentIds: [9],
+    })
+  ).resolves.toEqual([message])
+})

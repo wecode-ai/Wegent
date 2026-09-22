@@ -20,6 +20,7 @@ import { ProjectWorkBar } from '../controls/ProjectWorkBar'
 import { resolveAutomaticModel } from '../controls/runtimeModelSelection'
 import { createHttpCommentRuntime } from '../execution/httpCommentRuntime'
 import { startTaskAiRun } from '../execution/taskAiExecution'
+import { commentAgentMentions } from '../execution/taskCardReply'
 import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { IssueMainCommentComposer } from './IssueMainCommentComposer'
@@ -67,6 +68,7 @@ export function BrowserIssueCommentComposer({
   const mentionGroups = useIssueMentionGroups(members, agents, t)
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
+  const serverExecution = project.project_store === 'backend' && client.executeTaskComment
   const [isMobile, setIsMobile] = useState(false)
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)')
@@ -116,11 +118,12 @@ export function BrowserIssueCommentComposer({
       return
     const attachments = draft.attachments.attachments
     try {
-      if (agent && !execution.target)
+      if (!serverExecution && agent && !execution.target)
         throw new Error(t('activity.comment_execution_target_required'))
-      if (agent && !execution.modelsReady)
+      if (!serverExecution && agent && !execution.modelsReady)
         throw new Error(execution.error ?? t('activity.comment_models_loading'))
       if (
+        !serverExecution &&
         selectedModel &&
         !execution.models.some(
           model =>
@@ -145,9 +148,13 @@ export function BrowserIssueCommentComposer({
         clientMessageId: crypto.randomUUID(),
         text: issueCommentBody(text, imported),
         replyToMessageId: null,
-        model: model?.name ?? null,
+        model: serverExecution ? null : (model?.name ?? null),
         mentions: [
-          ...(agent ? [{ type: 'agent' as const, id: agent.id, label: agent.name }] : []),
+          ...(serverExecution
+            ? commentAgentMentions(text, agents)
+            : agent
+              ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
+              : []),
           ...mentions.filter(mention => mention.type === 'user'),
         ],
       })
@@ -156,7 +163,16 @@ export function BrowserIssueCommentComposer({
       // Persistence succeeded. A rejected execution must not cause a duplicate comment on retry.
       draft.setDraft('')
       draft.attachments.resetAttachments()
-      if (agent && execution.target)
+      if (serverExecution) {
+        onMessages(
+          await serverExecution({
+            projectId: project.id,
+            taskId: issue.id,
+            triggerMessageId: message.messageId,
+            attachmentIds: attachments.map(file => Number(file.id)),
+          })
+        )
+      } else if (agent && execution.target)
         await startTaskAiRun({
           client,
           project,
@@ -187,7 +203,7 @@ export function BrowserIssueCommentComposer({
   }
   return (
     <>
-      {execution.error && (
+      {!serverExecution && execution.error && (
         <div role="alert" className="mb-2 text-xs text-error">
           {execution.error}
           <button
@@ -243,48 +259,52 @@ export function BrowserIssueCommentComposer({
           />
         }
         settings={
-          <>
-            {execution.projects.length > 0 && (
-              <ProjectWorkBar
+          serverExecution ? undefined : (
+            <>
+              {execution.projects.length > 0 && (
+                <ProjectWorkBar
+                  translate={t}
+                  isMobile={isMobile}
+                  projects={execution.projects}
+                  devices={execution.devices}
+                  runtimeWork={execution.work}
+                  currentProject={execution.currentProject}
+                  currentProjectId={execution.selection?.projectId}
+                  selectedDeviceWorkspaceId={execution.workspace?.id}
+                  pendingProjectWorkspaceProjectId={
+                    execution.selection && !execution.workspace
+                      ? execution.selection.projectId
+                      : null
+                  }
+                  onSelectProject={id => execution.selectProject(id)}
+                  onSelectStandaloneDevice={() => execution.selectProject(null)}
+                  onSelectProjectWorkspace={(id, _workspaceId, workspace) =>
+                    execution.selectProject(id, workspace)
+                  }
+                />
+              )}
+              <ModelSelector
                 translate={t}
                 isMobile={isMobile}
-                projects={execution.projects}
-                devices={execution.devices}
-                runtimeWork={execution.work}
-                currentProject={execution.currentProject}
-                currentProjectId={execution.selection?.projectId}
-                selectedDeviceWorkspaceId={execution.workspace?.id}
-                pendingProjectWorkspaceProjectId={
-                  execution.selection && !execution.workspace ? execution.selection.projectId : null
-                }
-                onSelectProject={id => execution.selectProject(id)}
-                onSelectStandaloneDevice={() => execution.selectProject(null)}
-                onSelectProjectWorkspace={(id, _workspaceId, workspace) =>
-                  execution.selectProject(id, workspace)
+                models={execution.models}
+                selectedModel={selectedModel}
+                selectedModelOptions={options}
+                disabled={draft.busy || !execution.modelsReady}
+                onSelectModel={model => draft.setSelection({ model, options })}
+                onSelectModelOption={setOption}
+                onOpenModelSettings={runtime.openModelSettings}
+                onBlockedModelSelect={(_, message) =>
+                  draft.setError(message ?? t('todo.send_failed'))
                 }
               />
-            )}
-            <ModelSelector
-              translate={t}
-              isMobile={isMobile}
-              models={execution.models}
-              selectedModel={selectedModel}
-              selectedModelOptions={options}
-              disabled={draft.busy || !execution.modelsReady}
-              onSelectModel={model => draft.setSelection({ model, options })}
-              onSelectModelOption={setOption}
-              onOpenModelSettings={runtime.openModelSettings}
-              onBlockedModelSelect={(_, message) =>
-                draft.setError(message ?? t('todo.send_failed'))
-              }
-            />
-            <PermissionModeSelector
-              translate={t}
-              value={runtimePermissionMode(options)}
-              disabled={draft.busy}
-              onChange={mode => setOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-            />
-          </>
+              <PermissionModeSelector
+                translate={t}
+                value={runtimePermissionMode(options)}
+                disabled={draft.busy}
+                onChange={mode => setOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+              />
+            </>
+          )
         }
       />
     </>

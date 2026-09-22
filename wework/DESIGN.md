@@ -574,6 +574,13 @@ recipe closely:
   their larger touch-oriented typography;
 - selecting a model is a terminal menu action and closes the model selector;
   reasoning and speed adjustments keep it open for consecutive changes;
+- keep the last successfully loaded local model catalog visible when a
+  background refresh fails; a transient catalog or authentication-status
+  request must not remove the model currently attached to an active thread;
+- when no valid local catalog has ever loaded and the selected model is
+  unavailable, keep the model selector visible with an explicit disabled
+  unavailable entry so the user can understand the state and choose another
+  model; reserve the blank loading placeholder for the initial pending load;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
@@ -701,6 +708,25 @@ must not discard entered data without warning. Do not stack modal dialogs.
   hide them.
 
 ### 6.7 Cards and empty states
+
+项目看板卡片按短编号/标签、两行标题、进展摘要、负责人/日期排列。
+只突出高和紧急优先级，完整编号和标签通过提示保留；卡片日期固定展示创建时间，
+不随更新时间或截止日期变化，提示明确标注“创建时间”。
+点击卡片打开 Issue 详情与动态，点击“查看进展”打开可回复的
+任务对话浮层。进展入口必须有关联任务：任务正在运行、事项正在执行或待确认时显示；
+桌面端还保留未关闭 PR/MR 的任务入口。无绑定或无详情权限时隐藏，拖拽或已打开
+Issue 侧栏时禁用预览。已完成且无活动任务、未关闭 PR/MR 的卡片不显示入口。
+
+Project-board cards order short reference/tags, a two-line title, progress summary,
+and an assignee/date row. Highlight only high and urgent priorities; retain
+full references and tags in tooltips. Always show the creation date with a Created
+tooltip and accessible label; updates and deadlines must not change that date.
+Card clicks open Issue details and activity; View progress
+opens the existing task conversation with its reply composer. The progress action
+requires a bound task that is running, an active execution, or an Issue in review;
+desktop also retains access for an open PR/MR. Hide it without a binding or detail
+permission, and suppress previews during drag or while the Issue drawer is open.
+Completed Issues without active tasks or open PR/MRs have no progress action.
 
 Use a card only when a boundary communicates grouping, preview, selection, or a
 single contained action. Prefer rows, whitespace, and a quiet surface. Do not

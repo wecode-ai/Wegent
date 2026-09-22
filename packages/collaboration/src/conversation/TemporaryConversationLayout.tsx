@@ -9,6 +9,9 @@ export function TemporaryConversationLayout({
   testId = 'right-workspace-chat-panel',
   emptyStateText,
   messageCount,
+  loading = false,
+  loadError,
+  onRetry,
   expanded = false,
   wideComposer = false,
   onRestoreConversation,
@@ -19,6 +22,9 @@ export function TemporaryConversationLayout({
   testId?: string
   emptyStateText: string
   messageCount: number
+  loading?: boolean
+  loadError?: string | null
+  onRetry?(): void
   expanded?: boolean
   wideComposer?: boolean
   onRestoreConversation?(): void
@@ -30,6 +36,38 @@ export function TemporaryConversationLayout({
     <section data-testid={testId} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {messageCount > 0 ? (
         children
+      ) : loading ? (
+        <div
+          className="flex flex-1 flex-col gap-4 p-8 motion-safe:animate-pulse"
+          aria-busy="true"
+          data-testid="temporary-conversation-loading"
+        >
+          <div className="h-4 w-2/3 rounded bg-muted" />
+          <div className="h-4 w-1/2 rounded bg-muted" />
+          <div className="h-4 w-3/4 rounded bg-muted" />
+        </div>
+      ) : loadError ? (
+        <div
+          role="alert"
+          className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-sm text-text-muted"
+        >
+          <p>{t('activity.task_activity_transcript_unavailable')}</p>
+          <p>
+            {loadError.startsWith('device_offline:')
+              ? t('activity.task_activity_device_offline')
+              : loadError}
+          </p>
+          {onRetry ? (
+            <button
+              type="button"
+              data-testid="temporary-conversation-retry"
+              onClick={onRetry}
+              className="rounded-md px-3 py-2 hover:bg-muted"
+            >
+              {t('activity.retry')}
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-sm text-text-muted">
           <MessageCircle className="h-5 w-5 text-text-secondary" />

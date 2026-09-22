@@ -219,6 +219,31 @@ describe('shared autocomplete controller in a browser host', () => {
     expect(input.current!.getValue()).toBe('[$gmail](/skills/gmail/SKILL.md) ')
     expect(element('local-skill-autocomplete')).toBeNull()
   })
+  it.each([
+    ['claude', 'codex'],
+    ['claude', 'codex-plugin'],
+    ['openai', 'claude'],
+    ['openai', 'claude-plugin'],
+  ])('selects %s model skills from %s through both menus', async (provider, source) => {
+    await mount({
+      selectedModel: {
+        name: 'test-model',
+        type: 'public',
+        config: { env: { model: provider } },
+      },
+      onListLocalSkills: async () => [{ ...gmail, source }],
+    })
+    for (const [trigger, option] of [
+      ['/gmail', 'slash-command-option-skill-gmail'],
+      ['$gmail', 'local-skill-option-gmail'],
+    ]) {
+      await type(trigger)
+      expect(element(option)).not.toBeNull()
+      expect((element(option) as HTMLButtonElement).disabled).toBe(false)
+      await click(option)
+      expect(input.current!.getValue()).toBe('[$gmail](/skills/gmail/SKILL.md) ')
+    }
+  })
   it('opens the native slash model menu and selects the original model', async () => {
     const model = {
       name: 'model-a',

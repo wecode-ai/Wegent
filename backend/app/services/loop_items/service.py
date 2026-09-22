@@ -1543,7 +1543,9 @@ class LoopItemService:
                     by_user_id=user_id,
                 )
                 updates["metadata_json"] = metadata
-        if next_status and next_status != item.status:
+        previous_status = item.status
+        status_changed = bool(next_status and next_status != previous_status)
+        if status_changed:
             updates["completed_at"] = (
                 self._now() if next_status == "completed" else None
             )
@@ -1579,6 +1581,17 @@ class LoopItemService:
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+        if status_changed:
+            from app.services.workspace_cleanup_intents import sync_issue_status
+
+            sync_issue_status(
+                db,
+                item=item,
+                previous_status=previous_status,
+                next_status=next_status,
+                next_version=values.version + 1,
+                completed_at=updates.get("completed_at"),
+            )
         db.commit()
         db.refresh(item)
         if cancelled_runs:

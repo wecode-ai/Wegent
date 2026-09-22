@@ -16,6 +16,23 @@ export interface TaskReplyCard {
   root: ProjectChatMessage;
   replies: ProjectChatMessage[];
 }
+export function commentAgentMentions(
+  text: string,
+  agents: { id: string; name: string }[],
+) {
+  return agents
+    .filter((agent) => {
+      const escaped = agent.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|\\s)@${escaped}(?=$|\\s|[，。！？,!?])`).test(
+        text,
+      );
+    })
+    .map((agent) => ({
+      type: "agent" as const,
+      id: agent.id,
+      label: agent.name,
+    }));
+}
 export interface TaskCardDispatchResult {
   ok: boolean;
   persisted: boolean;
@@ -89,12 +106,26 @@ export async function dispatchTaskCardReply<
     task,
     card,
     reply,
-    agent,
     runtime,
     onMessages,
     startFailedText,
     sendFailedText,
   } = input;
+  const previousAgent = [card.root, ...card.replies]
+    .filter((message) => message.sender.type === "agent")
+    .at(-1);
+  const agent = previousAgent
+    ? input.agent?.id === (previousAgent.agentId || previousAgent.sender.id)
+      ? input.agent
+      : {
+          id: previousAgent.agentId || previousAgent.sender.id,
+          name: previousAgent.sender.name,
+          runtime:
+            previousAgent.metadata.executor_type === "wegent_team"
+              ? "wegent"
+              : previousAgent.runtimeAddress?.runtime,
+        }
+    : input.agent;
   const rootId = card.root.messageId;
   const attachments = reply.attachments ?? [];
   const address = cardSessionAddress(card);
@@ -107,7 +138,13 @@ export async function dispatchTaskCardReply<
   };
   if (!reply.content.trim())
     return { ok: false, persisted, error: sendFailedText };
-  if (customManager && (!client.continueAutomationManager || !address))
+  const serverExecution =
+    project.project_store === "backend" && client.executeTaskComment;
+  if (
+    !serverExecution &&
+    customManager &&
+    (!client.continueAutomationManager || !address)
+  )
     return { ok: false, persisted, error: startFailedText };
   try {
     const text = input.prepareComment
@@ -122,7 +159,10 @@ export async function dispatchTaskCardReply<
       // runtime address. Mention-driven enqueue is reserved for a new root
       // comment; including the mention here would create a second session.
       mentions: [
-        ...(agent && !customManager && !(input.selfManagedExecution && address)
+        ...(!serverExecution &&
+        agent &&
+        !customManager &&
+        !(input.selfManagedExecution && address)
           ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
           : []),
         // Members the reply composer mentioned are addressed, not enqueued.
@@ -134,7 +174,16 @@ export async function dispatchTaskCardReply<
     persisted = true;
     input.onPersisted?.(message);
     onMessages([message]);
-    if (customManager && address) {
+    if (serverExecution) {
+      onMessages(
+        await serverExecution({
+          projectId: project.id,
+          taskId: task.id,
+          triggerMessageId: message.messageId,
+          attachmentIds: remoteAttachmentIds(attachments),
+        }),
+      );
+    } else if (customManager && address) {
       let pending: ProjectChatMessage | undefined;
       try {
         pending = await client.continueAutomationManager!({

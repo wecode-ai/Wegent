@@ -894,6 +894,7 @@ export function createDesktopScenario({
   let resolvePartialWritten
   let resolveRequest
   let resolveScrollButtonAppendWritten
+  let resolveSubagentChildRequestStarted
   let resolveSubagentPartialWritten
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -930,6 +931,9 @@ export function createDesktopScenario({
   })
   const subagentCompletionRelease = new Promise(resolve => {
     releaseSubagentCompletion = resolve
+  })
+  const subagentChildRequestStarted = new Promise(resolve => {
+    resolveSubagentChildRequestStarted = resolve
   })
   const subagentPartialWritten = new Promise(resolve => {
     resolveSubagentPartialWritten = resolve
@@ -1335,6 +1339,7 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (request.headers['x-openai-subagent']) {
+        resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
           const tool = selectShellTool(
             body,
@@ -1408,6 +1413,7 @@ export function createDesktopScenario({
         requestContainsToolOutputForCall(body, SUBAGENT_CALL_ID)
       ) {
         const agentId = spawnedAgentId(body)
+        await subagentChildRequestStarted
         subagentStage = 'awaiting-wait-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(

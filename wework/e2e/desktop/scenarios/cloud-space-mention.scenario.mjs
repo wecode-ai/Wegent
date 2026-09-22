@@ -456,6 +456,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, 'cloud-space-mention-03-consecutive-moves-stable.png')
 
       await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="cloud-todo-card-progress-popup-${WEBSITE_TODO.id}"]`,
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-card-open-task-${WEBSITE_TODO.id}"]`,
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
         timeoutMs: uiTimeoutMs,
       })

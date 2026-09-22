@@ -145,6 +145,8 @@ export interface WorkflowProjectPluginRef {
   pluginName: string;
   marketplaceId: string;
   displayName: string;
+  description?: string;
+  catalogSource?: "cloud" | "local" | "local_cloud";
 }
 
 export interface WorkflowDeliverableRequirement {

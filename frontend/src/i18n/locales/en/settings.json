@@ -269,6 +269,12 @@
         "knowledge_description": "New chats start with these knowledge bases; more can still be added in chat.",
         "mcp_description": "Connect external MCP services to add tool capabilities."
       },
+      "capability": {
+        "base_title": "Use shared base capabilities",
+        "base_description": "Reuse the system agent's general skills, tools, and plugins without changing this agent's identity or runtime. This may increase context and tool-call usage.",
+        "enabled": "Enabled",
+        "disabled": "Disabled"
+      },
       "execution": {
         "bind_mode_description": "Controls which entry points and task types can use this agent.",
         "requires_workspace_description": "When enabled, code tasks must start with a repository.",

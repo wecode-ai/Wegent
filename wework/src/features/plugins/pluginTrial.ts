@@ -1,3 +1,4 @@
+import { beginOperation } from '@/telemetry/operationBus'
 import { getPluginUseCount30d } from '@wegent/collaboration/composer/pluginUsage'
 export {
   getPluginUseCount30d,
@@ -64,7 +65,14 @@ interface PluginTrialOptions {
 }
 
 function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
-  window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
+  const attempt = beginOperation('plugin.trial')
+  try {
+    window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
+  } catch (error) {
+    attempt.fail('request')
+    throw error
+  }
+  attempt.succeed()
   window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
   return true
 }

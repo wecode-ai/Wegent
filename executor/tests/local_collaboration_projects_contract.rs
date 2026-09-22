@@ -144,6 +144,9 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .iter()
         .find(|item| item["id"] == first["id"])
         .unwrap();
+    let archived_key = first["metadata"]["code_project_key"].clone();
+    let archived_name = first["name"].clone();
+    let archived_roots = first["metadata"]["workspace_roots"].clone();
     server
         .dispatch(
             "projects.archive",
@@ -157,6 +160,30 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .unwrap()
         .iter()
         .any(|item| item["id"] == first["id"]));
+    let restored = server
+        .dispatch(
+            "projects.import_code_project",
+            json!({
+                "project_key":archived_key,
+                "name":archived_name,
+                "roots":archived_roots
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored["id"], first["id"]);
+    assert!(restored["deleted_at"].is_null());
+    assert_eq!(
+        restored["metadata"]["collaboration_groups"],
+        json!([{"id":"squad-1", "name":"Delivery team"}])
+    );
+    server
+        .dispatch(
+            "projects.archive",
+            json!({"project_id":restored["id"], "version":restored["version"]}),
+        )
+        .await
+        .unwrap();
 
     // Reproduce a directory imported before it became part of a named project.
     let state_path = codex_home.path().join(".codex-global-state.json");

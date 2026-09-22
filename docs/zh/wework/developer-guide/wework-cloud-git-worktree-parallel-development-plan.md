@@ -7,6 +7,7 @@ sidebar_position: 20
 ## 1. 文档状态
 
 - 制定日期：2026-08-17
+- 最近更新：2026-09-21
 - 状态：核心代码、真实 Electron 云端闭环和 Remote Docker 容器生命周期验收完成；仅托管生产持久卷与实例重建待目标环境验收
 - 目标：让 Wework 的本地设备、托管云设备和 Remote Docker 设备共用同一套托管 Git Worktree 能力
 - 开发方式：一个主 Agent 负责目标、公共契约和集成；多个子 Agent 在互斥写入范围内并行实现
@@ -70,6 +71,47 @@ flowchart LR
 16. Executor 崩溃恢复不得自动续跑 Agent；有效 Worktree 可以恢复为可管理状态，关联任务标记为中断或失败。
 17. 删除 Worktree 必须先收到关联 Runtime 停止确认，再归档任务、创建快照并移除目录。
 18. 同一 Executor Home 第一阶段只允许一个 Executor 进程写入。
+
+### 2.4 协作任务的自动工作区与 Issue 清理
+
+协作任务不向用户暴露 Worktree 选项。Wework 在发送任务前查询目标 Executor 的
+Worktree capability 和 Git preflight：可用时自动创建独立 Worktree；不可用时在任务
+创建前选择当前项目工作区。已经进入 Worktree 创建阶段后的确定性失败仍然直接失败，
+不能静默回退到主工作区。
+
+从本地目录生成协作项目时，本地 Executor 读取第一个工作区根目录对应的 Git
+顶层目录、`origin` 地址和当前分支，并写入项目的 `execution_environment`。已有项目
+只在尚未配置执行环境时自动补齐，用户自定义配置不会被覆盖。
+
+Issue 生命周期清理遵循控制面与数据面分离：
+
+```mermaid
+sequenceDiagram
+  participant B as Backend
+  participant E as 同一 Executor
+  participant L as Executor 本地 Worktree Store
+  B->>B: Issue completed<br/>记录 release desired state + due_at
+  B-->>E: 到期后通知 runtime.tasks.available
+  E->>B: pull + claim(issue version)
+  E->>L: 用 runtime task ID 解析本地 Worktree
+  alt 关联任务仍在运行
+    E-->>B: 不 ACK，租约到期后重试
+  else 可以清理
+    E->>L: 归档、保留快照并删除目录
+    E->>B: ACK 精确 Issue version
+  end
+  B->>B: Issue reopened<br/>发布 retain desired state
+```
+
+- Backend 只持久化 Issue version、Executor 设备、Runtime Task ID、动作和到期时间；
+  不保存 Worktree ID、路径或文件系统状态。
+- Runtime Task 到 Worktree 的映射只由创建它的 Executor 本地维护。
+- Issue 完成后默认保留 7 天，由 `WORKTREE_CLEANUP_RETENTION_DAYS` 配置；到期后
+  Backend 唤醒原执行目标，由该 Executor 自己完成清理。
+- Issue 在清理前重新打开时，Backend 将意图改为 `retain`；Executor ACK 新版本时不
+  修改本地 Worktree。
+- 纯 Executor 设备不需要启动 Wework。它通过现有 `/local-executor` 拉取通道接收任务
+  和清理意图。
 
 ## 3. 范围
 

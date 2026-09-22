@@ -127,10 +127,20 @@ class RuntimeSupervisorCreateInput(BaseModel):
     )
 
 
+class ProjectSessionScope(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    project_id: str = Field(..., alias="projectId", min_length=1)
+    issue_id: str = Field(..., alias="issueId", min_length=1)
+
+
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
     """Request a page of a device-local runtime transcript."""
 
     limit: Optional[int] = Field(default=None, ge=1, le=200)
+    project_session: Optional[ProjectSessionScope] = Field(
+        default=None, alias="projectSession"
+    )
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     include_full_content: bool = Field(default=False, alias="includeFullContent")
@@ -508,6 +518,13 @@ class RuntimeTranscriptResponse(BaseModel):
     runtime: RuntimeName
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
+    turns: list[dict[str, Any]]
+    running: Optional[bool] = None
+    origin: Optional[dict[str, Any]] = None
+    history_unavailable: bool = Field(default=False, alias="historyUnavailable")
+    turn_navigation: list[dict[str, Any]] = Field(
+        default_factory=list, alias="turnNavigation"
+    )
     context_usage: Optional[dict[str, Any]] = Field(default=None, alias="contextUsage")
     full_content: bool = Field(default=False, alias="fullContent")
     range_start: Optional[int] = Field(default=None, alias="rangeStart")

@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import type { WikiBoundDocument, WikiPageSummary } from '@/apis/wiki'
+import type { WikiBoundDocument, WikiPageSummary, WikiProjectSummary } from '@/apis/wiki'
 
 const mockListConnections = jest.fn()
 const mockListKbWikiDocuments = jest.fn()
+const mockListProjects = jest.fn()
+const mockListBranches = jest.fn()
 const mockListPages = jest.fn()
 const mockUnbind = jest.fn()
 const mockTranslations = {
@@ -37,11 +39,21 @@ const mockTranslate = (key: string, params?: Record<string, string | number>) =>
   )
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 jest.mock('@/apis/wiki', () => ({
   wikiApis: {
     listConnections: () => mockListConnections(),
     listKbWikiDocuments: (...args: unknown[]) => mockListKbWikiDocuments(...(args as [])),
     unbindKbWikiDocument: (...args: unknown[]) => mockUnbind(...args),
+    listProjects: (...args: unknown[]) => mockListProjects(...args),
+    listBranches: (...args: unknown[]) => mockListBranches(...args),
     listPages: (...args: unknown[]) => mockListPages(...args),
     bindKbWikiDocuments: jest.fn(),
   },
@@ -92,6 +104,53 @@ const pages: WikiPageSummary[] = [
   },
 ]
 
+const gitLabCapabilities = {
+  resource_kind: 'file' as const,
+  supports_locale: false,
+  supports_project_selection: true,
+  supports_branch_selection: true,
+  supports_scheduled_sync: true,
+}
+const gitLabConnections = {
+  connections: [
+    {
+      id: 'conn-a',
+      display_name: 'Connection A',
+      enabled: true,
+      connector_type: 'gitlab_repo',
+      site_url: 'https://gitlab-a.example.com',
+      default_locale: null,
+      api_key_masked: '****',
+      capabilities: gitLabCapabilities,
+      available_connectors: [],
+    },
+    {
+      id: 'conn-b',
+      display_name: 'Connection B',
+      enabled: true,
+      connector_type: 'gitlab_repo',
+      site_url: 'https://gitlab-b.example.com',
+      default_locale: null,
+      api_key_masked: '****',
+      capabilities: gitLabCapabilities,
+      available_connectors: [],
+    },
+  ],
+  available_connectors: [],
+}
+const gitLabProjectA: WikiProjectSummary = {
+  path: 'group/project-a',
+  name: 'Project A',
+  default_branch: 'main-a',
+  web_url: 'https://gitlab-a.example.com/group/project-a',
+}
+const gitLabProjectB: WikiProjectSummary = {
+  path: 'group/project-b',
+  name: 'Project B',
+  default_branch: 'main-b',
+  web_url: 'https://gitlab-b.example.com/group/project-b',
+}
+
 function renderTab(
   onImport: (
     paths: string[],
@@ -133,6 +192,8 @@ describe('WikiDocumentImport', () => {
       available_connectors: [{ type: 'wikijs', display_name: 'Wiki.js' }],
     })
     mockListKbWikiDocuments.mockResolvedValue([bound])
+    mockListProjects.mockResolvedValue({ projects: [], next_offset: null })
+    mockListBranches.mockResolvedValue({ branches: [], next_offset: null })
     mockListPages.mockResolvedValue({ pages, next_offset: null, warnings: [] })
   })
 
@@ -436,6 +497,182 @@ describe('WikiDocumentImport', () => {
     await waitFor(() =>
       expect(onImport).toHaveBeenCalledWith(['2'], {
         connectionId: 'conn-b',
+      })
+    )
+  })
+
+  it('does not combine a new GitLab connection with the previous project and branch', async () => {
+    mockListConnections.mockResolvedValue(gitLabConnections)
+    mockListKbWikiDocuments.mockResolvedValue([])
+    mockListProjects.mockImplementation(({ connection_id }: { connection_id: string }) =>
+      Promise.resolve({
+        projects: [connection_id === 'conn-a' ? gitLabProjectA : gitLabProjectB],
+        next_offset: null,
+      })
+    )
+    mockListBranches.mockImplementation(({ connection_id }: { connection_id: string }) =>
+      Promise.resolve({
+        branches: [
+          {
+            name: connection_id === 'conn-a' ? 'main-a' : 'main-b',
+            is_default: true,
+          },
+        ],
+        next_offset: null,
+      })
+    )
+    mockListPages.mockResolvedValue({ pages: [], next_offset: null, warnings: [] })
+    renderTab()
+
+    await waitFor(() =>
+      expect(mockListPages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connection_id: 'conn-a',
+          project_path: 'group/project-a',
+          branch: 'main-a',
+        })
+      )
+    )
+
+    mockListBranches.mockClear()
+    mockListPages.mockClear()
+    fireEvent.change(screen.getByTestId('wiki-import-connection-select'), {
+      target: { value: 'conn-b' },
+    })
+
+    await waitFor(() =>
+      expect(mockListPages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connection_id: 'conn-b',
+          project_path: 'group/project-b',
+          branch: 'main-b',
+        })
+      )
+    )
+    expect(mockListBranches).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        connection_id: 'conn-b',
+        project_path: 'group/project-a',
+      })
+    )
+    expect(mockListPages).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        connection_id: 'conn-b',
+        project_path: 'group/project-a',
+        branch: 'main-a',
+      })
+    )
+  })
+
+  it('ignores a project response from the previous GitLab connection', async () => {
+    const staleProjects = deferred<{
+      projects: WikiProjectSummary[]
+      next_offset: null
+    }>()
+    mockListConnections.mockResolvedValue(gitLabConnections)
+    mockListKbWikiDocuments.mockResolvedValue([])
+    mockListProjects.mockImplementation(({ connection_id }: { connection_id: string }) => {
+      if (connection_id === 'conn-a') return staleProjects.promise
+      return Promise.resolve({
+        projects: [gitLabProjectB],
+        next_offset: null,
+      })
+    })
+    mockListBranches.mockResolvedValue({
+      branches: [{ name: 'main-b', is_default: true }],
+      next_offset: null,
+    })
+    mockListPages.mockResolvedValue({ pages: [], next_offset: null, warnings: [] })
+    renderTab()
+
+    await waitFor(() =>
+      expect(mockListProjects).toHaveBeenCalledWith(
+        expect.objectContaining({ connection_id: 'conn-a' })
+      )
+    )
+    fireEvent.change(screen.getByTestId('wiki-import-connection-select'), {
+      target: { value: 'conn-b' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('wiki-import-project-select')).toHaveValue('group/project-b')
+    )
+
+    await act(async () => {
+      staleProjects.resolve({
+        projects: [gitLabProjectA],
+        next_offset: null,
+      })
+      await staleProjects.promise
+    })
+
+    expect(screen.getByTestId('wiki-import-project-select')).toHaveValue('group/project-b')
+    expect(mockListBranches).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        connection_id: 'conn-b',
+        project_path: 'group/project-a',
+      })
+    )
+  })
+
+  it('ignores a branch response from the previous GitLab connection', async () => {
+    const staleBranches = deferred<{
+      branches: Array<{ name: string; is_default: boolean }>
+      next_offset: null
+    }>()
+    mockListConnections.mockResolvedValue(gitLabConnections)
+    mockListKbWikiDocuments.mockResolvedValue([])
+    mockListProjects.mockImplementation(({ connection_id }: { connection_id: string }) =>
+      Promise.resolve({
+        projects: [connection_id === 'conn-a' ? gitLabProjectA : gitLabProjectB],
+        next_offset: null,
+      })
+    )
+    mockListBranches.mockImplementation(({ connection_id }: { connection_id: string }) => {
+      if (connection_id === 'conn-a') return staleBranches.promise
+      return Promise.resolve({
+        branches: [{ name: 'main-b', is_default: true }],
+        next_offset: null,
+      })
+    })
+    mockListPages.mockResolvedValue({ pages: [], next_offset: null, warnings: [] })
+    renderTab()
+
+    await waitFor(() =>
+      expect(mockListBranches).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connection_id: 'conn-a',
+          project_path: 'group/project-a',
+        })
+      )
+    )
+    fireEvent.change(screen.getByTestId('wiki-import-connection-select'), {
+      target: { value: 'conn-b' },
+    })
+    await waitFor(() =>
+      expect(mockListPages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connection_id: 'conn-b',
+          project_path: 'group/project-b',
+          branch: 'main-b',
+        })
+      )
+    )
+
+    mockListPages.mockClear()
+    await act(async () => {
+      staleBranches.resolve({
+        branches: [{ name: 'main-a', is_default: true }],
+        next_offset: null,
+      })
+      await staleBranches.promise
+    })
+
+    expect(screen.getByTestId('wiki-import-branch-select')).toHaveValue('main-b')
+    expect(mockListPages).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        connection_id: 'conn-b',
+        project_path: 'group/project-b',
+        branch: 'main-a',
       })
     )
   })

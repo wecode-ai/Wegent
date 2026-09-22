@@ -269,6 +269,19 @@ class TestDockerExecutor:
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
 
+    def test_add_workspace_mount_creates_missing_host_directory(
+        self, executor, tmp_path, monkeypatch
+    ):
+        """Docker bind mounts must point at an existing host directory."""
+        workspace = tmp_path / "executor-workspace"
+        monkeypatch.setenv("EXECUTOR_WORKSPACE", str(workspace))
+        cmd = []
+
+        executor._add_workspace_mount(cmd)
+
+        assert workspace.is_dir()
+        assert cmd == ["-v", f"{workspace}:/workspace"]
+
     def test_submit_executor_existing_container_success(self, executor):
         """Test submitting executor to existing container successfully"""
         task = {
