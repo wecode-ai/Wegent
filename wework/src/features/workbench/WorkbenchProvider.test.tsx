@@ -905,7 +905,7 @@ function RuntimeTaskPinProbe() {
   )
 }
 
-function RuntimeTaskForkProbe() {
+function RuntimeTaskForkProbe({ onForkSettled }: { onForkSettled: (created: boolean) => void }) {
   const workbench = useWorkbench()
 
   return (
@@ -914,6 +914,7 @@ function RuntimeTaskForkProbe() {
         {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
       </span>
       <span data-testid="fork-current-project">{workbench.state.currentProject?.id ?? 'none'}</span>
+      <span data-testid="fork-setup-error">{workbench.projectChat.composerError}</span>
       <span data-testid="fork-runtime-task-titles">
         {workbench.state.runtimeWork?.projects
           .flatMap(project => project.deviceWorkspaces)
@@ -948,10 +949,15 @@ function RuntimeTaskForkProbe() {
         type="button"
         data-testid="fork-current-runtime-task-action"
         onClick={() =>
-          void workbench.forkCurrentRuntimeTask({
-            deviceId: 'device-1',
-            workspacePath: '/workspace/project-alpha',
-          })
+          void workbench
+            .forkCurrentRuntimeTask({
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+            })
+            .then(
+              () => onForkSettled(true),
+              () => onForkSettled(false)
+            )
         }
       >
         fork current runtime task
@@ -1500,6 +1506,26 @@ function ProjectSendProbe({
         }}
       >
         send project sidebar chat
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const project =
+            workbench.state.currentProject ??
+            workbench.state.projects.find(candidate => candidate.id === 7)
+          if (!project) return
+          void workbench.createProjectRuntimeTask('继承前序工作区', {
+            project,
+            workspaceSource: {
+              deviceId: 'device-1',
+              taskId: 'predecessor-task',
+              workspacePath: '/workspace/worktrees/predecessor',
+            },
+            runtime: 'codex',
+          })
+        }}
+      >
+        send with inherited workspace
       </button>
       <button
         type="button"
@@ -2708,123 +2734,139 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
-  test('opens a forked task before refreshing the runtime task list', async () => {
-    const refreshRequest = deferred<RuntimeWorkListResponse>()
-    const initialRuntimeWork = createRuntimeWork()
-    initialRuntimeWork.projects[0]!.deviceWorkspaces[0]!.tasks[0]!.modelSelection = {
-      modelName: 'wework-custom-desktop-e2e-responses',
-      modelType: 'runtime',
-      options: {
-        codexProviderId: 'local-model:desktop-e2e-responses',
-      },
-    }
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi
-        .fn()
-        .mockResolvedValueOnce(initialRuntimeWork)
-        .mockReturnValueOnce(refreshRequest.promise),
-      forkRuntimeTask: vi.fn().mockResolvedValue({
-        accepted: true,
-        source: {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-a',
+  test.each([null, 'Fork transcript unavailable'])(
+    'opens a forked task before refreshing the runtime task list (setup error: %s)',
+    async setupError => {
+      const refreshRequest = deferred<RuntimeWorkListResponse>()
+      const initialRuntimeWork = createRuntimeWork()
+      initialRuntimeWork.projects[0]!.deviceWorkspaces[0]!.tasks[0]!.modelSelection = {
+        modelName: 'wework-custom-desktop-e2e-responses',
+        modelType: 'runtime',
+        options: {
+          codexProviderId: 'local-model:desktop-e2e-responses',
         },
-        target: {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-fork',
-        },
-        runtime: 'codex',
-        transcript: {
-          taskId: 'runtime-fork',
-          workspacePath: '/workspace/project-alpha',
+      }
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi
+          .fn()
+          .mockResolvedValueOnce(initialRuntimeWork)
+          .mockReturnValueOnce(refreshRequest.promise),
+        forkRuntimeTask: vi.fn().mockResolvedValue({
+          accepted: true,
+          source: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+          },
+          target: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-fork',
+          },
           runtime: 'codex',
-          running: false,
-          messages: [],
-          turns: [
-            {
-              id: 'fork-turn',
-              status: 'completed',
-              runtimeStatus: 'done',
-              items: [
-                {
-                  id: 'fork-assistant',
-                  type: 'assistant_text',
-                  content: 'Forked transcript is ready',
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    })
-    const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-    })
+          setupError,
+          transcript: setupError
+            ? null
+            : {
+                taskId: 'runtime-fork',
+                workspacePath: '/workspace/project-alpha',
+                runtime: 'codex',
+                running: false,
+                messages: [],
+                turns: [
+                  {
+                    id: 'fork-turn',
+                    status: 'completed',
+                    runtimeStatus: 'done',
+                    items: [
+                      {
+                        id: 'fork-assistant',
+                        type: 'assistant_text',
+                        content: 'Forked transcript is ready',
+                      },
+                    ],
+                  },
+                ],
+              },
+        }),
+      })
+      const services = createWorkbenchServices({
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      })
 
-    renderWorkbench(<RuntimeTaskForkProbe />, services)
+      const onForkSettled = vi.fn()
+      renderWorkbench(<RuntimeTaskForkProbe onForkSettled={onForkSettled} />, services)
 
-    await userEvent.click(await screen.findByTestId('open-fork-source'))
-    await waitFor(() =>
-      expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-a')
-    )
-    expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
+      await userEvent.click(await screen.findByTestId('open-fork-source'))
+      await waitFor(() =>
+        expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-a')
+      )
+      expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
 
-    await userEvent.click(screen.getByTestId('fork-current-runtime-task-action'))
+      await userEvent.click(screen.getByTestId('fork-current-runtime-task-action'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
-    )
-    expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
-    expect(screen.getByTestId('fork-runtime-task-titles')).toHaveTextContent(
-      'runtime-fork:Runtime A:optimistic'
-    )
-    expect(screen.getByTestId('fork-runtime-task-models')).toHaveTextContent(
-      'runtime-fork:wework-custom-desktop-e2e-responses'
-    )
-    expect(
-      getRuntimeConversationMessages({
+      await waitFor(() =>
+        expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
+      )
+      expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
+      expect(screen.getByTestId('fork-runtime-task-titles')).toHaveTextContent(
+        'runtime-fork:Runtime A:optimistic'
+      )
+      expect(screen.getByTestId('fork-runtime-task-models')).toHaveTextContent(
+        'runtime-fork:wework-custom-desktop-e2e-responses'
+      )
+      const forkMessages = getRuntimeConversationMessages({
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-fork',
       }).map(message => message.content)
-    ).toContain('Forked transcript is ready')
-    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
+      if (setupError) {
+        expect(forkMessages).toEqual([])
+        expect(screen.getByTestId('fork-setup-error')).toHaveTextContent(
+          i18n.t('workbench.task_fork_setup_failed', { taskId: 'runtime-fork', error: setupError })
+        )
+      } else {
+        expect(forkMessages).toContain('Forked transcript is ready')
+        expect(screen.getByTestId('fork-setup-error')).toBeEmptyDOMElement()
+      }
+      expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
-    refreshRequest.resolve(
-      createRuntimeWork({
-        projects: [
-          {
-            project: { id: 7, name: 'Wegent' },
-            deviceWorkspaces: [
-              {
-                id: 22,
-                projectId: 7,
-                deviceId: 'device-1',
-                deviceName: 'Project Device',
-                deviceStatus: 'online',
-                workspacePath: '/workspace/project-alpha',
-                mapped: true,
-                available: true,
-                tasks: [
-                  {
-                    taskId: 'runtime-fork',
-                    workspacePath: '/workspace/project-alpha',
-                    title: 'Runtime fork',
-                    runtime: 'codex',
-                  },
-                ],
-              },
-            ],
-            totalTasks: 1,
-          },
-        ],
-        totalTasks: 1,
-      })
-    )
-    await waitFor(() => expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7'))
-  })
+      refreshRequest.resolve(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-fork',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime fork',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
+          ],
+          totalTasks: 1,
+        })
+      )
+      await waitFor(() => expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7'))
+      await waitFor(() => expect(onForkSettled).toHaveBeenCalledWith(true))
+      expect(runtimeWorkApi.forkRuntimeTask).toHaveBeenCalledTimes(1)
+    }
+  )
 
   test('keeps a project task globally pinned while executor refresh is stale', async () => {
     const pinRequest = deferred<void>()
@@ -6693,6 +6735,61 @@ describe('WorkbenchProvider runtime tasks', () => {
         }),
       })
     )
+    expect(request.execution).toBeUndefined()
+    expect(prepareWorktree).not.toHaveBeenCalled()
+  })
+
+  test('reuses a predecessor workspace without creating another worktree', async () => {
+    const prepareWorktree = vi.fn()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      prepareWorktree,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with inherited workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    expect(request.workspaceSourceTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'predecessor-task',
+      workspacePath: '/workspace/worktrees/predecessor',
+    })
     expect(request.execution).toBeUndefined()
     expect(prepareWorktree).not.toHaveBeenCalled()
   })

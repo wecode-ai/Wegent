@@ -405,6 +405,7 @@ export function createHybridWorkbenchServices(
   let rememberedCloudModels: UnifiedModel[] = []
   let cloudModelsLoaded = false
   let cloudModelsRequest: Promise<void> | null = null
+  let cloudModelsRefreshRequested = false
   const rememberedCloudSearch = new Map<string, RuntimeWorkSearchResponse>()
   const cloudSearchRequests = new Map<string, Promise<void>>()
   const rememberedCloudArchives = new Map<string, ArchivedConversationsListResponse>()
@@ -426,7 +427,12 @@ export function createHybridWorkbenchServices(
     rememberedCloudDevicesRevision = revision
   }
   const loadCloudModelsInBackground = () => {
-    if (cloudModelsLoaded || cloudModelsRequest) return
+    if (cloudModelsLoaded) return
+    if (cloudModelsRequest) {
+      cloudModelsRefreshRequested = true
+      return
+    }
+    cloudModelsRefreshRequested = false
     cloudModelsRequest = Promise.resolve()
       .then(() => cloudServices.modelApi.listModels())
       .then(response => {
@@ -444,6 +450,8 @@ export function createHybridWorkbenchServices(
       })
       .finally(() => {
         cloudModelsRequest = null
+        // Preserve a refresh that arrived before the failed request settled.
+        if (!cloudModelsLoaded && cloudModelsRefreshRequested) loadCloudModelsInBackground()
       })
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
@@ -889,7 +897,9 @@ export function createHybridWorkbenchServices(
     async getRuntimeTranscript(data: RuntimeTranscriptRequest) {
       const route = isLocalDeviceId(data.deviceId) ? 'local' : 'cloud'
       try {
-        const response = await routeByAddress(data).getRuntimeTranscript(data)
+        const response = await (
+          data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+        ).getRuntimeTranscript(data)
         const snapshot = runtimeExecutionSnapshot(data, response)
         if (
           snapshot &&
@@ -1182,9 +1192,12 @@ export function createHybridWorkbenchServices(
     reorderQueuedRuntimeTask(data) {
       return routeByAddress(data).reorderQueuedRuntimeTask(data)
     },
-    async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+    async createRuntimeTask(
+      data: RuntimeTaskCreateRequest,
+      ...dispatchHooks: [beforeDispatch?: () => Promise<void>]
+    ) {
       if (data.origin?.projectStore === 'local') {
-        return localProjectServices.runtimeWorkApi!.createRuntimeTask(data)
+        return localProjectServices.runtimeWorkApi!.createRuntimeTask(data, ...dispatchHooks)
       }
       const startedAt = Date.now()
       logRuntimeTaskCreateStage('hybrid-create-started', {
@@ -1205,8 +1218,8 @@ export function createHybridWorkbenchServices(
         try {
           response =
             data.wegentTeamId && route === 'cloud'
-              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request)
-              : await api.createRuntimeTask(request)
+              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request, ...dispatchHooks)
+              : await api.createRuntimeTask(request, ...dispatchHooks)
         } catch (error) {
           if (data.wegentTeamId && route === 'cloud' && rejectsRuntimeTaskCreateV3(error)) {
             throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, {

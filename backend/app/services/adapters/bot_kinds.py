@@ -12,13 +12,12 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-logger = logging.getLogger(__name__)
-
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
-from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
+from app.schemas.kind import BaseGhostRef, Bot, Ghost, Model, Shell, SkillRefMeta, Team
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -33,6 +32,8 @@ from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
 from shared.models.db.kind import utc_now_naive
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_skill_id_mapping(
@@ -65,11 +66,76 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     ]
 
     @staticmethod
+    def resolve_default_base_ghost_ref(db: Session) -> dict[str, Any]:
+        """Resolve the public chat default's Ghost as the shared baseline."""
+        configured = (settings.DEFAULT_TEAM_CHAT or "").strip()
+        if not configured:
+            raise HTTPException(
+                status_code=400,
+                detail="Default chat agent is not configured",
+            )
+        team_name, _, namespace = configured.partition("#")
+        namespace = namespace or "default"
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Team",
+                Kind.name == team_name,
+                Kind.namespace == namespace,
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if not team or not team.json:
+            raise HTTPException(
+                status_code=400,
+                detail="Default chat agent is unavailable",
+            )
+        team_crd = Team.model_validate(team.json)
+        leader = next(
+            (
+                member
+                for member in (team_crd.spec.members or [])
+                if member.role == "leader"
+            ),
+            None,
+        ) or next(iter(team_crd.spec.members or []), None)
+        if leader is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Default chat agent has no bot",
+            )
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Bot",
+                Kind.name == leader.botRef.name,
+                Kind.namespace == leader.botRef.namespace,
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if not bot or not bot.json:
+            raise HTTPException(
+                status_code=400,
+                detail="Default chat agent bot is unavailable",
+            )
+        bot_crd = Bot.model_validate(bot.json)
+        return {
+            "name": bot_crd.spec.ghostRef.name,
+            "namespace": bot_crd.spec.ghostRef.namespace,
+            "user_id": 0,
+        }
+
+    @staticmethod
     def _resolve_create_capability_mode(obj_in: BotCreate) -> str:
         if obj_in.capability_mode is not None:
             return obj_in.capability_mode
         has_explicit_capabilities = any(
             (
+                obj_in.inherit_base_capabilities,
                 obj_in.mcp_servers,
                 obj_in.plugins,
                 obj_in.skills,
@@ -444,6 +510,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "mcpServers": obj_in.mcp_servers or {},
             "plugins": obj_in.plugins or [],
         }
+        if obj_in.inherit_base_capabilities:
+            ghost_spec["baseGhostRef"] = self.resolve_default_base_ghost_ref(db)
         if obj_in.default_knowledge_base_refs is not None:
             ghost_spec["defaultKnowledgeBaseRefs"] = [
                 ref.model_dump() for ref in obj_in.default_knowledge_base_refs
@@ -1144,6 +1212,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot_crd.spec.capability_mode = update_data["capability_mode"]
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")
+
+        if "inherit_base_capabilities" in update_data and ghost:
+            ghost_crd = Ghost.model_validate(ghost.json)
+            if obj_in.inherit_base_capabilities:
+                ghost_crd.spec.baseGhostRef = BaseGhostRef(
+                    **self.resolve_default_base_ghost_ref(db)
+                )
+                bot_crd = Bot.model_validate(bot.json)
+                bot_crd.spec.capability_mode = "manual"
+                bot.json = bot_crd.model_dump()
+                flag_modified(bot, "json")
+            else:
+                ghost_crd.spec.baseGhostRef = None
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
 
         if "system_prompt" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
@@ -1855,8 +1939,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         skill_refs = {}
         preload_skill_refs = {}
         default_knowledge_base_refs = []
+        inherit_base_capabilities = False
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
+            inherit_base_capabilities = ghost_crd.spec.baseGhostRef is not None
             skills = ghost_crd.spec.skills or []
             preload_skills = ghost_crd.spec.preload_skills or []
             default_knowledge_base_refs = [
@@ -1894,6 +1980,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "mcp_servers": mcp_servers,
             "plugins": plugins,
             "capability_mode": bot_crd.spec.capability_mode,
+            "inherit_base_capabilities": inherit_base_capabilities,
             "default_knowledge_base_refs": default_knowledge_base_refs,
             "skills": skills,
             "skill_refs": skill_refs,
@@ -2463,6 +2550,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             preload_skill_refs=preload_skill_refs_meta,
             plugins=bot_dict.get("plugins"),
             capability_mode=bot_dict.get("capability_mode", "follow_device"),
+            inherit_base_capabilities=bot_dict.get("inherit_base_capabilities", False),
             namespace=namespace,
         )
 

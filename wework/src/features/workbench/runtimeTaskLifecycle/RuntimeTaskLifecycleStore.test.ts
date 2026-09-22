@@ -79,6 +79,22 @@ describe('RuntimeTaskLifecycleStore', () => {
     ).toBe(true)
   })
 
+  test('tracks task-local lifecycle revisions across a complete running cycle', () => {
+    const store = new RuntimeTaskLifecycleStore('task-revision-test')
+
+    expect(store.getTaskRevision(address)).toBe(0)
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+    const idleRevision = store.getTaskRevision(address)
+
+    store.executorStarted(address)
+    const runningRevision = store.getTaskRevision(address)
+    store.executorSettled(address)
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(runningRevision).toBeGreaterThan(idleRevision)
+    expect(store.getTaskRevision(address)).toBeGreaterThan(runningRevision)
+  })
+
   test('consumes a queued lifecycle block only after a stable transition', () => {
     const store = new RuntimeTaskLifecycleStore('queued-block-transition-test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))

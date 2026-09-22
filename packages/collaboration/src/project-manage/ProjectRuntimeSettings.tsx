@@ -132,7 +132,7 @@ export function ProjectRuntimeSettings({
           model: model.name,
           modelType: model.type,
           modelOptions: model.options,
-          workspacePolicy: "project",
+          workspacePolicy: "git_worktree",
         });
         setProfiles((items) => [...items, profile!]);
         setSelectedId(profile.id);

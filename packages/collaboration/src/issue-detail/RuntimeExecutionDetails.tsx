@@ -256,6 +256,14 @@ export function RuntimeExecutionDetails({
                         : "activity.task_activity_transcript_execution_unknown",
                   )}
                 </p>
+                {transcriptError ? (
+                  <p
+                    role="alert"
+                    className="mt-2 break-words text-xs text-text-muted"
+                  >
+                    {transcriptError}
+                  </p>
+                ) : null}
               </div>
               <button
                 type="button"

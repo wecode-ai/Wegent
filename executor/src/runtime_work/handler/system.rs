@@ -588,6 +588,80 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    pub(super) async fn apply_issue_worktree_cleanup(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        if string_field(&payload, "action").as_deref() == Some("retain") {
+            return Ok(json!({"success": true, "released": []}));
+        }
+        let task_ids = payload
+            .get("runtime_task_ids")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_owned)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+        if task_ids.is_empty() {
+            return Ok(json!({"success": true, "released": []}));
+        }
+
+        let tasks = self.store.list_task_summaries(true);
+        if tasks
+            .iter()
+            .any(|task| task_ids.contains(&task.local_task_id) && task.running)
+        {
+            return Err(AppIpcError::new(
+                "workspace_cleanup_busy",
+                "A linked Runtime task is still running",
+            ));
+        }
+        let worktrees = self.worktrees.clone();
+        let listed_tasks = tasks.clone();
+        let entries = tokio::task::spawn_blocking(move || worktrees.list(&listed_tasks))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_list_failed",
+                    format!("Worktree cleanup lookup failed: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
+        let mut released = Vec::new();
+        let mut shared = Vec::new();
+        for (record, linked) in entries.into_iter().filter(|(record, linked)| {
+            task_ids.contains(&record.worktree_id)
+                || linked
+                    .iter()
+                    .any(|task| task_ids.contains(&task.local_task_id))
+        }) {
+            if linked
+                .iter()
+                .any(|task| task.status != "archived" && !task_ids.contains(&task.local_task_id))
+            {
+                shared.push(record.path);
+                continue;
+            }
+            let path = record.path;
+            self.delete_worktree(json!({
+                "path": path,
+                "preserveSnapshot": true,
+            }))
+            .await?;
+            released.push(path);
+        }
+        Ok(json!({
+            "success": true,
+            "released": released,
+            "shared": shared,
+        }))
+    }
+
     pub(super) async fn restore_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
         let path = string_field(&payload, "path")
             .or_else(|| workspace_path(&payload))
@@ -1038,6 +1112,45 @@ mod tests {
             "worktree_persistent_storage_unverified"
         );
         assert_eq!(prepare_error.code, "worktree_persistent_storage_unverified");
+    }
+
+    #[tokio::test]
+    async fn issue_cleanup_defers_while_a_linked_runtime_task_is_running() {
+        let root = tempfile::tempdir().expect("temporary runtime work directory");
+        let mut handler = RuntimeWorkRpcHandler::new("device-cloud", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let mut task = RuntimeTaskLink::new_pending(
+            "runtime-task-1".to_owned(),
+            root.path().join("workspace").display().to_string(),
+            "Running task".to_owned(),
+        );
+        task.running = true;
+        handler.store.upsert_task(task);
+
+        let error = handler
+            .apply_issue_worktree_cleanup(json!({
+                "action": "release",
+                "runtime_task_ids": ["runtime-task-1"],
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "workspace_cleanup_busy");
+    }
+
+    #[tokio::test]
+    async fn reopened_issue_cleanup_is_acknowledged_without_touching_worktrees() {
+        let handler = RuntimeWorkRpcHandler::new("device-cloud", "/bin/false");
+
+        let result = handler
+            .apply_issue_worktree_cleanup(json!({
+                "action": "retain",
+                "runtime_task_ids": ["runtime-task-1"],
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result, json!({"success": true, "released": []}));
     }
 
     #[test]

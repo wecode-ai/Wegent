@@ -20,6 +20,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
     ProjectChatAutomationManagerContinuation,
+    ProjectChatCommentExecution,
     ProjectChatSend,
     ProjectChatSubscribe,
     ProjectChatWegentContinuation,
@@ -69,6 +70,7 @@ PROJECT_CHAT_EXECUTION_SNAPSHOT_EVENT = "wework:project_chat:execution:snapshot"
 PROJECT_CHAT_MANAGER_CONTINUE_EVENT = "wework:project_chat:manager:continue"
 PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
 PROJECT_CHAT_WEGENT_CONTINUE_EVENT = "wework:project_chat:wegent:continue"
+PROJECT_CHAT_COMMENT_EXECUTE_EVENT = "wework:project_chat:comment:execute"
 PROJECT_CHAT_PROJECT_ROOM_PREFIX = "wework-project-chat:project:"
 PROJECT_CHAT_TASK_ROOM_PREFIX = "wework-project-chat:task:"
 RUNTIME_EXECUTION_REQUEST_KEYS = (
@@ -147,6 +149,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             PROJECT_CHAT_MANAGER_CONTINUE_EVENT: "on_project_chat_manager_continue",
             PROJECT_CHAT_AGENT_FAILED_EVENT: "on_project_chat_agent_failed",
             PROJECT_CHAT_WEGENT_CONTINUE_EVENT: "on_project_chat_wegent_continue",
+            PROJECT_CHAT_COMMENT_EXECUTE_EVENT: "on_project_chat_comment_execute",
         }
 
     @trace_websocket_event(exclude_events={"connect"}, extract_event_data=True)
@@ -447,6 +450,41 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
+    async def on_project_chat_comment_execute(self, sid: str, data: dict) -> dict:
+        """Execute a saved project comment under its server-owned binding."""
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        from app.services.loop_item_executions.service import (
+            WeworkRuntimeConfigurationError,
+        )
+        from app.services.project_chat.comment_execution import execute_comment
+
+        try:
+            request = ProjectChatCommentExecution.model_validate(
+                project_chat_payload(data)
+            )
+            with get_db_session() as db:
+                messages = await execute_comment(
+                    db, user_id=int(identity["user_id"]), request=request
+                )
+                result = [
+                    message.model_dump(mode="json", by_alias=True)
+                    for message in messages
+                ]
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+        except WeworkRuntimeConfigurationError as exc:
+            return project_chat_error("EXECUTION_CONFIGURATION", str(exc))
+        except Exception:
+            logger.exception("[ProjectChat] Comment execution failed")
+            return project_chat_error(
+                "EXECUTION_FAILED", "Comment saved, but AI execution could not start"
+            )
+        for message in result:
+            await emit_project_chat_message(self, message)
+        return {"ok": True, "result": result}
+
     async def on_project_chat_wegent_continue(self, sid: str, data: dict) -> dict:
         """Persist and dispatch one reply into its bound native Wegent Task."""
 
@@ -484,6 +522,22 @@ async def relay_ipc_request(
     timeout_seconds: int,
 ) -> dict[str, Any]:
     """Relay one supported app IPC method to the owning executor."""
+
+    project_transcript = False
+    if (
+        method == "runtime.tasks.transcript"
+        and params.get("projectSession") is not None
+    ):
+        try:
+            user_id, params = await run_sync_in_executor(
+                _project_transcript_request, user_id, device_id, params
+            )
+            project_transcript = True
+        except (HTTPException, ValidationError) as exc:
+            raise RuntimeRpcError(
+                str(exc.detail) if isinstance(exc, HTTPException) else str(exc),
+                code="project_session_access_denied",
+            ) from exc
 
     if method == "device.execute_command":
         try:
@@ -532,7 +586,21 @@ async def relay_ipc_request(
         method=method,
         payload=params,
         timeout_seconds=timeout_seconds,
+        **({"allow_app_device_task_reading": True} if project_transcript else {}),
     )
+
+
+def _project_transcript_request(
+    user_id: int, device_id: str, params: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.project_chat.session_access import resolve_project_transcript
+    from app.services.runtime_work_service import _runtime_transcript_payload
+
+    request = RuntimeTranscriptRequest.model_validate({**params, "deviceId": device_id})
+    with get_db_session() as db:
+        owner, address = resolve_project_transcript(db, user_id, request)
+        return owner, _runtime_transcript_payload(request, address)
 
 
 def ipc_error(

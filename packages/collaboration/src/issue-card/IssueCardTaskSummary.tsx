@@ -1,30 +1,30 @@
-import type { ReactNode } from "react";
-import { ListTodo, Target } from "lucide-react";
-import type { CollaborationTranslate } from "../i18n";
-import { activityClassNames as cn } from "../issue-detail/activityClassNames";
-import { ActivityShimmerText } from "./ActivityShimmerText";
+import type { ReactNode } from 'react'
+import { ListTodo, Target } from 'lucide-react'
+import type { CollaborationTranslate } from '../i18n'
+import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { ActivityShimmerText } from './ActivityShimmerText'
 
 export interface IssueCardLiveActivity {
-  active: boolean;
-  processText: string | null;
-  tools: { id: string; text: string; running: boolean }[];
+  active: boolean
+  processText: string | null
+  tools: { id: string; text: string; running: boolean }[]
 }
 
 export interface IssueCardTaskSummaryProps {
-  itemId: string;
-  bindingId: string | number;
-  title: string;
-  compact: boolean;
-  focused?: boolean;
-  goal?: string | null;
-  goalLoading?: boolean;
-  activity: IssueCardLiveActivity;
-  responsePreview: string | null;
-  reserveTrailingAction?: boolean;
-  status?: ReactNode;
-  hideTaskIcon?: boolean;
-  conversation?: ReactNode;
-  translate: CollaborationTranslate;
+  itemId: string
+  bindingId: string | number
+  title: string
+  compact: boolean
+  focused?: boolean
+  goal?: string | null
+  goalLoading?: boolean
+  activity: IssueCardLiveActivity
+  responsePreview: string | null
+  reserveTrailingAction?: boolean
+  status?: ReactNode
+  hideTaskIcon?: boolean
+  conversation?: ReactNode
+  translate: CollaborationTranslate
 }
 
 export function IssueCardTaskSummary({
@@ -46,10 +46,7 @@ export function IssueCardTaskSummary({
   return (
     <div
       data-testid={`cloud-todo-card-task-summary-${itemId}-${bindingId}`}
-      className={cn(
-        "min-w-0 text-left",
-        compact && "relative rounded-md px-1 py-0.5",
-      )}
+      className={cn('min-w-0 text-left', compact && 'relative mt-3 empty:hidden')}
     >
       {status}
       {!compact ? (
@@ -77,7 +74,7 @@ export function IssueCardTaskSummary({
           data-testid={`cloud-todo-card-popup-goal-loading-${itemId}-${bindingId}`}
           className="mt-2 text-xs leading-5 text-text-muted"
         >
-          {t("todo.current_conversation_goal_loading", "正在加载会话目标…")}
+          {t('todo.current_conversation_goal_loading', '正在加载会话目标…')}
         </div>
       ) : null}
       {compact && activity.active ? (
@@ -96,16 +93,16 @@ export function IssueCardTaskSummary({
         <div
           data-testid={`cloud-todo-card-final-response-${itemId}`}
           className={cn(
-            "text-xs leading-5 text-text-muted",
-            "h-5 truncate",
-            reserveTrailingAction && "pr-7",
+            'text-xs leading-5 text-text-muted',
+            'line-clamp-2 break-words',
+            reserveTrailingAction && 'pr-7'
           )}
         >
           {responsePreview}
         </div>
       ) : null}
     </div>
-  );
+  )
 }
 
 function IssueCardCompactActivity({
@@ -115,29 +112,24 @@ function IssueCardCompactActivity({
   reserveTrailingAction,
   focused,
 }: {
-  itemId: string;
-  activity: IssueCardLiveActivity;
-  responsePreview: string | null;
-  reserveTrailingAction: boolean;
-  focused: boolean;
+  itemId: string
+  activity: IssueCardLiveActivity
+  responsePreview: string | null
+  reserveTrailingAction: boolean
+  focused: boolean
 }) {
-  const processText = activity.processText || responsePreview;
-  const visibleTools = focused
-    ? activity.tools.slice(-3)
-    : activity.tools.slice(-1);
+  const processText = activity.processText || responsePreview
+  const visibleTools = focused ? activity.tools.slice(-3) : activity.tools.slice(-1)
 
   return (
-    <div
-      data-testid={`cloud-todo-card-activity-${itemId}`}
-      className="min-w-0 text-xs"
-    >
+    <div data-testid={`cloud-todo-card-activity-${itemId}`} className="min-w-0 text-xs">
       {processText ? (
         <div
           data-testid={`cloud-todo-card-process-${itemId}`}
           className={cn(
-            "whitespace-pre-wrap leading-5 text-text-secondary",
-            focused ? "line-clamp-[8]" : "line-clamp-3",
-            reserveTrailingAction && "pr-7",
+            'whitespace-pre-wrap leading-5 text-text-secondary',
+            focused ? 'line-clamp-[8]' : 'line-clamp-2',
+            reserveTrailingAction && 'pr-7'
           )}
         >
           {processText}
@@ -147,21 +139,17 @@ function IssueCardCompactActivity({
         <div
           data-testid={`cloud-todo-card-tool-line-${itemId}`}
           className={cn(
-            "ml-2 min-w-0 border-l border-border pl-3 text-text-muted",
-            processText && "mt-1",
+            'ml-2 min-w-0 border-l border-border pl-3 text-text-muted',
+            processText && 'mt-1'
           )}
         >
-          {visibleTools.map((block) => (
-            <IssueCardToolActivity
-              key={block.id}
-              itemId={itemId}
-              block={block}
-            />
+          {visibleTools.map(block => (
+            <IssueCardToolActivity key={block.id} itemId={itemId} block={block} />
           ))}
         </div>
       ) : null}
     </div>
-  );
+  )
 }
 
 export function IssueCardGoalSummary({
@@ -171,13 +159,13 @@ export function IssueCardGoalSummary({
   compact,
   translate: t,
 }: {
-  itemId: string;
-  bindingId: string | number;
-  objective: string;
-  compact: boolean;
-  translate: CollaborationTranslate;
+  itemId: string
+  bindingId: string | number
+  objective: string
+  compact: boolean
+  translate: CollaborationTranslate
 }) {
-  const label = t("todo.current_conversation_goal", "当前会话目标");
+  const label = t('todo.current_conversation_goal', '当前会话目标')
 
   if (compact) {
     return (
@@ -189,7 +177,7 @@ export function IssueCardGoalSummary({
       >
         <Target className="h-4 w-4" aria-hidden="true" />
       </span>
-    );
+    )
   }
 
   return (
@@ -197,30 +185,23 @@ export function IssueCardGoalSummary({
       data-testid={`cloud-todo-card-popup-goal-${itemId}-${bindingId}`}
       className="mt-2 flex min-w-0 gap-2 rounded-lg bg-muted/55 px-2.5 py-2"
     >
-      <Target
-        className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary"
-        aria-hidden="true"
-      />
+      <Target className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
       <div className="min-w-0">
-        <div className="text-xs font-medium leading-5 text-text-secondary">
-          {label}
-        </div>
-        <p className="line-clamp-3 text-xs leading-5 text-text-primary">
-          {objective}
-        </p>
+        <div className="text-xs font-medium leading-5 text-text-secondary">{label}</div>
+        <p className="line-clamp-3 text-xs leading-5 text-text-primary">{objective}</p>
       </div>
     </div>
-  );
+  )
 }
 
 function IssueCardToolActivity({
   itemId,
   block,
 }: {
-  itemId: string;
-  block: IssueCardLiveActivity["tools"][number];
+  itemId: string
+  block: IssueCardLiveActivity['tools'][number]
 }) {
-  const running = block.running;
+  const running = block.running
 
   return (
     <div
@@ -235,5 +216,5 @@ function IssueCardToolActivity({
         <span className="min-w-0 truncate">{block.text}</span>
       )}
     </div>
-  );
+  )
 }

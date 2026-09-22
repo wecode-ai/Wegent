@@ -334,6 +334,9 @@ impl LocalTaskStore {
             local_automation::validate_rules(&automatic_processing_rules)?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
+        if let Some(execution_environment) = input.execution_environment {
+            metadata["execution_environment"] = execution_environment;
+        }
         let connection = self.connection()?;
         let updated = connection.execute(
             "UPDATE loop_items

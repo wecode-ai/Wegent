@@ -138,6 +138,9 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Override the globally selected project execution strategy. Pass null to
    * bind the task to the selected project's main workspace. */
   workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
+  /** Collaboration entry points choose worktrees automatically. If the
+   * executor rejects the worktree preflight, continue in the main workspace. */
+  automaticWorkspaceSelection?: boolean
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
@@ -330,7 +333,12 @@ export interface WorkbenchContextValue {
   ) => Promise<ArchiveRuntimeConversationsResult>
   forkCurrentRuntimeTask: (
     target: RuntimeTaskForkTarget,
-    options?: { source?: RuntimeTaskAddress; lastTurnId?: string; title?: string }
+    options?: {
+      source?: RuntimeTaskAddress
+      lastTurnId?: string
+      title?: string
+      modelSelection?: ModelSelectionConfig | null
+    }
   ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>

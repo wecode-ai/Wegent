@@ -486,6 +486,7 @@ describe('shared IssueDetail', () => {
         taskId: 'actual-runtime-task',
         limit: 50,
         refresh: true,
+        projectSession: { projectId: 'project-1', issueId: 'issue-1' },
       })
       expect(screen.getByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-execution-detail-close')).toHaveFocus()

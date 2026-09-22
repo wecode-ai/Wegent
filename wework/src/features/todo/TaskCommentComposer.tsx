@@ -21,6 +21,8 @@ export function TaskCommentComposer({
   error,
   controls,
   projectWork,
+  serverExecution = false,
+  agents = [],
 }: {
   value: string
   onChange: (value: string) => void
@@ -30,6 +32,8 @@ export function TaskCommentComposer({
   error: string | null
   controls: ProjectChatControls
   projectWork: ProjectWorkControls
+  serverExecution?: boolean
+  agents?: { id: string; name: string }[]
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -37,6 +41,12 @@ export function TaskCommentComposer({
   return (
     <IssueMainCommentComposer
       value={value}
+      mentionGroups={[
+        {
+          label: t('todo.agent_teams'),
+          items: agents.map(agent => ({ id: agent.id, name: agent.name, avatar: 'AI' })),
+        },
+      ]}
       onChange={onChange}
       onSubmit={onSubmit}
       disabled={disabled}
@@ -60,24 +70,31 @@ export function TaskCommentComposer({
         />
       }
       settings={
-        <>
-          {projectWork.projects.length > 0 ? (
-            <ProjectWorkBar {...projectWork} showClearButton={projectWork.showProjectClearButton} />
-          ) : null}
-          <ModelSelector
-            models={controls.models}
-            selectedModel={controls.selectedModel}
-            selectedModelOptions={controls.selectedModelOptions}
-            disabled={disabled || sending}
-            onSelectModel={controls.setSelectedModel}
-            onSelectModelOption={controls.setSelectedModelOption}
-          />
-          <PermissionModeSelector
-            value={runtimePermissionMode(controls.selectedModelOptions)}
-            disabled={disabled || sending}
-            onChange={mode => controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-          />
-        </>
+        serverExecution ? undefined : (
+          <>
+            {projectWork.projects.length > 0 ? (
+              <ProjectWorkBar
+                {...projectWork}
+                showClearButton={projectWork.showProjectClearButton}
+              />
+            ) : null}
+            <ModelSelector
+              models={controls.models}
+              selectedModel={controls.selectedModel}
+              selectedModelOptions={controls.selectedModelOptions}
+              disabled={disabled || sending}
+              onSelectModel={controls.setSelectedModel}
+              onSelectModelOption={controls.setSelectedModelOption}
+            />
+            <PermissionModeSelector
+              value={runtimePermissionMode(controls.selectedModelOptions)}
+              disabled={disabled || sending}
+              onChange={mode =>
+                controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+              }
+            />
+          </>
+        )
       }
     />
   )

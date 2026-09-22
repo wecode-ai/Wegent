@@ -17,10 +17,12 @@ from app.services.board_team_continuation import board_team_continuation_service
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reassigned", [False, True])
 async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
     test_db,
     test_user,
     monkeypatch,
+    reassigned,
 ):
     team = Kind(
         kind="Team",
@@ -115,6 +117,9 @@ async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
         status="completed",
     )
     test_db.add_all([initial_response, trigger])
+    if reassigned:
+        item.assignee_agent_id = "new-agent"
+        agent.metadata_json = {"runtime": "codex"}
     test_db.commit()
 
     create_chat_task = AsyncMock(

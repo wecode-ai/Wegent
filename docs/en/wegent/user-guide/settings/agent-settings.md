@@ -14,6 +14,7 @@ This guide covers everything you need to configure AI agents in Wegent through t
 - [Agents in collaboration projects](#-agents-in-collaboration-projects)
 - [Accessing Agent Settings](#-accessing-agent-settings)
 - [Creating an Agent](#-creating-an-agent)
+- [Shared Base Capabilities](#-shared-base-capabilities)
 - [Configuring Bots](#-configuring-bots)
 - [Collaboration Modes](#-collaboration-modes)
 - [Model Configuration](#-model-configuration)
@@ -155,6 +156,21 @@ For **other modes**, select existing bots or create new ones.
 ### Step 5: Save
 
 Click **Save** to create your agent. It will appear in your agent list.
+
+---
+
+## 🧰 Shared Base Capabilities
+
+When an agent is created with the simple form, **Use shared base capabilities** is enabled by default. The custom agent reuses the general Skills, MCP tools, and plugins configured on the system default agent while keeping its own name, system prompt, model, and executor.
+
+- This works with Chat, Claude Code, Codex, and other supported executors; it does not require switching to Chat Shell.
+- Wegent merges the base capabilities into the custom agent configuration and performs one model execution. It does not invoke the default agent first and the custom agent second.
+- Same-name MCP and plugin entries from the custom agent take precedence, while Skills are deduplicated.
+- Only one inheritance level is supported to keep capability resolution predictable.
+- Enabling the option provides more capabilities but can increase context size, tool discovery, and tool-call usage. Disable it for pure chat or minimal executions that do not need these capabilities.
+- In **Follow runtime device** mode, Wegent uses the current user's capabilities on the execution device and does not load fixed Ghost capabilities.
+
+After saving, the UI continues to show the Skills available to the agent. During execution, the merged capability configuration is cached within the request so prompt, Skill, MCP, and plugin assembly do not repeat the same reads.
 
 ---
 
@@ -441,6 +457,10 @@ Check **Bind Mode** setting - enable Chat and/or Code as needed.
 - **Disabled**: Can work without a repo
 
 Enable for development agents, disable for chat agents.
+
+### Q: Does enabling shared base capabilities make two model calls?
+
+No. Wegent reads the custom Ghost and its base Ghost, merges their Skills, MCP tools, and plugins, and sends one final model request. The base Ghost's system prompt does not override the custom agent's identity.
 
 ---
 

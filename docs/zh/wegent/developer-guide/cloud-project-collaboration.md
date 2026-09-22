@@ -27,7 +27,7 @@ sidebar_position: 32
 - 「自动处理」只定义触发规则：Issue 创建、添加 Tag、外部事件或定时条件发生后，将工作交给指定的项目成员、智能体或协作小组。规则不绑定设备。
 - 「执行环境」管理项目可用的设备授权池。智能体创建时不选择设备；人工分配和自动处理都在执行领取时从授权池解析设备。
 
-评论中的 Mention 只产生提及和通知，不改变负责人；Assignment、Mention、Subscription 和 Run 使用独立语义。直接使用“分配”操作才会改变负责人，并在目标为智能体或协作小组时创建对应 Run。
+评论中的 Mention 不改变负责人；明确 @ 可用智能体可触发评论执行。Assignment、Mention、Subscription 和 Run 使用独立语义。直接使用“分配”操作才会改变负责人，并在目标为智能体或协作小组时创建对应 Run。
 
 模型身份与提供方参数作为不透明字典传递，不参与接口字段的大小写转换。设备在线状态以连接心跳为准。运行缺少模型或工作区配置时，执行保持 `waiting_runtime`，并通过统一的运行配置入口补齐；设备本身在领取 Run 时绑定。
 
@@ -285,7 +285,7 @@ sequenceDiagram
 7. 激活消息无法入队或 worker 激活失败时必须写明确的 `failed` 终态；没有消费者会继续处理的 execution 不得保留为 `queued`。
 8. Wegent 前端/API 主动停止只能先写 `CANCELLING/cancel_requested`；只有 Runtime ACK 或可信 `CANCELLED` 回调才能写两侧 `CANCELLED/cancelled`。取消发送失败不得伪造终态，前端必须等待并显示服务端 ACK。
 9. 三种 runtime 必须使用同一份可见 user input：规范 `project_id`、`task_id`、`execution_id`、任务 `cloud://` URI，以及用户配置的机器人执行提示词。执行提示词不得进入 Team/Ghost/Bot system prompt，也不得藏入 application context；任务标题、描述和状态由 MCP 读取最新值。
-10. Wegent 评论续聊必须从回复目标携带的 `execution_id` 和 `backend_task_id` 精确解析原生 Task，并再次校验当前看板机器人和 Team；不得从“最新执行”、设备运行列表或前端内存猜测会话。每轮续聊在同一 Task 新建 Subtask，execution 保持原终态，回复评论是该轮展示投影。同一原生 Task 同一时刻最多允许一个 `pending` 或 `streaming` 续聊，防止并发请求覆盖活动 Subtask 标签或串写投影。
+10. Wegent 评论续聊必须从回复目标携带的 `execution_id` 和 `backend_task_id` 精确解析原生 Task，并再次校验线程绑定的项目机器人和原执行 Team；不得从“最新执行”、设备运行列表或前端内存猜测会话。每轮续聊在同一 Task 新建 Subtask，execution 保持原终态，回复评论是该轮展示投影。同一原生 Task 同一时刻最多允许一个 `pending` 或 `streaming` 续聊，防止并发请求覆盖活动 Subtask 标签或串写投影。
 11. 只要原生 Wegent Task 的标签表明它来自看板执行或看板自动化，Backend 就必须在每一轮构建请求时注入看板 MCP；ChatShell 与 Executor 共用同一注入结果，续聊不得依赖上一轮容器内的 MCP 配置。
 12. Backend 看板 MCP 与 Wework 本地原生 Space MCP 是两个 runtime 边界。前者由 Backend 托管并使用 Task Token，后者由 Wework Runtime 本地启动；二者复用规范工具名和领域语义，但不得互相 fallback 或覆盖。
 13. Task Token 的 `task_id/subtask_id` 和原生 Task 标签共同限定当前看板空间。模型可以操作该空间内的其他任务，但当前任务、自动化 run 和 execution 身份必须由服务端解析，不能要求模型猜 ID，也不能用 Task Token 越过当前空间。
@@ -496,3 +496,50 @@ Wework Composer 把云项目、目录、文件、TODO 和交付编码为 `cloud:
 3. Task 关联与从 TODO 开启任务。
 4. Delivery 的权限、来源任务和 MinIO 路径迁移。
 5. 共享文件与云空间 MCP。
+
+## 项目成员与评论执行
+
+智能体的配置可见性决定成员能否主动选择该智能体，不决定成员能否继续参与已经授权的 Issue 工作。具有评论权限的 Developer 成员可以回复项目内已绑定的 AI 评论，无须取得执行者的设备或模型权限。
+
+- 回复已有 AI 评论线程：从线程中的 AI 活动解析原执行记录或 TaskBinding，沿用执行身份和会话；Issue 换负责人不改变旧线程绑定。
+- 新增顶层评论：明确 @ 的可用智能体优先，否则使用 Issue 当前负责的智能体；通过已有执行队列创建独立会话，保留审批与等待配置状态。
+- 没有负责智能体且没有 @ 智能体：仅保存评论。评论重试不会因随后更换负责人而意外触发执行。
+- 明确 @ 其他智能体仍须检查配置可见性；评论不会修改 Issue 的负责人。
+
+```mermaid
+flowchart TD
+    UI[网页或桌面客户端] --> Save[保存成员评论]
+    Save --> Execute[项目评论执行服务]
+    Execute --> Auth[校验项目权限与评论作者]
+    Auth --> Kind{已有 AI 线程?}
+    Kind -->|是| Binding[读取线程的执行记录或 TaskBinding]
+    Binding --> Continue[原执行身份与原会话续跑]
+    Kind -->|否| Agent{明确提及或 Issue 负责人?}
+    Agent -->|有| Queue[执行队列创建独立会话]
+    Agent -->|无| Comment[仅保存评论]
+    Continue --> Activity[状态与结果回写同一线程]
+    Queue --> Activity
+    Activity --> UI
+```
+
+客户端通过 `wework:project_chat:comment:execute` 提交项目、Issue、已保存评论 ID 和附件 ID，不提交执行者身份或设备配置。后端使用评论及线程锁、已有响应记录避免重复分派；失败需回显，已保存评论不重复提交。续跑新建活动记录，不继承已终结自动化的状态，不重新打开原自动化。
+
+针对性验证覆盖成员看不到管理员智能体时的续跑、新评论独立会话、负责人变化、重复请求、设备拒绝、普通评论，以及跨项目、只读成员、他人评论等拒绝路径。桌面回归纳入现有 `collaboration-shared-core` 场景；E2E 仅在明确要求时运行。
+
+### 项目执行会话的读取权限
+
+执行详情和 Issue 任务对话通过 `projectSession: { projectId, issueId }` 声明读取上下文。HTTP transcript 与 Socket.IO transcript 使用同一校验：项目 Reporter 及以上权限、Issue 存在、精确匹配设备和任务的执行记录或有效 TaskBinding，并解析唯一原执行人。请求中的工作区路径和 Runtime Handle 不能扩大读取范围。个人会话继续校验个人设备所有权；项目读取不开放执行人的设备目录、模型凭据或其他会话。
+
+```mermaid
+flowchart LR
+    View[执行详情 / Issue 任务对话] --> Scope[项目和 Issue 查看权限]
+    Scope --> Binding[精确核对执行记录 / TaskBinding]
+    Binding --> Owner[原执行人 + 原设备 + 原任务]
+    Owner --> Read[读取 Runtime 会话]
+    Read --> Content[展示内容或确认空记录]
+    Read --> Error[展示真实读取错误并允许重试]
+```
+
+历史执行结果与会话读取状态独立。读取失败不得显示为“没有对话记录”，也不能据此宣称执行器确认未运行。首次读取展示骨架屏；设备实际离线时保留错误与重试入口，不切换到成员同名设备。自动化回归包含成员读取管理员会话；默认只执行针对性单元测试，E2E 需明确要求。
+
+HTTP transcript 响应必须保留 Runtime 的 `turns`、`running`、`origin`、`historyUnavailable` 和 `turnNavigation`，与 Socket.IO 读取契约一致。缺少 `turns` 是协议错误，不能用空列表替代已有会话。

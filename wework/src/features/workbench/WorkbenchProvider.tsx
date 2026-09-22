@@ -1635,6 +1635,7 @@ export function WorkbenchProvider({
     lifecycleStore,
     markRuntimeTasksArchived,
     refreshWorkLists,
+    setComposerErrorForScope,
     canNavigate: canNavigateWorkspaceTab,
   })
 

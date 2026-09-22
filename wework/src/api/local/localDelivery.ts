@@ -27,7 +27,7 @@ import {
   updateIssueWorkflowForRuntime,
   workflowBoardStatus,
 } from '@/api/issueWorkflow'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type {
@@ -277,6 +277,12 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
           CloudProject['automatic_processing_rules']
         >)
       : [],
+    execution_environment:
+      record.metadata.execution_environment &&
+      typeof record.metadata.execution_environment === 'object' &&
+      !Array.isArray(record.metadata.execution_environment)
+        ? (record.metadata.execution_environment as CloudProject['execution_environment'])
+        : undefined,
     created_by_user_id: 0,
     current_user_id: 0,
     current_user_name: '',
@@ -284,6 +290,7 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
     visibility: 'private',
     status: record.status ?? 'active',
     tags: stringList(record.metadata.tags),
+    metadata: record.metadata,
     version: record.version,
     created_at: record.created_at,
     updated_at: record.updated_at,
@@ -839,9 +846,7 @@ function unsupported(name: string): never {
   throw new Error(`${name} is not available for local projects yet`)
 }
 
-export function createLocalDeliveryApi(
-  request: LocalRequest
-): NonNullable<WorkbenchServices['deliveryApi']> {
+export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpaceApi {
   const taskProjects = new Map<string, CloudProjectId>()
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
@@ -907,6 +912,18 @@ export function createLocalDeliveryApi(
       })
       return localProject(record)
     },
+    async importLocalCodeProject(data: {
+      runtimeProjectKey: string
+      name: string
+      roots: string[]
+    }) {
+      const record = await request<LocalLoopItemRecord>('projects.import_code_project', {
+        project_key: data.runtimeProjectKey,
+        name: data.name,
+        roots: data.roots,
+      })
+      return localProject(record)
+    },
     async updateCloudProject(
       projectId: CloudProjectId,
       data: {
@@ -919,6 +936,7 @@ export function createLocalDeliveryApi(
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        execution_environment?: CloudProject['execution_environment']
         version: number
       }
     ) {
@@ -1590,5 +1608,5 @@ export function createLocalDeliveryApi(
       })
     },
   }
-  return api as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+  return api as unknown as LocalProjectSpaceApi
 }

@@ -23,6 +23,7 @@ from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
     ExecutionEnvironmentConfig,
     ExecutionEnvironmentDefinition,
+    WorkspaceNavigationContextResponse,
 )
 
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
@@ -224,6 +225,7 @@ class CloudProjectResponse(BaseModel):
 
     id: SnowflakeId
     workspace_id: SnowflakeId | None = None
+    workspace_context: WorkspaceNavigationContextResponse | None = None
     public_id: str
     project_key: str
     name: str

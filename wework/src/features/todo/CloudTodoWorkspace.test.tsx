@@ -774,6 +774,11 @@ async function openIssueMoreProperties() {
   }
 }
 
+async function openIssueFromBoard(itemId = 'WEG-1') {
+  const openTask = screen.queryByTestId(`cloud-todo-card-open-task-${itemId}`)
+  await userEvent.click(openTask ?? screen.getByTestId(`cloud-todo-card-${itemId}`))
+}
+
 describe('CloudTodoWorkspace', () => {
   beforeEach(() => {
     clearRuntimeConversationCacheForTests()
@@ -1368,7 +1373,7 @@ describe('CloudTodoWorkspace', () => {
       '先检查项目看板如何组织运行中的消息。'
     )
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass(
-      'line-clamp-3',
+      'line-clamp-2',
       'leading-5'
     )
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('h-15')
@@ -1406,7 +1411,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
     expect(screen.getByTestId('cloud-todo-column-pending')).toHaveClass('w-[292px]')
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass('line-clamp-[8]')
-    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-3')
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-2')
     expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBe('true')
 
     act(() => {
@@ -1448,7 +1453,7 @@ describe('CloudTodoWorkspace', () => {
       expect.stringContaining('验证看板悬浮预览始终展示当前会话目标和最新进展')
     )
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
       'Implement cloud MCP'
@@ -1483,7 +1488,7 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.click(screen.getByTestId('mock-dnd-drag-cancel'))
 
     fireEvent.mouseLeave(screen.getByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
@@ -1535,7 +1540,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-progress-trigger-WEG-1'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
@@ -1547,7 +1552,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-2')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-2'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-2'))
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveAttribute(
       'data-pinned',
@@ -1651,7 +1656,7 @@ describe('CloudTodoWorkspace', () => {
       '第一行'
     )
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
@@ -1780,7 +1785,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-trigger-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(conversation).toHaveAttribute('data-device-id', 'local-device')
     expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
@@ -2323,7 +2328,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
 
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
@@ -2391,13 +2397,14 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
     await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
 
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
-    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
+    await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
@@ -2461,7 +2468,8 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     const boardCard = await screen.findByTestId('cloud-todo-card-WEG-1')
-    await userEvent.click(boardCard)
+    expect(boardCard).toBeInTheDocument()
+    await openIssueFromBoard()
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     await expandIssueExecutionDetails()
@@ -2494,7 +2502,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
@@ -2516,7 +2525,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-detail').parentElement).toHaveClass(
@@ -2560,7 +2570,9 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByText('Implement cloud MCP')).toBeInTheDocument()
     expect(screen.queryByText('WEG-1')).not.toBeInTheDocument()
     expect(screen.getByText('hongyu9')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('负责人')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).toHaveTextContent(
+      '负责人'
+    )
     expect(screen.getByTestId('cloud-todo-card-assignee-WEG-1')).toHaveTextContent('hongyu9')
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
@@ -2595,7 +2607,9 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
 
-    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
+    expect(
+      (await screen.findByTestId('cloud-todo-card-WEG-1')).closest('article')
+    ).toHaveTextContent('未指定')
     expect(screen.queryByTestId('cloud-todo-card-assignee-WEG-1')).not.toBeInTheDocument()
   })
 
@@ -2625,8 +2639,12 @@ describe('CloudTodoWorkspace', () => {
     const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
     expect(assignee).toHaveTextContent('发布机器人')
     expect(assignee.querySelector('svg')).not.toBeNull()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).not.toHaveTextContent(
+      '未指定'
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).toHaveTextContent(
+      '发布机器人'
+    )
   })
 
   it('resolves a local robot assignee name from the project chat agents', async () => {
@@ -2687,8 +2705,12 @@ describe('CloudTodoWorkspace', () => {
     const assignee = await screen.findByTestId('cloud-todo-card-assignee-WEG-1')
     expect(assignee).toHaveTextContent('发布机器人')
     expect(assignee.querySelector('svg')).not.toBeNull()
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).not.toHaveTextContent('未指定')
-    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('发布机器人')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).not.toHaveTextContent(
+      '未指定'
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-1').closest('article')).toHaveTextContent(
+      '发布机器人'
+    )
     expect(cloudServices.localProjectChatAgentApi!.list).toHaveBeenCalledWith(project.id)
   })
 
@@ -2995,7 +3017,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
     await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-WEG-2'))
     await userEvent.click(screen.getByTestId('cloud-todo-save'))
@@ -3053,7 +3076,8 @@ describe('CloudTodoWorkspace', () => {
       'electron-titlebar-interactive-region'
     )
     expect(screen.getByTestId('cloud-todo-add')).toHaveClass('electron-titlebar-interactive-region')
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
 
     expect(await screen.findByText('任务详情')).toBeInTheDocument()
     await expandIssueExecutionDetails()
@@ -3076,7 +3100,8 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.queryByTestId('cloud-todo-card-activity-WEG-1')).not.toBeInTheDocument()
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-task-thread-panel')).not.toBeInTheDocument()
@@ -3125,7 +3150,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     await openIssueMoreProperties()
     expect((await screen.findAllByText(/参与者/)).length).toBeGreaterThan(0)
     await userEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
@@ -3435,7 +3461,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     const file = new File(['context'], 'brief.txt', { type: 'text/plain' })
     await userEvent.upload(screen.getByTestId('cloud-todo-attachment-input'), file)
 
@@ -3476,7 +3503,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
 
     expect(await screen.findByText('feedback.png')).toBeInTheDocument()
     expect(
@@ -3522,7 +3550,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     const download = await screen.findByTestId('cloud-todo-attachment-download-attachment-existing')
 
     await userEvent.click(download)
@@ -4788,7 +4817,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     await expandIssueExecutionDetails()
     await userEvent.click(await screen.findByTestId('cloud-todo-create-workflow-task-backend'))
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-workflow-node-id', 'backend')
@@ -4836,7 +4866,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
     expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
@@ -5867,9 +5898,9 @@ describe('CloudTodoWorkspace', () => {
       'Stopped task Issue'
     )
     expect(screen.queryByTestId('cloud-todo-batch-confirm-review')).not.toBeInTheDocument()
-    expect(await screen.findByTestId('cloud-todo-card-progress-trigger-WEG-1')).toHaveAttribute(
+    expect(await screen.findByTestId('cloud-todo-card-open-task-WEG-1')).toHaveAttribute(
       'aria-label',
-      '查看进展：Stopped task Issue'
+      '打开任务页：Stopped task Issue'
     )
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('Stopped task')
     expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(
@@ -5898,7 +5929,7 @@ describe('CloudTodoWorkspace', () => {
       )
     )
 
-    await userEvent.click(screen.getByText('Stopped task Issue'))
+    await openIssueFromBoard()
     expect(screen.getByTestId('cloud-todo-detail')).toHaveTextContent('Stopped task Issue')
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
 

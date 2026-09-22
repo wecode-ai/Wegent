@@ -24,6 +24,7 @@ export interface CollaborationStatus {
 export interface CollaborationProject {
   id: CollaborationProjectId
   workspace_id?: string | null
+  workspace_context?: Omit<CollaborationWorkspaceNavigationContext, 'location'> | null
   public_id: string
   project_key: string
   name: string
@@ -55,6 +56,7 @@ export interface CollaborationProject {
   version: number
   created_at: string
   updated_at: string
+  metadata?: Record<string, unknown>
 }
 
 export type LocalCollaborationProject = CollaborationProject & {

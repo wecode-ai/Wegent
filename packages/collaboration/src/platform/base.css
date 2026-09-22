@@ -104,13 +104,6 @@
   white-space: nowrap;
 }
 
-.collaboration-loading {
-  display: grid;
-  min-height: 280px;
-  place-content: center;
-  text-align: center;
-}
-
 .collaboration-settings-section {
   display: grid;
   gap: 10px;

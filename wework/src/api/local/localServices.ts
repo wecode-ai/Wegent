@@ -2927,7 +2927,10 @@ export function createRuntimeWorkApiFromIpc(
     cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
-    async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+    async createRuntimeTask(
+      data: RuntimeTaskCreateRequest,
+      beforeDispatch?: () => Promise<void>
+    ): Promise<RuntimeTaskCreateResponse> {
       const startedAt = Date.now()
       logRuntimeTaskCreateStage('local-create-started', {
         taskId: data.taskId ?? null,
@@ -3003,6 +3006,8 @@ export function createRuntimeWorkApiFromIpc(
         userId: executionRequest.user_id ?? null,
         userName: stringValue(executionRequest.user_name),
       })
+      // Fence delivery only after preparation succeeds and before Runtime can accept the task.
+      await beforeDispatch?.()
       logRuntimeTaskCreateStage('local-rpc-dispatched', {
         taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
@@ -3053,14 +3058,39 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeTaskQueueReorderResponse> {
       return requestWithLocalDevice('runtime.tasks.queue.reorder', data)
     },
-    forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
-      if (data.lastTurnId) {
-        return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
-          ...data,
-          taskId: data.source.taskId,
-        })
+    async forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      if (!data.lastTurnId) return requestWithLocalDevice('runtime.tasks.import_fork', data)
+
+      const selection = data.modelSelection
+      let modelConfig: Record<string, unknown> | undefined
+      if (selection?.modelName) {
+        if (
+          selection.modelType === 'runtime' &&
+          !(await prepareRuntimeModel({
+            deviceId: data.target.deviceId,
+            modelId: selection.modelName,
+          }))
+        ) {
+          throw modelCatalogSyncCancelled()
+        }
+        modelConfig = await applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            'codex',
+            requireLocalCodexCatalog,
+            selection.modelName,
+            selection.modelType,
+            selection.options,
+            options.cloudModelGateway
+          ),
+          selection.options,
+          resolveProxy
+        )
       }
-      return requestWithLocalDevice('runtime.tasks.import_fork', data)
+      return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
+        ...data,
+        taskId: data.source.taskId,
+        ...(modelConfig ? { modelConfig } : {}),
+      })
     },
   }
 }

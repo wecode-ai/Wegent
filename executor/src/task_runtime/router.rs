@@ -69,6 +69,17 @@ impl TaskRuntime {
         self.local_store.create_project(input).map(mask_project)
     }
 
+    pub fn import_code_project(
+        &self,
+        key: &str,
+        name: &str,
+        roots: &[String],
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.local_store
+            .import_code_project(key, name, roots)
+            .map(mask_project)
+    }
+
     pub fn update_project(
         &self,
         project_id: &str,

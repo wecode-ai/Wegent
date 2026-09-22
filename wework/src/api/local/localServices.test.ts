@@ -124,6 +124,69 @@ describe('createLocalAppServices', () => {
     ).toThrow('Cloud runtime user identity is required')
   })
 
+  test.each([undefined, 'completed-turn'])(
+    'sends fork IPC with the selected model at %s',
+    async lastTurnId => {
+      const response = { accepted: true }
+      const request = vi.fn().mockResolvedValue(response)
+      const api = createRuntimeWorkApiFromIpc(request, async () => 'device-1')
+      const modelSelection = {
+        modelName: 'gpt-5.6-sol',
+        modelType: 'runtime' as const,
+        options: { reasoning_effort: 'high' },
+      }
+      const source = { deviceId: 'device-1', taskId: 'source-task' }
+      const target = { deviceId: 'device-1', workspacePath: '/workspace/fork-test' }
+
+      await expect(
+        api.forkRuntimeTask({ source, target, lastTurnId, modelSelection })
+      ).resolves.toBe(response)
+
+      expect(request).toHaveBeenCalledWith(
+        lastTurnId ? 'runtime.tasks.fork_at_turn' : 'runtime.tasks.import_fork',
+        expect.objectContaining({
+          source,
+          target,
+          ...(lastTurnId ? { taskId: source.taskId, lastTurnId } : {}),
+          modelSelection,
+          ...(lastTurnId
+            ? { modelConfig: expect.objectContaining({ model_id: 'gpt-5.6-sol' }) }
+            : {}),
+        }),
+        'device-1'
+      )
+      if (!lastTurnId) expect(request.mock.calls[0][1]).not.toHaveProperty('modelConfig')
+    }
+  )
+
+  test('forks with the configured cloud model gateway', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'device-1', {
+      cloudModelGateway: { baseUrl: 'https://cloud.example.com/responses', apiKey: 'test-token' },
+    })
+    await api.forkRuntimeTask({
+      source: { deviceId: 'device-1', taskId: 'source-task' },
+      target: { deviceId: 'device-1', workspacePath: '/workspace/fork-test' },
+      lastTurnId: 'completed-turn',
+      modelSelection: {
+        modelName: 'shared-model',
+        modelType: 'user',
+        options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '42' },
+      },
+    })
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.fork_at_turn',
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({
+          model_id: 'shared-model',
+          base_url: 'https://cloud.example.com/responses',
+          api_key: 'test-token',
+        }),
+      }),
+      'device-1'
+    )
+  })
+
   test('reuses the runtime event stream for the same local transport', () => {
     const request = vi.fn().mockResolvedValue({})
     const subscribe = vi.fn().mockResolvedValue(vi.fn())
@@ -3713,6 +3776,57 @@ describe('createLocalAppServices', () => {
       })
     )
     expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
+  })
+
+  test('prepares model identity before fencing and keeps transport failures after the fence', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example/api/runtime-work/llm-responses-proxy',
+        apiKey: 'test-token',
+      },
+    })
+    const data = {
+      deviceId: 'local-device',
+      workspacePath: '/tmp/project',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      message: 'run',
+      modelId: 'shared-model',
+      modelType: 'public' as const,
+    }
+    const beforeDispatch = vi.fn(async () => {
+      expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    })
+    await expect(services.runtimeWorkApi!.createRuntimeTask(data, beforeDispatch)).rejects.toThrow(
+      'Cloud model identity is incomplete'
+    )
+    expect(beforeDispatch).not.toHaveBeenCalled()
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    const valid = {
+      ...data,
+      modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+    }
+    const fenceError = new Error('Execution is no longer dispatchable')
+    await expect(
+      services.runtimeWorkApi!.createRuntimeTask(valid, async () => {
+        throw fenceError
+      })
+    ).rejects.toBe(fenceError)
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(false)
+    const transportError = new Error('Runtime connection closed')
+    request.mockImplementation(async method => {
+      if (method === 'runtime.tasks.create') throw transportError
+      return { accepted: true }
+    })
+    await expect(services.runtimeWorkApi!.createRuntimeTask(valid, beforeDispatch)).rejects.toBe(
+      transportError
+    )
+    expect(beforeDispatch).toHaveBeenCalledOnce()
+    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.create')).toBe(true)
   })
 
   test('builds cloud model gateway config without resolving credentials', async () => {
