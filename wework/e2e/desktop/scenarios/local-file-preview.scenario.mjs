@@ -31,8 +31,8 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
   })
 }
 
-async function findTreeItem(control, name, timeoutMs) {
-  const selector = `${FILE_TREE_ITEM_SELECTOR}[aria-label="${name}"]`
+async function findTreeItem(control, name, timeoutMs, rootSelector = '') {
+  const selector = `${rootSelector ? `${rootSelector} ` : ''}${FILE_TREE_ITEM_SELECTOR}[aria-label="${name}"]`
   await control.command('waitFor', selector, { timeoutMs })
   return selector
 }
@@ -174,12 +174,23 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         `workspace-file-breadcrumb-${workspacePath.replace(/\\/g, '/')}`
       )}]`
       await control.command('click', rootBreadcrumb)
-      const directorySelector = await findTreeItem(control, 'breadcrumb-fixture', uiTimeoutMs)
-      await control.command('click', directorySelector)
-      const firstFileSelector = await findTreeItem(control, 'first.ts', uiTimeoutMs)
       await control.command('waitFor', '[data-testid="workspace-file-directory-menu"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const directoryMenuSelector = '[data-testid="workspace-file-directory-menu"]'
+      const directorySelector = await findTreeItem(
+        control,
+        'breadcrumb-fixture',
+        uiTimeoutMs,
+        directoryMenuSelector
+      )
+      await control.command('click', directorySelector)
+      const firstFileSelector = await findTreeItem(
+        control,
+        'first.ts',
+        uiTimeoutMs,
+        directoryMenuSelector
+      )
       await control.command('click', directorySelector)
       await waitForMissing(control, firstFileSelector, uiTimeoutMs)
       await control.command('click', directorySelector)
