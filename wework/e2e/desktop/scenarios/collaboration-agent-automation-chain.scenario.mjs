@@ -860,10 +860,6 @@ export async function createDesktopScenario({
       scoped('[data-testid="collaboration-participants-tab-agents"][aria-selected="true"]'),
       { timeoutMs: uiTimeoutMs }
     )
-    await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', '[data-testid="project-agent-mode-create"]')
     codexAgent = await createProjectAgentThroughUi(control, {
       name: CODEX_AGENT_NAME,
       nativeRuntime: 'codex',
@@ -871,10 +867,6 @@ export async function createDesktopScenario({
       systemMarker: CODEX_SYSTEM_MARKER,
     })
     await capture(control, 'collaboration-agent-chain-05-codex-configured.png')
-    await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', '[data-testid="project-agent-mode-create"]')
     claudeAgent = await createProjectAgentThroughUi(control, {
       name: CLAUDE_AGENT_NAME,
       nativeRuntime: 'claude_code',

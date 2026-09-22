@@ -2253,8 +2253,18 @@ describe("CollaborationPlatformApp real component flow", () => {
       location: "local",
       name: "本地空间",
     };
+    const cloudProject = {
+      ...project,
+      workspace_context: {
+        id: workspace.id,
+        public_id: "cloud-workspace",
+        location: "cloud" as const,
+        name: workspace.name,
+      },
+    };
     const { api } = createApi({
       initialWorkspaces: [localWorkspace, workspace],
+      initialProjects: [cloudProject],
     });
 
     await render(

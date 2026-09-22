@@ -685,16 +685,30 @@ function CollaborationPlatformNavigation({
     () => workspaces.filter((workspace) => workspace.location === domain),
     [domain, workspaces],
   );
+  const domainWorkspaceIds = useMemo(
+    () => new Set(domainWorkspaces.map((workspace) => workspace.id)),
+    [domainWorkspaces],
+  );
+  const domainProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          (Boolean(project.workspace_id) &&
+            domainWorkspaceIds.has(project.workspace_id!)) ||
+          (project.project_store === "local" ? "local" : "cloud") === domain,
+      ),
+    [domain, domainWorkspaceIds, projects],
+  );
   const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
       buildWorkspaceNavigation(
         domainWorkspaces,
-        projects,
+        domainProjects,
         workspaceNavigationContext,
       ),
-    [domainWorkspaces, projects, workspaceNavigationContext],
+    [domainProjects, domainWorkspaces, workspaceNavigationContext],
   );
-  const selectedProjectWorkspaceId = projects.find(
+  const selectedProjectWorkspaceId = domainProjects.find(
     (project) => project.id === host.location.projectId,
   )?.workspace_id;
   const selectedWorkspaceId =

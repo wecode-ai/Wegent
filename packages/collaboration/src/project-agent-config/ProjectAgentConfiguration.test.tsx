@@ -438,7 +438,7 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
   });
 
-  it("uses the reusable Agent resource creator in local workspace settings", async () => {
+  it("reuses the root local-Agent creator in local workspace settings", async () => {
     const onAgentsChange = vi.fn();
     const { api, create, list } = createApi({ agents: [] });
     await renderHosted(api, {
@@ -453,26 +453,25 @@ describe("ProjectAgentConfiguration", () => {
 
     await click("project-agent-add");
 
-    expect(element("hosted-agent-create")).toBeTruthy();
+    expect(element("hosted-local-agent-create")).toBeTruthy();
     expect(
-      document.querySelector('[data-testid="hosted-local-agent-create"]'),
-    ).toBeNull();
-
-    await click("hosted-agent-create");
-
-    expect(create).toHaveBeenCalledWith("local-workspace", {
-      name: "空间新智能体",
-      runtime: "wegent",
-      wegentTeamId: 91,
-    });
-    expect(list).toHaveBeenCalledTimes(1);
-    expect(onAgentsChange).toHaveBeenCalledOnce();
+      element("hosted-local-agent-create").dataset.projectId,
+    ).toBeUndefined();
     expect(
       document.querySelector('[data-testid="hosted-agent-create"]'),
     ).toBeNull();
+
+    await click("hosted-local-agent-create");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(onAgentsChange).toHaveBeenCalledOnce();
+    expect(
+      document.querySelector('[data-testid="hosted-local-agent-create"]'),
+    ).toBeNull();
   });
 
-  it("creates a reusable Agent resource for a local project", async () => {
+  it("creates a local project Agent in the current project", async () => {
     const onAgentsChange = vi.fn();
     const { api, create, list } = createApi({ agents: [] });
     await renderHosted(api, {
@@ -485,19 +484,17 @@ describe("ProjectAgentConfiguration", () => {
 
     await click("project-agent-add");
 
-    expect(element("hosted-agent-create")).toBeTruthy();
+    expect(element("hosted-local-agent-create").dataset.projectId).toBe(
+      project.id,
+    );
     expect(
-      document.querySelector('[data-testid="hosted-local-agent-create"]'),
+      document.querySelector('[data-testid="hosted-agent-create"]'),
     ).toBeNull();
 
-    await click("hosted-agent-create");
+    await click("hosted-local-agent-create");
 
-    expect(create).toHaveBeenCalledWith(project.id, {
-      name: "空间新智能体",
-      runtime: "wegent",
-      wegentTeamId: 91,
-    });
-    expect(list).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
     expect(onAgentsChange).toHaveBeenCalledOnce();
   });
 

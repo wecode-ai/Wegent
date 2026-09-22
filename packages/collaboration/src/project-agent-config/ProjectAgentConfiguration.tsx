@@ -60,9 +60,7 @@ export function ProjectAgentConfiguration({
 }) {
   const workspaceId = project.workspace_id;
   const usesLocalAgentCreator =
-    project.project_store === "local" &&
-    !host?.renderAgentCreator &&
-    Boolean(host?.renderLocalAgentCreator);
+    project.project_store === "local" && Boolean(host?.renderLocalAgentCreator);
   const usesLocalAgentEditor =
     project.project_store === "local" && Boolean(host?.renderLocalAgentEditor);
   const supportsAgentCreation = Boolean(
