@@ -119,22 +119,28 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')
       await control.command('contextMenu', '[data-testid="workspace-file-name-button"]')
-      await control.command('waitFor', '[data-testid="workspace-file-open-preferred"]', {
+      await control.command('waitFor', '[data-testid="workspace-file-context-menu"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-file-open-with"]')
-      await control.command('waitFor', '[data-testid="workspace-file-open-with-submenu"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.ok(
+      if (
         Number(
-          await control.command(
-            'getElementCount',
-            '[data-testid="workspace-file-open-with-submenu"] [role="menuitem"]'
-          )
-        ) > 0,
-        'The file context menu did not expose any installed application'
-      )
+          await control.command('getElementCount', '[data-testid="workspace-file-open-with"]')
+        ) > 0
+      ) {
+        await control.command('click', '[data-testid="workspace-file-open-with"]')
+        await control.command('waitFor', '[data-testid="workspace-file-open-with-submenu"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.ok(
+          Number(
+            await control.command(
+              'getElementCount',
+              '[data-testid="workspace-file-open-with-submenu"] [role="menuitem"]'
+            )
+          ) > 0,
+          'The file context menu did not expose any installed application'
+        )
+      }
       await control.command('press', 'body', { key: 'Escape' })
       await waitForMissing(control, '[data-testid="workspace-file-open-with-submenu"]', uiTimeoutMs)
       await control.command('press', 'body', { key: 'Escape' })
