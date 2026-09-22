@@ -363,3 +363,108 @@ def test_public_model_detail_returns_404_for_restricted_user(
         current_user=alice,
     )
     assert model["name"] == "detail-restricted-model"
+
+
+def test_bot_detail_hides_restricted_public_model_from_other_developer(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    from app.models.namespace import Namespace
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.schemas.base_role import BaseRole
+    from app.services.adapters.bot_kinds import bot_kinds_service
+
+    owner = _make_user(test_db, "owner")
+    restricted_model = _public_model(
+        "bot-detail-restricted-model",
+        allowed_users=[owner.user_name],
+        allowed_users_enabled=True,
+    )
+    namespace = Namespace(
+        name="restricted-bot-group",
+        display_name="Restricted Bot Group",
+        owner_user_id=owner.id,
+    )
+    test_db.add_all([restricted_model, namespace])
+    test_db.commit()
+    test_db.refresh(namespace)
+
+    test_db.add(
+        ResourceMember(
+            resource_type="Namespace",
+            resource_id=namespace.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
+            user_id=test_user.id,
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=owner.id,
+            reviewed_by_user_id=owner.id,
+        )
+    )
+
+    ghost = Kind(
+        user_id=owner.id,
+        kind="Ghost",
+        name="restricted-bot-ghost",
+        namespace="restricted-bot-group",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {
+                "name": "restricted-bot-ghost",
+                "namespace": "restricted-bot-group",
+            },
+            "spec": {"systemPrompt": "You are helpful", "mcpServers": {}},
+        },
+    )
+    shell = Kind(
+        user_id=0,
+        kind="Shell",
+        name="Chat",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {"name": "Chat", "namespace": "default"},
+            "spec": {"shellType": "Chat", "requiresWorkspace": False},
+        },
+    )
+    bot = Kind(
+        user_id=owner.id,
+        kind="Bot",
+        name="restricted-model-bot",
+        namespace="restricted-bot-group",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {
+                "name": "restricted-model-bot",
+                "namespace": "restricted-bot-group",
+            },
+            "spec": {
+                "ghostRef": {
+                    "name": "restricted-bot-ghost",
+                    "namespace": "restricted-bot-group",
+                },
+                "shellRef": {"name": "Chat", "namespace": "default"},
+                "modelRef": {
+                    "name": "bot-detail-restricted-model",
+                    "namespace": "default",
+                },
+            },
+        },
+    )
+    test_db.add_all([ghost, shell, bot])
+    test_db.commit()
+
+    bot_dict = bot_kinds_service.get_by_id_and_user(
+        test_db,
+        bot_id=bot.id,
+        user_id=test_user.id,
+    )
+
+    assert bot_dict["agent_config"] == {}
