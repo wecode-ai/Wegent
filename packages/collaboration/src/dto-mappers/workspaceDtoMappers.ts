@@ -5,6 +5,8 @@
 import type {
   WorkspaceDelivery,
   WorkspaceDeliveryAsset,
+  WorkspaceGitBranch,
+  WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
   WorkspaceWorkflowPlan,
@@ -204,6 +206,24 @@ export function mapCollaborationExecutionDto(
     ),
     agent_id: nullableString(camelOrSnake(row, "agentId", "agent_id")),
     team_id: nullableNumber(camelOrSnake(row, "teamId", "team_id")),
+    backend_task_id: nullableNumber(
+      camelOrSnake(row, "backendTaskId", "backend_task_id"),
+    ),
+    execution_environment: nullableString(
+      camelOrSnake(row, "executionEnvironment", "execution_environment"),
+    ),
+    execution_device_id: nullableString(
+      camelOrSnake(row, "executionDeviceId", "execution_device_id"),
+    ),
+    runtime_instance_id: nullableString(
+      camelOrSnake(row, "runtimeInstanceId", "runtime_instance_id"),
+    ),
+    runtime_device_id: nullableString(
+      camelOrSnake(row, "runtimeDeviceId", "runtime_device_id"),
+    ),
+    runtime_task_id: nullableString(
+      camelOrSnake(row, "runtimeTaskId", "runtime_task_id"),
+    ),
     assigner_user_id: Number(
       camelOrSnake(row, "assignerUserId", "assigner_user_id") ?? 0,
     ),
@@ -297,26 +317,31 @@ export function mapCollaborationWorkspaceDto(
             };
           })
         : [],
-      status: (executionEnvironment.status ?? "uninitialized") as NonNullable<
-        CollaborationWorkspace["execution_environment"]
-      >["status"],
       fingerprint: String(executionEnvironment.fingerprint ?? ""),
-      prepared_device_id: String(
-        executionEnvironment.prepared_device_id ??
-          executionEnvironment.preparedDeviceId ??
-          "",
+      devices: Object.fromEntries(
+        Object.entries(asRecord(executionEnvironment.devices ?? {})).map(
+          ([deviceKey, value]) => {
+            const entry = asRecord(value);
+            return [
+              deviceKey,
+              {
+                status: entry.status as
+                  | "preparing"
+                  | "ready"
+                  | "error"
+                  | undefined,
+                workspace_path: String(
+                  entry.workspace_path ?? entry.workspacePath ?? "",
+                ),
+                prepared_at: nullableString(
+                  entry.prepared_at ?? entry.preparedAt ?? null,
+                ),
+                error: String(entry.error ?? ""),
+              },
+            ];
+          },
+        ),
       ),
-      prepared_workspace_path: String(
-        executionEnvironment.prepared_workspace_path ??
-          executionEnvironment.preparedWorkspacePath ??
-          "",
-      ),
-      prepared_at: nullableString(
-        executionEnvironment.prepared_at ??
-          executionEnvironment.preparedAt ??
-          null,
-      ),
-      error: String(executionEnvironment.error ?? ""),
     },
     project_count: Number(row.project_count ?? row.projectCount ?? 0),
     created_by_user_id: Number(
@@ -389,6 +414,9 @@ export function mapCollaborationOwnedAgentDto(
       ? { agent_id: String(row.agent_id ?? row.agentId) }
       : {}),
     ...(teamId == null ? {} : { team_id: teamId }),
+    ...(Number.isFinite(Number(row.version))
+      ? { version: Number(row.version) }
+      : {}),
     owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
@@ -424,6 +452,30 @@ export function mapCollaborationPlatformResourcesDto(
           mapCollaborationExecutionEnvironmentDto(environment as WorkspaceDto),
         )
       : [],
+  };
+}
+
+export function mapWorkspaceGitRepositoryDto(
+  input: WorkspaceDto,
+): WorkspaceGitRepository {
+  const row = asRecord(input);
+  return {
+    id: Number(camelOrSnake(row, "gitRepoId", "git_repo_id") ?? 0),
+    name: String(row.name ?? ""),
+    fullName: String(camelOrSnake(row, "gitRepo", "git_repo") ?? ""),
+    cloneUrl: String(camelOrSnake(row, "gitUrl", "git_url") ?? ""),
+    gitDomain: String(camelOrSnake(row, "gitDomain", "git_domain") ?? ""),
+    provider: String(row.type ?? ""),
+  };
+}
+
+export function mapWorkspaceGitBranchDto(
+  input: WorkspaceDto,
+): WorkspaceGitBranch {
+  const row = asRecord(input);
+  return {
+    name: String(row.name ?? ""),
+    default: row.default === true,
   };
 }
 

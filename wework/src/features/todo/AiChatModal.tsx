@@ -1,13 +1,5 @@
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  Bot,
-  ChevronDown,
-  MessageSquare,
-  Plus,
-  Undo2,
-  X,
-} from 'lucide-react'
+import { IssueTaskConversationPanel } from '@wegent/collaboration'
+import { ArrowUpRight, Bot, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -21,9 +13,11 @@ import {
   withoutRuntimeTaskWorkspaceBinding,
 } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
+import { findWorkbenchDevice, getWorkbenchDeviceDisplayName } from '@/lib/workbench-device'
 import type {
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
 } from '@/types/api'
@@ -60,6 +54,98 @@ interface AiChatModalProps {
     localProject: ProjectWithTasks | null
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   embedded?: boolean
+}
+
+interface AutomaticIssueTaskComposerProps {
+  project: ProjectWithTasks | null
+  deviceWorkspaceId: number | null
+  projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']
+  inheritFromTask: RuntimeTaskAddress | null
+  taskRequest: RuntimeTaskCreateRequest | null
+  runtimeContext: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+  prepareTask?: AiChatModalProps['prepareTask']
+  onTaskCreated?: AiChatModalProps['onTaskCreated']
+  panelProps: Omit<
+    Parameters<typeof TemporaryChatPanel>[0],
+    'createTask' | 'projectWork' | 'currentProject'
+  >
+}
+
+const isolatedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] = {
+  workspace: { source: 'git_worktree' },
+}
+
+function automaticExecutionMode(
+  projectWork: AutomaticIssueTaskComposerProps['projectWork'],
+  inheritFromTask: RuntimeTaskAddress | null,
+  taskRequest: RuntimeTaskCreateRequest | null
+): ProjectExecutionMode {
+  if (inheritFromTask) return 'current_workspace'
+  if (taskRequest?.execution?.workspace?.source === 'git_worktree') return 'git_worktree'
+  return projectWork?.worktreeAvailability?.available ? 'git_worktree' : 'current_workspace'
+}
+
+function AutomaticIssueTaskComposer({
+  project,
+  deviceWorkspaceId,
+  projectWork,
+  inheritFromTask,
+  taskRequest,
+  runtimeContext,
+  prepareTask,
+  onTaskCreated,
+  panelProps,
+}: AutomaticIssueTaskComposerProps) {
+  const executionMode = automaticExecutionMode(projectWork, inheritFromTask, taskRequest)
+  const effectiveTaskRequest = taskRequest
+    ? {
+        ...taskRequest,
+        execution:
+          executionMode === 'git_worktree'
+            ? {
+                workspace: {
+                  source: 'git_worktree',
+                  ...(taskRequest.execution?.workspace?.source === 'git_worktree' &&
+                  taskRequest.execution.workspace.branch
+                    ? { branch: taskRequest.execution.workspace.branch }
+                    : {}),
+                },
+              }
+            : undefined,
+      }
+    : null
+  const createConversation = useProjectRuntimeTaskComposer({
+    project,
+    deviceWorkspaceId,
+    workspaceExecution:
+      inheritFromTask || effectiveTaskRequest
+        ? undefined
+        : executionMode === 'git_worktree'
+          ? isolatedWorkspaceExecution
+          : null,
+    workspaceSource: inheritFromTask,
+    taskRequest: effectiveTaskRequest,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  })
+
+  return (
+    <TemporaryChatPanel
+      {...panelProps}
+      currentProject={project}
+      createTask={createConversation}
+      projectWork={
+        projectWork
+          ? {
+              ...projectWork,
+              executionMode,
+              executionModeLocked: true,
+            }
+          : undefined
+      }
+    />
+  )
 }
 
 function lastAddressStorageKey(projectId: string | number, taskId?: string): string {
@@ -101,11 +187,35 @@ export function AiChatModal({
     () => resolveRuntimeTaskProjects(localProjects, state?.runtimeWork),
     [localProjects, state?.runtimeWork]
   )
-  const storageKey = lastAddressStorageKey(project.id, task?.id)
-  const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
-    () => initialAddress ?? storedLastAddress(storageKey)
+  const hasPreparedEnvironmentTarget = Boolean(
+    initialTaskRequest?.deviceId?.trim() && initialTaskRequest.workspacePath?.trim()
   )
-  const notifiedInitialAddressRef = useRef(Boolean(initialAddress))
+  const storageKey = lastAddressStorageKey(project.id, task?.id)
+  const initialAddressKey = initialAddress ? JSON.stringify(initialAddress) : null
+  const hasInitialAddress = Boolean(initialAddress)
+  const [addressState, setAddressState] = useState<{
+    initialAddressKey: string | null
+    address: RuntimeTaskAddress | null
+  }>(() => ({
+    initialAddressKey,
+    address: initialAddress ?? storedLastAddress(storageKey),
+  }))
+  const currentAddress =
+    addressState.initialAddressKey === initialAddressKey
+      ? addressState.address
+      : (initialAddress ?? addressState.address)
+  const issueId = task?.id
+  const conversationAddress = useMemo(
+    () =>
+      currentAddress && issueId && project.project_store === 'backend'
+        ? {
+            ...currentAddress,
+            projectSession: { projectId: String(project.id), issueId },
+          }
+        : currentAddress,
+    [currentAddress, project.id, project.project_store, issueId]
+  )
+  const notifiedInitialAddressRef = useRef(hasInitialAddress)
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
   // mount, so explicit toggles bump the remount key; creating a new runtime
@@ -114,24 +224,14 @@ export function AiChatModal({
   const [sessionKey, setSessionKey] = useState(0)
   const [localProjectId, setLocalProjectId] = useState<number | null>(() => {
     const requestedProjectId = runtimeTaskProjectUiId(state?.runtimeWork, initialTaskRequest)
-    const matched =
-      runtimeTaskProjects.find(
-        candidate => candidate.id === (requestedProjectId ?? initialLocalProjectId)
-      ) ??
-      runtimeTaskProjects.find(candidate => String(candidate.id) === String(project.id)) ??
-      runtimeTaskProjects[0]
+    const initialProjectId = hasPreparedEnvironmentTarget
+      ? null
+      : (requestedProjectId ?? initialLocalProjectId)
+    const matched = runtimeTaskProjects.find(candidate => candidate.id === initialProjectId)
     return matched?.id ?? null
   })
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(
     initialTaskRequest?.deviceWorkspaceId ?? null
-  )
-  const [executionMode, setExecutionMode] = useState<ProjectExecutionMode>(
-    initialTaskRequest?.execution?.workspace?.source === 'git_worktree'
-      ? 'git_worktree'
-      : 'current_workspace'
-  )
-  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(
-    initialTaskRequest?.execution?.workspace?.branch ?? null
   )
   const selectedLocalProject =
     runtimeTaskProjects.find(candidate => candidate.id === localProjectId) ?? null
@@ -150,62 +250,56 @@ export function AiChatModal({
     () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
     [project, task, workflowNodeId]
   )
+  const executionDeviceName = useMemo(() => {
+    const deviceId = initialAddress?.deviceId ?? null
+    return getWorkbenchDeviceDisplayName(
+      findWorkbenchDevice(state?.devices ?? [], deviceId),
+      deviceId
+    )
+  }, [initialAddress?.deviceId, state?.devices])
 
-  // The task detail modal stays open underneath; Escape only closes the chat
-  // first so the user never loses the task context in one keystroke.
+  // Embedded panes handle Escape locally so sibling drawers keep their context.
   useEffect(() => {
-    if (!open) return
+    if (!open || embedded) return
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
         event.stopPropagation()
         onClose()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, open])
+  }, [embedded, onClose, open])
 
-  const taskRequest = useMemo(
-    () =>
-      initialTaskRequest
+  const taskRequest = useMemo(() => {
+    if (!initialTaskRequest) return null
+    const directEnvironmentTarget =
+      !selectedLocalProject &&
+      initialTaskRequest.deviceId?.trim() &&
+      initialTaskRequest.workspacePath?.trim()
         ? {
-            ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
-            execution:
-              executionMode === 'git_worktree'
-                ? {
-                    workspace: {
-                      source: 'git_worktree' as const,
-                      ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
-                    },
-                  }
-                : undefined,
-            ...runtimeContext,
+            deviceId: initialTaskRequest.deviceId.trim(),
+            workspacePath: initialTaskRequest.workspacePath.trim(),
           }
-        : null,
-    [executionMode, initialTaskRequest, runtimeContext, worktreeBranch]
-  )
-  const createConversation = useProjectRuntimeTaskComposer({
-    project: selectedLocalProject,
-    deviceWorkspaceId: localDeviceWorkspaceId,
-    workspaceSource: inheritFromTask,
-    taskRequest,
-    runtimeContext,
-    prepareTask,
-    onTaskCreated,
-  })
-
+        : {}
+    return {
+      ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
+      ...directEnvironmentTarget,
+      ...runtimeContext,
+    }
+  }, [initialTaskRequest, runtimeContext, selectedLocalProject])
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
       if (!address) return
       window.localStorage.setItem(storageKey, JSON.stringify(address))
-      setCurrentAddress(address)
+      setAddressState({ initialAddressKey, address })
       setComposeNew(false)
       if (!notifiedInitialAddressRef.current) {
         notifiedInitialAddressRef.current = true
-        onAddressChange?.(address)
+        if (!hasInitialAddress) onAddressChange?.(address)
       }
     },
-    [onAddressChange, storageKey]
+    [hasInitialAddress, initialAddressKey, onAddressChange, storageKey]
   )
 
   const startNewConversation = useCallback(() => {
@@ -218,38 +312,47 @@ export function AiChatModal({
     options: { expanded?: boolean; key?: number; startFresh?: boolean } = {}
   ) => {
     const composer = (projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']) => (
-      <TemporaryChatPanel
+      <AutomaticIssueTaskComposer
         key={options.key}
-        currentProject={selectedLocalProject}
-        source={null}
-        instanceId={instanceId}
-        testId={testId}
-        initialInput={initialTaskInput}
-        initialAddress={options.startFresh ? null : currentAddress}
-        createTask={createConversation}
-        onAddressChange={rememberAddress}
-        runtimeContext={runtimeContext}
-        allowInitialGoal
-        emptyStateText={t(
-          'todo.issue_task_composer_empty',
-          '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
-        )}
-        placeholder={t('todo.issue_task_composer_placeholder', '描述要执行的任务')}
-        expanded={options.expanded}
-        wideComposer={options.expanded}
+        project={selectedLocalProject}
+        deviceWorkspaceId={localDeviceWorkspaceId}
         projectWork={projectWork}
-        showProjectWorkBar={Boolean(projectWork)}
-        projectWorkBarMiddleContext={<WorkItemComposerGuide integrated toolbar project={project} />}
-        projectWorkBarTrailingContext={
-          <WorkbenchHarnessSelector
-            runtime="codex"
-            harnesses={[]}
-            enabledHarnesses={[]}
-            loading={false}
-            detectionFailed={false}
-            onRuntimeChange={() => undefined}
-          />
-        }
+        inheritFromTask={inheritFromTask}
+        taskRequest={taskRequest}
+        runtimeContext={runtimeContext}
+        prepareTask={prepareTask}
+        onTaskCreated={onTaskCreated}
+        panelProps={{
+          source: null,
+          instanceId,
+          testId,
+          initialInput: initialTaskInput,
+          initialAddress: options.startFresh ? null : currentAddress,
+          onAddressChange: rememberAddress,
+          runtimeContext,
+          allowInitialGoal: true,
+          emptyStateText: t(
+            'todo.issue_task_composer_empty',
+            '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
+          ),
+          placeholder: t('todo.issue_task_composer_placeholder', '描述要执行的任务'),
+          expanded: options.expanded,
+          wideComposer: options.expanded,
+          showProjectWorkBar: Boolean(projectWork),
+          projectWorkBarMiddleContext: (
+            <WorkItemComposerGuide integrated toolbar project={project} />
+          ),
+          projectWorkBarTrailingContext: (
+            <WorkbenchHarnessSelector
+              runtime="codex"
+              harnesses={[]}
+              enabledHarnesses={[]}
+              loading={false}
+              detectionFailed={false}
+              onRuntimeChange={() => undefined}
+            />
+          ),
+        }}
       />
     )
 
@@ -257,12 +360,8 @@ export function AiChatModal({
       <ConnectedIssueProjectWork
         project={selectedLocalProject}
         selectedDeviceWorkspaceId={localDeviceWorkspaceId}
-        executionMode={executionMode}
-        worktreeBranch={worktreeBranch}
         onSelectProject={selectLocalProject}
         onSelectProjectWorkspace={selectLocalProjectWorkspace}
-        onExecutionModeChange={setExecutionMode}
-        onWorktreeBranchChange={setWorktreeBranch}
         inheritFromTask={inheritFromTask}
       >
         {projectWork => composer(projectWork)}
@@ -275,69 +374,34 @@ export function AiChatModal({
   if (initialAddress) {
     if (embedded) {
       return (
-        <aside
-          data-testid="ai-chat-modal-backdrop"
-          data-presentation="sidebar"
-          className={cn(
-            'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
-            !open && 'hidden'
-          )}
+        <IssueTaskConversationPanel
+          issueId={task?.id}
+          open={open}
+          existingTask={true}
+          executionDeviceName={executionDeviceName}
+          onClose={onClose}
+          onBack={onBack}
+          translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
+          onOpenTask={
+            onOpenRuntimeTask
+              ? () => onOpenRuntimeTask(conversationAddress ?? initialAddress)
+              : undefined
+          }
         >
-          <section
-            data-testid="ai-chat-modal"
-            className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
-          >
-            <header className="flex h-12 shrink-0 items-center gap-2 px-3">
-              <button
-                type="button"
-                data-testid="ai-chat-modal-back"
-                onClick={onBack ?? onClose}
-                aria-label={t('workbench.back_to_work_item', '返回 Issue')}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </button>
-              <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
-                <b className="font-medium text-text-secondary">{task?.id}</b>
-                {' · '}
-                {t('workbench.task_conversation', '任务对话')}
-              </span>
-              {onOpenRuntimeTask ? (
-                <button
-                  type="button"
-                  data-testid="ai-chat-open-runtime-task"
-                  onClick={() => void onOpenRuntimeTask(initialAddress)}
-                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                >
-                  {t('workbench.open_full_task', '打开完整任务')}
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                data-testid="ai-chat-modal-close"
-                onClick={onClose}
-                aria-label={t('common.close', '关闭')}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </header>
-            <TemporaryChatPanel
-              currentProject={selectedLocalProject}
-              source={initialAddress}
-              instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
-              testId="work-item-task-chat-panel"
-              initialAddress={currentAddress}
-              onAddressChange={rememberAddress}
-              runtimeContext={runtimeContext}
-              sendEphemeral={false}
-              emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
-              placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
-              expanded
-            />
-          </section>
-        </aside>
+          <TemporaryChatPanel
+            currentProject={selectedLocalProject}
+            source={initialAddress}
+            instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
+            testId="work-item-task-chat-panel"
+            initialAddress={conversationAddress}
+            onAddressChange={rememberAddress}
+            runtimeContext={runtimeContext}
+            sendEphemeral={false}
+            emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
+            placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
+            expanded
+          />
+        </IssueTaskConversationPanel>
       )
     }
 
@@ -399,7 +463,9 @@ export function AiChatModal({
                 <dt className="text-text-muted">{t('workbench.runtime_task', '执行任务')}</dt>
                 <dd className="truncate text-text-primary">{taskTitle || initialAddress.taskId}</dd>
                 <dt className="text-text-muted">{t('workbench.device', '设备')}</dt>
-                <dd className="truncate text-text-primary">{initialAddress.deviceId}</dd>
+                <dd className="truncate text-text-primary" data-testid="ai-chat-execution-device">
+                  {executionDeviceName || initialAddress.deviceId}
+                </dd>
               </dl>
             </div>
           </aside>
@@ -414,7 +480,7 @@ export function AiChatModal({
                 <button
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
-                  onClick={() => void onOpenRuntimeTask(initialAddress)}
+                  onClick={() => void onOpenRuntimeTask(conversationAddress ?? initialAddress)}
                   className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary transition hover:bg-muted"
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
@@ -427,7 +493,7 @@ export function AiChatModal({
               source={initialAddress}
               instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
               testId="work-item-task-chat-panel"
-              initialAddress={currentAddress}
+              initialAddress={conversationAddress}
               onAddressChange={rememberAddress}
               runtimeContext={runtimeContext}
               sendEphemeral={false}
@@ -443,41 +509,20 @@ export function AiChatModal({
 
   if (embedded) {
     return (
-      <aside
-        data-testid="ai-chat-modal-backdrop"
-        data-presentation="sidebar"
-        className={cn(
-          'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
-          !open && 'hidden'
-        )}
+      <IssueTaskConversationPanel
+        issueId={task?.id}
+        open={open}
+        existingTask={false}
+        onClose={onClose}
+        onBack={onBack}
+        translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
       >
-        <section
-          data-testid="ai-chat-modal"
-          className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
-        >
-          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
-            <button
-              type="button"
-              data-testid="ai-chat-modal-close"
-              onClick={onClose}
-              aria-label={t('workbench.back_to_work_item', '返回工作空间')}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
-              <b className="font-medium text-text-secondary">{task?.id}</b>
-              {' · '}
-              {t('todo.new_task')}
-            </span>
-          </header>
-          {renderNewTaskComposer(
-            `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,
-            'work-item-new-task-chat-panel',
-            { expanded: true, startFresh: true }
-          )}
-        </section>
-      </aside>
+        {renderNewTaskComposer(
+          `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,
+          'work-item-new-task-chat-panel',
+          { expanded: true, startFresh: true }
+        )}
+      </IssueTaskConversationPanel>
     )
   }
 

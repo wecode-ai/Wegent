@@ -3,17 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApis } from '@/apis/user'
 import type { QuickLaunchInputPreset, QuickLaunchResponse, Team } from '@/types/api'
-import { getTeamTargetPage, type TeamModeFilter } from '../../selector/team-selector-utils'
+import { getBindModesTargetPage, type TeamModeFilter } from '../../selector/team-selector-utils'
 import type { QuickInputPreset, QuickLauncher } from './types'
 
 interface UseQuickLaunchersOptions {
-  teams: Team[]
   currentMode: TeamModeFilter
   defaultTeam?: Team | null
-}
-
-function findTeam(teams: Team[], teamId: number) {
-  return teams.find(team => team.id === teamId) || null
 }
 
 function presetsFromPhrases(phrases: string[] | undefined): QuickInputPreset[] {
@@ -44,7 +39,7 @@ function normalizeInputPresets(
   return presetsFromPhrases(fallbackPhrases)
 }
 
-export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickLaunchersOptions) {
+export function useQuickLaunchers({ currentMode, defaultTeam }: UseQuickLaunchersOptions) {
   const [data, setData] = useState<QuickLaunchResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -70,8 +65,7 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
     const launchers: QuickLauncher[] = []
 
     for (const item of data?.system_functions ?? []) {
-      const team = findTeam(teams, item.team_id)
-      if (!team) continue
+      const team = { id: item.team_id, bind_mode: item.bind_mode }
 
       launchers.push({
         key: `system:${item.id}`,
@@ -80,20 +74,20 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
         description: item.description,
         icon: item.icon,
         team,
-        targetPage: getTeamTargetPage(team, currentMode),
+        targetPage: getBindModesTargetPage(item.bind_mode, currentMode),
         inputPresets: normalizeInputPresets(item.input_presets),
       })
     }
 
     return launchers
-  }, [currentMode, data?.system_functions, teams])
+  }, [currentMode, data?.system_functions])
 
   const favoriteLaunchers = useMemo<QuickLauncher[]>(() => {
     const launchers: QuickLauncher[] = []
 
     for (const item of data?.favorite_agents ?? []) {
-      const team = findTeam(teams, item.team_id)
-      if (!team || defaultTeam?.id === team.id) continue
+      const team = { id: item.team_id, bind_mode: item.bind_mode }
+      if (defaultTeam?.id === team.id) continue
 
       launchers.push({
         key: `agent:${item.team_id}`,
@@ -102,16 +96,13 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
         description: item.description,
         icon: item.icon,
         team,
-        targetPage: getTeamTargetPage(team, currentMode),
-        inputPresets: normalizeInputPresets(
-          item.input_presets,
-          item.quick_phrases ?? team.quick_phrases
-        ),
+        targetPage: getBindModesTargetPage(item.bind_mode, currentMode),
+        inputPresets: normalizeInputPresets(item.input_presets, item.quick_phrases),
       })
     }
 
     return launchers
-  }, [currentMode, data?.favorite_agents, defaultTeam?.id, teams])
+  }, [currentMode, data?.favorite_agents, defaultTeam?.id])
 
   return {
     isLoading,

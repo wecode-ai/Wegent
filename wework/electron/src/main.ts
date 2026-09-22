@@ -18,6 +18,7 @@ import {
   webContents,
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
+  type Session,
   type WebContents,
 } from 'electron'
 import electronUpdater from 'electron-updater'
@@ -85,7 +86,7 @@ import {
   createNativeContextMenuActions,
   installContextMenu,
 } from './host/image-context-actions.js'
-import { CODEX_SYSTEM_PROXY_PROBE_URL, proxyRulesToUrl } from './host/system-proxy.js'
+import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
@@ -104,6 +105,10 @@ import {
 } from './runtime/brand-runtime-environment.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
+import {
+  isTrustedIsolatedSurfaceAttachment,
+  loadTrustedIsolatedSurfacePolicies,
+} from './host/isolated-surface-security.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
@@ -125,13 +130,7 @@ import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
-import {
-  createWeworkSyncDownloadTimeout,
-  createWeworkSyncFetchInit,
-  normalizeWeworkSyncApiBaseUrl,
-  normalizeWeworkSyncPath,
-  readWeworkSyncResponse,
-} from './host/wework-sync-request.js'
+import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -141,6 +140,10 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
+const isolatedSurfacePreloadPath = resolve(packageRoot, 'dist/isolated-surface-preload.cjs')
+const isolatedSurfacePolicies = loadTrustedIsolatedSurfacePolicies(
+  resolve(packageRoot, 'dist/isolated-surfaces.json')
+)
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
@@ -277,7 +280,10 @@ const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspa
   : []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
-  Array<{ label: string; partition: string }>
+  Array<
+    | { kind: 'browser'; label: string; partition: string }
+    | { kind: 'isolated-surface'; partition: Session }
+  >
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
@@ -410,15 +416,21 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     void shell.openExternal(url)
   })
   contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const isolatedSurface = isTrustedIsolatedSurfaceAttachment(
+      params as Record<string, unknown>,
+      dshUrl,
+      isolatedSurfacePolicies
+    )
     const route = embeddedBrowserRouteFromParams(params as Record<string, unknown>)
-    console.log('[embedded-browser] webview attachment requested', {
+    console.log('[webview] attachment requested', {
       ownerId: contents.id,
       partition: params.partition ?? null,
       routeLabel: route?.label ?? null,
       src: params.src ?? null,
+      type: isolatedSurface ? 'isolated-surface' : 'browser',
     })
-    if (!route) {
-      console.warn('[embedded-browser] rejected unknown webview attachment', {
+    if (!route && !isolatedSurface) {
+      console.warn('[webview] rejected unknown attachment', {
         ownerId: contents.id,
         partition: params.partition ?? null,
         src: params.src ?? null,
@@ -427,11 +439,22 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       return
     }
     const queue = pendingEmbeddedBrowserAttachments.get(contents.id) ?? []
-    queue.push({ label: route.label, partition: route.routePartition })
+    queue.push(
+      isolatedSurface
+        ? { kind: 'isolated-surface', partition: contents.session }
+        : { kind: 'browser', label: route!.label, partition: route!.routePartition }
+    )
     pendingEmbeddedBrowserAttachments.set(contents.id, queue)
-    params.partition = EMBEDDED_BROWSER_PARTITION
-    webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    webPreferences.preload = browserAnnotationPreloadPath
+    if (isolatedSurface) {
+      delete params.partition
+      webPreferences.session = contents.session
+      webPreferences.preload = isolatedSurfacePreloadPath
+      webPreferences.backgroundThrottling = false
+    } else {
+      params.partition = EMBEDDED_BROWSER_PARTITION
+      webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+      webPreferences.preload = browserAnnotationPreloadPath
+    }
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -449,6 +472,22 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     const queue = pendingEmbeddedBrowserAttachments.get(contents.id)
     const pending = queue?.shift()
     if (queue?.length === 0) pendingEmbeddedBrowserAttachments.delete(contents.id)
+    if (pending?.kind === 'isolated-surface') {
+      if (guestContents.session !== pending.partition) {
+        console.warn('[isolated-surface] rejected attached webview with an unexpected session', {
+          guestId: guestContents.id,
+          ownerId: contents.id,
+        })
+        guestContents.close()
+        return
+      }
+      console.log('[isolated-surface] isolated Chromium renderer attached', {
+        guestId: guestContents.id,
+        ownerId: contents.id,
+      })
+      secureDshContents(guestContents, dshUrl)
+      return
+    }
     if (
       !pending ||
       !embeddedBrowser ||
@@ -458,7 +497,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
         guestId: guestContents.id,
         hasBrowserManager: Boolean(embeddedBrowser),
         ownerId: contents.id,
-        pendingLabel: pending?.label ?? null,
+        pendingLabel: pending?.kind === 'browser' ? pending.label : null,
         sessionMatches: guestContents.session === session.fromPartition(EMBEDDED_BROWSER_PARTITION),
       })
       guestContents.close()
@@ -1253,8 +1292,8 @@ function installIpc(): void {
   ipcMain.handle('runtime:use-builtin-node', async () => {
     await requiredPreferences().update({ nodeExecutablePath: null })
   })
-  ipcMain.handle('runtime:resolve-codex-proxy', async () =>
-    proxyRulesToUrl(await session.defaultSession.resolveProxy(CODEX_SYSTEM_PROXY_PROBE_URL))
+  ipcMain.handle('runtime:resolve-proxy', async (_event, targetUrl: string) =>
+    resolveSystemProxy(session.defaultSession, targetUrl)
   )
 }
 
@@ -1479,6 +1518,7 @@ async function configureDesktopRuntime(): Promise<void> {
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
+          quitApplication: () => requestApplicationShutdown(() => app.quit()),
           openRuntimeTask: taskAddressId =>
             dispatchTrayAction({
               type: 'open-task',
@@ -1492,28 +1532,8 @@ async function configureDesktopRuntime(): Promise<void> {
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
-            const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
-            try {
-              const response = await fetch(
-                `${apiBaseUrl}${path}`,
-                await createWeworkSyncFetchInit(
-                  request,
-                  `${credential.tokenType} ${credential.accessToken}`,
-                  downloadTimeout?.signal
-                )
-              )
-              const body = await readWeworkSyncResponse(
-                response,
-                request.downloadPath,
-                request.downloadSizeBytes,
-                downloadTimeout?.refresh
-              )
-              return { status: response.status, body }
-            } finally {
-              downloadTimeout?.clear()
-            }
+            return requestWeworkSync(request, `${credential.tokenType} ${credential.accessToken}`)
           },
         },
         {

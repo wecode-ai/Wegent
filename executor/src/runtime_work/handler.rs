@@ -30,6 +30,7 @@ use crate::{
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
+    attachments::device_runtime_attachment_task_dir,
     config::device::ConnectionConfig,
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -615,7 +616,6 @@ struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
-    managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
     codex_turn: Option<ActiveCodexTurn>,
@@ -945,6 +945,11 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        if request.is_local_project() {
+            request.clear_backend_credentials();
+            return;
+        }
+        self.rewrite_model_gateway_backend(request);
         let connection = match self.backend_connection_snapshot() {
             Ok(Some(connection)) => connection,
             Ok(None) => return,
@@ -966,7 +971,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.backend_url = Some(connection.backend_url);
+            request.backend_url = Some(connection.backend_url.clone());
         }
         if request
             .auth_token
@@ -989,6 +994,27 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    ///
+    /// The connection snapshot is unavailable before the device finishes
+    /// connecting, so fall back to the request's own backend URL (environment,
+    /// payload, or task API domain) and leave the gateway untouched when
+    /// neither source yields a reachable address.
+    fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
+        let snapshot_backend_url = self
+            .backend_connection_snapshot()
+            .ok()
+            .flatten()
+            .map(|connection| connection.backend_url)
+            .unwrap_or_default();
+        let backend_url = if snapshot_backend_url.trim().is_empty() {
+            crate::agents::request_backend_url(request).unwrap_or_default()
+        } else {
+            snapshot_backend_url
+        };
+        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
+    }
+
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
         let configure_before_startup_recovery = method == "runtime.codex.runtime_config.update";
         let startup_recovery_deferred = self.startup_recovery_deferred.load(Ordering::Acquire);
@@ -1000,6 +1026,7 @@ impl RuntimeWorkRpcHandler {
         }
         let result = match method {
             "runtime.tasks.list" => self.list_tasks(&payload).await,
+            "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
@@ -1134,12 +1161,16 @@ impl RuntimeWorkRpcHandler {
             "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
             "runtime.worktrees.list" => self.list_worktrees().await,
             "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.apply_issue_cleanup" => {
+                self.apply_issue_worktree_cleanup(payload).await
+            }
             "runtime.worktrees.restore" => self.restore_worktree(payload).await,
             "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.projects.upsert_local" => self.upsert_local_project(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.composer.catalog.read" => self.read_composer_catalog(payload).await,
             "runtime.workspace.search" => self.search_workspace(payload).await,
             "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
             "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
@@ -1170,6 +1201,8 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.tasks.get"
+            | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"
             | "runtime.codex.runtime_config.update"
@@ -1183,6 +1216,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod composer_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{

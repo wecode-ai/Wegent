@@ -104,6 +104,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "runtime.archives",
     "runtime.automations",
     "runtime.codex",
+    "runtime.composer",
     "runtime.connectors",
     "runtime.harness",
     "runtime.hooks",
@@ -1916,13 +1917,40 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
-        "projects.list" => {
-            serialize_task_value(runtime.list_projects().map_err(task_runtime_error)?)
-        }
+        "projects.list" => serialize_task_value(
+            runtime
+                .list_collaboration_projects()
+                .map_err(task_runtime_error)?,
+        ),
         "projects.create" => {
             let input = serde_json::from_value::<ProjectCreate>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(runtime.create_project(input).map_err(task_runtime_error)?)
+        }
+        "projects.import_code_project" => {
+            let project_key = required_task_string(&params, "project_key")?;
+            let name = required_task_string(&params, "name")?;
+            let roots = params
+                .get("roots")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|root| !root.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if roots.is_empty() {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "roots must contain at least one workspace path",
+                ));
+            }
+            serialize_task_value(
+                runtime
+                    .import_code_project(project_key, name, &roots)
+                    .map_err(task_runtime_error)?,
+            )
         }
         "projects.update" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -2278,6 +2306,40 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
             serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
         }
+        "todos.comment.agent.start" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let agent_id = required_task_string(&params, "agent_id")?;
+            let trigger_message_id = required_task_string(&params, "trigger_message_id")?;
+            let runtime_device_id = required_task_string(&params, "runtime_device_id")?;
+            let runtime_task_id = required_task_string(&params, "runtime_task_id")?;
+            serialize_task_value(
+                runtime
+                    .start_runtime_comment(&crate::task_runtime::LocalRuntimeCommentStart {
+                        project_id,
+                        task_id,
+                        agent_id,
+                        trigger_message_id,
+                        runtime_device_id,
+                        runtime_task_id,
+                        prompt: params.get("prompt").and_then(Value::as_str),
+                        model: params.get("model").and_then(Value::as_str),
+                    })
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.comment.agent.fail" => {
+            let message_id = required_task_string(&params, "message_id")?;
+            let error = params
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Local runtime run failed");
+            serialize_task_value(
+                runtime
+                    .fail_runtime_comment(message_id, error)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "executions.enqueue" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
@@ -2392,6 +2454,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "chat_agents.ensure_default" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = task_input::<ChatAgentCreate>(&params, "agent")?;
+            serialize_task_value(
+                runtime
+                    .ensure_default_chat_agent(project_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "chat_agents.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let agent_id = required_task_string(&params, "agent_id")?;
@@ -2414,6 +2485,33 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
+        "projects.automation.cancel" => runtime
+            .cancel_project_automation_run(
+                required_task_string(&params, "project_id")?,
+                required_task_string(&params, "run_id")?,
+            )
+            .map_err(task_runtime_error),
+        "projects.automation.retry" => runtime
+            .retry_project_automation_run(
+                required_task_string(&params, "project_id")?,
+                required_task_string(&params, "run_id")?,
+            )
+            .map_err(task_runtime_error),
+        "projects.automation.run" => runtime
+            .run_project_automation(
+                required_task_string(&params, "project_id")?,
+                required_task_string(&params, "automation_id")?,
+                params.get("issue_id").and_then(Value::as_str),
+            )
+            .map_err(task_runtime_error),
+        "projects.automation.runs" => serialize_task_value(
+            runtime
+                .list_project_automation_runs(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "automation_id")?,
+                )
+                .map_err(task_runtime_error)?,
+        ),
         "executions.list" => {
             let project_id = required_task_string(&params, "project_id")?;
             let agent_id = params.get("agent_id").and_then(Value::as_str);

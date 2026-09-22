@@ -3,15 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./automation";
+export * from "./agent-form";
 export * from "./board";
 export * from "./CollaborationApp";
 export * from "./CollaborationProjectSummary";
 export * from "./CollaborationSettings";
 export * from "./dto-mappers";
+export * from "./execution-environment/IssueExecutionEnvironmentNotice";
+export * from "./execution-environment/issueEnvironmentReadiness";
 export * from "./files";
 export * from "./http-api";
 export * from "./i18n";
 export * from "./issue-card";
+export * from "./issue-delete";
 export * from "./issue-detail";
 export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";

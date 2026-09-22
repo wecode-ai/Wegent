@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   captureVerificationScreenshot,
+  completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
 } from '../modules/workspace-flows.mjs'
 
@@ -11,6 +12,7 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
+const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -93,7 +95,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       ) {
         cloudAgentMutationRequests.push(`${request.method} ${url.pathname}`)
       }
-      if (url.pathname.startsWith('/api/v1/cloud-projects/')) {
+      if (
+        url.pathname.startsWith('/api/v1/cloud-projects/') ||
+        url.pathname.startsWith('/api/v1/loop-items/')
+      ) {
         cloudProjectDetailRequests.push(`${request.method} ${url.pathname}`)
       }
       return false
@@ -177,29 +182,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-workspace-project-create"]')
       )
-      await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
+      await control.command(
+        'click',
+        '[data-testid="collaboration-workspace-project-import-folder"]'
+      )
+      await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const createSnapshot = await snapshot(control)
-      assert.ok(
-        createSnapshot.testIds.includes('cloud-project-location-local'),
-        'The local workspace project dialog did not identify local storage'
-      )
       assert.equal(
-        createSnapshot.testIds.includes('cloud-project-location-cloud'),
-        false,
-        'The local workspace project dialog incorrectly offered cloud storage'
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="collaboration-project-name-input"]',
+            { visible: true }
+          )
+        ),
+        0,
+        'The local workspace unexpectedly opened the cloud project form'
       )
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
@@ -207,9 +208,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('waitFor', scoped('[data-testid="collaboration-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      assert.ok(
-        cloudWorkspaceListFailures > 0,
-        'Entering the local workspace did not exercise the unavailable cloud workspace service'
+      assert.equal(
+        cloudWorkspaceListFailures,
+        0,
+        'Entering the local workspace unexpectedly reloaded the unavailable cloud workspace service'
       )
       assertLocalIsolation()
 
@@ -260,38 +262,50 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="project-agent-mode-create"]')
-      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="wework-agent-model-load-error"]', {
-        text: 'Desktop E2E cloud model service is unavailable',
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        value: '离线本地智能体',
+      })
+      await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
+        value: MODEL_NAME,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })
-      assert.notEqual(
-        await control.command('getAttribute', '[data-testid="wework-agent-resource-create"]', {
-          value: 'disabled',
-        }),
-        null,
-        'Agent creation must remain disabled without an available model'
-      )
-      assert.deepEqual(
-        cloudAgentMutationRequests,
-        [],
-        'Unavailable model metadata must not trigger a cloud Agent mutation'
-      )
-      await control.command('click', '[data-testid="wework-agent-resource-creator-close"]')
-      await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(
-        Number(
-          await control.command('getElementCount', scoped('[data-testid^="project-agent-row-"]'))
-        ),
-        0,
-        'A failed offline cloud resource creation must not create a project Agent binding'
+      await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
+        text: '离线本地智能体',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid^="project-agent-edit-"]'))
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+        value: '离线本地智能体（已编辑）',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
+        text: '离线本地智能体（已编辑）',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.deepEqual(
+        cloudAgentMutationRequests,
+        [],
+        'Local Agent creation must not write cloud resources'
       )
+      assertLocalIsolation()
 
       await control.command(
         'click',
@@ -342,14 +356,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
         {
-          visible: false,
+          text: '云端空间',
           timeoutMs: uiTimeoutMs,
         }
       )
 
-      assert.ok(
-        cloudWorkspaceListFailures > 0,
-        'Returning to all spaces did not exercise the unavailable cloud workspace service'
+      assert.equal(
+        cloudWorkspaceListFailures,
+        0,
+        'Returning to the local workspace unexpectedly reloaded the unavailable cloud workspace service'
       )
       assertLocalIsolation()
     },

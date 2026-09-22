@@ -371,11 +371,16 @@ def _runtime_capacity_used(
 ) -> int | None:
     """Combine Runtime truth with durable reservations without double-counting."""
 
+    # Managed Wegent runs execute in the Chat runtime, never occupy a device
+    # Runtime slot, and therefore never carry a runtime instance identity.
+    # Treating them as ambiguous would stall every device claim for this owner
+    # for as long as one Wegent run holds capacity.
     ambiguous = (
         db.query(LoopItemExecution.id)
         .filter(
             LoopItemExecution.executor_owner_user_id == owner_user_id,
             LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.execution_environment != "wegent",
             LoopItemExecution.runtime_instance_id == "",
         )
         .first()
@@ -646,6 +651,40 @@ def utcnow() -> datetime:
     """Naive UTC timestamp matching the loop_items convention."""
 
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | None:
+    """Report whether a run emitted assistant text, or None when unknowable.
+
+    Device runs key their activity row by the Runtime task identity. Managed
+    Wegent runs execute in the Chat runtime, never claim a device, and key the
+    same row by loop item plus agent instead. A run carrying neither identity
+    cannot be probed at all.
+    """
+
+    if execution.runtime_device_id and execution.runtime_task_id:
+        identity = (
+            ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+        )
+    elif execution.agent_id:
+        identity = (
+            ProjectChatMessage.task_id == execution.loop_item_id,
+            ProjectChatMessage.agent_id == execution.agent_id,
+        )
+    else:
+        return None
+    message = (
+        db.query(ProjectChatMessage)
+        .filter(
+            *identity,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .order_by(ProjectChatMessage.id.desc())
+        .first()
+    )
+    return message is not None and bool((message.content or "").strip())
 
 
 class LoopItemExecutionService:
@@ -3224,6 +3263,19 @@ class LoopItemExecutionService:
     def _linked_activity(
         db: Session, execution: LoopItemExecution
     ) -> ProjectChatMessage | None:
+        trigger_id = execution.runtime_origin_context.get("comment_trigger_message_id")
+        if trigger_id:
+            return (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.project_id == execution.cloud_project_id,
+                    ProjectChatMessage.task_id == execution.loop_item_id,
+                    ProjectChatMessage.trigger_message_id == trigger_id,
+                    ProjectChatMessage.sender_type == "agent",
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .first()
+            )
         activity_message_id = LoopItemExecutionService._automation_activity_message_id(
             db, execution
         )
@@ -4457,20 +4509,10 @@ class LoopItemExecutionService:
         )
         stalled: list[LoopItemExecution] = []
         for execution in candidates:
-            if not execution.runtime_device_id or not execution.runtime_task_id:
-                continue
-            message = (
-                db.query(ProjectChatMessage)
-                .filter(
-                    ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
-                    ProjectChatMessage.sender_type == "agent",
-                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-                )
-                .order_by(ProjectChatMessage.id.desc())
-                .first()
-            )
-            if message is not None and (message.content or "").strip():
+            produced_text = _agent_text_produced(db, execution)
+            # None means the run exposes no probeable identity, so a stall can
+            # never be proven; True means real progress.
+            if produced_text is None or produced_text:
                 continue
             requested = self.cancel(
                 db,

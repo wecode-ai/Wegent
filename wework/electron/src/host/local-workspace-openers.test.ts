@@ -1,8 +1,12 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { listLocalWorkspaceOpeners, saveCustomWorkspaceOpener } from './local-workspace-openers.js'
+import {
+  listLocalWorkspaceOpeners,
+  openFileInWorkspaceApp,
+  saveCustomWorkspaceOpener,
+} from './local-workspace-openers.js'
 
 const { accessMock, execFileMock } = vi.hoisted(() => ({
   accessMock: vi.fn(),
@@ -20,6 +24,33 @@ vi.mock('node:fs/promises', async importOriginal => ({
 }))
 
 describe('local workspace openers', () => {
+  test.each(['vscode', 'cursor', 'terminal', 'file-manager'])(
+    'opens a file through the selected %s target',
+    async opener => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-file-opener-'))
+      const path = join(directory, 'test document.md')
+      const services = { open: vi.fn().mockResolvedValue(undefined), reveal: vi.fn() }
+      try {
+        await writeFile(path, 'test')
+        await openFileInWorkspaceApp(opener, path, services)
+        if (opener === 'file-manager') {
+          expect(services.reveal).toHaveBeenCalledExactlyOnceWith(path)
+          expect(services.open).not.toHaveBeenCalled()
+        } else {
+          expect(services.open).toHaveBeenCalledExactlyOnceWith(
+            opener,
+            opener === 'terminal' ? directory : path
+          )
+          expect(services.reveal).not.toHaveBeenCalled()
+        }
+        await expect(openFileInWorkspaceApp(opener, directory, services)).rejects.toThrow(
+          'not a regular file'
+        )
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
   beforeEach(() => {
     accessMock.mockRejectedValue(new Error('Path is not installed'))
     execFileMock.mockImplementation((...args: unknown[]) => {

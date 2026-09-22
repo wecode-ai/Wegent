@@ -1,560 +1,412 @@
+import { BrowserIssueExecution } from './BrowserIssueExecution'
+import { BrowserIssueActivityTools } from './BrowserIssueActivityTools'
+import { useIssueActivityScroll } from './useIssueActivityScroll'
+import { BrowserIssueReplies } from './BrowserIssueReplies'
+import { BrowserIssueCommentComposer } from './BrowserIssueCommentComposer'
+import { issueTaskSummaryForMessage } from './issueTaskSummary'
+import type { SharedIssueDetailTaskBinding } from './createSharedIssueDetailPort'
+import {
+  executionRuntimeAddress,
+  messageRuntimeExecutionTarget,
+  type RuntimeExecutionTarget,
+} from './runtimeExecutionTarget'
+import { isSingleActivityExecution } from '@wegent/chat-core/activity-execution-turn'
+import { IssueActivityFeed } from './IssueActivityFeed'
+import { IssueMarkdownProvider } from './IssueMarkdownProvider'
+import { IssueWebCommentComposer } from './IssueWebCommentComposer'
+import { groupIssueActivityThreads } from './IssueActivityThread'
+import { IssueActivityContent } from './IssueActivityContent'
+import { IssueActivityMarkdown } from './IssueActivityMarkdown'
+import { IssueProjectChatThread } from './IssueProjectChatThread'
+import { useIssueProjectChat } from './useIssueProjectChat'
+import { useIssueExecutionCancellation } from './useIssueExecutionCancellation'
+import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ArrowUp, UserPlus } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { IssueActivityCard, IssueActivityMessage } from './IssueActivityPresentation'
+import { useCallback, useMemo } from 'react'
 
-import { executionStatusLabel } from "./executionStatusLabel";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import { executionStatusLabel } from './executionStatusLabel'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationAgent,
   CollaborationAssignment,
   CollaborationComment,
   CollaborationExecution,
   CollaborationIssue,
+  CollaborationProject,
   CollaborationMember,
-} from "../types";
+} from '../types'
 
-type ActivityEntry =
-  | { kind: "assignment"; at: string; assignment: CollaborationAssignment }
-  | { kind: "comment"; at: string; comment: CollaborationComment }
-  | { kind: "run"; at: string; run: CollaborationExecution };
-
-type AssignmentTarget = {
-  type: "human" | "agent";
-  targetId: string;
-  name: string;
-};
-
-export function issueActivityEntries(
-  assignments: CollaborationAssignment[],
-  comments: CollaborationComment[],
-  executions: CollaborationExecution[],
-): ActivityEntry[] {
-  const assignmentEventIds = new Set(
-    assignments.flatMap((assignment) => [
-      assignment.id,
-      ...(assignment.comment_id ? [assignment.comment_id] : []),
-    ]),
-  );
-  return [
-    ...assignments.map(
-      (assignment): ActivityEntry => ({
-        kind: "assignment",
-        at: assignment.created_at,
-        assignment,
-      }),
-    ),
-    ...comments
-      .filter((comment) => !assignmentEventIds.has(comment.id))
-      .map(
-        (comment): ActivityEntry => ({
-          kind: "comment",
-          at: comment.created_at,
-          comment,
-        }),
-      ),
-    ...executions.map(
-      (run): ActivityEntry => ({
-        kind: "run",
-        at: run.created_at,
-        run,
-      }),
-    ),
-  ].sort((left, right) => left.at.localeCompare(right.at));
-}
-
-export function activityDisplayBody(body: string, fallback: string): string {
-  const marker = body.trim();
-  if (!marker || !/^[A-Z0-9_]+$/.test(marker)) return body || fallback;
-  const actor = marker.includes("CLAUDE")
-    ? "Claude"
-    : marker.includes("CODEX")
-      ? "Codex"
-      : null;
-  if (actor === "Claude" && /(COMPLETED|PASSED)/.test(marker))
-    return "Claude 已完成，Codex 阶段已自动解锁";
-  if (actor === "Codex" && /(COMPLETED|PASSED)/.test(marker))
-    return "Codex 已完成，所有自动化阶段已完成";
-  if (actor && /(PLAN_SUBMITTED|ASSIGNED|STARTED)/.test(marker))
-    return `自动化规则已将当前阶段分配给 ${actor}`;
-  return "自动化流程已更新";
-}
+import { issueActivityEntries } from './issueActivityEntries'
+import { activityDisplayBody } from './activityDisplayBody'
 
 export function IssueActivityPanel({
   api,
   issue,
+  project,
+  onTaskUpdated,
   members,
   agents,
   assignments,
   comments,
   executions,
   canComment,
-  canAssign,
-  showCurrentAssignment = true,
+  canAttach = canComment,
   translate,
-  onIssueChange,
-  onAssignmentsChange,
   onCommentsChange,
   onError,
+  onOpenExecution,
+  onOpenAttachment,
+  taskBindings = [],
+  onOpenTaskConversation,
 }: {
-  api: Pick<SharedWorkspaceApi, "assignments" | "comments">;
-  issue: CollaborationIssue;
-  members: CollaborationMember[];
-  agents: CollaborationAgent[];
-  assignments: CollaborationAssignment[];
-  comments: CollaborationComment[];
-  executions: CollaborationExecution[];
-  canComment: boolean;
-  canAssign: boolean;
-  showCurrentAssignment?: boolean;
-  translate(
-    key: string,
-    fallback?: string,
-    options?: Record<string, string | number>,
-  ): string;
-  onIssueChange(issue: CollaborationIssue): void;
-  onAssignmentsChange(assignments: CollaborationAssignment[]): void;
-  onCommentsChange(comments: CollaborationComment[]): void;
-  onError(): void;
+  api: Pick<SharedWorkspaceApi, 'assignments' | 'comments' | 'activity'> &
+    Partial<Pick<SharedWorkspaceApi, 'attachments' | 'runtime' | 'taskBindings' | 'issues'>>
+  issue: CollaborationIssue
+  project?: CollaborationProject
+  onTaskUpdated?(issue: CollaborationIssue): void
+  members: CollaborationMember[]
+  agents: CollaborationAgent[]
+  assignments: CollaborationAssignment[]
+  comments: CollaborationComment[]
+  executions: CollaborationExecution[]
+  canComment: boolean
+  canAttach?: boolean
+  translate(key: string, fallback?: string, options?: Record<string, string | number>): string
+  onCommentsChange(comments: CollaborationComment[]): void
+  onError(): void
+  taskBindings?: SharedIssueDetailTaskBinding[]
+  onOpenTaskConversation?(binding: SharedIssueDetailTaskBinding): void
+  onOpenAttachment?(id: string, filename: string): void
+  onOpenExecution?(target: RuntimeExecutionTarget): void
 }) {
-  const [body, setBody] = useState("");
-  const [mentionOpen, setMentionOpen] = useState(false);
-  const [assignmentOpen, setAssignmentOpen] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [composerExpanded, setComposerExpanded] = useState(false);
-  const commentRef = useRef<HTMLTextAreaElement>(null);
-  const mentionCaretRef = useRef<number | null>(null);
-  const submissionIdRef = useRef(0);
-  useEffect(() => {
-    submissionIdRef.current += 1;
-    mentionCaretRef.current = null;
-    setBody("");
-    setMentionOpen(false);
-    setAssignmentOpen(false);
-    setComposerExpanded(false);
-    setSending(false);
-    return () => {
-      submissionIdRef.current += 1;
-      mentionCaretRef.current = null;
-    };
-  }, [issue.id]);
-  useLayoutEffect(() => {
-    const caret = mentionCaretRef.current;
-    if (caret === null) return;
-    mentionCaretRef.current = null;
-    commentRef.current?.focus();
-    commentRef.current?.setSelectionRange(caret, caret);
-  }, [body]);
+  const chat = useIssueProjectChat(api.activity, issue.cloud_project_id, issue.id)
+  const cancel = useCallback(
+    (address: RuntimeTaskAddress) => {
+      if (!api.runtime) throw new Error('Runtime execution service is unavailable')
+      return api.runtime.cancel(address)
+    },
+    [api.runtime]
+  )
+  const cancellation = useIssueExecutionCancellation(
+    issue.id,
+    cancel,
+    translate('activity.task_activity_stop_failed')
+  )
+  const scroll = useIssueActivityScroll({
+    messages: chat.messages,
+    loading: chat.loading,
+    cardTestIdPrefix: 'collaboration-chat-card-',
+  })
+  const threads = useMemo(() => groupIssueActivityThreads(chat.messages), [chat.messages])
+  const addressedMessages = useMemo(
+    () =>
+      chat.messages.map(
+        message =>
+          messageRuntimeExecutionTarget(
+            message,
+            executions.find(run => run.id === Number(message.metadata.execution_id))
+          )?.activityMessage ?? message
+      ),
+    [chat.messages, executions]
+  )
+  // Project chat is the canonical PC activity stream. REST records describe
+  // the same work and belong only to hosts without a project-chat transport.
   const entries = useMemo(
-    () => issueActivityEntries(assignments, comments, executions),
-    [assignments, comments, executions],
-  );
-  const currentAssignment = useMemo(
-    () =>
-      assignments
-        .filter((assignment) => assignment.status === "active")
-        .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
-        .at(-1) ?? null,
-    [assignments],
-  );
-  const currentExecution = useMemo(
-    () =>
-      executions
-        .filter(
-          (execution) =>
-            execution.loop_item_id === issue.id &&
-            (!currentAssignment ||
-              execution.created_at >= currentAssignment.updated_at),
-        )
-        .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
-        .at(-1) ?? null,
-    [currentAssignment, executions, issue.id],
-  );
-  const submit = async () => {
-    const submissionId = ++submissionIdRef.current;
-    const submittedIssueId = issue.id;
-    const submittedBody = body;
-    const commentBody = submittedBody.trim();
-    if (!commentBody) return;
-    if (!canComment) return;
-    mentionCaretRef.current = null;
-    setBody("");
-    setMentionOpen(false);
-    setComposerExpanded(false);
-    setSending(true);
-    try {
-      const comment = await api.comments.create(submittedIssueId, commentBody);
-      if (submissionId !== submissionIdRef.current) return;
-      onCommentsChange([...comments, comment]);
-    } catch {
-      if (submissionId !== submissionIdRef.current) return;
-      setBody(submittedBody);
-      setComposerExpanded(true);
-      onError();
-    } finally {
-      if (submissionId === submissionIdRef.current) setSending(false);
-    }
-  };
-  const assign = async (target: AssignmentTarget) => {
-    if (!api.assignments || sending) return;
-    setSending(true);
-    setAssignmentOpen(false);
-    try {
-      const result = await api.assignments.create(issue.id, {
-        targetType: target.type,
-        targetId: target.targetId,
-        workflowStep: null,
-        notifyTarget: true,
-      });
-      onAssignmentsChange([...assignments, result.assignment]);
-      onIssueChange(result.issue);
-    } catch {
-      onError();
-    } finally {
-      setSending(false);
-    }
-  };
-  const insertMention = (target: { name: string }) => {
-    const textarea = commentRef.current;
-    const start = textarea?.selectionStart ?? body.length;
-    const end = textarea?.selectionEnd ?? start;
-    const rawPrefix = body.slice(0, start);
-    const prefix = rawPrefix.endsWith("@") ? rawPrefix.slice(0, -1) : rawPrefix;
-    const suffix = body.slice(end);
-    const leadingSpace = prefix && !/\s$/.test(prefix) ? " " : "";
-    const trailingSpace = suffix && /^\s/.test(suffix) ? "" : " ";
-    const mentionEnd =
-      prefix.length + leadingSpace.length + target.name.length + 1;
-    const nextBody = `${prefix}${leadingSpace}@${target.name}${trailingSpace}${suffix}`;
-    const nextCaret = mentionEnd + trailingSpace.length;
-    mentionCaretRef.current = nextCaret;
-    setBody(nextBody);
-    setMentionOpen(false);
-    setComposerExpanded(true);
-  };
+    () => (api.activity ? [] : issueActivityEntries(assignments, comments, executions)),
+    [api.activity, assignments, comments, executions]
+  )
 
-  return (
-    <section
-      className="task-detail-comments collaboration-comment collaboration-activity-panel"
-      data-testid="collaboration-issue-activity"
-    >
-      {showCurrentAssignment || canAssign ? (
-        <section
-          className="collaboration-current-assignment"
-          data-testid="collaboration-current-assignment"
-        >
-          <header>
-            <strong>{translate("todo.current_assignment", "当前分配")}</strong>
-            <span>
-              {currentAssignment
-                ? currentExecution?.display_state ||
-                  (currentAssignment.target_type === "human"
-                    ? translate("todo.waiting_to_start", "等待开始")
-                    : translate("todo.assigned", "已分配"))
-                : translate("todo.unassigned", "尚未分配")}
-            </span>
-          </header>
-          {currentAssignment ? (
-            <div>
-              <span
-                className={
-                  currentAssignment.target_type === "agent"
-                    ? "collaboration-current-assignment-avatar is-agent"
-                    : "collaboration-current-assignment-avatar"
-                }
-              >
-                {currentAssignment.target_type === "agent"
-                  ? "AI"
-                  : currentAssignment.target_name.slice(0, 1)}
-              </span>
-              <span className="collaboration-current-assignment-main">
-                <b>{currentAssignment.target_name}</b>
-                <small>
-                  {currentAssignment.target_type === "agent"
-                    ? translate("todo.agent", "智能体")
-                    : translate("todo.member", "成员")}
-                  {currentExecution?.runtime_source
-                    ? ` · ${currentExecution.runtime_source}`
-                    : ""}
-                </small>
-              </span>
-              <span className="collaboration-current-assignment-source">
-                {translate("todo.assignment_source", "分配来源")}：
-                {currentAssignment.workflow_step ||
-                  translate("todo.manual_assignment", "Issue 内手动分配")}
-              </span>
-            </div>
-          ) : (
-            <p>
-              {translate(
-                "todo.assignment_empty_hint",
-                "选择成员或智能体完成分配；其他项目成员仍可主动参与。",
-              )}
-            </p>
-          )}
-          {canAssign ? (
-            <div className="issue-comment-mention">
-              <button
-                type="button"
-                data-testid="collaboration-issue-assignment-trigger"
-                aria-label={translate("todo.assign", "分配")}
-                aria-expanded={assignmentOpen}
-                disabled={sending}
-                onClick={() => setAssignmentOpen((current) => !current)}
-              >
-                <UserPlus aria-hidden="true" className="h-4 w-4" />
-                {translate("todo.assign", "分配")}
-              </button>
-              {assignmentOpen ? (
-                <div
-                  className="issue-comment-mention-popup"
-                  data-testid="collaboration-issue-assignment-popup"
-                >
-                  {members.length > 0 ? (
-                    <section>
-                      <h4>{translate("todo.members", "成员")}</h4>
-                      {members.map((member) => (
-                        <button
-                          type="button"
-                          key={`assignment-member:${member.user_id}`}
-                          data-testid={`collaboration-issue-assign-member-${member.user_id}`}
-                          onClick={() =>
-                            void assign({
-                              type: "human",
-                              targetId: String(member.user_id),
-                              name: member.user_name,
-                            })
-                          }
-                        >
-                          <span>{member.user_name.slice(0, 1)}</span>
-                          {member.user_name}
-                        </button>
-                      ))}
-                    </section>
-                  ) : null}
-                  {agents.length > 0 ? (
-                    <section>
-                      <h4>{translate("todo.agent_teams", "智能体")}</h4>
-                      {agents.map((agent) => (
-                        <button
-                          type="button"
-                          key={`assignment-agent:${agent.id}`}
-                          data-testid={`collaboration-issue-assign-agent-${agent.id}`}
-                          onClick={() =>
-                            void assign({
-                              type: "agent",
-                              targetId: agent.id,
-                              name: agent.name,
-                            })
-                          }
-                        >
-                          <span>AI</span>
-                          {agent.name}
-                        </button>
-                      ))}
-                    </section>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-      <header className="task-detail-comments-head">
-        <span className="font-semibold text-text-primary">
-          {translate("todo.activity", "动态")}
-        </span>
-        <span>{entries.length}</span>
-      </header>
-      <div
-        className="task-detail-comments-list collaboration-activity-list"
-        data-testid="collaboration-comments"
-      >
-        {entries.length === 0 ? (
-          <p>{translate("todo.activity_empty", "还没有动态")}</p>
-        ) : null}
-        {entries.map((entry) => {
-          if (entry.kind === "comment") {
-            return (
-              <article
-                className="issue-comment-event"
-                key={`comment:${entry.comment.id}`}
-              >
-                <header>
-                  <strong>{entry.comment.author}</strong>
-                  <time>
-                    {entry.comment.created_at.slice(0, 16).replace("T", " ")}
-                  </time>
-                </header>
-                <p>{activityDisplayBody(entry.comment.body, "")}</p>
-              </article>
-            );
-          }
-          if (entry.kind === "assignment") {
-            return (
-              <article
-                className="collaboration-assignment-event"
-                data-testid={`collaboration-assignment-${entry.assignment.id}`}
-                key={`assignment:${entry.assignment.id}`}
-              >
-                <header>
-                  <strong>
-                    {entry.assignment.created_by_user_name ||
-                      translate("todo.someone", "项目成员")}
-                  </strong>
-                  <time>
-                    {entry.assignment.created_at.slice(0, 16).replace("T", " ")}
-                  </time>
-                </header>
-                <p>
-                  {activityDisplayBody(
-                    entry.assignment.body,
-                    `${translate("todo.assigned_to", "分配给")} @${entry.assignment.target_name}`,
-                  )}
-                </p>
-              </article>
-            );
-          }
-          return (
-            <article
-              className="collaboration-run-event"
-              data-testid={`collaboration-run-${entry.run.id}`}
-              key={`run:${entry.run.id}`}
-            >
-              <strong>
-                {entry.run.executor_type === "automation_manager"
-                  ? translate("todo.execution_manager_run", "AI 调度")
-                  : translate("todo.execution_run", "执行任务")}
-              </strong>
-              <p>
-                {entry.run.task_title} ·{" "}
-                {executionStatusLabel(entry.run.display_state, translate)}
-              </p>
-              {entry.run.executor_type === "automation_manager" &&
-              entry.run.display_state === "succeeded" ? (
-                <p>
-                  {translate(
-                    "todo.execution_manager_completed",
-                    "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
-                  )}
-                </p>
-              ) : null}
-              <time>{entry.run.created_at.slice(0, 16).replace("T", " ")}</time>
-            </article>
-          );
-        })}
-      </div>
-      <div
-        className="issue-comment-composer-shell"
-        data-expanded={
-          composerExpanded || Boolean(body.trim()) ? "true" : "false"
+  const content = (
+    <IssueMarkdownProvider attachments={api.attachments}>
+      <IssueActivityFeed
+        testId="collaboration-issue-activity"
+        listTestId="collaboration-comments"
+        listRef={scroll.listRef}
+        translate={translate}
+        count={entries.length + chat.messages.length}
+        loading={chat.loading}
+        error={chat.error ?? cancellation.error}
+        emptyDescription={
+          issue.assignee_agent_name || issue.assignee_team_name
+            ? translate('activity.task_activity_empty_with_ai', undefined, {
+                name: issue.assignee_agent_name || issue.assignee_team_name || '',
+              })
+            : translate('activity.task_activity_empty_without_ai')
         }
-        onFocusCapture={() => setComposerExpanded(true)}
-        onBlurCapture={(event) => {
-          if (
-            !event.currentTarget.contains(event.relatedTarget as Node | null) &&
-            !body.trim()
-          ) {
-            setComposerExpanded(false);
-            setMentionOpen(false);
-          }
-        }}
-      >
-        <textarea
-          ref={commentRef}
-          rows={1}
-          data-testid="collaboration-issue-comment"
-          aria-label={translate("todo.comment", "评论")}
-          placeholder={translate(
-            "todo.comment_or_assign",
-            "评论，输入 @ 提及成员或智能体",
-          )}
-          value={body}
-          disabled={!canComment || sending}
-          onChange={(event) => {
-            const nextBody = event.target.value;
-            setBody(nextBody);
-            if (nextBody) setComposerExpanded(true);
-            if (nextBody.endsWith("@")) setMentionOpen(true);
-          }}
-        />
-        <div className="issue-comment-composer-actions">
-          <div className="issue-comment-mention">
-            <button
-              type="button"
-              aria-label={translate("todo.mention_collaborator", "提及协作者")}
-              aria-expanded={mentionOpen}
-              data-testid="collaboration-issue-mention-trigger"
-              disabled={!canComment || sending}
-              onClick={() => {
-                setComposerExpanded(true);
-                setMentionOpen((current) => !current);
+        tools={
+          api.issues ? (
+            <BrowserIssueActivityTools
+              key={issue.id}
+              api={{ ...api, issues: api.issues }}
+              issue={issue}
+              project={project}
+              agents={agents}
+              currentUserId={chat.currentUserId}
+              messages={chat.messages}
+              onMessages={chat.merge}
+              onTaskUpdated={onTaskUpdated}
+              translate={translate}
+            />
+          ) : undefined
+        }
+        composer={
+          api.runtime &&
+          api.activity &&
+          api.attachments &&
+          api.taskBindings &&
+          api.issues &&
+          project ? (
+            <BrowserIssueCommentComposer
+              key={issue.id}
+              api={{
+                attachments: api.attachments,
+                taskBindings: api.taskBindings,
+                issues: api.issues,
               }}
-            >
-              @
-            </button>
-            {mentionOpen ? (
-              <div
-                className="issue-comment-mention-popup"
-                data-testid="collaboration-issue-mention-popup"
-              >
-                {members.length > 0 ? (
-                  <section>
-                    <h4>{translate("todo.members", "成员")}</h4>
-                    {members.map((member) => (
-                      <button
-                        type="button"
-                        key={`member:${member.user_id}`}
-                        data-testid={`collaboration-issue-mention-member-${member.user_id}`}
-                        onClick={() =>
-                          insertMention({
-                            name: member.user_name,
-                          })
-                        }
+              runtime={api.runtime}
+              client={api.activity}
+              project={project}
+              issue={issue}
+              agents={agents}
+              members={members}
+              messages={chat.messages}
+              canComment={canComment}
+              canAttach={canAttach}
+              loading={chat.loading}
+              translate={translate}
+              onMessages={chat.merge}
+              onCommentPersisted={message => {
+                scroll.followCard(message.messageId)
+                scroll.scrollTaskCommentsToTop()
+              }}
+              onTaskUpdated={onTaskUpdated}
+            />
+          ) : (
+            <IssueWebCommentComposer
+              key={issue.id}
+              issueId={issue.id}
+              attachmentApi={api.attachments}
+              canComment={canComment}
+              canAttach={canAttach}
+              loading={chat.loading}
+              members={members}
+              agents={agents}
+              translate={translate}
+              send={async body => {
+                if (api.activity) {
+                  await chat.send(body)
+                  return
+                }
+                return api.comments.create(issue.id, body)
+              }}
+              onSent={comment => onCommentsChange([...comments, comment])}
+              onError={onError}
+            />
+          )
+        }
+      >
+        <div className="flex flex-col">
+          {[
+            ...threads.map(thread => ({
+              kind: 'thread' as const,
+              at: thread.root.createdAt,
+              thread,
+            })),
+            ...entries,
+          ]
+            .sort((left, right) => right.at.localeCompare(left.at))
+            .map(entry => {
+              if (entry.kind === 'thread')
+                return (
+                  <IssueProjectChatThread
+                    key={`thread:${entry.thread.root.messageId}`}
+                    thread={entry.thread}
+                    canComment={canComment}
+                    send={chat.send}
+                    upload={
+                      canAttach && api.attachments
+                        ? file => api.attachments!.upload(issue.id, file)
+                        : undefined
+                    }
+                    remove={api.attachments ? id => api.attachments!.remove(id) : undefined}
+                    translate={translate}
+                    executions={executions}
+                    singleExecutionForMessage={message =>
+                      isSingleActivityExecution(addressedMessages, message)
+                    }
+                    taskSummaryForMessage={message =>
+                      issueTaskSummaryForMessage(
+                        message,
+                        taskBindings,
+                        issue.title,
+                        issue.workflow?.nodes,
+                        onOpenTaskConversation
+                      )
+                    }
+                    onOpenExecution={onOpenExecution}
+                    onStopExecution={api.runtime ? cancellation.stop : undefined}
+                    stoppingMessageId={cancellation.stoppingMessageId}
+                    onOpenAttachment={onOpenAttachment}
+                  />
+                )
+              const id =
+                entry.kind === 'comment'
+                  ? entry.comment.id
+                  : entry.kind === 'assignment'
+                    ? entry.assignment.id
+                    : String(entry.run.id)
+              const author =
+                entry.kind === 'comment'
+                  ? entry.comment.author
+                  : entry.kind === 'assignment'
+                    ? entry.assignment.created_by_user_name || translate('todo.someone', '项目成员')
+                    : translate(
+                        entry.run.executor_type === 'automation_manager'
+                          ? 'todo.execution_manager_run'
+                          : 'todo.execution_run',
+                        entry.run.executor_type === 'automation_manager' ? 'AI 调度' : '执行任务'
+                      )
+              const content =
+                entry.kind === 'comment'
+                  ? activityDisplayBody(entry.comment.body, '')
+                  : entry.kind === 'assignment'
+                    ? activityDisplayBody(
+                        entry.assignment.body,
+                        `${translate('todo.assigned_to', '分配给')} @${entry.assignment.target_name}`
+                      )
+                    : null
+              const boundTask =
+                entry.kind === 'run'
+                  ? taskBindings.find(
+                      binding =>
+                        binding.device_id === entry.run.runtime_device_id &&
+                        binding.task_id === entry.run.runtime_task_id
+                    )
+                  : undefined
+              return (
+                <IssueActivityCard key={`${entry.kind}:${id}`}>
+                  <IssueActivityMessage
+                    data-testid={
+                      entry.kind === 'assignment'
+                        ? `collaboration-assignment-${id}`
+                        : entry.kind === 'run'
+                          ? `collaboration-run-${id}`
+                          : `collaboration-comment-${id}`
+                    }
+                    author={author}
+                    createdAt={entry.at}
+                    agent={entry.kind === 'run'}
+                  >
+                    {entry.kind === 'run' ? (
+                      <>
+                        <div className="task-detail-thread-task-link">
+                          <button
+                            type="button"
+                            className="task-detail-ai-run-open-task"
+                            data-testid={`collaboration-open-task-${entry.run.id}`}
+                            onClick={() => {
+                              if (boundTask) onOpenTaskConversation?.(boundTask)
+                            }}
+                            disabled={!boundTask || !onOpenTaskConversation}
+                          >
+                            {entry.run.task_title}
+                          </button>
+                          <button
+                            type="button"
+                            className="task-detail-ai-run-open-task"
+                            data-testid={`collaboration-open-execution-${entry.run.id}`}
+                            disabled={!onOpenExecution || !executionRuntimeAddress(entry.run)}
+                            onClick={() => {
+                              const address = executionRuntimeAddress(entry.run)
+                              if (address)
+                                onOpenExecution?.({
+                                  address,
+                                  taskTitle: entry.run.task_title,
+                                  senderName: author,
+                                  runId: String(entry.run.id),
+                                  runStatus: entry.run.display_state,
+                                })
+                            }}
+                          >
+                            {executionStatusLabel(entry.run.display_state, translate)}
+                          </button>
+                        </div>
+                        {entry.run.error_message ? (
+                          <p
+                            className="text-error"
+                            data-testid={`collaboration-run-error-${entry.run.id}`}
+                          >
+                            {entry.run.error_message}
+                          </p>
+                        ) : null}
+                        {entry.run.executor_type === 'automation_manager' &&
+                        entry.run.display_state === 'succeeded' ? (
+                          <p>
+                            {translate(
+                              'todo.execution_manager_completed',
+                              '调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。'
+                            )}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <IssueActivityContent
+                        messageId={id}
+                        expandLabel={translate('todo.expand_content')}
+                        collapseLabel={translate('todo.collapse_content')}
                       >
-                        <span>{member.user_name.slice(0, 1)}</span>
-                        {member.user_name}
-                      </button>
-                    ))}
-                  </section>
-                ) : null}
-                {agents.length > 0 ? (
-                  <section>
-                    <h4>{translate("todo.agent_teams", "智能体")}</h4>
-                    {agents.map((agent) => (
-                      <button
-                        type="button"
-                        key={`agent:${agent.id}`}
-                        data-testid={`collaboration-issue-mention-agent-${agent.id}`}
-                        onClick={() =>
-                          insertMention({
-                            name: agent.name,
-                          })
-                        }
-                      >
-                        <span>AI</span>
-                        {agent.name}
-                      </button>
-                    ))}
-                  </section>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            data-testid="collaboration-issue-comment-submit"
-            aria-label={translate("todo.send_comment", "发送")}
-            title={translate("todo.send_comment", "发送")}
-            disabled={sending || !body.trim() || !canComment}
-            onClick={() => void submit()}
-          >
-            <ArrowUp aria-hidden="true" />
-          </button>
+                        <IssueActivityMarkdown
+                          translate={translate}
+                          content={content ?? ''}
+                          onOpenAttachment={onOpenAttachment}
+                        />
+                      </IssueActivityContent>
+                    )}
+                  </IssueActivityMessage>
+                </IssueActivityCard>
+              )
+            })}
         </div>
-      </div>
-    </section>
-  );
+      </IssueActivityFeed>
+    </IssueMarkdownProvider>
+  )
+  return api.runtime &&
+    api.activity &&
+    api.attachments &&
+    api.taskBindings &&
+    api.issues &&
+    project ? (
+    <BrowserIssueExecution key={issue.id} runtime={api.runtime}>
+      <BrowserIssueReplies
+        key={issue.id}
+        api={{
+          attachments: api.attachments,
+          taskBindings: api.taskBindings,
+          issues: api.issues,
+        }}
+        runtime={api.runtime}
+        client={api.activity}
+        project={project}
+        issue={issue}
+        agents={agents}
+        messages={chat.messages}
+        onMessages={chat.merge}
+        onTaskUpdated={onTaskUpdated}
+        onReplyPersisted={rootId => {
+          scroll.followCard(rootId)
+          scroll.revealCardBottom(rootId)
+        }}
+        canComment={canComment}
+        translate={translate}
+      >
+        {content}
+      </BrowserIssueReplies>
+    </BrowserIssueExecution>
+  ) : (
+    content
+  )
 }

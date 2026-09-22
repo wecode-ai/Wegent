@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Columns2,
+  Columns3,
   Edit3,
   FolderOpen,
   FolderPlus,
@@ -45,8 +46,10 @@ import type {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
@@ -116,6 +119,8 @@ import {
   getRuntimeProjectSidebarStateKey,
 } from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
+import { SidebarTaskTitle } from './SidebarTaskTitle'
+import { SidebarWorklistsScroll } from './SidebarWorklistsScroll'
 import {
   defaultAppearance,
   getWorkbenchBackground,
@@ -184,6 +189,7 @@ import {
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
+  shortenSidebarHomePath,
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
@@ -233,7 +239,7 @@ interface DesktopSidebarProps {
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
-  onOpenMyWork?: () => void
+  onToggleMyWork?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -305,6 +311,8 @@ interface DesktopSidebarProps {
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
+
+type TaskViewAction = 'priority' | 'board'
 
 interface RuntimeTaskPinMutation {
   createdRevision: number
@@ -398,6 +406,76 @@ interface ArchiveConversationsConfirmDialogProps {
 }
 
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
+
+interface PendingRuntimeTaskArchive {
+  noticeOpen: boolean
+  runArchive: () => void
+  timerId: number
+}
+
+const pendingRuntimeTaskArchives = new Map<string, PendingRuntimeTaskArchive>()
+const pendingRuntimeTaskArchiveListeners = new Map<string, Set<() => void>>()
+
+function notifyPendingRuntimeTaskArchive(key: string) {
+  pendingRuntimeTaskArchiveListeners.get(key)?.forEach(listener => listener())
+}
+
+function subscribePendingRuntimeTaskArchive(key: string, listener: () => void) {
+  const listeners = pendingRuntimeTaskArchiveListeners.get(key) ?? new Set<() => void>()
+  listeners.add(listener)
+  pendingRuntimeTaskArchiveListeners.set(key, listeners)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) {
+      pendingRuntimeTaskArchiveListeners.delete(key)
+    }
+  }
+}
+
+function getPendingRuntimeTaskArchive(key: string) {
+  return pendingRuntimeTaskArchives.get(key) ?? null
+}
+
+function schedulePendingRuntimeTaskArchive(key: string, runArchive: () => void) {
+  const existing = pendingRuntimeTaskArchives.get(key)
+  if (existing) {
+    window.clearTimeout(existing.timerId)
+  }
+  const pending: PendingRuntimeTaskArchive = {
+    noticeOpen: true,
+    runArchive,
+    timerId: window.setTimeout(() => {
+      if (pendingRuntimeTaskArchives.get(key) !== pending) return
+      pendingRuntimeTaskArchives.delete(key)
+      notifyPendingRuntimeTaskArchive(key)
+      pending.runArchive()
+    }, RUNTIME_ARCHIVE_UNDO_DELAY_MS),
+  }
+  pendingRuntimeTaskArchives.set(key, pending)
+  notifyPendingRuntimeTaskArchive(key)
+}
+
+function updatePendingRuntimeTaskArchive(key: string, runArchive: () => void) {
+  const pending = pendingRuntimeTaskArchives.get(key)
+  if (pending) {
+    pending.runArchive = runArchive
+  }
+}
+
+function undoPendingRuntimeTaskArchive(key: string) {
+  const pending = pendingRuntimeTaskArchives.get(key)
+  if (!pending) return
+  window.clearTimeout(pending.timerId)
+  pendingRuntimeTaskArchives.delete(key)
+  notifyPendingRuntimeTaskArchive(key)
+}
+
+function dismissPendingRuntimeTaskArchiveNotice(key: string) {
+  const pending = pendingRuntimeTaskArchives.get(key)
+  if (!pending || !pending.noticeOpen) return
+  pendingRuntimeTaskArchives.set(key, { ...pending, noticeOpen: false })
+  notifyPendingRuntimeTaskArchive(key)
+}
 const EMPTY_RUNTIME_TASK_KEYS: ReadonlySet<string> = new Set()
 const EMPTY_SPLIT_GROUP_MEMBERSHIPS: Readonly<Record<string, WorkbenchSplitGroupMembership>> = {}
 const PROJECT_APPEARANCE_COLORS = [
@@ -574,7 +652,7 @@ function ArchiveConversationsConfirmDialog({
 }
 
 const SIDEBAR_ROW_METADATA_CLASS =
-  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
+  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible group-focus-visible/task:invisible group-has-[:focus-visible]/task:invisible'
 const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
   'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
@@ -778,10 +856,6 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
   )
 }
 
-function shortenSidebarHomePath(path: string): string {
-  return path.replace(/^\/Users\/[^/]+(?=\/|$)/u, '~')
-}
-
 function getSidebarRepositoryLabel(repoUrl?: string | null): string | null {
   const value = repoUrl?.trim()
   if (!value) return null
@@ -885,11 +959,11 @@ function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-function getRuntimePriorityTaskKey(
+function getRuntimeTaskSortableId(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ): string {
-  return `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
+  return `${workspace.deviceId}:${task.taskId}`
 }
 
 function getProjectHoverSources(
@@ -1472,15 +1546,12 @@ function RuntimeTaskRow({
     value: boolean
   } | null>(null)
   const [archiving, setArchiving] = useState(false)
-  const [archivePending, setArchivePending] = useState(false)
-  const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
   const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
   const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
-  const archiveDelayRef = useRef<number | null>(null)
   const titleShimmerDelayRef = useRef<number | null>(null)
   const previousTitleRef = useRef(task.title)
   const [titleShimmering, setTitleShimmering] = useState(false)
@@ -1504,9 +1575,25 @@ function RuntimeTaskRow({
         number: splitGroup.displayNumber,
       })
     : null
+  const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const archiveKey = getRuntimeTaskLifecycleKey(taskAddress)
+  const subscribeArchive = useCallback(
+    (listener: () => void) => subscribePendingRuntimeTaskArchive(archiveKey, listener),
+    [archiveKey]
+  )
+  const getArchiveSnapshot = useCallback(
+    () => getPendingRuntimeTaskArchive(archiveKey),
+    [archiveKey]
+  )
+  const pendingArchive = useSyncExternalStore(
+    subscribeArchive,
+    getArchiveSnapshot,
+    getArchiveSnapshot
+  )
+  const archivePending = pendingArchive !== null
+  const archiveNoticeOpen = pendingArchive?.noticeOpen === true
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
-  const taskAddress = getRuntimeTaskAddress(workspace, task)
   const conversationMenuActions = useDshMenuCommands('conversation.context')
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
@@ -1520,6 +1607,7 @@ function RuntimeTaskRow({
       ? Number(task.queuePosition)
       : null
   const threadId = getRuntimeTaskThreadId(task)
+  const moveTaskMenu = useMoveRuntimeTaskMenu(workspace, task, threadId, stateDeviceId)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
     taskAddress
@@ -1554,9 +1642,6 @@ function RuntimeTaskRow({
   }
   useEffect(() => {
     return () => {
-      if (archiveDelayRef.current !== null) {
-        window.clearTimeout(archiveDelayRef.current)
-      }
       if (titleShimmerDelayRef.current !== null) {
         window.clearTimeout(titleShimmerDelayRef.current)
       }
@@ -1587,16 +1672,16 @@ function RuntimeTaskRow({
       setArchiving(false)
     }
   }
+  useEffect(() => {
+    updatePendingRuntimeTaskArchive(archiveKey, () => {
+      void runArchive()
+    })
+  })
   const scheduleArchive = () => {
     if (archiveDisabled) return
-    setArchivePending(true)
-    setArchiveNoticeOpen(true)
-    archiveDelayRef.current = window.setTimeout(() => {
-      archiveDelayRef.current = null
-      setArchivePending(false)
-      setArchiveNoticeOpen(false)
+    schedulePendingRuntimeTaskArchive(archiveKey, () => {
       void runArchive()
-    }, RUNTIME_ARCHIVE_UNDO_DELAY_MS)
+    })
   }
   const handleArchive = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -1604,15 +1689,10 @@ function RuntimeTaskRow({
     scheduleArchive()
   }
   const handleUndoArchive = () => {
-    if (archiveDelayRef.current !== null) {
-      window.clearTimeout(archiveDelayRef.current)
-      archiveDelayRef.current = null
-    }
-    setArchivePending(false)
-    setArchiveNoticeOpen(false)
+    undoPendingRuntimeTaskArchive(archiveKey)
   }
   const handleDismissArchiveNotice = () => {
-    setArchiveNoticeOpen(false)
+    dismissPendingRuntimeTaskArchiveNotice(archiveKey)
   }
   const handleCloseForceArchiveConfirm = () => {
     if (!archiving) {
@@ -1704,6 +1784,7 @@ function RuntimeTaskRow({
       >
         <div
           data-testid={`runtime-local-task-row-${task.taskId}`}
+          data-sidebar-task-row
           data-marked={marked ? 'true' : undefined}
           role="button"
           tabIndex={disabled ? -1 : 0}
@@ -1752,25 +1833,14 @@ function RuntimeTaskRow({
           />
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-              <span
-                data-sidebar-drag-activator
-                data-testid={`runtime-local-task-title-${task.taskId}`}
-                className={cn(
-                  'runtime-task-title relative flex min-w-0 items-center gap-1 truncate',
-                  titleShimmering && 'is-updated'
-                )}
-              >
-                {titleShimmering ? (
-                  <span
-                    aria-hidden="true"
-                    className="runtime-task-title-shimmer"
-                    data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                  />
-                ) : null}
-                <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
-                  {task.title}
-                </span>
-              </span>
+              <SidebarTaskTitle
+                text={task.title}
+                testId={`runtime-local-task-title-${task.taskId}`}
+                textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+                shimmering={titleShimmering}
+                shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
+                className="flex-none"
+              />
               <span
                 data-testid={`runtime-local-task-source-${task.taskId}`}
                 className="flex min-w-0 items-center gap-1 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]"
@@ -1786,25 +1856,13 @@ function RuntimeTaskRow({
               </span>
             </span>
           ) : (
-            <span
-              data-sidebar-drag-activator
-              data-testid={`runtime-local-task-title-${task.taskId}`}
-              className={cn(
-                'runtime-task-title relative min-w-0 flex-1 truncate',
-                titleShimmering && 'is-updated'
-              )}
-            >
-              {titleShimmering ? (
-                <span
-                  aria-hidden="true"
-                  className="runtime-task-title-shimmer"
-                  data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                />
-              ) : null}
-              <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
-                {task.title}
-              </span>
-            </span>
+            <SidebarTaskTitle
+              text={task.title}
+              testId={`runtime-local-task-title-${task.taskId}`}
+              textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+              shimmering={titleShimmering}
+              shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
+            />
           )}
           {splitGroup && splitGroupLabel ? (
             <span
@@ -1813,7 +1871,7 @@ function RuntimeTaskRow({
               data-split-group-active={splitGroup.active ? 'true' : undefined}
               title={splitGroupLabel}
               aria-label={splitGroupLabel}
-              className="ml-1 inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-[rgb(var(--color-sidebar-hover))] px-1.5 text-xs font-medium leading-none text-[rgb(var(--color-sidebar-text-secondary))]"
+              className="ml-1 inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-[rgb(var(--color-sidebar-hover))] px-1.5 text-xs font-medium leading-none text-[rgb(var(--color-sidebar-text-secondary))] group-hover/task:invisible group-focus-visible/task:invisible group-has-[:focus-visible]/task:invisible"
             >
               <Columns2 className="h-3 w-3" aria-hidden="true" />
               <span>{splitGroup.displayNumber}</span>
@@ -1822,7 +1880,7 @@ function RuntimeTaskRow({
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(
-              'relative ml-1 flex min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]',
+              'relative ml-1 flex min-w-[30px] shrink-0 items-center justify-end',
               priorityLayout ? 'self-stretch' : 'h-[30px]'
             )}
           >
@@ -1907,19 +1965,24 @@ function RuntimeTaskRow({
                     }
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <span className="relative flex h-4 w-4 items-center justify-center">
+                    {hasActiveGoal ? (
+                      <span
+                        data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
+                        className="relative flex h-4 w-4 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))]"
+                        aria-hidden="true"
+                      >
+                        <CompositedSpinner icon={Loader2} className="absolute inset-0 h-4 w-4" />
+                        <span
+                          data-testid={`runtime-local-task-goal-center-${task.taskId}`}
+                          className="h-1 w-1 rounded-full bg-current"
+                        />
+                      </span>
+                    ) : (
                       <CompositedSpinner
                         icon={Loader2}
                         className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
                       />
-                      {hasActiveGoal ? (
-                        <span
-                          data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
-                          aria-hidden="true"
-                          className="absolute h-1.5 w-1.5 rounded-full bg-primary"
-                        />
-                      ) : null}
-                    </span>
+                    )}
                   </span>
                 ) : priorityReason === 'waiting' ? (
                   <span
@@ -1958,8 +2021,9 @@ function RuntimeTaskRow({
             </span>
             <span
               data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
+              data-sidebar-title-actions
               className={cn(
-                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
+                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 group-focus-visible/task:pointer-events-auto group-focus-visible/task:opacity-100 group-has-[:focus-visible]/task:pointer-events-auto group-has-[:focus-visible]/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
                 queued ? 'w-[96px]' : 'w-[72px]'
               )}
             >
@@ -2162,6 +2226,7 @@ function RuntimeTaskRow({
             disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
+          moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
@@ -2215,7 +2280,7 @@ function RuntimeTaskRow({
         confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
         onClose={() => setRenameOpen(false)}
         onSubmit={title => {
-          if (workspace.available) onRenameRuntimeTask?.(taskAddress, title)
+          if (workspace.available) return onRenameRuntimeTask?.(taskAddress, title)
         }}
       />
       {archiveNoticeOpen &&
@@ -2307,7 +2372,7 @@ function LocalHarnessSessionRow({
   const useArchiveTestId = canArchive && session.isPrimary
 
   return (
-    <div className="group/harness-session relative flex items-center">
+    <div data-sidebar-task-row className="group/harness-session relative flex items-center">
       <button
         type="button"
         data-testid={`local-harness-session-row-${session.sessionId}`}
@@ -2322,7 +2387,10 @@ function LocalHarnessSessionRow({
         )}
       >
         <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
-        <span className="truncate">{session.title}</span>
+        <SidebarTaskTitle
+          text={session.title}
+          testId={`local-harness-session-title-${session.sessionId}`}
+        />
       </button>
       {onClose && (canArchive || canClose) && (
         <Tooltip
@@ -2336,6 +2404,7 @@ function LocalHarnessSessionRow({
         >
           <button
             type="button"
+            data-sidebar-title-actions
             data-testid={
               useArchiveTestId
                 ? `archive-local-harness-session-${session.sessionId}`
@@ -2350,7 +2419,7 @@ function LocalHarnessSessionRow({
                 ? t('workbench.archive_harness', '归档编码会话')
                 : t('workbench.close_harness', '关闭编码工具')
             }
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 group-has-[:focus-visible]/harness-session:opacity-100 focus-visible:opacity-100"
           >
             {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
           </button>
@@ -2908,9 +2977,7 @@ function ProjectItem({
                   testId={`project-runtime-task-sortable-${project.id}`}
                   className="space-y-0.5"
                   items={visibleRuntimeTaskItems}
-                  getId={({ workspace, task }) =>
-                    `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
-                  }
+                  getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                   getLabel={({ task }) => task.title}
                   getExternalDragData={({ workspace, task }) => ({
                     paneKey: getWorkbenchPaneKey({
@@ -3096,7 +3163,7 @@ export function DesktopSidebar({
   onOpenLocalHarnessSession,
   onCloseLocalHarnessSession,
   onOpenSearch,
-  onOpenMyWork,
+  onToggleMyWork,
   onStartNewProjectChat,
   onOpenRuntimeTask,
   onMarkRuntimeTaskRead,
@@ -3205,6 +3272,11 @@ export function DesktopSidebar({
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const [isArchivingPriority, setIsArchivingPriority] = useState(false)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
+  const projectCreateDialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => setProjectCreateDialogOpen(false),
+    projectCreateDialogOpen,
+    '[data-testid="project-create-local-option"]'
+  )
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
@@ -3229,6 +3301,9 @@ export function DesktopSidebar({
     readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [priorityFilterActive, setPriorityFilterActive] = useState(false)
+  const [taskViewAction, setTaskViewAction] = useState<TaskViewAction>(() =>
+    onToggleMyWork ? 'board' : 'priority'
+  )
   const [prioritySession, setPrioritySession] = useState<DesktopSidebarPrioritySession | null>(null)
   const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
   const [priorityShowPinned, setPriorityShowPinned] = useState(() =>
@@ -3499,7 +3574,7 @@ export function DesktopSidebar({
   const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
     () =>
       allPriorityViewTaskItems.map(item => ({
-        key: getRuntimePriorityTaskKey(item.workspace, item.task),
+        key: getRuntimeTaskSortableId(item.workspace, item.task),
         item,
         pinned: Boolean(item.task.pinned),
         pinnedOrder: item.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER,
@@ -3543,21 +3618,39 @@ export function DesktopSidebar({
         priorityItems: livePriorityTaskItems,
         recentGroups: [],
       }
-  const togglePriorityFilter = useCallback(() => {
-    if (priorityFilterActive) {
-      setPriorityFilterActive(false)
-      setPrioritySession(null)
-      return
-    }
-    setPrioritySession(createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned))
-    setPriorityFilterActive(true)
-  }, [
-    priorityFilterActive,
-    priorityShowPinned,
-    priorityViewSources,
-    setPriorityFilterActive,
-    setPrioritySession,
-  ])
+  const setPriorityFilterEnabled = useCallback(
+    (enabled: boolean) => {
+      if (!enabled) {
+        setPriorityFilterActive(false)
+        setPrioritySession(null)
+        return
+      }
+      setPrioritySession(
+        createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned)
+      )
+      setPriorityFilterActive(true)
+    },
+    [priorityShowPinned, priorityViewSources, setPriorityFilterActive, setPrioritySession]
+  )
+  const selectedTaskViewAction = taskViewAction === 'board' && onToggleMyWork ? 'board' : 'priority'
+  const selectTaskViewAction = useCallback(
+    (action: TaskViewAction) => {
+      setTaskViewAction(action)
+      if (action === 'board') {
+        setPriorityFilterEnabled(false)
+        if (taskView !== 'default-work-items') onToggleMyWork?.()
+        return
+      }
+      if (taskView === 'default-work-items') onToggleMyWork?.()
+      setPriorityFilterEnabled(true)
+    },
+    [onToggleMyWork, setPriorityFilterEnabled, setTaskViewAction, taskView]
+  )
+  const togglePriorityTaskView = useCallback(() => {
+    setTaskViewAction('priority')
+    if (taskView === 'default-work-items') onToggleMyWork?.()
+    setPriorityFilterEnabled(taskView === 'default-work-items' || !priorityFilterActive)
+  }, [onToggleMyWork, priorityFilterActive, setPriorityFilterEnabled, setTaskViewAction, taskView])
 
   const unreadPriorityTaskItems = useMemo(
     () =>
@@ -3934,12 +4027,12 @@ export function DesktopSidebar({
     })
   }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
 
-  const openProjectCreateDialog = () => {
+  const openProjectCreateDialog = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    // Pointer activation should not restore keyboard focus to the icon on dismissal.
+    if (event.detail > 0) event.currentTarget.blur()
     setProjectCreateDialogOpen(true)
     void onRefreshDevices?.().catch(() => undefined)
   }
-
-  useEscapeKey(() => setProjectCreateDialogOpen(false), projectCreateDialogOpen)
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
@@ -3997,12 +4090,12 @@ export function DesktopSidebar({
         return
       event.preventDefault()
       event.stopPropagation()
-      togglePriorityFilter()
+      togglePriorityTaskView()
     }
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [priorityFilterShortcut, togglePriorityFilter])
+  }, [priorityFilterShortcut, togglePriorityTaskView])
 
   useEffect(() => {
     if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
@@ -4090,45 +4183,100 @@ export function DesktopSidebar({
                     </button>
                   </Tooltip>
                 )}
-                <TitlebarTooltip
-                  label={
-                    priorityFilterActive
-                      ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
-                      : t('workbench.priority_filter', '按优先级筛选')
-                  }
-                  shortcut={
-                    priorityFilterActive ? undefined : (priorityFilterShortcut ?? undefined)
-                  }
-                  align="end"
-                  testId="runtime-priority-filter-tooltip"
+                <span
+                  data-testid="runtime-task-view-control"
+                  className="inline-flex shrink-0 items-center rounded-lg"
                 >
-                  <button
-                    type="button"
-                    data-testid="runtime-priority-filter-button"
-                    onClick={togglePriorityFilter}
-                    aria-pressed={priorityFilterActive}
-                    className={cn(
-                      'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
-                      priorityFilterActive && 'bg-[rgb(var(--color-sidebar-active))]'
-                    )}
-                    aria-label={
-                      priorityNeedsAttention && !priorityFilterActive
-                        ? t('workbench.priority_filter_needs_attention', '按优先级筛选，需要关注')
+                  <TitlebarTooltip
+                    label={
+                      selectedTaskViewAction === 'board'
+                        ? t('workbench.work_item_create_title', '看板')
                         : priorityFilterActive
                           ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
                           : t('workbench.priority_filter', '按优先级筛选')
                     }
+                    shortcut={
+                      selectedTaskViewAction === 'priority' && !priorityFilterActive
+                        ? (priorityFilterShortcut ?? undefined)
+                        : undefined
+                    }
+                    align="end"
+                    testId="runtime-priority-filter-tooltip"
                   >
-                    <Bell className="h-4 w-4" aria-hidden="true" />
-                    {priorityNeedsAttention && !priorityFilterActive && (
-                      <span
-                        data-testid="runtime-priority-filter-attention-dot"
-                        aria-hidden="true"
-                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
-                      />
-                    )}
-                  </button>
-                </TitlebarTooltip>
+                    <button
+                      type="button"
+                      data-testid="runtime-priority-filter-button"
+                      onClick={
+                        selectedTaskViewAction === 'board' ? onToggleMyWork : togglePriorityTaskView
+                      }
+                      aria-pressed={
+                        selectedTaskViewAction === 'board'
+                          ? taskView === 'default-work-items'
+                          : priorityFilterActive
+                      }
+                      className={cn(
+                        'relative flex h-7 w-7 shrink-0 items-center justify-center text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
+                        onToggleMyWork ? 'rounded-l-lg' : 'rounded-lg',
+                        (selectedTaskViewAction === 'board'
+                          ? taskView === 'default-work-items'
+                          : priorityFilterActive) && 'bg-[rgb(var(--color-sidebar-active))]'
+                      )}
+                      aria-label={
+                        selectedTaskViewAction === 'board'
+                          ? t('workbench.work_item_create_title', '看板')
+                          : priorityNeedsAttention && !priorityFilterActive
+                            ? t(
+                                'workbench.priority_filter_needs_attention',
+                                '按优先级筛选，需要关注'
+                              )
+                            : priorityFilterActive
+                              ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
+                              : t('workbench.priority_filter', '按优先级筛选')
+                      }
+                    >
+                      {selectedTaskViewAction === 'board' ? (
+                        <Columns3 className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <ListTodo className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {selectedTaskViewAction === 'priority' &&
+                        priorityNeedsAttention &&
+                        !priorityFilterActive && (
+                          <span
+                            data-testid="runtime-priority-filter-attention-dot"
+                            aria-hidden="true"
+                            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
+                          />
+                        )}
+                    </button>
+                  </TitlebarTooltip>
+                  {onToggleMyWork ? (
+                    <ActionMenu
+                      ariaLabel={t('workbench.task_view_menu', '任务视图')}
+                      testId="runtime-task-view-menu-button"
+                      menuTestId="runtime-task-view-menu"
+                      icon={ChevronDown}
+                      placement="bottom-end"
+                      showTriggerTooltip={false}
+                      items={[
+                        {
+                          label: t('workbench.priority_filter', '按优先级筛选'),
+                          icon: ListTodo,
+                          testId: 'runtime-task-view-priority',
+                          shortcut: priorityFilterShortcut ?? undefined,
+                          onSelect: () => selectTaskViewAction('priority'),
+                        },
+                        {
+                          label: t('workbench.work_item_create_title', '看板'),
+                          icon: Columns3,
+                          testId: 'runtime-task-view-board',
+                          onSelect: () => selectTaskViewAction('board'),
+                        },
+                      ]}
+                      triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&_svg]:h-2.5 [&_svg]:w-2.5"
+                    />
+                  ) : null}
+                </span>
               </>
             }
           />
@@ -4141,32 +4289,16 @@ export function DesktopSidebar({
             />
           </nav>
 
-          <div
-            ref={sidebarWorklistsScrollRef}
-            data-testid="sidebar-worklists-scroll"
-            data-scrolled={sidebarScrolled}
+          <SidebarWorklistsScroll
+            viewportRef={sidebarWorklistsScrollRef}
+            scrolled={sidebarScrolled}
+            locked={paneDragOutsideSidebar}
             onScroll={event => {
               if (preserveLockedScrollPosition(event)) return
               setSidebarScrolled(event.currentTarget.scrollTop > 0)
             }}
-            className={cn(
-              'relative mb-2 mt-0.5 min-h-0 flex-1 border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
-              paneDragOutsideSidebar ? 'overflow-y-hidden' : 'overflow-y-auto',
-              sidebarScrolled &&
-                'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
-              !sidebarScrolled && 'scrollbar-none'
-            )}
           >
             <nav className="mb-4 space-y-0.5">
-              {onOpenMyWork ? (
-                <DesktopSidebarNavItem
-                  icon={ListTodo}
-                  label={t('workbench.work_item_create_title', '看板')}
-                  testId="task-my-work-button"
-                  selected={taskView === 'default-work-items'}
-                  onClick={onOpenMyWork}
-                />
-              ) : null}
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
                   return (
@@ -4227,7 +4359,7 @@ export function DesktopSidebar({
                 priorityItems={priorityView.priorityItems}
                 pinnedItems={priorityView.pinnedItems}
                 recentGroups={priorityView.recentGroups}
-                getTaskKey={item => getRuntimePriorityTaskKey(item.workspace, item.task)}
+                getTaskKey={item => getRuntimeTaskSortableId(item.workspace, item.task)}
                 showPinned={priorityShowPinned}
                 onTogglePinned={() => setPriorityShowPinned(showPinned => !showPinned)}
                 canMarkAllAsRead={
@@ -4289,9 +4421,7 @@ export function DesktopSidebar({
                         testId="pinned-runtime-task-sortable-list"
                         className="space-y-0.5"
                         items={pinnedTaskItems}
-                        getId={({ workspace, task }) =>
-                          `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
-                        }
+                        getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                         getLabel={({ task }) => task.title}
                         getExternalDragData={({ workspace, task }) => ({
                           paneKey: getWorkbenchPaneKey({
@@ -4487,7 +4617,7 @@ export function DesktopSidebar({
                             data-testid="projects-create-button"
                             onClick={event => {
                               event.stopPropagation()
-                              openProjectCreateDialog()
+                              openProjectCreateDialog(event)
                             }}
                             className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                             aria-expanded={projectCreateDialogOpen}
@@ -4509,6 +4639,7 @@ export function DesktopSidebar({
                         }}
                       >
                         <div
+                          ref={projectCreateDialogRef}
                           role="dialog"
                           aria-modal="true"
                           aria-labelledby="project-create-dialog-title"
@@ -4808,9 +4939,7 @@ export function DesktopSidebar({
                           testId="runtime-chat-task-sortable-list"
                           className="space-y-0.5"
                           items={regularChatTaskItems}
-                          getId={({ workspace, task }) =>
-                            `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
-                          }
+                          getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                           getLabel={({ task }) => task.title}
                           getExternalDragData={({ workspace, task }) => ({
                             paneKey: getWorkbenchPaneKey({
@@ -4897,7 +5026,7 @@ export function DesktopSidebar({
                 </section>
               </>
             )}
-          </div>
+          </SidebarWorklistsScroll>
 
           {installedReleaseNotes && (
             <SidebarReleaseNotesCard

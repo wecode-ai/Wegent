@@ -8,13 +8,13 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
-import {
-  insertPluginReference,
-  notifyLocalPluginSkillsChanged,
-} from '@/features/plugins/pluginTrial'
+import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { clearComposerAppsSnapshot, resetComposerAppsMemory } from './composerAppsSnapshot'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerTextareaHandle } from './ComposerTextarea'
+import { PluginPickerMenu } from './PluginPickerMenu'
+import { ComposerCatalogContext } from './ComposerCatalogContext'
+import { createComposerCatalogStore } from '@wegent/collaboration/composer/createComposerCatalogStore'
 import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
@@ -194,34 +194,49 @@ describe('ComposerTextarea', () => {
     delete window.__WEWORK_DSH_EXTENSIONS__
   })
 
-  test('inserts plugin picker references without replacing the current draft', async () => {
-    const textareaRef = createRef<HTMLElement>()
-
-    function Harness() {
-      const [value, setValue] = useState('keep this draft')
+  test('inserts a picker reference only into its own editor when two drawers are mounted', async () => {
+    const left = createRef<ComposerTextareaHandle>()
+    const right = createRef<ComposerTextareaHandle>()
+    const apps = async () => [{ id: 'github', name: 'GitHub', isEnabled: true, isAccessible: true }]
+    function Harness({ name, handle }: { name: string; handle: typeof left }) {
+      const [value, setValue] = useState(name)
       return (
-        <ComposerTextarea
-          value={value}
-          onChange={setValue}
-          onSubmit={vi.fn()}
-          canSend
-          placeholder="Message"
-          rows={2}
-          textareaRef={textareaRef}
-          className="min-h-12"
-        />
+        <>
+          <ComposerTextarea
+            ref={handle}
+            value={value}
+            onChange={setValue}
+            onSubmit={vi.fn()}
+            canSend
+            placeholder="Message"
+            rows={2}
+            textareaRef={createRef()}
+            className="min-h-12"
+            testId={name}
+          />
+          <PluginPickerMenu
+            onListLocalApps={apps}
+            onInsertReference={reference => {
+              handle.current?.insertReference(reference)
+              handle.current?.focus()
+            }}
+          />
+        </>
       )
     }
-
-    render(<Harness />)
-    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
-    act(() => {
-      editor.focus()
-      insertPluginReference('[$GitHub](/tmp/github/SKILL.md)')
-    })
-
-    await waitFor(() => expect(editor.value).toContain('[$GitHub](/tmp/github/SKILL.md)'))
-    expect(editor.value).toContain('keep this draft')
+    render(
+      <>
+        <Harness name="left-draft" handle={left} />
+        <Harness name="right-draft" handle={right} />
+      </>
+    )
+    act(() => right.current?.setValue('right-draft', 5))
+    fireEvent.click(screen.getAllByTestId('composer-plugin-picker-button')[1])
+    fireEvent.click(await screen.findByTestId('composer-plugin-picker-item-github'))
+    expect(left.current?.getValue()).toBe('left-draft')
+    expect(right.current?.getValue()).toContain('[$GitHub]')
+    expect(right.current?.getValue()).toContain('-draft')
+    expect(document.activeElement).toBe(screen.getByTestId('right-draft'))
   })
 
   test('places the caret at the end when returning to a restored new-chat draft', async () => {
@@ -935,6 +950,48 @@ describe('ComposerTextarea', () => {
     expect(onListLocalApps).toHaveBeenCalledTimes(1)
   })
 
+  test('uses the same task-scoped source for slash plugins and skills', async () => {
+    const listApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])
+    const listSkills = vi.fn().mockResolvedValue([GMAIL_SKILL])
+    const inheritedApps = vi.fn()
+    const inheritedSkills = vi.fn()
+    render(
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: createComposerCatalogStore(),
+          catalogEvents: {},
+          listApps,
+          listSkills,
+          prefetchLocalAuth: false,
+        }}
+      >
+        <ComposerTextarea
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={createRef()}
+          className="min-h-12"
+          onListLocalApps={inheritedApps}
+          onListLocalSkills={inheritedSkills}
+        />
+      </ComposerCatalogContext.Provider>
+    )
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+    expect(await screen.findByTestId('slash-command-option-app-github')).toBeInTheDocument()
+    expect(await screen.findByTestId('slash-command-option-skill-gmail')).toBeInTheDocument()
+    expect(listApps).toHaveBeenCalledTimes(1)
+    expect(listSkills).toHaveBeenCalledTimes(1)
+    expect(inheritedApps).not.toHaveBeenCalled()
+    expect(inheritedSkills).not.toHaveBeenCalled()
+  })
+
   test('reloads plugin metadata after the installed plugin state changes', async () => {
     const textareaRef = createRef<HTMLElement>()
     const rawGithubApp: LocalDeviceApp = {
@@ -1172,6 +1229,7 @@ describe('ComposerTextarea', () => {
           onListLocalSkills={async () => [GMAIL_SKILL]}
           onSetGoal={onSetGoal}
           onSetPlanMode={onSetPlanMode}
+          onPasteFiles={vi.fn()}
         />
       )
     }
@@ -1207,6 +1265,7 @@ describe('ComposerTextarea', () => {
 
   test('adds a selected folder as an atomic composer reference', async () => {
     const textareaRef = createRef<HTMLElement>()
+    const onPasteFiles = vi.fn()
     const workspaceTarget: WorkspaceTarget = {
       deviceId: 'remote-device',
       path: '/workspace/project',
@@ -1239,6 +1298,7 @@ describe('ComposerTextarea', () => {
           className="min-h-12"
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
+          onPasteFiles={onPasteFiles}
         />
       )
     }
@@ -1253,6 +1313,7 @@ describe('ComposerTextarea', () => {
 
     await waitFor(() => {
       expect(nativeWorkspacePickerMocks.open).toHaveBeenCalledWith('/workspace/project')
+      expect(onPasteFiles).not.toHaveBeenCalled()
       expect(editor.value).toContain('[$frontend](folder://')
       expect(screen.getByTestId('composer-path-chip-frontend')).toHaveAttribute(
         'data-composer-path-kind',
@@ -1955,6 +2016,7 @@ describe('ComposerTextarea', () => {
 
   test('keeps conversation and cloud candidates out of the $ skill menu', async () => {
     const textareaRef = createRef<HTMLElement>()
+    const listSkills = vi.fn().mockResolvedValue([GMAIL_SKILL])
     const reference =
       '[$Fix login flow](wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22source-task%22%7D)'
     const conversationCandidates: ComposerConversationMentionCandidate[] = [
@@ -2002,7 +2064,7 @@ describe('ComposerTextarea', () => {
           rows={2}
           textareaRef={textareaRef}
           className="min-h-12"
-          onListLocalSkills={async () => [GMAIL_SKILL]}
+          onListLocalSkills={listSkills}
           cloudMentionCandidates={[cloudCandidate]}
           conversationMentionCandidates={conversationCandidates}
         />

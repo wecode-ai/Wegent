@@ -267,10 +267,11 @@ async function selectGroupBy(
       response.request().method() === 'PATCH' &&
       new URL(response.url()).pathname.endsWith(`/cloud-projects/${projectId}`)
   )
-  await page.getByTestId('cloud-board-group-by').selectOption(groupBy)
+  await page.getByTestId('cloud-board-group-by').click()
+  await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
   const response = await updateResponse
   expect(response.ok(), `Board grouping update failed: ${await response.text()}`).toBe(true)
-  await expect(page.getByTestId('cloud-board-group-by')).toHaveValue(groupBy)
+  await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
 }
 
 async function dragIssueTo(page: Page, issueId: string, columnKey: string): Promise<void> {
@@ -287,20 +288,22 @@ async function dragIssueTo(page: Page, issueId: string, columnKey: string): Prom
         pathname.endsWith('/loop-items/reorder'))
     )
   })
-  const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
+  const handle = page.getByTestId(`cloud-todo-card-${issueId}`)
+  await handle.scrollIntoViewIfNeeded()
+  const sourceBox = await handle.boundingBox()
+  expect(sourceBox).not.toBeNull()
+  await page.mouse.move(sourceBox!.x + 20, sourceBox!.y + 20)
+  await page.mouse.down()
   try {
-    await source.dispatchEvent('dragstart', { dataTransfer })
-    const dragHint = page.getByTestId(`cloud-todo-column-drag-hint-${columnKey}`)
-    await expect
-      .poll(async () => {
-        await target.dispatchEvent('dragover', { dataTransfer })
-        return dragHint.isVisible().catch(() => false)
-      })
-      .toBe(true)
-    await target.dispatchEvent('drop', { dataTransfer })
+    await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
+    await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
+    await target.scrollIntoViewIfNeeded()
+    const targetBox = await target.boundingBox()
+    expect(targetBox).not.toBeNull()
+    await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + 10, { steps: 10 })
+    await expect(page.getByTestId(`cloud-todo-column-drag-hint-${columnKey}`)).toBeVisible()
   } finally {
-    await source.dispatchEvent('dragend', { dataTransfer })
-    await dataTransfer.dispose()
+    await page.mouse.up()
   }
   const response = await mutationResponse
   expect(response.ok(), `Board mutation failed: ${await response.text()}`).toBe(true)
@@ -495,30 +498,36 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect.poll(async () => (await issue(page, created.id)).priority).toBe('high')
       await captureEvidence(page, 'web-03-priority-board')
 
+      await selectGroupBy(page, project.id, 'tag')
+      await dragIssueTo(page, created.id, `tag-tag-${suffix}`)
+      await expect.poll(async () => (await issue(page, created.id)).tags).toContain(`tag-${suffix}`)
+      await captureEvidence(page, 'web-04-tag-board')
+
       await selectGroupBy(page, project.id, 'assignee')
       await dragIssueTo(page, created.id, `assignee-${member.id}`)
       await expect
         .poll(async () => (await issue(page, created.id)).assignee_user_id)
         .toBe(member.id)
-      await captureEvidence(page, 'web-04-assignee-board')
+      await captureEvidence(page, 'web-05-assignee-board')
 
-      await selectGroupBy(page, project.id, 'tag')
-      await dragIssueTo(page, created.id, `tag-tag-${suffix}`)
-      await expect.poll(async () => (await issue(page, created.id)).tags).toContain(`tag-${suffix}`)
-      await captureEvidence(page, 'web-05-tag-board')
-
+      // A directly assigned human Issue advances through work review, so exercise
+      // board status drag with an Issue that has only the implicit creator default.
+      const statusIssue = await createIssueByApi(page, project.id, `Board status Issue ${suffix}`)
+      await page.reload()
       await selectGroupBy(page, project.id, 'status')
       const reorderResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
         return response.request().method() === 'POST' && pathname.endsWith('/loop-items/reorder')
       })
-      await dragIssueTo(page, created.id, 'completed')
+      await dragIssueTo(page, statusIssue.id, 'completed')
       const reordered = await reorderResponse
       expect(reordered.ok(), `Board reorder failed: ${await reordered.text()}`).toBe(true)
       const reorderedItems = (await reordered.json()) as { items: CloudIssue[] }
-      expect(reorderedItems.items.find(item => item.id === created.id)?.status).toBe('completed')
-      expect((await issue(page, created.id)).status).toBe('completed')
-      await page.getByTestId(`collaboration-issue-${created.id}`).scrollIntoViewIfNeeded()
+      expect(reorderedItems.items.find(item => item.id === statusIssue.id)?.status).toBe(
+        'completed'
+      )
+      expect((await issue(page, statusIssue.id)).status).toBe('completed')
+      await page.getByTestId(`collaboration-issue-${statusIssue.id}`).scrollIntoViewIfNeeded()
       await captureEvidence(page, 'web-06-status-board')
     } finally {
       if (projectId) await archiveProject(page, projectId)

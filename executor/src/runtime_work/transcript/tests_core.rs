@@ -386,6 +386,28 @@ fn completed_mcp_tool_updates_preserve_structured_content() {
 }
 
 #[test]
+fn mcp_tool_blocks_preserve_plugin_provenance() {
+    let params = json!({
+        "item": {
+            "id": "call-plugin",
+            "type": "mcpToolCall",
+            "pluginId": "openai-developers@openai-official",
+            "server": "openai-api-key-local-confirmation",
+            "tool": "confirm_openai_api_key_local_destination",
+            "arguments": {},
+            "status": "inProgress"
+        }
+    });
+
+    let block =
+        workbench_block_from_notification(&params, "turn-1", "device-1", "/tmp", Some("pending"))
+            .expect("MCP tool block");
+
+    assert_eq!(block["plugin_id"], "openai-developers@openai-official");
+    assert_eq!(block["mcp_server"], "openai-api-key-local-confirmation");
+}
+
+#[test]
 fn transcript_marks_image_view_without_status_as_done() {
     let thread = json!({
         "id": "thread-1",
@@ -672,6 +694,7 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
     assert_eq!(messages[2]["content"], "inspect runtime");
     assert_eq!(messages[3]["role"], "assistant");
     assert_eq!(messages[3]["content"], "Done.");
+    assert_eq!(messages[3]["createdAt"], 1_780_000_005_000_i64);
     assert_eq!(messages[3]["blocks"][0]["type"], "text");
     assert_eq!(
         messages[3]["blocks"][0]["content"],

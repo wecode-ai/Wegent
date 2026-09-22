@@ -136,11 +136,13 @@ When a scope requires deeper reading across modules or its `Must explain` questi
 exceed your evidence, delegate one complete research-and-writing Work Package to
 `{context.section_writer_agent_type or "the configured Section Writer agent"}`. Pass
 the generation ID plus that package's full page contracts, seed paths, prerequisites,
-known source-grounded facts, and output language. The same Writer must complete the
-package's remaining exploration and page submission in that one synchronous call; do
-not run a separate exploration delegation first, do not delegate one agent per page,
-and do not ask a Writer to delegate again. Keep related module and workflow pages in
-one package when doing so lets that Writer reuse evidence.
+known source-grounded facts, and output language. Explicitly tell every delegated
+Section Writer that it must not call `plan`, `complete`, or `fail`; it only reads and
+submits its assigned pages. The same Writer must complete the package's remaining
+exploration and page submission in that one synchronous call; do not run a separate
+exploration delegation first, do not delegate one agent per page, and do not ask a
+Writer to delegate again. Keep related module and workflow pages in one package when
+doing so lets that Writer reuse evidence.
 
 Once a scope is delegated, do not deeply reread it. Reconcile the pages actually
 submitted after each package rather than trusting its prose response. Handle only

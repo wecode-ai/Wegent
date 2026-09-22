@@ -146,6 +146,7 @@ import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
@@ -295,7 +296,6 @@ interface WorkspaceTabSurfaceProps {
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
-  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -309,7 +309,6 @@ export function WorkspaceTabSurface({
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
-  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -472,7 +471,6 @@ export function WorkspaceTabSurface({
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
-              prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncCoreDshModels={
                 tab.fixed &&
@@ -521,7 +519,7 @@ export function WorkspaceTabSurface({
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const { pathname: path, search } = useCurrentLocation()
-  useDshSlotEntries(WEWORK_DSH_SLOTS.route)
+  const registeredRoutes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
@@ -656,6 +654,35 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
+  if (deviceSurfaceExtension.isIsolatedSurface(path, search)) {
+    const route = registeredRoutes.find(entry => entry.path === path)
+    return (
+      <WorkbenchProvider
+        lifecycleStore={lifecycleStore}
+        services={services}
+        user={user}
+        debugSnapshotEnabled={false}
+        consumePluginTrials={false}
+        loadTaskComposerCatalogs={false}
+        publishDebugSnapshots={false}
+        syncCoreDshModels={false}
+        syncRemoteProjects={false}
+        syncRuntimeTaskLifecycle={false}
+      >
+        <div
+          className="h-dvh min-h-0 overflow-hidden bg-background"
+          data-testid="isolated-surface-route"
+        >
+          {route ? (
+            <DshRouteSurface route={route} search={search} workspaceTabId="isolated-surface" />
+          ) : (
+            <UnavailableWorkspaceRoute path={path} />
+          )}
+        </div>
+      </WorkbenchProvider>
+    )
+  }
+
   if (isPopoutWindow) {
     return (
       <>
@@ -679,9 +706,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
     tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
   )
-  const composerPrewarmTabId = workspaceTabs.tabs.find(
-    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
-  )?.id
   const cloudWebUrl = cloudConnection.webUrl
     ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
     : cloudConnection.webUrl
@@ -696,7 +720,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           active={tab.id === workspaceTabs.activeTabId}
           lifecycleStore={lifecycleStore}
           nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
-          prewarmComposerApps={tab.id === composerPrewarmTabId}
           smartAppsEnabled={experimentalFeatures.enabled}
           services={services}
           cloudWebUrl={cloudWebUrl}
@@ -798,6 +821,7 @@ function AppShell() {
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
   const showChromeTitlebar = (isDesktop || isElectron) && !isPopoutWindow
+  const isIsolatedSurface = deviceSurfaceExtension.isIsolatedSurface(path, search)
   useEffect(() => {
     const startupRouteReady =
       path === '/login' || path === '/login/oidc' || path === '/auth/wework/authorize'
@@ -1097,6 +1121,26 @@ function AppShell() {
 
   if (!user) {
     return <AppRoutes />
+  }
+
+  if (isIsolatedSurface) {
+    const isolatedShell = (
+      <div data-testid="app-shell" className="fixed inset-0 overflow-hidden bg-background">
+        <div data-testid="app-route-host" className="h-full min-h-0 overflow-hidden">
+          <AppRoutes />
+        </div>
+      </div>
+    )
+    return (
+      <CodexHomeInitializer>
+        <LocalRuntimeInitializer
+          initialCloudConnection={initialCloudConnection}
+          startupReady={workbenchStartupReady}
+        >
+          {isolatedShell}
+        </LocalRuntimeInitializer>
+      </CodexHomeInitializer>
+    )
   }
 
   const shell = (

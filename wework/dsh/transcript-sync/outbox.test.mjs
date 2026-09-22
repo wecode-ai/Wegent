@@ -153,7 +153,7 @@ test('persists a corrected branch point when the cloud parent is behind', async 
   reopened.close()
 })
 
-test('discards every pending turn and route for an orphaned session', async t => {
+test('permanently discards one turn while later turns keep syncing', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const path = join(directory, 'outbox.sqlite3')
@@ -185,28 +185,75 @@ test('discards every pending turn and route for an orphaned session', async t =>
   })
 
   assert.deepEqual(outbox.sessionIds(), ['orphaned-session', 'retained-session'])
-  assert.equal(outbox.firstForSession('orphaned-session').turnId, 'orphaned-turn-1')
+  const discardedTurn = outbox.firstForSession('orphaned-session')
+  assert.equal(discardedTurn.turnId, 'orphaned-turn-1')
   assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), true)
   assert.equal(outbox.hasPendingTranscript('missing-transcript'), false)
   const queryPlan = outbox.database
     .prepare('EXPLAIN QUERY PLAN SELECT 1 FROM pending_turns WHERE transcript_id = ? LIMIT 1')
     .get('orphaned-transcript')
   assert.match(queryPlan.detail, /pending_turns_transcript/u)
-  assert.equal(outbox.discardSession('orphaned-session'), 2)
-  assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), false)
-  assert.equal(outbox.count(), 1)
-  assert.equal(outbox.first().turnId, 'retained-turn-1')
-
-  outbox.enqueue({
+  assert.equal(outbox.discardTurn(discardedTurn), true)
+  assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), true)
+  assert.equal(outbox.count(), 2)
+  assert.deepEqual(outbox.firstForSession('orphaned-session'), {
     transcriptId: 'orphaned-transcript',
     taskId: 'orphaned-task',
-    title: 'Recreated',
-    sequence: 3,
-    turnId: 'orphaned-turn-3',
+    title: 'Orphaned',
+    sequence: 2,
+    turnId: 'orphaned-turn-2',
+    sessionId: 'orphaned-session',
+    baseSequence: 0,
+    cloudSequence: 1,
+  })
+
+  assert.equal(
+    outbox.enqueue({
+      transcriptId: 'orphaned-transcript',
+      taskId: 'orphaned-task',
+      title: 'Replayed',
+      sequence: 1,
+      turnId: 'orphaned-turn-1',
+      sessionId: 'orphaned-session',
+    }),
+    false
+  )
+  assert.equal(
+    outbox.enqueue({
+      transcriptId: 'orphaned-transcript',
+      taskId: 'orphaned-task',
+      title: 'Later',
+      sequence: 3,
+      turnId: 'orphaned-turn-3',
+      sessionId: 'orphaned-session',
+    }),
+    true
+  )
+  assert.equal(outbox.count(), 3)
+  outbox.close()
+
+  const reopened = new SqliteSyncOutbox(path)
+  assert.equal(
+    reopened.enqueue({
+      transcriptId: 'orphaned-transcript',
+      taskId: 'orphaned-task',
+      title: 'Replayed after restart',
+      sequence: 1,
+      turnId: 'orphaned-turn-1',
+      sessionId: 'orphaned-session',
+    }),
+    false
+  )
+  reopened.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Later after restart',
+    sequence: 4,
+    turnId: 'orphaned-turn-4',
     sessionId: 'orphaned-session',
   })
-  assert.equal(outbox.firstForSession('orphaned-session').cloudSequence, 1)
-  outbox.close()
+  assert.equal(reopened.count(), 4)
+  reopened.close()
 })
 
 test('upgrades an existing locator outbox without copying transcript bodies', async t => {

@@ -7,6 +7,7 @@ import {
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
+import { telemetryEvents } from './response-protocol.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -630,6 +631,37 @@ async function verifyPluginLifecycle({ control, fixture }) {
     5,
     'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
+  const telemetryRequest = await control.awaitTelemetryEvent(
+    'plugin_invocation_failed',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const invocationEvent = telemetryEvents(telemetryRequest.payload).find(
+    event => event.event === 'plugin_invocation_failed'
+  )
+  assert.deepEqual(
+    {
+      capability_type: invocationEvent?.properties?.capability_type,
+      execution_surface: invocationEvent?.properties?.execution_surface,
+      executor_location: invocationEvent?.properties?.executor_location,
+      failure_stage: invocationEvent?.properties?.failure_stage,
+      plugin_distribution: invocationEvent?.properties?.plugin_distribution,
+    },
+    {
+      capability_type: 'mcp',
+      execution_surface: 'task',
+      executor_location: 'local',
+      failure_stage: 'invoke',
+      plugin_distribution: 'official',
+    },
+    'The plugin invocation telemetry did not preserve the expected public dimensions'
+  )
+  assert.equal(
+    Object.keys(invocationEvent?.properties ?? {}).some(key =>
+      /plugin_key|plugin_name|marketplace|tool_name|task_id/.test(key)
+    ),
+    false,
+    'The public plugin invocation event exposed a private plugin or task identifier'
+  )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
 
@@ -699,6 +731,7 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugin-import-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.awaitTelemetryEvent('plugin_center_opened')
   const importSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     importSnapshot.testIds.includes('plugin-import-select') &&
@@ -738,6 +771,7 @@ async function verifyMarketplacePluginLifecycle({
       })
     )
     const importElapsedMs = Date.now() - importStartedAt
+    await control.awaitTelemetryEvent('plugin_zip_import_succeeded')
     assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
     assert.ok(
       importElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
@@ -1258,8 +1292,27 @@ async function verifySkillMentionRendering({ control, fixture }) {
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, ACTIVE_COMPOSER_SELECTOR)
   control.setScenario('skill_mention_display')
+  for (const path of [
+    '~/.agents/skills/test-skill/SKILL.md',
+    'C:/Users/me/skills/instructions.md',
+    './skills/instructions.md',
+  ]) {
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `[$test-skill](${path})`,
+    })
+    await control.command('waitFor', '[data-testid="local-skill-chip-test-skill"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `[test-label](${path})`,
+    })
+    await control.command('waitFor', '[data-testid="composer-path-chip-test-label"]', {
+      text: 'test-label',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-    value: `[$${qualifiedSkillName}](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
+    value: `[$${qualifiedSkillName}](${fixture.skillPath}) [test-label](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
   })
   await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1308,11 +1361,33 @@ async function verifySkillMentionRendering({ control, fixture }) {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"][aria-disabled="false"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await assertMentionRenderedAsToken(control, {
     tokenSelector: `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
     plainTextMention: `$${qualifiedSkillName}`,
     errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
   })
+  await control.command(
+    'waitFor',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"]',
+    {
+      text: 'test-label',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"] svg[data-testid="assistant-markdown-link-icon"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await captureVerificationScreenshot(control, 'skill-mention-01-reloaded.png')
 }
 

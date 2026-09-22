@@ -2,6 +2,7 @@ export const HOST_PROTOCOL_VERSION = 1
 
 export const HOST_CAPABILITIES = [
   'app.getVersion',
+  'app.quit',
   'appUpdate.check',
   'appUpdate.download',
   'appUpdate.downloadProgress',
@@ -48,6 +49,10 @@ export const HOST_CAPABILITIES = [
   'browser.setZoom',
   'clipboard.readWorkspacePaths',
   'clipboard.writeText',
+  'isolatedClipboard.activate',
+  'isolatedClipboard.deactivate',
+  'isolatedClipboard.readText',
+  'isolatedClipboard.writeText',
   'computerUse.openScreenRecordingSettings',
   'computerUse.requestPermissions',
   'computerUse.setEnabled',
@@ -155,6 +160,7 @@ export const HOST_CAPABILITIES = [
   'tray.setState',
   'workspace.listOpeners',
   'workspace.open',
+  'workspace.openFile',
   'workspace.pickOpener',
   'workspace.takePendingOpenRequests',
   'navigation.pendingSchemes',

@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.db.session import get_db_session
-from app.schemas.device import DeviceCapabilitySyncResponse
+from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.schemas.installed_plugin import PluginDeviceSyncResponse
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.plugin_device_installation_service import (
@@ -17,9 +17,11 @@ from shared.telemetry.decorators import trace_async
 
 def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
     with get_db_session() as db:
-        plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+        changed = plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
             db, user_id=user_id
         )
+        if changed:
+            db.commit()
 
         # Merge is intentional: older executors must never interpret omitted skills
         # and MCPs as a request to delete them. The scope acknowledgement is required.
@@ -43,6 +45,19 @@ def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def reconciliation_failure_detail(result: DeviceCapabilitySyncResult) -> str:
+    failed = next((item for item in result.plugins if item.status == "failed"), None)
+    if failed is not None:
+        identity = failed.name or str(failed.id or "plugin")
+        reason = (
+            failed.error_code or failed.stage or failed.error or "device_sync_failed"
+        )
+        return f"Plugin reconciliation failed for {identity}: {reason}"
+    if result.error:
+        return f"Plugin reconciliation failed: {result.error}"
+    return "Plugin reconciliation failed on the current device"
+
+
 @trace_async(tracer_name="backend.plugins", span_name="reconcile_device_plugins")
 async def reconcile_device_plugins(
     user_id: int, device_id: str
@@ -59,9 +74,7 @@ async def reconcile_device_plugins(
             or result.errors
             or any(item.status == "failed" for item in result.plugins)
         ):
-            raise HTTPException(
-                502, "Plugin reconciliation failed on the current device"
-            )
+            raise HTTPException(502, reconciliation_failure_detail(result))
         if result.scope != "plugins":
             raise HTTPException(409, "Update the desktop runtime to reconcile plugins")
         latest = desired_plugins(user_id, device_id)

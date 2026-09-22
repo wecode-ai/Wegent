@@ -1,4 +1,5 @@
-import { cp, mkdir } from 'node:fs/promises'
+import { cp, mkdir, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,3 +23,9 @@ await cp(
 )
 await mkdir(resolve(root, 'dist/cli'), { recursive: true })
 await cp(resolve(root, 'src/cli/wework-cli.mjs'), resolve(root, 'dist/cli/wework-cli.mjs'))
+const internalSurfaceManifest = resolve(root, '../wecode/electron/isolated-surfaces.json')
+const packagedSurfaceManifest = resolve(root, 'dist/isolated-surfaces.json')
+await rm(packagedSurfaceManifest, { force: true })
+if (existsSync(internalSurfaceManifest)) {
+  await cp(internalSurfaceManifest, packagedSurfaceManifest)
+}

@@ -364,6 +364,46 @@ async def test_runtime_rpc_service_keeps_other_app_device_methods_disabled(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method",
+    [
+        "runtime.tasks.transcript",
+        "runtime.tasks.send",
+        "runtime.capacity.get",
+        "runtime.files.read",
+    ],
+)
+async def test_project_read_capability_does_not_grant_app_device_control(
+    monkeypatch, method
+):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType.APP)),
+    )
+    sio_call = AsyncMock(return_value={"turns": []})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    request = dict(
+        user_id=7,
+        device_id="app-device",
+        method=method,
+        payload={"taskId": "runtime-1"},
+        allow_app_device_task_reading=True,
+    )
+    if method == "runtime.tasks.transcript":
+        assert await module.RuntimeRpcService().call(**request) == {"turns": []}
+        sio_call.assert_awaited_once()
+    else:
+        with pytest.raises(module.RuntimeRpcError) as exc:
+            await module.RuntimeRpcService().call(**request)
+        assert exc.value.code == "remote_control_disabled"
+        sio_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_sends_v2_to_capable_executor(monkeypatch):
     from app.services.device import runtime_rpc_service as module
 
@@ -845,3 +885,68 @@ async def test_runtime_rpc_service_rejects_invalid_response(monkeypatch):
         )
 
     assert exc_info.value.code == "runtime_rpc_invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_composer_catalog_rpc_keeps_device_route_and_task_scope(monkeypatch):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    resolver = AsyncMock(return_value=_runtime_route(device_type=DeviceType.LOCAL))
+    monkeypatch.setattr(module.runtime_route_resolver, "resolve", resolver)
+    snapshot = {
+        "taskId": "side-task",
+        "workspacePath": "/side-workspace",
+        "projectPluginIds": [],
+        "apps": [],
+        "skills": [],
+        "marketplaces": [],
+        "store": {"storePath": "/store", "plugins": []},
+    }
+    sio_call = AsyncMock(return_value=snapshot)
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    result = await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.composer.catalog.read",
+        payload={"taskId": "side-task", "forceRefresh": True},
+    )
+
+    resolver.assert_awaited_once_with(user_id=7, submitted_device_id="device-1")
+    sio_call.assert_awaited_once_with(
+        "runtime:rpc",
+        {
+            "method": "runtime.composer.catalog.read",
+            "payload": {"taskId": "side-task", "forceRefresh": True},
+        },
+        to="socket-1",
+        namespace="/local-executor",
+        timeout=35,
+    )
+    assert result == snapshot
+
+
+@pytest.mark.asyncio
+async def test_composer_catalog_rpc_respects_disabled_app_remote_control(monkeypatch):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType.APP)),
+    )
+    sio_call = AsyncMock()
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    with pytest.raises(module.RuntimeRpcError) as exc_info:
+        await module.RuntimeRpcService().call(
+            user_id=7,
+            device_id="app-device",
+            method="runtime.composer.catalog.read",
+            payload={"taskId": "side-task"},
+        )
+
+    assert exc_info.value.code == "remote_control_disabled"
+    sio_call.assert_not_awaited()

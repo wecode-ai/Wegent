@@ -62,12 +62,37 @@ async function waitForProxyRequest(requests, timeoutMs) {
   throw new Error('Codex did not send the model request through the system proxy')
 }
 
-export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workspacePath,
+  pac = false,
+}) {
+  let modelOrigin = MODEL_ORIGIN
+  let proxyUrl
+  let pacRequests = 0
+  let rejectedProxyRequests = 0
   const requests = []
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', MODEL_ORIGIN)
+    const url = new URL(request.url ?? '/', modelOrigin)
+    if (pac && url.pathname === '/proxy.pac') {
+      pacRequests += 1
+      response.writeHead(200, { 'Content-Type': 'application/x-ns-proxy-autoconfig' })
+      response.end(
+        'function FindProxyForURL(url, host) { return host === "chatgpt.com" ? "PROXY ' +
+          new URL(proxyUrl).host +
+          '" : "DIRECT"; }'
+      )
+      return
+    }
+    if (pac && /^https?:/.test(request.url ?? '')) {
+      rejectedProxyRequests += 1
+      response.writeHead(403)
+      response.end('Internal model requests must connect directly')
+      return
+    }
     if (
-      url.origin !== MODEL_ORIGIN ||
+      url.origin !== modelOrigin ||
       request.method !== 'POST' ||
       url.pathname !== '/v1/responses'
     ) {
@@ -94,11 +119,14 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
   })
   const address = server.address()
   assert.ok(address && typeof address !== 'string', 'Unable to start the system proxy fixture')
-  const proxyUrl = `http://127.0.0.1:${address.port}`
+  proxyUrl = `http://127.0.0.1:${address.port}`
+  if (pac) modelOrigin = proxyUrl
 
   return {
-    electronLaunchArguments: [`--proxy-server=${proxyUrl}`],
-    modelServerUrl: MODEL_ORIGIN,
+    electronLaunchArguments: [
+      pac ? `--proxy-pac-url=${proxyUrl}/proxy.pac` : `--proxy-server=${proxyUrl}`,
+    ],
+    modelServerUrl: modelOrigin,
 
     async verify(control) {
       await control.command('navigate', 'body', { value: '/' })
@@ -109,11 +137,21 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
 
       const proxiedRequest = await waitForProxyRequest(requests, uiTimeoutMs)
-      assert.match(
-        proxiedRequest.url,
-        /^http:\/\/wework-system-proxy\.invalid\/v1\/responses$/,
-        'Codex did not use absolute-form HTTP proxy routing'
-      )
+      if (pac) {
+        assert.equal(
+          proxiedRequest.url,
+          '/v1/responses',
+          'PAC DIRECT was incorrectly sent through the ChatGPT proxy'
+        )
+        assert.ok(pacRequests > 0, 'Electron did not load the PAC fixture')
+        assert.equal(rejectedProxyRequests, 0, 'An internal request reached the external proxy')
+      } else {
+        assert.match(
+          proxiedRequest.url,
+          /^http:\/\/wework-system-proxy\.invalid\/v1\/responses$/,
+          'Codex did not use absolute-form HTTP proxy routing'
+        )
+      }
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -133,13 +171,21 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       assert.match(
         await control.command('getText', '[data-testid="local-proxy-config-status"]'),
-        /System proxy|系统代理/,
-        'Proxy settings did not identify the effective proxy as the system proxy'
+        /Use system proxy|跟随系统/,
+        'Proxy settings did not show that the local proxy mode follows the system'
       )
-      assert.equal(
-        await control.command('getText', '[data-testid="local-proxy-effective-url"]'),
-        proxyUrl,
+      const effectiveProxyText = await control.command(
+        'getText',
+        '[data-testid="local-proxy-effective-url"]'
+      )
+      assert.ok(
+        effectiveProxyText.includes(proxyUrl),
         'Proxy settings did not show the proxy resolved by Electron'
+      )
+      assert.match(
+        effectiveProxyText,
+        /system proxy|系统代理/i,
+        'Proxy settings did not identify the current connection as the system proxy'
       )
       await captureScreenshot(
         control,
@@ -156,6 +202,8 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       return {
         proxyUrl,
         requestCount: requests.length,
+        pacRequests,
+        rejectedProxyRequests,
       }
     },
   }

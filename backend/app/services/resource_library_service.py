@@ -2014,8 +2014,11 @@ class ResourceLibraryService:
         if source.user_id == current_user.id and source.namespace == "default":
             return True
         if source.namespace != "default":
+            required_role = (
+                GroupRole.Developer if source.kind == "Team" else GroupRole.Maintainer
+            )
             return check_group_permission(
-                db, current_user.id, source.namespace, GroupRole.Maintainer
+                db, current_user.id, source.namespace, required_role
             )
         return False
 

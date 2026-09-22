@@ -1,33 +1,10 @@
-import type { RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
+import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleSnapshot } from './types'
-import {
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
-} from '../runtimePaneMessages'
 
 export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
 
-export function projectRuntimePaneTranscript(
-  transcript: RuntimeTranscriptResponse
-): RuntimePaneTranscript {
-  return {
-    runtime: transcript.runtime,
-    running: transcript.running,
-    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
-    contextUsage: transcript.contextUsage ?? null,
-    turnNavigation: transcript.turnNavigation ?? [],
-    fullContent: transcript.fullContent === true,
-    rangeStart: transcript.rangeStart ?? null,
-    rangeEnd: transcript.rangeEnd ?? null,
-    hasMoreBefore: Boolean(transcript.hasMoreBefore),
-    beforeCursor: transcript.beforeCursor ?? null,
-    hasMoreAfter: Boolean(transcript.hasMoreAfter),
-    afterCursor: transcript.afterCursor ?? null,
-  }
-}
-
+export { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 export function isRuntimePaneTranscriptConfirmedIdle(transcript: RuntimePaneTranscript): boolean {
   if (transcript.running !== false) return false
   return !transcript.turns.some(turn => isRuntimeTurnRunningStatus(turn.status))
@@ -162,10 +139,26 @@ export function runtimeTaskTrackingExecutionStatus(
 
   const task = lifecycle.task
   if (!task) return null
-  const status = task.status?.trim().toLowerCase()
-  const turnStatus = task.turnStatus?.trim().toLowerCase()
+  return runtimeTaskSummaryTrackingExecutionStatus(task)
+}
+
+export function runtimeTaskSummaryTrackingExecutionStatus(
+  task: RuntimeTaskSummary
+): RuntimeTaskTrackingExecutionStatus | null {
+  const normalizedTask = normalizeRuntimeTaskSummary(task)
+  const status = normalizedTask.status?.trim().toLowerCase()
+  const turnStatus = normalizedTask.turnStatus?.trim().toLowerCase()
+  const threadStatus = normalizedTask.threadStatus?.trim().toLowerCase()
   if (status === 'archived') return 'archived'
-  if (status === 'failed' || status === 'error' || turnStatus === 'failed') return 'failed'
+  if (
+    status === 'failed' ||
+    status === 'error' ||
+    turnStatus === 'failed' ||
+    threadStatus === 'systemerror' ||
+    Boolean(normalizedTask.error)
+  ) {
+    return 'failed'
+  }
   if (
     status === 'cancelled' ||
     status === 'canceled' ||
@@ -176,8 +169,15 @@ export function runtimeTaskTrackingExecutionStatus(
     return 'cancelled'
   }
   if (status === 'queued') return 'queued'
-  if (task.running === true) return 'running'
-  if (isRuntimeTaskAuthoritativeCompletion(task)) return 'succeeded'
+  if (isRuntimeTaskExecutionRunning(normalizedTask)) return 'running'
+  if (
+    isRuntimeTaskAuthoritativeCompletion(normalizedTask) ||
+    status === 'done' ||
+    status === 'completed' ||
+    status === 'succeeded'
+  ) {
+    return 'succeeded'
+  }
   return null
 }
 

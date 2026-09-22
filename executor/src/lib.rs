@@ -27,6 +27,7 @@ pub mod plugin_workspace_cli;
 pub mod process;
 pub mod process_environment;
 pub mod prompt_enrichment;
+mod prompt_mentions;
 pub mod protocol;
 pub mod runner;
 pub mod runtime_work;
@@ -34,7 +35,9 @@ pub mod server;
 pub mod services;
 pub mod stream;
 pub mod task_runtime;
+mod url_origin;
 pub mod version;
+mod workspace_paths;
 
 #[cfg(test)]
 pub(crate) mod test_env {

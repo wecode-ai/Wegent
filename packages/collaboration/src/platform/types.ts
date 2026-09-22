@@ -2,12 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationView } from "../types";
+import type { ReactNode } from "react";
+
+import type {
+  CollaborationDefaultAssistant,
+  CollaborationProject,
+  CollaborationView,
+  ProjectSettingsSectionId,
+  CollaborationWorkspace,
+} from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
 export type CollaborationPlatformRootView =
   | "home"
+  | "agents"
+  | "teams"
+  | "devices"
   | "my-work"
   | "inbox"
   | "runs";
@@ -29,10 +40,18 @@ export interface CollaborationPlatformLocation {
   workspaceView: CollaborationWorkspaceView;
   projectId: string | null;
   projectView: CollaborationView;
+  projectSettingsSection?: ProjectSettingsSectionId | null;
   issueId: string | null;
 }
 
 export interface CollaborationPlatformHostAdapter {
+  cloudAccess?: {
+    authenticated: boolean;
+    requestLogin(): void;
+  };
+  renderIssueComposer?(
+    props: import("./IssueHomeComposer").IssueHomeTaskComposerProps,
+  ): ReactNode;
   location: CollaborationPlatformLocation;
   capabilities: {
     automation: boolean;
@@ -41,8 +60,27 @@ export interface CollaborationPlatformHostAdapter {
     workspaceLocations?: readonly ("local" | "cloud")[];
     sidebarPresentation?: "full" | "context";
   };
+  defaultAssistant?: CollaborationDefaultAssistant;
   navigate(location: CollaborationPlatformLocation): void;
-  manageResource?(kind: "agents" | "environments", resourceId?: string): void;
+  manageResource?(
+    kind: "agents" | "environments",
+    resourceId?: string,
+    source?: "local" | "cloud",
+  ): void;
+  renderDeviceCreator?(input: {
+    source: "local" | "cloud";
+    workspaceId?: string;
+    hasCloudDevice: boolean;
+    onClose(): void;
+    onCreated(deviceId?: number): Promise<void>;
+  }): ReactNode;
+  renderProjectImporter?(input: {
+    workspace: CollaborationWorkspace;
+    mode: "folder" | "existing";
+    projects: CollaborationProject[];
+    onClose(): void;
+    onImported(project: CollaborationProject): Promise<void>;
+  }): ReactNode;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;
   workspaceOwnerOptions?: Array<{

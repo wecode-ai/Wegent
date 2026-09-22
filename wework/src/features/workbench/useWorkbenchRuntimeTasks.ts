@@ -15,6 +15,7 @@ import type {
   RuntimeTaskForkTarget,
   RuntimeTranscriptRequest,
   RuntimeWorkSearchRequest,
+  ModelSelectionConfig,
   User,
 } from '@/types/api'
 import type {
@@ -31,6 +32,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
+  findRuntimeTaskProjectWork,
   findRuntimeTaskWorkspace,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
@@ -40,6 +42,7 @@ import {
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
+import { getRuntimeTaskChatScopeKey } from './workbenchProviderHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 import type {
   ArchiveRuntimeTaskOptions,
@@ -64,6 +67,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   lifecycleStore: RuntimeTaskLifecycleStore
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: RefreshWorkLists
+  setComposerErrorForScope: (scopeKey: string, error: string | null) => void
   canNavigate?: () => boolean
 }
 
@@ -78,6 +82,7 @@ export function useWorkbenchRuntimeTasks({
   lifecycleStore,
   markRuntimeTasksArchived,
   refreshWorkLists,
+  setComposerErrorForScope,
   canNavigate = () => true,
 }: UseWorkbenchRuntimeTasksOptions) {
   const { t } = useTranslation('common')
@@ -190,13 +195,7 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options?: { fallbackProject?: ProjectWithTasks | null }
     ) => {
-      const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
-        item.deviceWorkspaces.some(
-          workspace =>
-            workspace.deviceId === address.deviceId &&
-            workspace.tasks.some(task => task.taskId === address.taskId)
-        )
-      )
+      const runtimeProjectWork = findRuntimeTaskProjectWork(state.runtimeWork, address)
       const project = runtimeProjectWork
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
@@ -351,12 +350,11 @@ export function useWorkbenchRuntimeTasks({
     async (address: RuntimeTaskAddress, title: string) => {
       const response = await executorClient.runtime.renameRuntimeTask({ address, title })
       if (!response.accepted) {
-        dispatch({ type: 'error_set', error: response.error || 'Failed to rename runtime task' })
-        return
+        throw new Error(response.error || 'Failed to rename runtime task')
       }
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists]
+    [executorClient, refreshWorkLists]
   )
 
   const archiveProjectConversations = useCallback(
@@ -441,78 +439,98 @@ export function useWorkbenchRuntimeTasks({
   const forkCurrentRuntimeTask = useCallback(
     async (
       target: RuntimeTaskForkTarget,
-      options: { lastTurnId?: string; title?: string } = {}
+      options: {
+        source?: RuntimeTaskAddress
+        lastTurnId?: string
+        title?: string
+        modelSelection?: ModelSelectionConfig | null
+      } = {}
     ) => {
-      if (!state.currentRuntimeTask) {
-        dispatch({ type: 'error_set', error: 'No runtime task is selected' })
-        return
+      const source = options.source ?? state.currentRuntimeTask
+      if (!source) {
+        throw new Error('No runtime task is selected')
       }
 
-      try {
-        const sourceTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
-        const sourceWorkspace = findRuntimeTaskWorkspace(
-          state.runtimeWork,
-          state.currentRuntimeTask
-        )
-        const response = await executorClient.runtime.forkRuntimeTask({
-          source: state.currentRuntimeTask,
-          target,
-          ...options,
+      const sourceTask = findRuntimeTask(state.runtimeWork, source)
+      const sourceWorkspace = findRuntimeTaskWorkspace(state.runtimeWork, source)
+      const requestOptions = { ...options }
+      delete requestOptions.source
+      const response = await executorClient.runtime.forkRuntimeTask({
+        source,
+        target,
+        ...requestOptions,
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.task_fork_failed'))
+      }
+
+      if (sourceTask && sourceWorkspace) {
+        const now = new Date().toISOString()
+        const workspacePath =
+          response.target.workspacePath || getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
+        const modelSelection =
+          options.modelSelection ??
+          sourceTask.modelSelection ??
+          modelSelectionFromRuntimeHandle(source.runtimeHandle)
+        dispatch({
+          type: 'runtime_task_optimistic_upserted',
+          project: state.currentProject,
+          workspace: {
+            ...sourceWorkspace,
+            deviceId: response.target.deviceId,
+            workspacePath,
+            tasks: [],
+          },
+          task: {
+            taskId: response.target.taskId,
+            workspacePath,
+            title: options.title ?? sourceTask.title,
+            runtime: response.runtime ?? sourceTask.runtime,
+            status: 'active',
+            running: false,
+            optimistic: true,
+            createdAt: now,
+            updatedAt: now,
+            modelSelection,
+          },
         })
-        if (!response.accepted) {
-          dispatch({ type: 'error_set', error: response.error || 'Failed to fork runtime task' })
-          return
-        }
+      }
 
-        const forkedTranscript = projectRuntimePaneTranscript(response.transcript)
-        const hydrationToken = beginRuntimeConversationHydration(response.target)
-        completeRuntimeConversationHydration(
-          response.target,
-          hydrationToken,
-          forkedTranscript.turns
-        )
-        lifecycleStore.syncTranscript(response.target, forkedTranscript)
-
-        if (sourceTask && sourceWorkspace) {
-          const now = new Date().toISOString()
-          const workspacePath =
-            response.target.workspacePath ||
-            getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
-          const modelSelection =
-            sourceTask.modelSelection ??
-            modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle)
-          dispatch({
-            type: 'runtime_task_optimistic_upserted',
-            project: state.currentProject,
-            workspace: {
-              ...sourceWorkspace,
-              deviceId: response.target.deviceId,
-              workspacePath,
-              tasks: [],
-            },
-            task: {
-              taskId: response.target.taskId,
-              workspacePath,
-              title: options.title ?? sourceTask.title,
-              runtime: response.runtime ?? sourceTask.runtime,
-              status: 'active',
-              running: false,
-              optimistic: true,
-              createdAt: now,
-              updatedAt: now,
-              modelSelection,
-            },
+      // Creation is committed; subsequent setup errors must not invite another fork.
+      const reportSetupError = (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        console.warn('[Wework] Runtime task fork setup failed', {
+          taskId: response.target.taskId,
+          error: message,
+        })
+        setComposerErrorForScope(
+          getRuntimeTaskChatScopeKey(response.target),
+          t('workbench.task_fork_setup_failed', {
+            taskId: response.target.taskId,
+            error: message,
           })
+        )
+      }
+      if (response.setupError) reportSetupError(response.setupError)
+      try {
+        if (response.transcript) {
+          const forkedTranscript = projectRuntimePaneTranscript(response.transcript)
+          const hydrationToken = beginRuntimeConversationHydration(response.target)
+          completeRuntimeConversationHydration(
+            response.target,
+            hydrationToken,
+            forkedTranscript.turns
+          )
+          lifecycleStore.syncTranscript(response.target, forkedTranscript)
         }
-        await openRuntimeTask(response.target, {
-          fallbackProject: state.currentProject,
-        })
+      } catch (error) {
+        reportSetupError(error)
+      }
+      try {
+        await openRuntimeTask(response.target, { fallbackProject: state.currentProject })
         await refreshWorkLists()
       } catch (error) {
-        dispatch({
-          type: 'error_set',
-          error: error instanceof Error ? error.message : 'Failed to fork runtime task',
-        })
+        reportSetupError(error)
       }
     },
     [
@@ -521,9 +539,11 @@ export function useWorkbenchRuntimeTasks({
       lifecycleStore,
       openRuntimeTask,
       refreshWorkLists,
+      setComposerErrorForScope,
       state.currentProject,
       state.currentRuntimeTask,
       state.runtimeWork,
+      t,
     ]
   )
 
@@ -656,12 +676,14 @@ function runtimeTranscriptRequestKey(
 ): string {
   return JSON.stringify({
     address: getRuntimeTaskRouteKey(address),
+    projectSession: address.projectSession ?? null,
     threadId: address.threadId ?? null,
     limit: options.limit ?? null,
     beforeCursor: options.beforeCursor ?? null,
     afterCursor: options.afterCursor ?? null,
     refresh: options.refresh ?? null,
     includeFullContent: options.includeFullContent ?? null,
+    conversationContextOnly: options.conversationContextOnly ?? null,
     navigationOnly: options.navigationOnly ?? null,
   })
 }

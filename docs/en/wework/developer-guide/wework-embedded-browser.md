@@ -184,12 +184,6 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 - Page action scripts may only perform behavior that matches the current tool semantics. Do not wrap arbitrary DOM mutations in internal evaluate calls to bypass safety checks.
 - macOS App Transport Security permits HTTP only for embedded web content. An invalid server certificate must first fail system trust evaluation; only then may the browser continue that server-trust challenge and publish risk state containing the native WebView identity and origin to the frontend. Register the TLS handler before the first navigation so initial loading cannot race asynchronous `with_webview` configuration. Keep the warning across same-origin pages, and clear it after cross-origin navigation or WebView closure.
 
-## Optional Cloud Desktop Extension
-
-The public Wework codebase defines only cloud-desktop UI slots, the internal-page classifier contract, and an unavailable default implementation. It does not include connection credentials, launch targets, launch orchestration, a concrete remote desktop protocol, authentication endpoint, proxy, page, or third-party client assets. The workbench and device settings use this capability only through `src/extensions/cloud-desktop-contract.ts`; the default implementation sets `available` to `false`, so no desktop action is shown.
-
-Product distributions may provide an implementation for `@extensions/cloud-desktop` at build time. The generic contract exposes `DeviceAction` and `WorkspaceAction` entry points for settings and project workspaces. A concrete implementation owns its connection types, launch target, asynchronous state, and launch orchestration, and must use `isCurrent` to ignore asynchronous requests after the project, device, or connection context changes. Public Wework provides only an unavailable fallback and must not contain concrete remote-desktop protocols, pages, assets, or dedicated copy.
-
 ## Annotation Flow
 
 The browser address bar includes an annotation icon. The implementation has three layers:

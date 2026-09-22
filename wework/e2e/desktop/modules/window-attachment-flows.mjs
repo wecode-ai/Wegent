@@ -1,3 +1,5 @@
+import { readdir } from 'node:fs/promises'
+
 import {
   distanceFromBottom,
   distanceFromTop,
@@ -42,6 +44,7 @@ import {
   WINDOW_LIFECYCLE_SCROLL_MARKER,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  commandOutput,
   ensureModelOptionVisible,
   join,
   processIsAlive,
@@ -62,12 +65,24 @@ import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+// The desktop stop budget is five seconds; a runtime that can exit on its own
+// must beat it, otherwise the app force-kills the tree and the window hangs.
+const RUNTIME_SELF_EXIT_TIMEOUT_MS = 4_000
 
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     if (!processIsAlive(processId)) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForProcessExitWithin(processId, timeoutMs, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!processIsAlive(processId)) return Date.now() - startedAt
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
   throw new Error(message)
 }
@@ -333,7 +348,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="runtime-task-close-cancel-button"]')
+  await control.command('press', 'body', { key: 'Escape' })
   const closeCancelledSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     !closeCancelledSnapshot.testIds.includes('runtime-task-close-confirm-overlay'),
@@ -596,8 +611,17 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
 
   setPhase('completed-task-scroll-position')
-  const middleParagraphSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]:nth-of-type(14)`
-  await control.command('scrollIntoViewAsUser', middleParagraphSelector)
+  const middleMarkdownSelector = [
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]`,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-markdown-window-placeholder]`,
+  ].join(', ')
+  await control.command('waitFor', middleMarkdownSelector, {
+    text: WINDOW_LIFECYCLE_SCROLL_MARKER,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoViewAsUser', middleMarkdownSelector, {
+    text: WINDOW_LIFECYCLE_SCROLL_MARKER,
+  })
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
   const middlePositionBeforeSwitch = await getSingleElementMetrics(
     control,
@@ -666,7 +690,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('waitFor', middleParagraphSelector, {
+  await control.command('waitFor', middleMarkdownSelector, {
     text: WINDOW_LIFECYCLE_SCROLL_MARKER,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -853,6 +877,57 @@ async function verifyBackgroundTaskWindowLifecycle({
       )}\n`
     )
     await restartDesktopApp()
+  } else {
+    setPhase('quit-with-close-to-tray-disabled')
+    const quitAppPid = activeApp.pid
+    const quitDiagnostics = JSON.parse(
+      await control.command('getDesktopRuntimeDiagnostics', 'body')
+    )
+    const quitExecutorPid = Number(quitDiagnostics.executorPid)
+    assert.ok(quitExecutorPid > 0, 'Executor PID was unavailable before quitting Wework')
+    assert.equal(
+      processIsAlive(quitExecutorPid),
+      true,
+      'The executor process was not alive before quitting Wework'
+    )
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ closeToTrayEnabled: false }),
+    })
+
+    await control.command('requestMainWindowClose', 'body')
+    const executorExitMs = await waitForProcessExitWithin(
+      quitExecutorPid,
+      RUNTIME_SELF_EXIT_TIMEOUT_MS,
+      'The executor did not exit on its own after its Wework owner quit; it had to be force-killed'
+    )
+    const appExitMs = await waitForProcessExitWithin(
+      quitAppPid,
+      DEFAULT_STEP_TIMEOUT_MS,
+      'Wework remained alive after quitting with close-to-tray disabled'
+    )
+    assert.equal(
+      processIsAlive(quitExecutorPid),
+      false,
+      'The executor outlived its Wework owner after quit'
+    )
+    await writeFile(
+      join(resultDir, 'quit-runtime-lifecycle.json'),
+      `${JSON.stringify(
+        {
+          appProcessId: quitAppPid,
+          executorProcessId: quitExecutorPid,
+          executorExitMs,
+          appExitMs,
+          runtimeSelfExitTimeoutMs: RUNTIME_SELF_EXIT_TIMEOUT_MS,
+        },
+        null,
+        2
+      )}\n`
+    )
+    await restartDesktopApp()
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ closeToTrayEnabled: true }),
+    })
   }
   return taskRowTestId
 }
@@ -983,6 +1058,33 @@ async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   throw new Error('The attachment-only tasks did not persist durable attachment previews')
 }
 
+async function waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, expectedCount) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const attachments = await findAttachmentFiles(runtimeAttachmentRoot)
+    if (attachments.length >= expectedCount) return attachments
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The remote device did not persist attachments in its private runtime root')
+}
+
+async function findAttachmentFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const files = await Promise.all(
+    entries.map(entry => {
+      const path = join(directory, entry.name)
+      return entry.isDirectory() ? findAttachmentFiles(path) : [path]
+    })
+  )
+  return files.flat().filter(path => path.endsWith(ATTACHMENT_ONLY_FILENAME))
+}
+
+function readGitStatus(workspacePath) {
+  return commandOutput('git', ['status', '--porcelain', '--untracked-files=all'], {
+    cwd: workspacePath,
+  })
+}
+
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
   appBundlePath,
@@ -990,7 +1092,10 @@ async function verifyAttachmentOnlySidebarLifecycle({
   composerSelector,
   control,
   executorHome,
+  runtimeAttachmentRoot,
+  workspacePath,
 }) {
+  const gitStatusBefore = workspacePath ? readGitStatus(workspacePath) : null
   control.setScenario('attachment_only')
   const rowsBeforeAttachmentOnly = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -1031,6 +1136,16 @@ async function verifyAttachmentOnlySidebarLifecycle({
   })
   if (executorHome) {
     await waitForDurableAttachmentPreviews(executorHome, 2)
+  }
+  if (runtimeAttachmentRoot) {
+    await waitForDeviceRuntimeAttachments(runtimeAttachmentRoot, 2)
+  }
+  if (workspacePath) {
+    assert.equal(
+      readGitStatus(workspacePath),
+      gitStatusBefore,
+      'Uploading remote device attachments changed the project Git status'
+    )
   }
 
   const twoTaskSnapshot = await waitForSnapshot(

@@ -2,11 +2,17 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { ProcessingBlock, RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
+import { ScrollableMessageArea } from './ScrollableMessageArea'
+import { setPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import { clearImagePreviewCache } from './imagePreviewCache'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
+import { ComposerCatalogContext } from './composer/ComposerCatalogContext'
+import { desktopComposerCatalogStore } from './composer/desktopComposerCatalog'
+import references from '../../../../packages/chat-core/test-fixtures/prompt-mentions.json'
 import '@/i18n'
 
 const desktopHostMock = vi.hoisted(() => ({
@@ -42,6 +48,318 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test.each([
+    { name: 'message list', Conversation: MessageList },
+    { name: 'scrollable conversation', Conversation: ScrollableMessageArea },
+  ])(
+    'opens sent text attachments with the current workspace preference in $name',
+    async ({ Conversation }) => {
+      runtimeMock.electron = true
+      // Supply a mounted viewport before the virtualizer's initial measurement.
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800)
+      vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1000)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      const viewport = document.createElement('div')
+      viewport.scrollTo = vi.fn()
+      document.body.appendChild(viewport)
+      const scrollProps = { externalScrollRef: { current: viewport } }
+      desktopHostMock.invoke.mockImplementation(async command => {
+        if (command === 'workspace.listOpeners') {
+          return [
+            { id: 'vscode', available: true },
+            { id: 'cursor', available: true },
+          ]
+        }
+      })
+      setPreferredWorkspaceOpener('/workspace/first', 'vscode')
+      setPreferredWorkspaceOpener('/workspace/second', 'cursor')
+      const path = '/attachments/sample.md'
+      const onOpenWorkspaceFile = vi.fn()
+      const messages = [
+        {
+          id: 'sent-file',
+          role: 'user' as const,
+          content: '',
+          status: 'done' as const,
+          createdAt: '2026-09-20T00:00:00Z',
+          attachments: [
+            {
+              id: 45,
+              filename: 'sample.md',
+              file_size: 10,
+              mime_type: 'text/markdown',
+              status: 'ready',
+              file_extension: '.md',
+              created_at: '2026-09-20T00:00:00Z',
+              local_path: path,
+            } satisfies Attachment,
+          ],
+        },
+      ]
+      const { rerender } = render(
+        <Conversation
+          {...scrollProps}
+          messages={messages}
+          workspacePath="/workspace/first"
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      )
+      await userEvent.click(screen.getByTestId('message-text-attachment'))
+      await waitFor(() =>
+        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
+          opener: 'vscode',
+          path,
+        })
+      )
+      desktopHostMock.invoke.mockClear()
+      rerender(
+        <Conversation
+          {...scrollProps}
+          messages={messages}
+          workspacePath="/workspace/second"
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      )
+      await userEvent.click(screen.getByTestId('message-text-attachment'))
+      await waitFor(() =>
+        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
+          opener: 'cursor',
+          path,
+        })
+      )
+      desktopHostMock.invoke.mockClear()
+      setPreferredWorkspaceOpener('/workspace/second', 'vscode')
+      await userEvent.click(screen.getByTestId('message-text-attachment'))
+      await waitFor(() =>
+        expect(desktopHostMock.invoke).toHaveBeenCalledWith('workspace.openFile', {
+          opener: 'vscode',
+          path,
+        })
+      )
+      expect(desktopHostMock.invoke).not.toHaveBeenCalledWith('shell.openPath', expect.anything())
+      expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+      viewport.remove()
+    }
+  )
+
+  test('renders an ordinary SKILL.md link with its literal label and skill icon after sending', () => {
+    const path = '~/worksapce/skills/test-skill/SKILL.md'
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'plain-skill-file',
+            role: 'user',
+            content: `[test-label](${path}) sent text`,
+            status: 'done',
+            createdAt: '2026-09-19T00:00:00Z',
+          },
+        ]}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+    const link = screen.getByTestId('assistant-markdown-link')
+    expect(link).toHaveTextContent(/^test-label$/)
+    expect(screen.getByTestId('assistant-markdown-link-icon').querySelector('path')).not.toBeNull()
+    expect(screen.queryByTestId('sent-local-skill-token-test-label')).not.toBeInTheDocument()
+    fireEvent.click(link)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(path)
+    expect(screen.getByTestId('message-user')).toHaveTextContent('test-label sent text')
+  })
+
+  test('disables unknown skills after catalog failure and enables them after refresh', async () => {
+    const path = '/Users/me/.agents/skills/test-skill/SKILL.md'
+    const listSkills = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([{ name: 'test-skill', path, description: '', source: 'codex' }])
+    const onOpenLocalSkillFile = vi.fn()
+    render(
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: desktopComposerCatalogStore,
+          catalogEvents: { catalogChanged: 'test-skill-refresh' },
+          prefetchLocalAuth: false,
+          listSkills,
+        }}
+      >
+        <MessageList
+          messages={[
+            {
+              id: 'skill',
+              role: 'user',
+              content: `[$test-skill](${path})`,
+              status: 'done',
+              createdAt: '2026-09-18T00:00:00Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      </ComposerCatalogContext.Provider>
+    )
+    const token = screen.getByTestId('sent-local-skill-token-test-skill')
+    await waitFor(() => expect(listSkills).toHaveBeenCalledTimes(1))
+    expect(token).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(token)
+    expect(onOpenLocalSkillFile).not.toHaveBeenCalled()
+    act(() => window.dispatchEvent(new Event('test-skill-refresh')))
+    await waitFor(() => expect(token).toHaveAttribute('aria-disabled', 'false'))
+    fireEvent.click(token)
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(path)
+  })
+
+  test('ignores a stale skill catalog after switching conversations', async () => {
+    const path = '/Users/me/.agents/skills/test-skill/SKILL.md'
+    let resolveOld!: (
+      skills: { name: string; path: string; source: string; description: string }[]
+    ) => void
+    const oldSource = vi.fn(
+      () =>
+        new Promise<{ name: string; path: string; source: string; description: string }[]>(
+          resolve => {
+            resolveOld = resolve
+          }
+        )
+    )
+    const newSource = vi.fn().mockResolvedValue([])
+    const onOpenLocalSkillFile = vi.fn()
+    const content = (listSkills: typeof oldSource) => (
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: desktopComposerCatalogStore,
+          catalogEvents: {},
+          prefetchLocalAuth: false,
+          listSkills,
+        }}
+      >
+        <MessageList
+          messages={[
+            {
+              id: 'skill',
+              role: 'user',
+              content: `[$test-skill](${path})`,
+              status: 'done',
+              createdAt: '2026-09-18T00:00:00Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      </ComposerCatalogContext.Provider>
+    )
+    const { rerender } = render(content(oldSource))
+    await waitFor(() => expect(oldSource).toHaveBeenCalledOnce())
+    rerender(content(newSource))
+    await waitFor(() => expect(newSource).toHaveBeenCalledOnce())
+    await act(async () => {
+      resolveOld([{ name: 'test-skill', path, description: '', source: 'codex' }])
+    })
+    const token = screen.getByTestId('sent-local-skill-token-test-skill')
+    expect(token).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(token)
+    expect(onOpenLocalSkillFile).not.toHaveBeenCalled()
+  })
+
+  test.each(references.filter(item => item.kind === 'skill'))(
+    'renders an unregistered skill without enabling file access: $reference',
+    fixture => {
+      const onOpenLocalSkillFile = vi.fn()
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'unknown-skill',
+              role: 'user',
+              content: fixture.reference,
+              status: 'done',
+              createdAt: '2026-09-18T00:00:00Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      )
+      const token = screen.getByTestId('sent-local-skill-token-test-skill')
+      expect(token).toHaveAttribute('aria-disabled', 'true')
+      expect(token).toHaveAttribute('tabindex', '-1')
+      fireEvent.click(token)
+      expect(onOpenLocalSkillFile).not.toHaveBeenCalled()
+    }
+  )
+
+  test('keeps appended text outside the sent link and opens only the original URL', () => {
+    const url = 'https://example.com/1192966660/Riodm8zUo'
+    openExternalUrlMock.mockClear()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-bounded-link',
+            role: 'user',
+            status: 'done',
+            createdAt: '2026-09-16T08:00:00Z',
+            content: `[${url}](${url})哈哈哈哈`,
+          },
+        ]}
+      />
+    )
+    const message = screen.getByTestId('user-message-content')
+    const link = within(message).getByRole('link', { name: url })
+    expect(link).not.toHaveTextContent('哈哈哈哈')
+    expect(message).toHaveTextContent(`${url}哈哈哈哈`)
+    fireEvent.click(link)
+    expect(openExternalUrlMock).toHaveBeenCalledWith(url)
+  })
+
+  test.each(['http://example.com/file_name?q=a_b#section', 'https://example.com/page'])(
+    'opens sent bare URL %s using the configured link handler',
+    url => {
+      openExternalUrlMock.mockClear()
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'user-http-link',
+              role: 'user',
+              content: `访问 ${url}`,
+              status: 'done',
+              createdAt: '2026-09-16T08:00:00Z',
+            },
+          ]}
+        />
+      )
+      fireEvent.click(
+        within(screen.getByTestId('user-message-content')).getByRole('link', { name: url })
+      )
+      expect(openExternalUrlMock).toHaveBeenCalledWith(url)
+    }
+  )
+
+  test('renders sent Markdown tables with formatting and the existing table actions', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-table',
+            role: 'user',
+            status: 'done',
+            createdAt: '2026-09-16T08:00:00Z',
+            content:
+              '| 项目 | 说明 |\n| --- | ---: |\n| 中文 | **重点** |\n| 代码 | `print(1)` |\n| 空单元格 | |',
+          },
+        ]}
+      />
+    )
+    const message = screen.getByTestId('user-message-content')
+    expect(within(message).getAllByRole('row')).toHaveLength(4)
+    expect(within(message).getByText('重点').tagName).toBe('STRONG')
+    expect(within(message).getByText('print(1)').tagName).toBe('CODE')
+    expect(within(message).getByText('说明')).toHaveStyle({ textAlign: 'right' })
+    expect(within(message).getByTestId('markdown-table-copy-button')).toBeInTheDocument()
+    fireEvent.click(within(message).getByTestId('markdown-table-expand-button'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+  })
+
   test('keeps runtime content truncation invisible while rendering the retained content', () => {
     render(
       <MessageList
@@ -805,6 +1123,130 @@ describe('MessageList', () => {
         .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
     ).toBe(true)
     expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+  })
+
+  test('releases eager Markdown chunks after streaming completes', () => {
+    runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1600px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    const content = Array.from(
+      { length: 60 },
+      (_, index) => `### Completed section ${index + 1}\n\n${'content '.repeat(40)}\n`
+    ).join('\n')
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-completed-windowed',
+            role: 'assistant',
+            content,
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
+    expect(chunks.length).toBeGreaterThan(2)
+    expect(
+      chunks.every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+
+    act(() => {
+      intersectionCallbacks.at(-1)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+
+    expect(chunks.at(-1)?.querySelector('[data-markdown-window-placeholder]')).toBeNull()
+    expect(chunks[0].querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
+  })
+
+  test('keeps a streamed oversized code chunk mounted after completion', () => {
+    runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1600px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    const longCode = [
+      '```sql',
+      ...Array.from(
+        { length: 110 },
+        (_, index) =>
+          `SELECT ${index + 1} AS value_${index + 1}, '${'payload '.repeat(8)}' AS payload;`
+      ),
+      '```',
+    ].join('\n')
+    const content = [
+      longCode,
+      ...Array.from(
+        { length: 8 },
+        (_, index) => `### Tail section ${index + 1}\n\n${'tail '.repeat(80)}\n`
+      ),
+    ].join('\n')
+    const streamingMessage = {
+      id: 'assistant-streamed-oversized-code',
+      role: 'assistant' as const,
+      content,
+      status: 'streaming' as const,
+      createdAt: '2026-09-21T10:00:00Z',
+    }
+
+    const { container, rerender } = render(<MessageList messages={[streamingMessage]} />)
+    const codeNode = container.querySelector('code')
+    expect(codeNode).not.toBeNull()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    act(() => {
+      intersectionCallbacks.forEach(callback =>
+        callback(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+    })
+
+    expect(container.querySelector('code')).toBe(codeNode)
+    expect(
+      codeNode
+        ?.closest('[data-markdown-window-chunk]')
+        ?.querySelector('[data-markdown-window-placeholder]')
+    ).toBeNull()
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -2789,7 +3231,7 @@ describe('MessageList', () => {
       <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
 
     rerender(
@@ -3107,8 +3549,8 @@ describe('MessageList', () => {
     const links = screen.getAllByTestId('assistant-markdown-link')
     const icons = screen.getAllByTestId('assistant-markdown-link-icon')
 
-    expect(icons[0]).toHaveTextContent('$')
-    expect(icons[1]).toHaveTextContent('{}')
+    expect(icons.every(icon => icon.tagName.toLowerCase() === 'svg')).toBe(true)
+    expect(icons[0].innerHTML).not.toBe(icons[1].innerHTML)
     expect(links[0]).toHaveClass('[&_code]:!bg-transparent', '[&_code]:!rounded-none')
     expect(links[0]).toHaveTextContent('scripts/build-mac-app.sh(line 49)')
     expect(links[1]).toHaveTextContent('package.json(line 15)')
@@ -3599,10 +4041,10 @@ describe('MessageList', () => {
     )
 
     const token = screen.getByTestId('sent-local-skill-token-browser')
-    expect(token).toHaveTextContent('Browser')
+    expect(token).toHaveTextContent('$browser')
     expect(screen.getByTestId('sent-local-skill-icon-browser')).toBeInTheDocument()
     expect(token).toHaveClass(
-      'h-7',
+      'composer-mention-node',
       'gap-1',
       'rounded-xl',
       'bg-muted',
@@ -4865,6 +5307,41 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
   })
 
+  test.each([false, true])(
+    'counts the visible conversation title when deciding to collapse (long body: %s)',
+    longBody => {
+      const title = '让助手生成两张表格，包含中文、粗体、代码和空单元格。'
+      const reference = createConversationMentionReference(title, {
+        deviceId: 'local-device',
+        taskId: 'runtime-42',
+        workspacePath: `/workspace/${'项目目录/'.repeat(20)}`,
+      })
+      const body = longBody ? '需要详细分析。'.repeat(100) : 'n'
+      expect(reference.length).toBeGreaterThan(600)
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'conversation-mention',
+              role: 'user',
+              content: `${reference} ${body}`,
+              status: 'done',
+              createdAt: '2026-09-17T02:16:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('user-message-content')).toHaveTextContent(`${title} ${body}`)
+      expect(screen.getByTestId(/^sent-conversation-token-/)).toHaveAttribute(
+        'href',
+        reference.slice(reference.indexOf('](') + 2, -1)
+      )
+      expect(screen.queryByTestId('toggle-user-message-button') !== null).toBe(longBody)
+    }
+  )
+
   test('does not collapse long runtime guidance messages', () => {
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
 
@@ -5131,16 +5608,74 @@ describe('MessageList', () => {
       />
     )
 
-    const status = screen.getByText('1 秒')
-
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
-    expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
-    expect(status.parentElement).not.toHaveClass('border-b')
+    expect(screen.queryByTestId('processing-duration-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('processing-summary-header')).not.toBeInTheDocument()
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
   })
 
-  test('starts the live processing timer when the first visible response appears', () => {
+  test('keeps a reasoning-only timer through final streaming and remount', () => {
+    vi.useFakeTimers()
+    try {
+      const start = Date.parse('2026-09-16T10:00:00Z')
+      vi.setSystemTime(start + 5000)
+      const message: WorkbenchMessage = {
+        id: 'reasoning-timer',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        createdAt: new Date(start + 2000).toISOString(),
+        turnId: 'reasoning-turn',
+        blocks: [
+          {
+            id: 'thinking-timer',
+            type: 'thinking',
+            content: '检查实现',
+            status: 'streaming',
+            createdAt: start + 2000,
+          },
+        ],
+      }
+      const runningTurn: RuntimeConversationTurn = {
+        id: 'reasoning-turn',
+        status: 'streaming',
+        startedAt: start,
+        items: [],
+      }
+      const first = render(<MessageList messages={[message]} turns={[runningTurn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 5秒')
+      act(() => vi.advanceTimersByTime(3000))
+      const finalMessage: WorkbenchMessage = {
+        ...message,
+        content: '最终回答',
+        createdAt: new Date(start + 8000).toISOString(),
+        blocks: message.blocks!.map(block => ({ ...block, status: 'done' })),
+      }
+      first.rerender(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
+      expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+      act(() => vi.advanceTimersByTime(5000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
+      first.unmount()
+      const restored = render(<MessageList messages={[finalMessage]} turns={[runningTurn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 13秒')
+      act(() => vi.advanceTimersByTime(2000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 15秒')
+      restored.rerender(
+        <MessageList
+          messages={[{ ...finalMessage, status: 'done' }]}
+          turns={[{ ...runningTurn, status: 'done', durationMs: 15_000 }]}
+        />
+      )
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 15秒')
+      act(() => vi.advanceTimersByTime(5000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 15秒')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('counts from the turn start when the first processing activity appears', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-05-25T18:46:08.000+08:00'))
@@ -5151,16 +5686,35 @@ describe('MessageList', () => {
             {
               id: '2',
               role: 'assistant',
-              content: '我先',
+              content: '',
               status: 'streaming',
               createdAt: '2026-05-25T18:46:00.000+08:00',
+              turnId: 'first-process-turn',
+              blocks: [
+                {
+                  id: 'first-process',
+                  type: 'text',
+                  content: '我先检查代码。',
+                  status: 'streaming',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+          turns={[
+            {
+              id: 'first-process-turn',
+              status: 'streaming',
+              startedAt: Date.parse('2026-05-25T18:46:00.000+08:00'),
+              items: [],
             },
           ]}
         />
       )
 
-      expect(screen.getByText('1 秒')).toBeInTheDocument()
-      expect(screen.queryByText('8 秒')).not.toBeInTheDocument()
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 8秒')
+      act(() => vi.advanceTimersByTime(1000))
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('已处理 9秒')
     } finally {
       vi.useRealTimers()
     }
@@ -5326,7 +5880,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('keeps the processing layout stable while final text is streaming', () => {
+  test('collapses at final text, preserves expansion, and keeps the final text mounted', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -5358,7 +5912,8 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
     expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('已处理')
     const content = screen.getByTestId('assistant-message-content')
 
@@ -5368,13 +5923,13 @@ describe('MessageList', () => {
           {
             ...streamingMessage,
             content: `${streamingMessage.content} More text.`,
-            blocks: [{ ...completedBlock, status: 'streaming' }],
+            blocks: [completedBlock],
           },
         ]}
       />
     )
 
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('assistant-message-content')).toBe(content)
 
     rerender(
@@ -5391,7 +5946,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('assistant-message-content')).toBe(content)
     expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
 
@@ -5408,7 +5963,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {
@@ -5947,31 +6502,45 @@ describe('MessageList', () => {
     expect(code).toHaveClass('select-text')
   })
 
-  test('renders local skill markdown links in user messages', () => {
+  test.each([
+    '/Users/crystal/.codex/skills/env-context/SKILL.md',
+    'C:/Users/me/.agents/skills/env-context/SKILL.md',
+    'C:\\Users\\me\\.agents\\skills\\env-context\\SKILL.md',
+    'skills/test(draft)/instructions.md',
+  ])('renders local skill markdown links in user messages: %s', async skillPath => {
     const onOpenLocalSkillFile = vi.fn()
     render(
-      <MessageList
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content:
-              'hello [$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md) context',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:00.000Z',
-          },
-        ]}
-        onOpenLocalSkillFile={onOpenLocalSkillFile}
-      />
+      <ComposerCatalogContext.Provider
+        value={{
+          appsStore: desktopComposerCatalogStore,
+          catalogEvents: {},
+          prefetchLocalAuth: false,
+          listSkills: async () => [
+            { name: 'env-context', path: skillPath, description: '', source: 'codex' },
+          ],
+        }}
+      >
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: `hello [$env-context](${skillPath.replace(/[\\()]/g, '\\$&')}) context`,
+              status: 'done',
+              createdAt: '2026-05-25T00:00:00.000Z',
+            },
+          ]}
+          onOpenLocalSkillFile={onOpenLocalSkillFile}
+        />
+      </ComposerCatalogContext.Provider>
     )
 
     const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
 
-    expect(skillLink).toHaveAttribute('href', '/Users/crystal/.codex/skills/env-context/SKILL.md')
+    expect(skillLink).toHaveAttribute('href', skillPath)
+    await waitFor(() => expect(skillLink).toHaveAttribute('aria-disabled', 'false'))
     fireEvent.click(skillLink)
-    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(
-      '/Users/crystal/.codex/skills/env-context/SKILL.md'
-    )
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(skillPath)
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })
 

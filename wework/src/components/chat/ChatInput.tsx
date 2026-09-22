@@ -1,14 +1,6 @@
-import {
-  ArrowRight,
-  BookOpenText,
-  ChevronDown,
-  ChevronUp,
-  ListChecks,
-  LoaderCircle,
-  PencilLine,
-  Sparkles,
-  X,
-} from 'lucide-react'
+import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
+import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
+import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
   forwardRef,
   useContext,
@@ -19,7 +11,6 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
@@ -57,15 +48,11 @@ import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
-import {
-  buildRefinedPluginPrompt,
-  buildTrialTemplatePrompt,
-  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
-} from '@/features/plugins/pluginTrial'
+import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
-import type { ModelSelectorCloseReason } from './composer/model-selector-types'
+import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -86,11 +73,10 @@ export interface ProjectChatControls {
   trialPluginName?: string
   trialPluginApp?: LocalDeviceApp
   hasConversationContext?: boolean
+  showTrialGuide?: (title: string, app: LocalDeviceApp) => void
   onDismissTrialGuide?: () => void
-  onApplyTrialTemplate?: (template: PluginPathComponent) => void
   onRefineTrialPrompt?: (request: PluginTrialRefinementRequest) => Promise<string>
   dismissTrialGuide?: () => void
-  applyTrialTemplate?: (template: PluginPathComponent) => void
   selectedSkills: SkillRef[]
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
@@ -101,6 +87,14 @@ export interface ProjectChatControls {
   onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
+  continueInNewConversation?: (
+    model: UnifiedModel,
+    options?: ModelOptions,
+    source?: {
+      address?: RuntimeTaskAddress
+      draft?: string
+    }
+  ) => void
   setSelectedModelOption: (optionId: string, value: string) => void
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
@@ -145,11 +139,13 @@ export interface ProjectWorkControls {
   // When false, the project trigger renders a static folder icon instead of the
   // hover-to-clear button (for defaults that cannot be cleared from the bar).
   showProjectClearButton?: boolean
+  showProjectSelector?: boolean
   projectMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
 }
 
 export interface ChatInputProps {
+  presentation?: 'chat' | 'document'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -162,18 +158,21 @@ export interface ChatInputProps {
   disabled: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
+  requireText?: boolean
   error?: string | null
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
+  submitLabel?: string
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
   projectPhrases?: QuickPhrase[]
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
+  projectWorkBar?: ReactNode
   showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
@@ -198,6 +197,7 @@ export interface ChatInputProps {
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  mentionScope?: 'all' | 'external'
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
@@ -243,330 +243,41 @@ interface PendingQueuedSend {
 interface PendingModelSelection {
   model: UnifiedModel | null
   options?: ModelOptions
-}
-
-function pluginTemplateDisplayTitle(template: PluginPathComponent, t: TFunction<'common'>): string {
-  const source = `${template.name} ${template.description ?? ''}`.toLowerCase()
-  if (/working[- ]tree|current workspace|当前工作区|当前改动/.test(source)) {
-    return t('workbench.plugin_trial_review_current_changes', '当前改动')
-  }
-  if (/merge base|compare.*branch|分支.*对比|合并基线/.test(source)) {
-    return t('workbench.plugin_trial_review_branch', '分支对比')
-  }
-  if (/this commit|single commit|单次提交|这次提交/.test(source)) {
-    return t('workbench.plugin_trial_review_commit', '单次提交')
-  }
-  return template.name
+  continueInNewConversation: boolean
 }
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
   return left?.name === right?.name && left?.type === right?.type
 }
 
-function PluginTrialTemplateStrip({
-  templates,
-  pluginName,
-  pluginApp,
-  draft,
-  hasConversationContext = false,
-  onApplyTemplate,
-  onRefinePrompt,
-  onApplyRefinedPrompt,
-  onDismiss,
-}: {
-  templates: PluginPathComponent[]
-  pluginName?: string
-  pluginApp?: LocalDeviceApp
-  draft: string
-  hasConversationContext?: boolean
-  onApplyTemplate?: (template: PluginPathComponent) => void
-  onRefinePrompt?: (draft: string) => Promise<string>
-  onApplyRefinedPrompt?: (prompt: string) => void
-  onDismiss?: () => void
-}) {
-  const { t } = useTranslation('common')
-  const availableTemplates = templates.filter(template => !template.unavailableReason).slice(0, 6)
-  const [showOtherTasks, setShowOtherTasks] = useState(false)
-  const [refinedPrompt, setRefinedPrompt] = useState('')
-  const [refining, setRefining] = useState(false)
-  const [refineError, setRefineError] = useState('')
-  const primaryTemplates = availableTemplates.slice(0, 3)
-  const otherTemplates = availableTemplates.slice(3)
-  const taskIcons = [PencilLine, BookOpenText, ListChecks]
+function codexConversationProvider(
+  model: UnifiedModel | null | undefined
+): 'openai' | 'router' | null {
+  if (!model) return null
+  const configuredKind =
+    typeof model.config?.weworkModelKind === 'string'
+      ? model.config.weworkModelKind
+      : typeof (model.config?.ui as Record<string, unknown> | undefined)?.family === 'string'
+        ? ((model.config?.ui as Record<string, unknown>).family as string)
+        : ''
+  if (configuredKind === 'codex-official') return 'openai'
+  if (configuredKind === 'codex-provider' || configuredKind === 'model-interface') return 'router'
+  return model.provider && model.provider !== 'local' ? 'router' : null
+}
 
-  if (!pluginName && availableTemplates.length === 0) return null
-  if (availableTemplates.length === 0 && !onRefinePrompt) return null
-
-  const refine = async () => {
-    if (!onRefinePrompt || refining) return
-    setRefining(true)
-    setRefineError('')
-    try {
-      setRefinedPrompt(await onRefinePrompt(draft))
-      setShowOtherTasks(false)
-    } catch (error) {
-      setRefineError(
-        error instanceof Error
-          ? error.message
-          : t('workbench.plugin_trial_ai_error', 'AI 暂时无法完善任务，请重试')
-      )
-    } finally {
-      setRefining(false)
-    }
-  }
-
-  const applyRecommendation = () => {
-    if (refinedPrompt) {
-      onApplyRefinedPrompt?.(refinedPrompt)
-      return
-    }
-    if (availableTemplates[0]) {
-      onApplyTemplate?.(availableTemplates[0])
-      return
-    }
-    void refine()
-  }
-
-  const renderTemplateRow = (template: PluginPathComponent, index: number) => {
-    const TaskIcon = taskIcons[index % taskIcons.length]
-    const isPrimaryRecommendation = !refinedPrompt && index === 0
-    const displayTitle = pluginTemplateDisplayTitle(template, t)
-
-    return (
-      <button
-        key={template.path}
-        type="button"
-        data-testid={
-          isPrimaryRecommendation
-            ? 'plugin-trial-recommendation-apply'
-            : 'plugin-trial-template-card'
-        }
-        className="group relative flex min-h-10 w-full items-center gap-2.5 border-b border-border/15 px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500"
-        onClick={() => onApplyTemplate?.(template)}
-        aria-label={t('workbench.plugin_trial_apply_task', '填入任务：{{task}}', {
-          task: displayTitle,
-        }).replace('{{task}}', displayTitle)}
-      >
-        <span
-          className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-blue-500 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-          aria-hidden="true"
-        />
-        <TaskIcon
-          className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"
-          aria-hidden="true"
-        />
-        {pluginName && (
-          <span className="shrink-0 text-sm font-medium leading-5 text-blue-600 dark:text-blue-300">
-            {pluginName}
-          </span>
-        )}
-        <strong
-          className="min-w-0 flex-1 truncate text-sm font-normal leading-5 text-text-primary"
-          data-testid={isPrimaryRecommendation ? 'plugin-trial-recommendation-title' : undefined}
-        >
-          {displayTitle}
-        </strong>
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
-          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      </button>
-    )
-  }
-
-  return (
-    <section
-      className="mx-auto mb-2 max-w-[760px] overflow-hidden rounded-xl border border-border/25 bg-background shadow-md"
-      data-testid="plugin-trial-template-strip"
-      aria-label={t('workbench.plugin_trial_examples_accessible_label', '插件常用任务')}
-    >
-      <div className="flex items-center justify-between gap-3 px-3 py-1.5">
-        <div className="flex min-w-0 items-center gap-2">
-          {pluginApp ? (
-            <ComposerPluginIcon
-              app={pluginApp}
-              className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background"
-              testId="plugin-trial-plugin-icon"
-            />
-          ) : (
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
-            </span>
-          )}
-          <div className="flex min-w-0 items-baseline gap-2">
-            <h3 className="shrink-0 text-sm font-medium leading-5 text-text-primary">
-              {pluginName
-                ? t('workbench.plugin_trial_examples_title', '{{plugin}} 可以这样用', {
-                    plugin: pluginName,
-                  }).replace('{{plugin}}', pluginName)
-                : t('workbench.plugin_trial_examples_fallback_title', '这个插件可以这样用')}
-            </h3>
-            <p className="truncate text-xs leading-4 text-text-muted">
-              {t('workbench.plugin_trial_examples_hint', '选择一个常用任务，填入后仍可修改')}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {onDismiss && (
-            <button
-              type="button"
-              data-testid="plugin-trial-template-dismiss"
-              aria-label={t('workbench.close', '关闭')}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
-              onClick={onDismiss}
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="px-2 pb-2">
-        <div
-          className="overflow-hidden rounded-lg border border-border/20"
-          data-testid={refinedPrompt ? 'plugin-trial-ai-result' : 'plugin-trial-recommendation'}
-        >
-          {refinedPrompt && (
-            <button
-              type="button"
-              data-testid="plugin-trial-recommendation-apply"
-              className="group relative flex min-h-10 w-full items-center gap-2.5 border-b border-border/15 bg-blue-500/[0.04] px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.1] focus-visible:bg-blue-500/[0.1] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500"
-              onClick={applyRecommendation}
-            >
-              <span
-                className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-blue-500 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-                aria-hidden="true"
-              />
-              <Sparkles
-                className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"
-                aria-hidden="true"
-              />
-              <span className="shrink-0 text-sm font-medium leading-5 text-blue-600 dark:text-blue-300">
-                {t('workbench.plugin_trial_ai_result', 'AI 整理的任务')}
-              </span>
-              <strong
-                className="min-w-0 flex-1 truncate text-sm font-normal leading-5 text-text-primary"
-                data-testid="plugin-trial-recommendation-title"
-              >
-                {refinedPrompt}
-              </strong>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </span>
-            </button>
-          )}
-          {primaryTemplates.map(renderTemplateRow)}
-          {showOtherTasks && otherTemplates.length > 0 && (
-            <div className="contents" data-testid="plugin-trial-other-tasks">
-              {otherTemplates.map((template, index) =>
-                renderTemplateRow(template, primaryTemplates.length + index)
-              )}
-            </div>
-          )}
-          {availableTemplates.length === 0 && (
-            <button
-              type="button"
-              data-testid="plugin-trial-recommendation-apply"
-              className="group relative flex min-h-10 w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => void refine()}
-              disabled={!onRefinePrompt || refining}
-            >
-              <span
-                className="absolute inset-y-2 left-0 w-0.5 rounded-r-full bg-blue-500 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-                aria-hidden="true"
-              />
-              <Sparkles
-                className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"
-                aria-hidden="true"
-              />
-              <strong
-                className="min-w-0 flex-1 text-sm font-normal leading-5 text-text-primary"
-                data-testid="plugin-trial-recommendation-title"
-              >
-                {t(
-                  'workbench.plugin_trial_ai_empty_recommendation',
-                  '让 AI 推荐一个适合当前目标的任务'
-                )}
-              </strong>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </span>
-            </button>
-          )}
-        </div>
-        {refineError && (
-          <div
-            className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs leading-4 text-red-700"
-            role="alert"
-            data-testid="plugin-trial-ai-error"
-          >
-            <span>{refineError}</span>
-            <button
-              type="button"
-              className="shrink-0 font-medium hover:underline"
-              onClick={() => void refine()}
-            >
-              {t('workbench.retry', '重试')}
-            </button>
-          </div>
-        )}
-        <div className="flex flex-wrap items-center justify-between gap-1 px-1 pt-1.5 text-xs leading-4 text-text-muted">
-          <span>
-            {t('workbench.plugin_trial_examples_footer', '点击只会填入输入框，不会自动发送')}
-          </span>
-          <span className="flex items-center gap-1">
-            {otherTemplates.length > 0 && (
-              <button
-                type="button"
-                data-testid="plugin-trial-other-tasks-toggle"
-                aria-expanded={showOtherTasks}
-                className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
-                onClick={() => setShowOtherTasks(current => !current)}
-              >
-                {showOtherTasks
-                  ? t('workbench.plugin_trial_hide_other_tasks', '收起其他任务')
-                  : t('workbench.plugin_trial_view_other_tasks', '查看其他常用任务')}
-                {showOtherTasks ? (
-                  <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-                )}
-              </button>
-            )}
-            {onRefinePrompt && (
-              <button
-                type="button"
-                data-testid="plugin-trial-ai-refine"
-                className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void refine()}
-                disabled={refining}
-                aria-label={
-                  hasConversationContext
-                    ? t(
-                        'workbench.plugin_trial_ai_other_task_with_context',
-                        '结合当前对话推荐其他任务'
-                      )
-                    : t('workbench.plugin_trial_ai_other_task', 'AI 推荐其他任务')
-                }
-              >
-                {refining ? (
-                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-                )}
-                {refining
-                  ? t('workbench.plugin_trial_ai_refining', 'AI 正在推荐…')
-                  : t('workbench.plugin_trial_ai_other_task', 'AI 推荐其他任务')}
-              </button>
-            )}
-          </span>
-        </div>
-      </div>
-    </section>
-  )
+function requiresNewConversationForModelSwitch(
+  activeModel: UnifiedModel | null | undefined,
+  targetModel: UnifiedModel | null
+): boolean {
+  const activeProvider = codexConversationProvider(activeModel)
+  const targetProvider = codexConversationProvider(targetModel)
+  return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   {
     value,
+    presentation,
     onChange,
     onBlur,
     onCompositionStart,
@@ -575,12 +286,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabled,
     pluginPickerIconOnly = false,
     submitDisabled = false,
+    requireText = false,
     error,
     disabledReason,
     placeholder,
     inputTestId,
     nativeEmptyCaret = false,
     submitButtonTestId,
+    submitLabel,
     variant = 'compact',
     collapseWhenIdle = false,
     projectPhrases,
@@ -608,6 +321,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     workspaceFileApi,
     cloudMentionCandidates,
     externalMentionCandidates,
+    mentionScope,
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectExternalMention,
@@ -620,6 +334,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onDismissInputLeadingContext,
     toolbarLeadingContext,
     projectWorkBarMiddleContext,
+    projectWorkBar,
     projectWorkBarTrailingContext,
     projectWorkBarEndContext,
     modelSelectorOverride,
@@ -661,6 +376,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       },
       focus: () => composerRef.current?.focus(),
       getValue: () => composerRef.current?.getValue() ?? value,
+      insertReference: reference => composerRef.current?.insertReference(reference),
       setValue: (nextValue, selectionOffset) =>
         composerRef.current?.setValue(nextValue, selectionOffset),
     }),
@@ -717,20 +433,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       ? (currentRuntimeProject.aiSettings?.quickPhrases ?? [])
       : [])
   const applyTrialTemplate = (template: PluginPathComponent) => {
-    const applyTemplate = controls.onApplyTrialTemplate ?? controls.applyTrialTemplate
-    if (!applyTemplate) return
-    const expectedValue = buildTrialTemplatePrompt(
-      composerRef.current?.getValue() ?? value,
-      template
-    )
-    applyTemplate(template)
-    window.requestAnimationFrame(() => {
-      window.dispatchEvent(
-        new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
-          detail: { expectedValue },
-        })
-      )
-    })
+    const editor = composerRef.current
+    if (!editor) return
+    const next = buildTrialTemplatePrompt(editor.getValue(), template, controls.trialPluginName)
+    editor.setValue(next)
+    onChange(next)
+    editor.focus()
   }
   const conversationMentionCandidates = useMemo(
     () =>
@@ -774,7 +482,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       controls.activeModel &&
       !isSameModel(controls.activeModel, model)
     ) {
-      setPendingModelSelection({ model, options })
+      setPendingModelSelection({
+        model,
+        options,
+        continueInNewConversation: requiresNewConversationForModelSwitch(
+          controls.activeModel,
+          model
+        ),
+      })
       return false
     }
     applyModelSelection(model, options)
@@ -783,8 +498,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
   const confirmModelSelection = () => {
     if (!pendingModelSelection) return
-    const { model, options } = pendingModelSelection
+    const { model, options, continueInNewConversation } = pendingModelSelection
     setPendingModelSelection(null)
+    if (continueInNewConversation && model) {
+      if (controls.continueInNewConversation) {
+        controls.continueInNewConversation(model, options, { draft: value })
+      } else {
+        controls.onBlockedModelSelect?.(
+          model,
+          t(
+            'workbench.model_switch_new_conversation_unavailable',
+            'Start a new conversation before switching to a different model provider.'
+          )
+        )
+      }
+      return
+    }
     applyModelSelection(model, options)
   }
   const cancelModelSelection = () => {
@@ -824,6 +553,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }
 
   const composerProps = {
+    presentation,
     value,
     onChange,
     onBlur,
@@ -832,16 +562,19 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     onSubmit: handleSubmit,
     disabled,
     submitDisabled,
+    requireText,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,
     nativeEmptyCaret,
     submitButtonTestId,
+    submitLabel,
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
     externalMentionCandidates,
+    mentionScope,
     conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
@@ -851,15 +584,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     followUpBehavior,
     isStreaming,
   }
-  const errorBanner = error ? (
-    <div
-      className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-      data-testid="chat-input-error"
-      role="alert"
-    >
-      {error}
-    </div>
-  ) : null
+  const errorBanner = <ComposerErrorBanner error={error} />
   const queuePanel = (
     <ConversationQueuePanel
       queuedMessages={queuedMessages}
@@ -891,6 +616,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         pendingModelSelection.model?.name ||
         t('workbench.model_auto_select', 'Auto select')
       }
+      continueInNewConversation={pendingModelSelection.continueInNewConversation}
       onCancel={cancelModelSelection}
       onConfirm={confirmModelSelection}
     />
@@ -898,11 +624,148 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
   if (variant === 'desktop') {
     return (
+      <PluginTrialSelectionContext.Provider value={controls.showTrialGuide}>
+        <div className="w-full">
+          <TaskPlanProgress plan={taskPlan} />
+          {queuePanel}
+          {errorBanner}
+          <PluginTrialTemplateStrip
+            translate={(key, fallback, options) => t(key, fallback ?? key, options)}
+            renderPluginIcon={(app, props) => <ComposerPluginIcon app={app} {...props} />}
+            key={controls.trialPluginName || 'plugin-trial'}
+            templates={controls.trialTemplates ?? []}
+            pluginName={controls.trialPluginName}
+            pluginApp={controls.trialPluginApp}
+            draft={value}
+            hasConversationContext={controls.hasConversationContext}
+            onApplyTemplate={applyTrialTemplate}
+            onRefinePrompt={
+              controls.onRefineTrialPrompt
+                ? draft =>
+                    controls.onRefineTrialPrompt?.({
+                      pluginName: controls.trialPluginName ?? '',
+                      draft,
+                      templates: controls.trialTemplates ?? [],
+                    }) ?? Promise.reject(new Error('AI refinement unavailable'))
+                : undefined
+            }
+            onApplyRefinedPrompt={applyRefinedPrompt}
+            onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
+          />
+          {(contextHeader || (displayedGoal && !goalDraftActive)) && (
+            <div
+              data-testid="composer-context-rail"
+              className={[
+                'mb-2 min-w-0 items-center divide-x divide-border/70 overflow-hidden rounded-xl border border-border/60 bg-muted/45 px-1 [&>*]:min-w-0 [&>*]:overflow-hidden',
+                contextHeader && displayedGoal && !goalDraftActive
+                  ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                  : 'flex',
+              ].join(' ')}
+            >
+              {displayedGoal && !goalDraftActive && (
+                <GoalStatusBar
+                  integrated
+                  goal={displayedGoal}
+                  continuing={goalContinuing}
+                  executionStatus={goalExecutionStatus}
+                  onEditGoal={onEditGoal}
+                  onPauseGoal={onPauseGoal}
+                  onResumeGoal={onResumeGoal}
+                  onClearGoal={onClearGoal}
+                />
+              )}
+              {contextHeader}
+            </div>
+          )}
+          <ProjectChatComposer
+            ref={composerRef}
+            {...composerProps}
+            pluginPickerIconOnly={pluginPickerIconOnly}
+            models={controls.models}
+            selectedModel={controls.selectedModel}
+            activeModel={controls.activeModel}
+            selectedModelOptions={controls.selectedModelOptions}
+            modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
+            onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
+            isModelSelectionReady={controls.isModelSelectionReady ?? true}
+            attachments={controls.attachments}
+            codeComments={codeComments}
+            uploadingFiles={controls.uploadingFiles}
+            attachmentErrors={controls.errors}
+            contextUsage={controls.contextUsage}
+            onSelectModel={model => requestModelSelection(model)}
+            onSelectModelAndOptions={(model, options) => requestModelSelection(model, options)}
+            onSelectModelOption={controls.setSelectedModelOption}
+            onBlockedModelSelect={controls.onBlockedModelSelect}
+            onFileSelect={files => controls.handleFileSelect(files)}
+            planModeActive={planModeActive}
+            onSetPlanMode={handleSetPlanMode}
+            onClearPlanMode={handleClearPlanMode}
+            onSetGoal={onSetGoal}
+            onConfigureSupervisor={onConfigureSupervisor}
+            supervisorEnabled={supervisorEnabled}
+            supervisorPending={supervisorPending}
+            onCompactContext={handleCompactContext}
+            goalDraftActive={goalDraftActive}
+            onCancelGoalDraft={onCancelGoalDraft}
+            onRemoveAttachment={attachmentId => {
+              void controls.removeAttachment(attachmentId)
+            }}
+            onClearCodeComments={onClearCodeComments}
+            projectWork={
+              projectWork ?? {
+                projects: [],
+                devices: [],
+                runtimeWork: null,
+                currentProject: null,
+                currentProjectId: undefined,
+                currentStandaloneDeviceId: null,
+                selectedDeviceWorkspaceId: null,
+                pendingProjectWorkspaceProjectId: null,
+                executionMode: 'current_workspace',
+                executionModeLocked: false,
+                onSelectProject: () => {},
+                onSelectStandaloneDevice: () => {},
+                onSelectProjectWorkspace: () => {},
+                onBindProjectWorkspace: () => {},
+                onExecutionModeChange: () => {},
+                onCreateProjectMode: undefined,
+              }
+            }
+            projectPhrases={projectQuickPhrases}
+            showProjectWorkBar={showProjectWorkBar}
+            showExecutionTools={showExecutionTools}
+            projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+            projectWorkBar={projectWorkBar}
+            projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+            projectWorkBarEndContext={projectWorkBarEndContext}
+            modelSelectorOverride={modelSelectorOverride}
+            onListLocalSkills={controls.listLocalSkills}
+            onListLocalApps={controls.listLocalApps}
+            isStreaming={isStreaming}
+            onPause={onPause}
+            showWorkspaceMenu={showWorkspaceMenu}
+            collapseWhenIdle={collapseWhenIdle}
+            inputLeadingContext={inputLeadingContext}
+            onDismissInputLeadingContext={onDismissInputLeadingContext}
+            toolbarLeadingContext={toolbarLeadingContext}
+          />
+          {queueResumeDialog}
+          {modelSwitchWarningDialog}
+        </div>
+      </PluginTrialSelectionContext.Provider>
+    )
+  }
+
+  return (
+    <PluginTrialSelectionContext.Provider value={controls.showTrialGuide}>
       <div className="w-full">
         <TaskPlanProgress plan={taskPlan} />
         {queuePanel}
         {errorBanner}
         <PluginTrialTemplateStrip
+          translate={(key, fallback, options) => t(key, fallback ?? key, options)}
+          renderPluginIcon={(app, props) => <ComposerPluginIcon app={app} {...props} />}
           key={controls.trialPluginName || 'plugin-trial'}
           templates={controls.trialTemplates ?? []}
           pluginName={controls.trialPluginName}
@@ -923,185 +786,53 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onApplyRefinedPrompt={applyRefinedPrompt}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
-        {(contextHeader || (displayedGoal && !goalDraftActive)) && (
-          <div
-            data-testid="composer-context-rail"
-            className={[
-              'mb-2 min-w-0 items-center divide-x divide-border/70 overflow-hidden rounded-xl border border-border/60 bg-muted/45 px-1 [&>*]:min-w-0 [&>*]:overflow-hidden',
-              contextHeader && displayedGoal && !goalDraftActive
-                ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                : 'flex',
-            ].join(' ')}
-          >
-            {displayedGoal && !goalDraftActive && (
-              <GoalStatusBar
-                integrated
-                goal={displayedGoal}
-                continuing={goalContinuing}
-                executionStatus={goalExecutionStatus}
-                onEditGoal={onEditGoal}
-                onPauseGoal={onPauseGoal}
-                onResumeGoal={onResumeGoal}
-                onClearGoal={onClearGoal}
-              />
-            )}
-            {contextHeader}
-          </div>
+        {displayedGoal && !goalDraftActive && (
+          <GoalStatusBar
+            goal={displayedGoal}
+            continuing={goalContinuing}
+            executionStatus={goalExecutionStatus}
+            onEditGoal={onEditGoal}
+            onPauseGoal={onPauseGoal}
+            onResumeGoal={onResumeGoal}
+            onClearGoal={onClearGoal}
+          />
         )}
-        <ProjectChatComposer
+        <CompactChatComposer
           ref={composerRef}
           {...composerProps}
-          pluginPickerIconOnly={pluginPickerIconOnly}
-          models={controls.models}
-          selectedModel={controls.selectedModel}
-          activeModel={controls.activeModel}
-          selectedModelOptions={controls.selectedModelOptions}
-          modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
-          onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
-          isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
           codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
-          contextUsage={controls.contextUsage}
-          onSelectModel={model => requestModelSelection(model)}
-          onSelectModelAndOptions={(model, options) => requestModelSelection(model, options)}
-          onSelectModelOption={controls.setSelectedModelOption}
-          onBlockedModelSelect={controls.onBlockedModelSelect}
-          onFileSelect={files => {
-            void controls.handleFileSelect(files)
-          }}
+          onFileSelect={files => controls.handleFileSelect(files)}
           planModeActive={planModeActive}
           onSetPlanMode={handleSetPlanMode}
           onClearPlanMode={handleClearPlanMode}
           onSetGoal={onSetGoal}
-          onConfigureSupervisor={onConfigureSupervisor}
-          supervisorEnabled={supervisorEnabled}
-          supervisorPending={supervisorPending}
-          onCompactContext={handleCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}
           onRemoveAttachment={attachmentId => {
             void controls.removeAttachment(attachmentId)
           }}
           onClearCodeComments={onClearCodeComments}
-          projectWork={
-            projectWork ?? {
-              projects: [],
-              devices: [],
-              runtimeWork: null,
-              currentProject: null,
-              currentProjectId: undefined,
-              currentStandaloneDeviceId: null,
-              selectedDeviceWorkspaceId: null,
-              pendingProjectWorkspaceProjectId: null,
-              executionMode: 'current_workspace',
-              executionModeLocked: false,
-              onSelectProject: () => {},
-              onSelectStandaloneDevice: () => {},
-              onSelectProjectWorkspace: () => {},
-              onBindProjectWorkspace: () => {},
-              onExecutionModeChange: () => {},
-              onCreateProjectMode: undefined,
-            }
-          }
-          projectPhrases={projectQuickPhrases}
-          showProjectWorkBar={showProjectWorkBar}
-          showExecutionTools={showExecutionTools}
-          projectWorkBarMiddleContext={projectWorkBarMiddleContext}
-          projectWorkBarTrailingContext={projectWorkBarTrailingContext}
-          projectWorkBarEndContext={projectWorkBarEndContext}
-          modelSelectorOverride={modelSelectorOverride}
           onListLocalSkills={controls.listLocalSkills}
           onListLocalApps={controls.listLocalApps}
+          models={controls.models}
+          selectedModel={controls.selectedModel}
+          activeModel={controls.activeModel}
+          selectedModelOptions={controls.selectedModelOptions}
+          onSelectModel={model => requestModelSelection(model)}
+          onSelectModelOption={controls.setSelectedModelOption}
+          onBlockedModelSelect={controls.onBlockedModelSelect}
+          isModelSelectionReady={controls.isModelSelectionReady ?? true}
           isStreaming={isStreaming}
           onPause={onPause}
-          showWorkspaceMenu={showWorkspaceMenu}
-          collapseWhenIdle={collapseWhenIdle}
-          inputLeadingContext={inputLeadingContext}
-          onDismissInputLeadingContext={onDismissInputLeadingContext}
-          toolbarLeadingContext={toolbarLeadingContext}
+          projectPhrases={projectQuickPhrases}
         />
         {queueResumeDialog}
         {modelSwitchWarningDialog}
       </div>
-    )
-  }
-
-  return (
-    <div className="w-full">
-      <TaskPlanProgress plan={taskPlan} />
-      {queuePanel}
-      {errorBanner}
-      <PluginTrialTemplateStrip
-        key={controls.trialPluginName || 'plugin-trial'}
-        templates={controls.trialTemplates ?? []}
-        pluginName={controls.trialPluginName}
-        pluginApp={controls.trialPluginApp}
-        draft={value}
-        hasConversationContext={controls.hasConversationContext}
-        onApplyTemplate={applyTrialTemplate}
-        onRefinePrompt={
-          controls.onRefineTrialPrompt
-            ? draft =>
-                controls.onRefineTrialPrompt?.({
-                  pluginName: controls.trialPluginName ?? '',
-                  draft,
-                  templates: controls.trialTemplates ?? [],
-                }) ?? Promise.reject(new Error('AI refinement unavailable'))
-            : undefined
-        }
-        onApplyRefinedPrompt={applyRefinedPrompt}
-        onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
-      />
-      {displayedGoal && !goalDraftActive && (
-        <GoalStatusBar
-          goal={displayedGoal}
-          continuing={goalContinuing}
-          executionStatus={goalExecutionStatus}
-          onEditGoal={onEditGoal}
-          onPauseGoal={onPauseGoal}
-          onResumeGoal={onResumeGoal}
-          onClearGoal={onClearGoal}
-        />
-      )}
-      <CompactChatComposer
-        ref={composerRef}
-        {...composerProps}
-        attachments={controls.attachments}
-        codeComments={codeComments}
-        uploadingFiles={controls.uploadingFiles}
-        attachmentErrors={controls.errors}
-        onFileSelect={files => {
-          void controls.handleFileSelect(files)
-        }}
-        planModeActive={planModeActive}
-        onSetPlanMode={handleSetPlanMode}
-        onClearPlanMode={handleClearPlanMode}
-        onSetGoal={onSetGoal}
-        goalDraftActive={goalDraftActive}
-        onCancelGoalDraft={onCancelGoalDraft}
-        onRemoveAttachment={attachmentId => {
-          void controls.removeAttachment(attachmentId)
-        }}
-        onClearCodeComments={onClearCodeComments}
-        onListLocalSkills={controls.listLocalSkills}
-        onListLocalApps={controls.listLocalApps}
-        models={controls.models}
-        selectedModel={controls.selectedModel}
-        activeModel={controls.activeModel}
-        selectedModelOptions={controls.selectedModelOptions}
-        onSelectModel={model => requestModelSelection(model)}
-        onSelectModelOption={controls.setSelectedModelOption}
-        onBlockedModelSelect={controls.onBlockedModelSelect}
-        isModelSelectionReady={controls.isModelSelectionReady ?? true}
-        isStreaming={isStreaming}
-        onPause={onPause}
-        projectPhrases={projectQuickPhrases}
-      />
-      {queueResumeDialog}
-      {modelSwitchWarningDialog}
-    </div>
+    </PluginTrialSelectionContext.Provider>
   )
 })
 
@@ -1202,11 +933,13 @@ function QueueResumeDialog({
 function ModelSwitchWarningDialog({
   t,
   targetModelLabel,
+  continueInNewConversation,
   onCancel,
   onConfirm,
 }: {
   t: ReturnType<typeof useTranslation>['t']
   targetModelLabel: string
+  continueInNewConversation: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -1224,23 +957,36 @@ function ModelSwitchWarningDialog({
         className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
       >
         <h2 id="model-switch-warning-dialog-title" className="heading-small text-text-primary">
-          {t('workbench.model_switch_warning_title', 'Switch model?')}
+          {continueInNewConversation
+            ? t('workbench.model_switch_new_conversation_title', 'Continue in a new conversation?')
+            : t('workbench.model_switch_warning_title', 'Switch model?')}
         </h2>
         <p
           id="model-switch-warning-dialog-description"
           className="mt-2 text-sm leading-5 text-text-secondary"
         >
-          {t(
-            'workbench.model_switch_warning_description',
-            'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
-            { model: targetModelLabel }
-          )}
+          {continueInNewConversation
+            ? t(
+                'workbench.model_switch_new_conversation_description',
+                '{{model}} uses a different model provider, so it cannot continue this Codex thread directly.',
+                { model: targetModelLabel }
+              )
+            : t(
+                'workbench.model_switch_warning_description',
+                'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
+                { model: targetModelLabel }
+              )}
         </p>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {t(
-            'workbench.model_switch_warning_effect',
-            'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
-          )}
+          {continueInNewConversation
+            ? t(
+                'workbench.model_switch_new_conversation_effect',
+                'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
+              )
+            : t(
+                'workbench.model_switch_warning_effect',
+                'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
+              )}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button
@@ -1260,7 +1006,9 @@ function ModelSwitchWarningDialog({
             onClick={onConfirm}
             className="h-8 rounded-lg bg-text-primary px-4 text-sm text-background hover:bg-text-primary/90"
           >
-            {t('workbench.model_switch_warning_confirm', 'Switch model')}
+            {continueInNewConversation
+              ? t('workbench.model_switch_new_conversation_confirm', 'Continue in new conversation')
+              : t('workbench.model_switch_warning_confirm', 'Switch model')}
           </Button>
         </div>
       </div>

@@ -190,6 +190,22 @@ impl RuntimeWorkRpcHandler {
         } else {
             transcript.items.push(item);
         }
+        let progress = (notification.method == "item/completed").then(|| {
+            transcript
+                .items
+                .iter()
+                .filter_map(|item| {
+                    (string_field(item, "type").as_deref() == Some("agentMessage"))
+                        .then(|| string_field(item, "text"))
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        });
+        drop(active_items);
+        if let Some(progress) = progress.filter(|text| !text.is_empty()) {
+            self.project_queue_progress(local_task_id, &progress);
+        }
     }
 
     fn record_active_codex_plan_delta(&self, local_task_id: &str, turn_id: &str, params: &Value) {
@@ -468,21 +484,23 @@ impl RuntimeWorkRpcHandler {
             if notification_turn_id == active_turn.turn_id {
                 true
             } else {
-                log_executor_event(
-                    "runtime work routes non-active turn notification",
-                    &[
-                        ("thread_id", thread_id.clone()),
-                        ("active_turn_id", active_turn.turn_id),
-                        ("notification_turn_id", notification_turn_id.to_owned()),
-                    ],
-                );
+                if codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "runtime work routes non-active turn notification",
+                        &[
+                            ("thread_id", thread_id.clone()),
+                            ("active_turn_id", active_turn.turn_id),
+                            ("notification_turn_id", notification_turn_id.to_owned()),
+                        ],
+                    );
+                }
                 false
             }
         } else {
             false
         };
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
-            self.register_codex_thread_workspace_root(&started_thread_id, &route_request);
+            self.register_codex_thread_workspace_root(&started_thread_id, &route_request, false);
         }
         drop(routing);
 

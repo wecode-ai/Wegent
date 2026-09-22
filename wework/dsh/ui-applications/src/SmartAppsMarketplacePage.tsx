@@ -1,3 +1,4 @@
+import { beginSmartAppPublication } from '@/features/harness-apps/smartAppOperations'
 import {
   useCallback,
   useEffect,
@@ -2307,6 +2308,7 @@ function SmartAppPublishDialog({
     }
     setPublishing(true)
     setError(null)
+    const attempt = beginSmartAppPublication()
     try {
       const metadataBase = {
         name: manifest.name,
@@ -2361,16 +2363,18 @@ function SmartAppPublishDialog({
         )
         try {
           await harnessAppsApi.upload(exported.archivePath, initialized.uploadUrl)
-          await api.completeSubmission(initialized.submissionId)
+          attempt.submitted(await api.completeSubmission(initialized.submissionId))
         } catch (value) {
+          attempt.fail()
           await api.cancelSubmission(initialized.submissionId).catch(() => undefined)
           throw value
         }
       } else {
-        await api.publish(file!, metadata)
+        attempt.submitted(await api.publish(file!, metadata))
       }
       onPublished()
     } catch (value) {
+      attempt.fail()
       setError(
         getSmartAppErrorMessage(
           value,

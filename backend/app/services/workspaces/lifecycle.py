@@ -6,7 +6,7 @@
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate
+from app.services.cloud_project_visibility import readable_workspace_ids
 from app.services.execution_environment_initialization import (
     preparing_execution_environment,
 )
@@ -114,12 +115,7 @@ class WorkspaceLifecycleService:
     def list_accessible(
         self, db: Session, user_id: int
     ) -> list[CollaborationWorkspace]:
-        workspace_ids = select(ResourceMember.resource_id).where(
-            ResourceMember.resource_type == ResourceType.WORKSPACE.value,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
+        workspace_ids = readable_workspace_ids(user_id)
         kinds = (
             db.query(Kind)
             .filter(
@@ -214,7 +210,8 @@ class WorkspaceLifecycleService:
             is_default=next_default,
             execution_environment=(
                 preparing_execution_environment(
-                    values.execution_environment.model_dump()
+                    values.execution_environment.model_dump(),
+                    current.execution_environment,
                 )
                 if values.execution_environment is not None
                 else None

@@ -52,6 +52,7 @@ function projectAgent(
     id: "project-agent-1",
     name: "已有智能体",
     runtime: "wegent",
+    wegent_team_id: 12,
     status: "active",
     version: 1,
     ...values,
@@ -60,8 +61,11 @@ function projectAgent(
 
 function createApi(options?: {
   agents?: WorkspaceProjectAgent[];
+  resourceAgents?: CollaborationOwnedAgent[];
   workspaceAgents?: CollaborationOwnedAgent[];
 }) {
+  const rows = [...(options?.agents ?? [projectAgent()])];
+  const list = vi.fn(async () => rows);
   const create = vi.fn(async (_projectId, input: Record<string, unknown>) =>
     projectAgent({
       id: input.runtime === "wegent" ? "created-wegent" : "created-codex",
@@ -69,19 +73,24 @@ function createApi(options?: {
       ...input,
     }),
   );
-  const update = vi.fn(async (_projectId, agentId) =>
-    projectAgent({ id: agentId, status: "archived", version: 2 }),
+  const update = vi.fn(
+    async (_projectId, agentId, input: Record<string, unknown>) => {
+      const index = rows.findIndex((row) => row.id === agentId);
+      const next = projectAgent({ ...rows[index], ...input, version: 2 });
+      if (index >= 0) rows[index] = next;
+      return next;
+    },
   );
   const api = {
     projects: {},
     resources: {
       list: vi.fn(async () => ({
-        agents: [],
+        agents: options?.resourceAgents ?? [],
         execution_environments: [],
       })),
     },
     agents: {
-      list: vi.fn(async () => options?.agents ?? [projectAgent()]),
+      list,
       create,
       update,
     },
@@ -106,7 +115,7 @@ function createApi(options?: {
       ),
     },
   } as unknown as SharedWorkspaceApi;
-  return { api, create, update };
+  return { api, create, list, update };
 }
 
 function element(testId: string): HTMLElement {
@@ -137,6 +146,7 @@ async function change(testId: string, value: string) {
 }
 
 const hostedCreationHost: ProjectAgentConfigurationHost = {
+  supportsExistingAgentSelection: false,
   renderAgentCreator({ namespace, onCreated, workspaceName }) {
     return (
       <button
@@ -150,6 +160,63 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
       </button>
     );
   },
+  renderLocalAgentCreator({ onCreated, projectId }) {
+    return (
+      <button
+        data-project-id={projectId}
+        data-testid="hosted-local-agent-create"
+        onClick={() => void onCreated()}
+        type="button"
+      >
+        创建本地智能体
+      </button>
+    );
+  },
+  renderLocalAgentEditor({ onClose, onSaved, projectId, resourceId }) {
+    return (
+      <div
+        data-project-id={projectId}
+        data-resource-id={resourceId}
+        data-testid="hosted-local-agent-editor"
+      >
+        <button
+          data-testid="hosted-local-agent-save"
+          onClick={() => void onSaved()}
+          type="button"
+        >
+          保存
+        </button>
+        <button onClick={onClose} type="button">
+          关闭
+        </button>
+      </div>
+    );
+  },
+  renderAgentEditor({ agent, namespace, onClose, onSaved, workspaceName }) {
+    return (
+      <div data-testid="hosted-agent-editor">
+        <button
+          data-testid="hosted-agent-save"
+          data-namespace={namespace}
+          data-team-id={agent.teamId}
+          data-workspace-name={workspaceName}
+          onClick={() =>
+            void onSaved({ name: "重命名智能体", teamId: agent.teamId })
+          }
+          type="button"
+        >
+          保存
+        </button>
+        <button
+          data-testid="hosted-agent-editor-close"
+          onClick={onClose}
+          type="button"
+        >
+          关闭
+        </button>
+      </div>
+    );
+  },
   renderDialog({ children, testIds }) {
     return <div data-testid={testIds.dialog}>{children}</div>;
   },
@@ -159,7 +226,6 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
         {options.map((option) => (
           <button
             data-testid={option.testId}
-            disabled={option.disabled}
             key={option.value}
             onClick={() => onChange(option.value)}
             type="button"
@@ -228,6 +294,43 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
+  async function renderHosted(
+    api: SharedWorkspaceApi,
+    options: {
+      onAgentsChange?(): void;
+      scope?: "project" | "workspace";
+      target?: CollaborationProject;
+    } = {},
+  ) {
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={hostedCreationHost}
+          project={options.target ?? project}
+          resourceContext={{
+            name: "研发空间",
+            namespace: "engineering",
+          }}
+          onAgentsChange={options.onAgentsChange}
+          onError={vi.fn()}
+          scope={options.scope}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+  }
+
+  it("separates a shared Agent source from its executor type", async () => {
+    const { api } = createApi();
+    await render(api);
+
+    const text = element("project-agent-row-project-agent-1").textContent ?? "";
+    expect(text).toContain("执行器由智能体定义");
+    expect(text).toContain("共享智能体");
+    expect(text).not.toContain("Wegent");
+  });
+
   it("adds an existing Agent without exposing a duplicate inline creator", async () => {
     const { api, create } = createApi();
     await render(api);
@@ -254,18 +357,44 @@ describe("ProjectAgentConfiguration", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a project Agent through the resource-library host and binds it to the project", async () => {
-    const { api, create } = createApi({ workspaceAgents: [] });
+  it("opens and consumes a host-requested add action once", async () => {
+    const { api } = createApi();
+    const onConsumed = vi.fn();
+
     await act(async () => {
       root.render(
         <ProjectAgentConfiguration
           api={api}
-          host={hostedCreationHost}
+          openComposerRequestId={17}
+          onOpenComposerRequestConsumed={onConsumed}
           project={project}
-          resourceContext={{
-            name: "研发空间",
-            namespace: "engineering",
-          }}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+
+    expect(onConsumed).toHaveBeenCalledWith(17);
+    expect(element("project-agent-dialog")).toBeTruthy();
+  });
+
+  it("excludes cloud Agent resources from local projects", async () => {
+    const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
+    const { api } = createApi({
+      resourceAgents: [cloudAgent],
+      workspaceAgents: [],
+    });
+    const localProject = { ...project, project_store: "local" as const };
+    const host = {
+      ...hostedCreationHost,
+      supportsExistingAgentSelection: true,
+    };
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={host}
+          project={localProject}
           onError={vi.fn()}
           translate={(_key, fallback) => fallback}
         />,
@@ -273,7 +402,26 @@ describe("ProjectAgentConfiguration", () => {
     });
 
     await click("project-agent-add");
-    await click("project-agent-mode-create");
+    expect(
+      container.querySelector('[data-testid="project-agent-wegent-team"]'),
+    ).toBeNull();
+  });
+
+  it("creates a project Agent through the resource-library host and binds it to the project", async () => {
+    const { api, create } = createApi({ workspaceAgents: [] });
+    await renderHosted(api);
+
+    await click("project-agent-add");
+    // Hosted creation replaces existing-Agent selection entirely.
+    for (const testId of [
+      "project-agent-dialog",
+      "project-agent-mode-existing",
+      "project-agent-mode-create",
+      "project-agent-wegent-team",
+      "project-agent-wegent-create",
+    ]) {
+      expect(document.querySelector(`[data-testid="${testId}"]`)).toBeNull();
+    }
     expect(element("hosted-agent-create").dataset.namespace).toBe(
       "engineering",
     );
@@ -288,6 +436,129 @@ describe("ProjectAgentConfiguration", () => {
       wegentTeamId: 91,
     });
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
+  });
+
+  it("reuses the root local-Agent creator in local workspace settings", async () => {
+    const onAgentsChange = vi.fn();
+    const { api, create, list } = createApi({ agents: [] });
+    await renderHosted(api, {
+      onAgentsChange,
+      scope: "workspace",
+      target: {
+        ...project,
+        id: "local-workspace",
+        project_store: "local",
+      },
+    });
+
+    await click("project-agent-add");
+
+    expect(element("hosted-local-agent-create")).toBeTruthy();
+    expect(
+      element("hosted-local-agent-create").dataset.projectId,
+    ).toBeUndefined();
+    expect(
+      document.querySelector('[data-testid="hosted-agent-create"]'),
+    ).toBeNull();
+
+    await click("hosted-local-agent-create");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(onAgentsChange).toHaveBeenCalledOnce();
+    expect(
+      document.querySelector('[data-testid="hosted-local-agent-create"]'),
+    ).toBeNull();
+  });
+
+  it("creates a local project Agent in the current project", async () => {
+    const onAgentsChange = vi.fn();
+    const { api, create, list } = createApi({ agents: [] });
+    await renderHosted(api, {
+      onAgentsChange,
+      target: {
+        ...project,
+        project_store: "local",
+      },
+    });
+
+    await click("project-agent-add");
+
+    expect(element("hosted-local-agent-create").dataset.projectId).toBe(
+      project.id,
+    );
+    expect(
+      document.querySelector('[data-testid="hosted-agent-create"]'),
+    ).toBeNull();
+
+    await click("hosted-local-agent-create");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(onAgentsChange).toHaveBeenCalledOnce();
+  });
+
+  it("edits the Agent resource behind a configured project Agent", async () => {
+    const onAgentsChange = vi.fn();
+    const { api, update } = createApi({
+      agents: [projectAgent({ wegent_team_id: 12 })],
+      workspaceAgents: [],
+    });
+    await renderHosted(api, { onAgentsChange });
+
+    await click("project-agent-edit-project-agent-1");
+    expect(element("hosted-agent-save").dataset.teamId).toBe("12");
+    expect(element("hosted-agent-save").dataset.namespace).toBe("engineering");
+
+    await click("hosted-agent-save");
+
+    expect(update).toHaveBeenCalledWith(project.id, "project-agent-1", {
+      version: 1,
+      name: "重命名智能体",
+    });
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "重命名智能体",
+    );
+    expect(
+      document.querySelector('[data-testid="hosted-agent-editor"]'),
+    ).toBeNull();
+    expect(onAgentsChange).toHaveBeenCalled();
+  });
+
+  it("reloads workspace Agents after an edit instead of updating the binding", async () => {
+    const { api, list, update } = createApi({
+      agents: [projectAgent({ wegent_team_id: 12 })],
+      workspaceAgents: [],
+    });
+    await renderHosted(api, { scope: "workspace" });
+
+    await click("project-agent-edit-project-agent-1");
+    await click("hosted-agent-save");
+
+    // The workspace binding update removes the Agent, so it must stay unused.
+    expect(update).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(
+      document.querySelector('[data-testid="hosted-agent-editor"]'),
+    ).toBeNull();
+  });
+
+  it("routes project Agent editing through the local Agent editor", async () => {
+    const { api } = createApi({
+      agents: [projectAgent({ runtime: "claude_code", wegent_team_id: null })],
+      workspaceAgents: [],
+    });
+    await renderHosted(api, {
+      target: { ...project, id: "local-project", project_store: "local" },
+    });
+
+    await click("project-agent-edit-project-agent-1");
+    expect(element("hosted-local-agent-editor").dataset.resourceId).toBe(
+      "project-agent-1",
+    );
+    expect(
+      document.querySelector('[data-testid="hosted-agent-editor"]'),
+    ).toBeNull();
   });
 
   it("archives an existing project agent with optimistic concurrency", async () => {
@@ -349,6 +620,7 @@ describe("ProjectAgentConfiguration", () => {
       agents: [
         projectAgent({
           runtime: "claude_code",
+          wegent_team_id: null,
           additionalSkills: [{ name: "review", namespace: "codex" }],
           mcpServers: {
             repository: { command: "node", args: ["server.mjs"] },
@@ -361,6 +633,27 @@ describe("ProjectAgentConfiguration", () => {
     expect(
       element("project-agent-capabilities-project-agent-1").textContent,
     ).toContain("1 Skill · 项目空间 MCP + 1 MCP");
+  });
+
+  it("shows an Agent display name without replacing its resource name", async () => {
+    const { api } = createApi({
+      agents: [
+        projectAgent({
+          displayName: "本地能力智能体",
+          name: "local-capability-agent",
+          runtime: "codex",
+          wegent_team_id: null,
+        }),
+      ],
+    });
+    await render(api);
+
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "本地能力智能体",
+    );
+    expect(
+      element("project-agent-row-project-agent-1").textContent,
+    ).not.toContain("local-capability-agent");
   });
 
   it("keeps creation separate from the configured Agent list", async () => {

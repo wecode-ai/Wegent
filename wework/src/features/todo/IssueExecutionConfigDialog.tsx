@@ -232,6 +232,8 @@ export function IssueExecutionConfigDialog({
 
   return (
     <CloudTodoModal
+      onSubmit={confirm}
+      pending={saving}
       title={t('todo.execution_config_dialog_title', '补全运行配置')}
       onClose={onClose}
       width="wide"
@@ -364,10 +366,9 @@ export function IssueExecutionConfigDialog({
           {t('common.cancel', '取消')}
         </button>
         <button
-          type="button"
+          type="submit"
           data-testid="issue-execution-config-confirm"
           disabled={!canConfirm}
-          onClick={() => void confirm()}
           className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
         >
           {saving

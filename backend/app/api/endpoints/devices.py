@@ -12,6 +12,7 @@ Online status is managed via Redis with heartbeat mechanism.
 import logging
 import os
 import posixpath
+from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -878,6 +879,10 @@ class DeviceSessionResponse(BaseModel):
     transport: Literal["url", "socketio"] = Field(
         default="url",
         description="Browser transport for the interactive session",
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="UTC expiration time for the interactive session",
     )
 
 

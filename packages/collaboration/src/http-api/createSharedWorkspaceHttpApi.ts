@@ -9,6 +9,8 @@ import {
   mapCollaborationPlatformResourcesDto,
   mapCollaborationWorkspaceDto,
   mapCollaborationWorkspaceNavigationContextDto,
+  mapWorkspaceGitBranchDto,
+  mapWorkspaceGitRepositoryDto,
 } from "../dto-mappers";
 import type {
   SharedCollaborationResourcesApi,
@@ -16,6 +18,7 @@ import type {
   SharedWorkspaceAgentsApi,
   SharedWorkspaceAssignmentsApi,
   SharedWorkspaceCommentsApi,
+  SharedWorkspaceGitRepositoriesApi,
   SharedWorkspaceProjectsApi,
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
@@ -36,6 +39,7 @@ export interface SharedWorkspaceHttpTransport {
 export interface SharedWorkspaceHttpApi {
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
+  gitRepositories: SharedWorkspaceGitRepositoriesApi;
   projects: Pick<
     SharedWorkspaceProjectsApi,
     | "listCollaborationGroups"
@@ -52,6 +56,9 @@ export interface SharedWorkspaceHttpApi {
 function encoded(value: string | number): string {
   return encodeURIComponent(String(value));
 }
+
+// Matches the backend /git/repositories page-size cap.
+const GIT_REPOSITORY_FETCH_LIMIT = 5000;
 
 function snakeCaseKey(key: string): string {
   return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -361,6 +368,37 @@ export function createSharedWorkspaceHttpApi(
         return mapCollaborationPlatformResourcesDto(
           await transport.get("/v1/resources"),
         );
+      },
+      async removeAgent(agent) {
+        if (agent.team_id == null) {
+          throw new Error("Cloud agent is missing its team id");
+        }
+        const query = new URLSearchParams({
+          force: "true",
+          confirm_name: agent.name,
+        });
+        await transport.delete(
+          `/teams/${encoded(agent.team_id)}?${query.toString()}`,
+        );
+      },
+    },
+    gitRepositories: {
+      async list() {
+        const items = await transport.get<unknown[]>(
+          `/git/repositories?limit=${GIT_REPOSITORY_FETCH_LIMIT}`,
+        );
+        return items.map((item) => mapWorkspaceGitRepositoryDto(record(item)));
+      },
+      async listBranches(repository) {
+        const query = new URLSearchParams({
+          git_repo: repository.fullName,
+          type: repository.provider,
+          git_domain: repository.gitDomain,
+        });
+        const items = await transport.get<unknown[]>(
+          `/git/repositories/branches?${query.toString()}`,
+        );
+        return items.map((item) => mapWorkspaceGitBranchDto(record(item)));
       },
     },
     projects: {

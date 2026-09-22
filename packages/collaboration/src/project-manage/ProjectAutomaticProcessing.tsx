@@ -18,7 +18,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CollaborationTranslate } from "../i18n";
 import type {
@@ -32,6 +32,7 @@ import type {
   CollaborationMember,
   CollaborationProject,
 } from "../types";
+import { useAutomaticProcessingRules } from "./useAutomaticProcessingRules";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
 
 type TriggerKind = "created" | "tag_added" | "external" | "schedule";
@@ -322,7 +323,12 @@ export function ProjectAutomaticProcessing({
   locale: "zh-CN" | "en";
   translate: CollaborationTranslate;
 }) {
-  const [rules, setRules] = useState<WorkspaceAutomationRule[]>([]);
+  const {
+    rules,
+    loading,
+    error: rulesError,
+    load,
+  } = useAutomaticProcessingRules(api.automations, project.id);
   const [groups, setGroups] = useState<CollaborationGroup[]>([]);
   const [availableAgents, setAvailableAgents] =
     useState<CollaborationAgent[]>(agents);
@@ -331,53 +337,111 @@ export function ProjectAutomaticProcessing({
   const [editing, setEditing] = useState(false);
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
   const [targetQuery, setTargetQuery] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [hooksLoading, setHooksLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [actionError, setError] = useState("");
+  const [optionsError, setOptionsError] = useState("");
+  const [hooksError, setHooksError] = useState("");
+  const translateRef = useRef(translate);
+  translateRef.current = translate;
+  const needsHooks = editing && draft.trigger === "external";
+  const error =
+    actionError ||
+    optionsError ||
+    (needsHooks && hooksError) ||
+    (rulesError
+      ? rulesError instanceof Error
+        ? rulesError.message
+        : translate("todo.automatic_processing_load_failed", "加载自动处理失败")
+      : !api.automations
+        ? translate(
+            "todo.automatic_processing_unavailable",
+            "当前项目暂不支持自动处理。",
+          )
+        : "");
   const canManage =
     project.access_role === "Owner" || project.access_role === "Maintainer";
 
-  const load = useCallback(async () => {
-    if (!api.automations) {
-      setLoading(false);
-      setError(
-        translate(
-          "todo.automatic_processing_unavailable",
-          "当前项目暂不支持自动处理。",
-        ),
-      );
-      return;
-    }
-    setLoading(true);
+  useEffect(() => {
+    setDraft(EMPTY_DRAFT);
+    setEditing(false);
+    setHooks([]);
+    setHooksError("");
     setError("");
-    try {
-      const [nextRules, nextGroups, nextAgents, nextHooks] = await Promise.all([
-        api.automations.list(project.id),
-        api.projects.listCollaborationGroups?.(project.id) ?? [],
-        api.agents.list(project.id),
-        api.incomingHooks?.list(project.id).catch(() => []) ?? [],
-      ]);
-      setRules(nextRules);
-      setGroups(nextGroups);
-      setAvailableAgents(nextAgents);
-      setHooks(nextHooks);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : translate(
-              "todo.automatic_processing_load_failed",
-              "加载自动处理失败",
-            ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [api, project.id, translate]);
+  }, [api, project.id]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let active = true;
+    setGroups([]);
+    setOptionsError("");
+    void Promise.all([
+      api.projects.listCollaborationGroups?.(project.id) ?? [],
+      api.agents.list(project.id),
+    ])
+      .then(([nextGroups, nextAgents]) => {
+        if (!active) return;
+        setGroups(nextGroups);
+        setAvailableAgents(nextAgents);
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setOptionsError(
+          cause instanceof Error
+            ? cause.message
+            : translateRef.current(
+                "todo.automatic_processing_load_failed",
+                "加载自动处理失败",
+              ),
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, project.id]);
+
+  useEffect(() => {
+    if (!needsHooks || !api.incomingHooks) {
+      setHooksLoading(false);
+      return;
+    }
+    let active = true;
+    setHooksLoading(true);
+    setHooksError("");
+    void api.incomingHooks
+      .list(project.id)
+      .then((nextHooks) => {
+        if (!active) return;
+        setHooks(nextHooks);
+        const hook = nextHooks[0];
+        if (hook)
+          setDraft((current) =>
+            current.hookId
+              ? current
+              : {
+                  ...current,
+                  hookId: hook.id,
+                  eventType: eventTypesForHook(hook)[0] ?? "",
+                },
+          );
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setHooksError(
+          cause instanceof Error
+            ? cause.message
+            : translateRef.current(
+                "todo.automatic_processing_load_failed",
+                "加载自动处理失败",
+              ),
+        );
+      })
+      .finally(() => {
+        if (active) setHooksLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api.incomingHooks, project.id, needsHooks]);
 
   useEffect(() => {
     setAvailableAgents(agents);
@@ -466,6 +530,7 @@ export function ProjectAutomaticProcessing({
             : translate("todo.trigger_external_event", "外部事件发生后");
   const valid = Boolean(
     targetAvailable &&
+    (draft.trigger !== "external" || (!hooksLoading && !hooksError)) &&
     (draft.trigger !== "tag_added" || draft.tag.trim()) &&
     (draft.trigger !== "schedule" || draft.cronExpression.trim()) &&
     (draft.trigger !== "external" || (draft.hookId && draft.eventType)),
@@ -861,7 +926,9 @@ export function ProjectAutomaticProcessing({
                 <legend className="mb-2 text-sm font-medium text-text-primary">
                   {translate("todo.when", "当发生")}
                 </legend>
-                {TRIGGER_OPTIONS.map((option, index) => {
+                {TRIGGER_OPTIONS.filter(
+                  (option) => option.kind !== "external" || api.incomingHooks,
+                ).map((option, index) => {
                   const selected = draft.trigger === option.kind;
                   const Icon = option.icon;
                   const localeIndex = locale === "zh-CN" ? 0 : 1;
@@ -1109,6 +1176,7 @@ export function ProjectAutomaticProcessing({
                           className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
                           data-testid="automatic-processing-hook"
                           id="automatic-processing-hook"
+                          disabled={hooksLoading}
                           value={draft.hookId}
                           onChange={(event) => {
                             const hook = hooks.find(
@@ -1124,7 +1192,9 @@ export function ProjectAutomaticProcessing({
                           }}
                         >
                           <option value="">
-                            {translate("common.select", "请选择")}
+                            {hooksLoading
+                              ? translate("common.loading", "加载中…")
+                              : translate("common.select", "请选择")}
                           </option>
                           {hooks.map((hook) => (
                             <option key={hook.id} value={hook.id}>
@@ -1144,6 +1214,7 @@ export function ProjectAutomaticProcessing({
                           className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
                           data-testid="automatic-processing-event"
                           id="automatic-processing-event"
+                          disabled={hooksLoading}
                           value={draft.eventType}
                           onChange={(event) =>
                             updateDraft({ eventType: event.target.value })

@@ -79,6 +79,22 @@ describe('RuntimeTaskLifecycleStore', () => {
     ).toBe(true)
   })
 
+  test('tracks task-local lifecycle revisions across a complete running cycle', () => {
+    const store = new RuntimeTaskLifecycleStore('task-revision-test')
+
+    expect(store.getTaskRevision(address)).toBe(0)
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+    const idleRevision = store.getTaskRevision(address)
+
+    store.executorStarted(address)
+    const runningRevision = store.getTaskRevision(address)
+    store.executorSettled(address)
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(runningRevision).toBeGreaterThan(idleRevision)
+    expect(store.getTaskRevision(address)).toBeGreaterThan(runningRevision)
+  })
+
   test('consumes a queued lifecycle block only after a stable transition', () => {
     const store = new RuntimeTaskLifecycleStore('queued-block-transition-test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
@@ -703,6 +719,55 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+  })
+
+  test('preserves a recovered Goal when an older completed transcript arrives after turn start', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'queued', goalStatus: 'active' }))
+    )
+    store.turnStarted(address, 'recovered-turn')
+    const before = store.getTask(address)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'previous-turn',
+            items: [],
+            status: 'completed',
+            completedAt: 1_786_676_400_000,
+          },
+        ],
+      }),
+      { preserveActiveTurn: true }
+    )
+
+    expect(store.getTask(address)).toEqual(before)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'recovered-turn',
+            items: [],
+            status: 'completed',
+            completedAt: 1_786_676_401_000,
+          },
+        ],
+      })
+    )
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.task?.completedAt).toBe(1_786_676_401_000)
   })
 
   test('ignores a stale running transcript after the current turn settles', () => {

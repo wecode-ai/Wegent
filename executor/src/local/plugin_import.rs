@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use fs2::FileExt;
 use futures_util::StreamExt;
 use reqwest::{redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
@@ -21,11 +20,12 @@ use uuid::Uuid;
 
 use crate::logging::log_executor_event;
 
+use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
+
 const MAX_PLUGIN_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_PLUGIN_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_PLUGIN_ARCHIVE_ENTRIES: usize = 5_000;
 const MAX_PLUGIN_COPY_URL_BYTES: usize = 8 * 1024;
-const PLUGIN_MUTATION_LOCK_FILE: &str = "plugin-mutations.lock";
 const PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
 const CODEX_PERSONAL_MARKETPLACE_ID: &str = "personal";
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
@@ -372,7 +372,7 @@ pub fn finalize_plugin_import(request: PluginImportMutationRequest) -> Result<()
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved);
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     let backup_root = plugin_import_backup_root(&marketplace_root, &request.rollback_id)?;
     if backup_root.exists() {
         fs::remove_dir_all(backup_root)
@@ -386,7 +386,7 @@ pub fn rollback_plugin_import(request: PluginImportMutationRequest) -> Result<()
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved);
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     restore_plugin_import(&marketplace_root, &request.rollback_id)
 }
 
@@ -407,7 +407,7 @@ pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), Stri
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved);
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     if !marketplace_root
         .join("plugins")
         .join(plugin_name)
@@ -432,7 +432,7 @@ pub fn unlink_plugin_release(request: UnlinkPluginReleaseRequest) -> Result<(), 
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved);
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     let mut links = load_plugin_cloud_links(&marketplace_root);
     links.retain(|link| link.local_plugin_name != plugin_name);
     write_plugin_cloud_links(&marketplace_root, links)
@@ -444,25 +444,30 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved);
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     let plugin_path = marketplace_root.join("plugins").join(plugin_name);
-    let metadata = fs::symlink_metadata(&plugin_path)
-        .map_err(|error| format!("Failed to inspect personal plugin: {error}"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err("Plugin is not a managed personal plugin directory".to_owned());
-    }
-    let canonical_plugin = plugin_path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
-    let canonical_plugins_root = marketplace_root
-        .join("plugins")
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve personal plugin directory: {error}"))?;
-    if canonical_plugin.parent() != Some(canonical_plugins_root.as_path())
-        || !canonical_plugin.join(".codex-plugin/plugin.json").is_file()
-    {
-        return Err("Plugin is not a managed personal plugin".to_owned());
-    }
+    let canonical_plugin = match fs::symlink_metadata(&plugin_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Plugin is not a managed personal plugin directory".to_owned());
+            }
+            let canonical_plugin = plugin_path
+                .canonicalize()
+                .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
+            let canonical_plugins_root = marketplace_root
+                .join("plugins")
+                .canonicalize()
+                .map_err(|error| format!("Failed to resolve personal plugin directory: {error}"))?;
+            if canonical_plugin.parent() != Some(canonical_plugins_root.as_path())
+                || !canonical_plugin.join(".codex-plugin/plugin.json").is_file()
+            {
+                return Err("Plugin is not a managed personal plugin".to_owned());
+            }
+            Some(canonical_plugin)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to inspect personal plugin: {error}")),
+    };
 
     let manifest_paths = [
         marketplace_root.join(".agents/plugins/marketplace.json"),
@@ -471,7 +476,7 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
     let registered = manifest_paths
         .iter()
         .any(|path| marketplace_manifest_contains_plugin(path, plugin_name).unwrap_or(false));
-    if !registered {
+    if canonical_plugin.is_some() && !registered {
         return Err("Plugin is not registered in this personal marketplace".to_owned());
     }
 
@@ -486,24 +491,31 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
         })
         .transpose()?;
 
-    let backup_root = marketplace_root.join(".wegent").join(format!(
-        "plugin-delete-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&backup_root)
-        .map_err(|error| format!("Failed to create personal plugin deletion backup: {error}"))?;
+    let backup_root = canonical_plugin.as_ref().map(|_| {
+        marketplace_root.join(".wegent").join(format!(
+            "plugin-delete-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    });
+    if let Some(backup_root) = &backup_root {
+        fs::create_dir_all(backup_root).map_err(|error| {
+            format!("Failed to create personal plugin deletion backup: {error}")
+        })?;
+    }
     let manifest_backups = manifest_paths
         .iter()
         .map(|path| fs::read(path).ok())
         .collect::<Vec<_>>();
     let cloud_link_path = plugin_cloud_link_registry_path(&marketplace_root);
     let cloud_link_backup = fs::read(&cloud_link_path).ok();
-    fs::rename(&canonical_plugin, backup_root.join("plugin"))
-        .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
+    if let (Some(canonical_plugin), Some(backup_root)) = (&canonical_plugin, &backup_root) {
+        fs::rename(canonical_plugin, backup_root.join("plugin"))
+            .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
+    }
 
     let mutation = (|| {
         for path in &manifest_paths {
@@ -541,12 +553,17 @@ pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<()
             }
         }
         let _ = restore_optional_file(&copy_registry_path, copy_registry_backup.as_deref());
-        let _ = fs::rename(backup_root.join("plugin"), &canonical_plugin);
-        let _ = fs::remove_dir_all(&backup_root);
+        if let (Some(canonical_plugin), Some(backup_root)) = (&canonical_plugin, &backup_root) {
+            let _ = fs::rename(backup_root.join("plugin"), canonical_plugin);
+            let _ = fs::remove_dir_all(backup_root);
+        }
         return Err(error);
     }
-    fs::remove_dir_all(&backup_root)
-        .map_err(|error| format!("Failed to finalize personal plugin deletion: {error}"))
+    if let Some(backup_root) = backup_root {
+        fs::remove_dir_all(&backup_root)
+            .map_err(|error| format!("Failed to finalize personal plugin deletion: {error}"))?;
+    }
+    Ok(())
 }
 
 fn validate_plugin_copy_request(request: &ImportPersonalPluginCopyRequest) -> Result<(), String> {
@@ -739,7 +756,7 @@ fn import_plugin_copy_package(
     let marketplace_root = marketplace_root
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     let plugins_root =
         prepare_direct_child_directory(&marketplace_root, "plugins", "personal plugin directory")?;
     let manifest_paths = prepare_personal_marketplace_manifest_paths(&marketplace_root)?;
@@ -846,7 +863,7 @@ fn rollback_plugin_copy(marketplace_root: &Path, plugin_name: &str) -> Result<()
     let marketplace_root = marketplace_root
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     let plugins_root =
         prepare_direct_child_directory(&marketplace_root, "plugins", "personal plugin directory")?;
     let manifest_paths = prepare_personal_marketplace_manifest_paths(&marketplace_root)?;
@@ -1067,7 +1084,7 @@ fn import_plugin_package_at(
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
     let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
-    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     fs::create_dir_all(&plugins_root)
         .map_err(|error| format!("Failed to create plugin directory: {error}"))?;
@@ -1768,7 +1785,7 @@ fn ensure_personal_plugin_at(
 ) -> Result<EnsurePersonalPluginResult, String> {
     let plugin_name = validate_personal_plugin_name(plugin_name)?;
     let destination_root = prepare_local_marketplace_root(destination_marketplace_path)?;
-    let _mutation_lock = acquire_plugin_mutation_lock(&destination_root)?;
+    let _mutation_lock = acquire_personal_marketplace_lock(&destination_root)?;
     let plugins_root = destination_root.join("plugins");
     create_directory_without_symlink(&plugins_root, "personal plugin directory")?;
 
@@ -2820,32 +2837,6 @@ fn write_plugin_cloud_links(
     )
 }
 
-fn acquire_plugin_mutation_lock(marketplace_root: &Path) -> Result<fs::File, String> {
-    let lock_directory = marketplace_root.join(".wegent");
-    create_directory_without_symlink(&lock_directory, "plugin state directory")?;
-    let canonical_marketplace = marketplace_root
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
-    let canonical_lock_directory = lock_directory
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve plugin state directory: {error}"))?;
-    if canonical_lock_directory.parent() != Some(canonical_marketplace.as_path()) {
-        return Err("Plugin state directory escaped the personal marketplace".to_owned());
-    }
-    let lock_path = canonical_lock_directory.join(PLUGIN_MUTATION_LOCK_FILE);
-    reject_symlink(&lock_path, "plugin mutation lock")?;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|error| format!("Failed to open {}: {error}", lock_path.display()))?;
-    lock.lock_exclusive()
-        .map_err(|error| format!("Failed to lock {}: {error}", marketplace_root.display()))?;
-    Ok(lock)
-}
-
 fn upsert_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> Result<(), String> {
     let mut manifest = if manifest_path.is_file() {
         serde_json::from_str::<Value>(
@@ -3605,6 +3596,11 @@ mod tests {
         })
         .unwrap();
 
+        delete_personal_plugin(DeletePersonalPluginRequest {
+            marketplace_path: marketplace.display().to_string(),
+            plugin_name: "example-plugin".to_owned(),
+        })
+        .unwrap();
         delete_personal_plugin(DeletePersonalPluginRequest {
             marketplace_path: marketplace.display().to_string(),
             plugin_name: "example-plugin".to_owned(),

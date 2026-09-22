@@ -11,6 +11,7 @@ import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
+  getElementMetrics,
   getSingleElementMetrics,
   prepareCompletedTurnScreenshot,
   verifyShortConversationLayout,
@@ -123,6 +124,8 @@ import {
 
 import {
   verifyFollowUpSendRejectionNotice,
+  verifyModelServiceConnectionError,
+  verifyModelProxyRestartRecovery,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -287,6 +290,7 @@ import {
 import {
   captureVerificationScreenshot,
   enrichTrackedDefaultIssueTitle,
+  reloadMainWindow,
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
@@ -813,6 +817,19 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh-task')
+  control.setScenario('checkpoint_task')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    CHECKPOINT_TASK_PROMPT,
+    'checkpoint_task'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   setPhase('model-catalog-refresh')
   const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
   await control.command('waitFor', modelSelector, {
@@ -838,6 +855,29 @@ async function verifyLocalModelRouting({
     text: selectedModelLabel,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+
+  setPhase('model-catalog-refresh-failure')
+  await control.command('failNextLocalCodexModelList', '')
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const failedRefreshSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.ok(
+    failedRefreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared after the local Codex catalog refresh failed'
+  )
+  assert.ok(
+    !failedRefreshSnapshot.testIds.includes('model-selector-loading'),
+    'The failed local Codex catalog refresh left a blank loading placeholder'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'model-catalog-refresh-failure.png')
 
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
@@ -1125,6 +1165,7 @@ async function main() {
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
@@ -1139,6 +1180,7 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
+        publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
@@ -1238,6 +1280,7 @@ async function main() {
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+      WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
       WEWORK_E2E_STARTUP_SPLASH_CAPTURE: join(resultDir, 'startup-splash.png'),
       WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
@@ -1285,6 +1328,11 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    if (DESKTOP_SEGMENT === 'running-conversation-history') {
+      appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS = '1500'
+    } else {
+      delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
+    }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
@@ -1404,6 +1452,7 @@ async function main() {
         initialRendererLocation: ready.location,
         pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
+        resultDir,
         runtimeRoot: electronCoreRuntimeRoot,
       })
       if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
@@ -1875,6 +1924,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
@@ -2161,6 +2211,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'remote-project-dialog'
       await control.command('click', '[data-testid="projects-create-button"]')
+      await control.command('waitFor', '[data-testid="projects-create-button-menu"]', {
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'project-create-local-option',
+        'Opening project creation did not move focus into the dialog'
+      )
+      await control.command('nativePress', '[data-testid="project-create-local-option"]', {
+        key: 'Escape',
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('projects-create-button-menu'),
+        'Escape did not close the project source dialog'
+      )
+      await control.command('click', '[data-testid="projects-create-button"]')
       await control.command('click', '[data-testid="project-create-remote-option"]')
       await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2204,6 +2271,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         workspacePath,
+        restartDesktopApp,
       })
     }
 
@@ -2647,6 +2715,33 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
         assertDefaultIssueContextInjected(enrichedIssueRequest)
+        phase = 'cloud-issue-task-sidebar-restored'
+        await reloadMainWindow(
+          control,
+          'The Wework WebView did not reconnect while restoring a cloud Issue task'
+        )
+        await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+          visible: true,
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        })
+        await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        const restoredTaskId = taskRowTestId.replace('runtime-local-task-row-', '')
+        await waitForWorkbenchTask(
+          control,
+          restoredTaskId,
+          'The cloud Issue task row did not become the current runtime task'
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="work-item-guide-summary-title"]`,
+          {
+            text: `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`,
+            visible: true,
+            timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+          }
+        )
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })
@@ -3353,6 +3448,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'rate-limit-recovery'
       await verifyRateLimitRecovery({ composerSelector, control })
 
+      phase = 'model-service-connection-error'
+      await verifyModelServiceConnectionError({ composerSelector, control })
+
+      phase = 'model-proxy-restart-recovery'
+      await verifyModelProxyRestartRecovery({
+        composerSelector,
+        control,
+        executorLogPath,
+        restartDesktopApp,
+      })
+
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('resilience')) {
@@ -3516,13 +3622,34 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The conversation after opening a linked file',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterOpen = await waitForElementTop(
-        control,
-        filePanelAnchorSelector,
-        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-        'The linked file paragraph after opening the file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      // Capture the settled state before the anchor expectation is read: a failing run has to show where
+      // the paragraph ended up, not only where it started.
+      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
+      let filePanelAnchorAfterOpen
+      try {
+        filePanelAnchorAfterOpen = await waitForElementTop(
+          control,
+          filePanelAnchorSelector,
+          top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+          'The linked file paragraph after opening the file panel',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      } catch (error) {
+        const settled = {
+          anchor: (await getElementMetrics(control, filePanelAnchorSelector)).at(-1) ?? null,
+          scroller: await getSingleElementMetrics(
+            control,
+            conversationScrollerSelector,
+            'The conversation after the anchor expectation failed'
+          ),
+        }
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (before=${JSON.stringify({
+            anchor: filePanelAnchorBeforeOpen,
+            scroller: filePanelScrollerBeforeOpen,
+          })} settled=${JSON.stringify(settled)})`
+        )
+      }
       assert.ok(
         filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
         `Opening the file panel did not resize the conversation from ${filePanelScrollerBeforeOpen.width}px; after=${filePanelScrollerAfterOpen.width}px`
@@ -3541,7 +3668,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
       await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
       await waitForSnapshot(
         control,
@@ -3625,7 +3751,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
@@ -3666,16 +3791,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        value: 'file-panel-anchor',
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
@@ -4162,7 +4277,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPastedWorkspacePaths({ composerSelector, control, workspacePath })
 
       phase = 'dropped-workspace-paths'
-      await verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath })
+      await verifyDroppedWorkspacePaths({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('workspace-attachments')) {
         console.log(
           `Wework desktop workspace-attachments checkpoint passed. Evidence: ${resultDir}`

@@ -27,7 +27,7 @@ Project settings keep collaboration organization separate from runtime resources
 - **Automatic processing** defines trigger rules only. Issue creation, Tag changes, external events, or schedules route work to a project member, Agent, or collaboration group. A rule never binds a device.
 - **Execution environments** manages the project's authorized device pool. Agent creation does not select a device. Manual assignments and automatic processing resolve a device from this pool when a Run is claimed.
 
-A Mention in a comment only creates a mention and notification; it never changes the assignee. Assignment, Mention, Subscription, and Run have independent semantics. Only an explicit assignment changes ownership and creates a Run when the target is an Agent or collaboration group.
+A Mention never changes the assignee; explicitly mentioning an available agent can trigger comment execution. Assignment, Mention, Subscription, and Run have independent semantics. Explicit assignment changes ownership and creates a Run when the target is an Agent or collaboration group.
 
 Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If model or workspace configuration is missing, the execution remains in `waiting_runtime` and uses the unified runtime-configuration entrypoint; the device itself is bound when the Run is claimed.
 
@@ -285,7 +285,7 @@ Review the sequence against these invariants, in order:
 7. Failure to enqueue activation, or activation failure in the worker, must persist an explicit `failed` terminal state; an execution with no remaining consumer must never stay `queued`.
 8. A Wegent UI/API stop first writes only `CANCELLING/cancel_requested`. Both sides become `CANCELLED/cancelled` only after a Runtime ACK or trustworthy `CANCELLED` callback. Delivery failure cannot invent terminal truth, and the frontend must await and display the server ACK.
 9. All three runtimes use the same visible user input: canonical `project_id`, `task_id`, and `execution_id`, the task `cloud://` URI, and the user-configured Bot execution prompt. The execution prompt never enters a Team/Ghost/Bot system prompt or hidden application context; MCP reads the latest task title, description, and state.
-10. A Wegent comment continuation resolves the native Task from the reply target's exact `execution_id` and `backend_task_id`, then revalidates the current board Bot and Team. It never infers a session from the latest execution, a device runtime list, or frontend memory. Each turn creates Subtasks in the same Task, preserves the execution's terminal state, and uses the reply comment only as that turn's display projection. A native Task may have at most one `pending` or `streaming` continuation at a time so concurrent requests cannot overwrite the active Subtask label or cross-write projections.
+10. A Wegent comment continuation resolves the native Task from the reply target's exact `execution_id` and `backend_task_id`, then revalidates the thread-bound project Bot and original execution Team. It never infers a session from the latest execution, a device runtime list, or frontend memory. Each turn creates Subtasks in the same Task, preserves the execution's terminal state, and uses the reply comment only as that turn's display projection. A native Task may have at most one `pending` or `streaming` continuation at a time so concurrent requests cannot overwrite the active Subtask label or cross-write projections.
 11. Whenever native Wegent Task labels identify a board execution or board automation, Backend injects the board MCP on every request build. ChatShell and Executor consume the same injection result, and continuations never depend on MCP state left in a previous container.
 12. The Backend board MCP and Wework's native local Space MCP are separate runtime boundaries. Backend owns the former with Task Token authentication; Wework Runtime starts the latter locally. They share canonical tool names and domain semantics but never fall back to or overwrite each other.
 13. The Task Token's `task_id/subtask_id` and native Task labels jointly scope the current board space. The model may operate on other items inside that space, but the current item, automation run, and execution identities are resolved by the server and are never guessed, and a Task Token cannot cross the current space boundary.
@@ -496,3 +496,50 @@ The Wework Composer encodes cloud projects, directories, files, TODOs, and deliv
 3. Add Task bindings and start-a-task-from-TODO.
 4. Migrate delivery authorization, source Task references, and MinIO paths.
 5. Add shared files and the cloud workspace MCP.
+
+## Project members and comment execution
+
+Agent configuration visibility controls whether members can select an agent. Collaboration on an already authorized Issue uses project permissions and the comment thread's execution binding. A Developer can reply without gaining access to the executor's personal devices, models, or credentials.
+
+- A reply to an AI thread continues its original execution identity and session, even after the Issue is reassigned.
+- A new top-level comment uses an explicitly mentioned available agent, or the Issue's assigned agent. The existing execution queue starts an independent session and preserves approval and configuration-waiting states.
+- Without an assigned or mentioned agent, the comment is saved without execution. Retrying that request after reassignment does not start AI unexpectedly.
+- Mentioning another agent still requires picker visibility. Comments do not change the Issue assignee.
+
+```mermaid
+flowchart TD
+    UI[Web or desktop client] --> Save[Save member comment]
+    Save --> Execute[Project comment execution service]
+    Execute --> Auth[Check project role and comment author]
+    Auth --> Kind{Existing AI thread?}
+    Kind -->|Yes| Binding[Resolve execution record or TaskBinding]
+    Binding --> Continue[Continue original owner and session]
+    Kind -->|No| Agent{Mentioned or assigned agent?}
+    Agent -->|Yes| Queue[Queue an independent session]
+    Agent -->|No| Comment[Save comment only]
+    Continue --> Activity[Project status and results into the thread]
+    Queue --> Activity
+    Activity --> UI
+```
+
+Clients send project, Issue, saved comment, and attachment IDs through `wework:project_chat:comment:execute`. Execution identity and device configuration are resolved on the server. Comment/thread locks and existing response records prevent duplicate dispatch. Execution failures are surfaced without resending saved comments. A follow-up creates its own activity and does not inherit or reopen a completed automation run.
+
+Focused checks cover hidden admin agents, independent root sessions, reassignment, duplicate requests, device rejection, comment-only behavior, and cross-project, read-only, and other-author rejection. Desktop regression coverage belongs to the existing `collaboration-shared-core` scenario; E2E runs require an explicit request.
+
+### Reading project execution sessions
+
+Execution details and Issue conversations declare `projectSession: { projectId, issueId }` as their read context. HTTP and Socket.IO transcript requests share one authorization path: project Reporter access or higher, an existing Issue, an exact device/task match in an execution record or active TaskBinding, and a single original execution owner. Client workspace paths and Runtime Handles cannot expand this authority. Personal transcripts retain device ownership checks; project reads do not grant access to the owner's device catalog, model credentials, or other sessions.
+
+```mermaid
+flowchart LR
+    View[Execution details / Issue conversation] --> Scope[Project and Issue read permission]
+    Scope --> Binding[Exact execution record / TaskBinding]
+    Binding --> Owner[Original owner + device + task]
+    Owner --> Read[Read Runtime transcript]
+    Read --> Content[Content or confirmed empty history]
+    Read --> Error[Actual read error with retry]
+```
+
+Historical execution outcomes and transcript availability are independent. A read failure must not appear as empty history or confirmed executor idleness. Initial loading uses a skeleton. An offline executor remains an explicit error with retry; clients must not switch to a member's similarly named device. The existing automation regression includes member reads of admin-owned history. Focused unit tests run by default; E2E requires an explicit request.
+
+HTTP transcript responses preserve the Runtime's `turns`, `running`, `origin`, `historyUnavailable`, and `turnNavigation`, matching the Socket.IO contract. Missing `turns` is a protocol error, not an empty-history fallback.

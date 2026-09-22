@@ -47,6 +47,7 @@ watcher.on('event', event => {
   if (event.code === 'END') {
     const result = pendingResult
     pendingResult = null
+    if (!result) return
     finalizing = finalizing
       .then(async () => {
         await result?.close()
@@ -60,6 +61,7 @@ watcher.on('event', event => {
     return
   }
   if (event.code === 'ERROR') {
+    pendingResult = null
     fail(event.error)
     if (completedBuilds === 0) {
       void watcher.close().finally(() => process.exit(1))

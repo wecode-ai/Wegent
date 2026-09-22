@@ -7,6 +7,7 @@ import {
   requestWorkbenchComposerFocus,
 } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
+import { TextInputDialog } from '@/components/common/TextInputDialog'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -546,6 +547,67 @@ describe('BufferedChatInput', () => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue('unfinished draft')
     })
   })
+
+  test.each(['context', 'navigation', 'enabled'] as const)(
+    'keeps rename focus when delayed composer %s completes',
+    async reason => {
+      const user = userEvent.setup()
+      const onRename = vi.fn()
+      const projectChat = createProjectChat('runtime:device-1:rename-focus')
+      function Harness({ ready }: { ready: boolean }) {
+        const [renaming, setRenaming] = useState(false)
+        return (
+          <>
+            <button type="button" onDoubleClick={() => setRenaming(true)}>
+              Rename task
+            </button>
+            <TextInputDialog
+              open={renaming}
+              title="Rename"
+              label="Name"
+              initialValue="Original"
+              confirmLabel="Save"
+              cancelLabel="Cancel"
+              inputTestId="rename-focus-input"
+              confirmTestId="rename-focus-save"
+              onClose={() => setRenaming(false)}
+              onSubmit={onRename}
+            />
+            <div data-active-workbench-pane="true">
+              <BufferedChatInput
+                autoFocus
+                variant="desktop"
+                value=""
+                onChange={vi.fn()}
+                onSubmit={vi.fn()}
+                disabled={reason === 'enabled' && !ready}
+                projectChat={projectChat}
+                contextHeader={ready ? <span>Linked task</span> : null}
+              />
+            </div>
+          </>
+        )
+      }
+      const { rerender } = render(<Harness ready={false} />)
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        rerender(<Harness ready={false} />)
+        await user.dblClick(screen.getByRole('button', { name: 'Rename task' }))
+        const input = screen.getByTestId('rename-focus-input')
+        expect(input).toHaveFocus()
+        await user.type(input, `Draft ${attempt}`)
+        if (reason === 'navigation') requestWorkbenchComposerFocus(projectChat.scopeKey)
+        rerender(<Harness ready />)
+        await act(() => new Promise(resolve => window.requestAnimationFrame(resolve)))
+        expect(screen.getByTestId('composer-context-rail')).toHaveTextContent('Linked task')
+        expect(input).toHaveFocus()
+        await user.keyboard('{Escape}')
+        expect(screen.queryByTestId('rename-focus-input')).not.toBeInTheDocument()
+      }
+      expect(onRename).not.toHaveBeenCalled()
+      requestWorkbenchComposerFocus(projectChat.scopeKey)
+      await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+    }
+  )
 
   test('focuses the matching composer when a conversation is selected', async () => {
     render(

@@ -144,6 +144,7 @@ export function IssueWorkflowPlanSection({
   fallbackStatus = "idle",
   error,
   busy = false,
+  deviceNamesById,
   availableActions,
   labels,
   testIds = {},
@@ -156,6 +157,7 @@ export function IssueWorkflowPlanSection({
   fallbackStatus?: WorkspaceWorkflowPlanStatus;
   error?: string | null;
   busy?: boolean;
+  deviceNamesById?: Readonly<Record<string, string>>;
   availableActions?: Partial<Record<IssueWorkflowPlanAction, boolean>>;
   labels: IssueWorkflowPlanLabels;
   testIds?: IssueWorkflowPlanTestIds;
@@ -166,6 +168,9 @@ export function IssueWorkflowPlanSection({
 }) {
   const status = plan?.status ?? fallbackStatus;
   const manager = plan?.manager;
+  const managerDeviceName = manager?.deviceId
+    ? deviceNamesById?.[manager.deviceId]?.trim() || manager.deviceId
+    : undefined;
   const managerPlanConflict =
     (status === "awaiting_approval" && manager?.status === "failed") ||
     (status === "planning" &&
@@ -317,7 +322,7 @@ export function IssueWorkflowPlanSection({
             ) : null}
           </div>
           <p className="mt-1 truncate text-xs text-text-muted">
-            {[manager?.model, manager?.deviceId].filter(Boolean).join(" · ")}
+            {[manager?.model, managerDeviceName].filter(Boolean).join(" · ")}
           </p>
         </button>
       ) : null}

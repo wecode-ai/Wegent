@@ -9,7 +9,12 @@ fn cached_transcript_response(
 ) -> Value {
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let turn_navigation = transcript_turn_navigation(&messages);
-    transcript_response(TranscriptResponseInput {
+    let history_unavailable = !running
+        && link.runtime == "claude_code"
+        && messages.is_empty()
+        && link.runtime_handle.get("userMessagePresentations")
+            .and_then(Value::as_array).is_some_and(|items| !items.is_empty());
+    let mut response = transcript_response(TranscriptResponseInput {
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
         runtime: link.runtime.clone(),
@@ -23,9 +28,20 @@ fn cached_transcript_response(
             after_cursor.map(ToOwned::to_owned),
         ),
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
-    })
+    });
+    response["historyUnavailable"] = Value::Bool(history_unavailable);
+    if link.runtime == "claude_code" && link.status == "interrupted" && !running {
+        if let Some(turn) = response.get_mut("turns").and_then(Value::as_array_mut)
+            .and_then(|turns| turns.last_mut()) {
+            turn["status"] = json!("failed");
+            turn["runtimeStatus"] = json!("failed");
+            turn["error"] = json!("Execution was interrupted before its outcome was recorded");
+        }
+    }
+    response
 }
 
 pub(super) fn remove_superseded_transcript_turns(
@@ -123,6 +139,7 @@ struct TranscriptResponseInput {
     running: bool,
     pagination: TranscriptPagination,
     full_content: bool,
+    conversation_context_only: bool,
     turn_item_source: TranscriptTurnItemSource,
     turn_navigation: Vec<Value>,
 }
@@ -173,14 +190,21 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         local_task_id,
         workspace_path,
         runtime,
-        messages,
+        mut messages,
         context_usage,
         running,
         pagination,
         full_content,
+        conversation_context_only,
         turn_item_source,
         turn_navigation,
     } = input;
+    let turn_item_source = if conversation_context_only {
+        project_conversation_context_messages(&mut messages);
+        TranscriptTurnItemSource::CachedMessages
+    } else {
+        turn_item_source
+    };
     let ResolvedTranscriptPagination {
         messages,
         range_start,
@@ -468,9 +492,43 @@ fn transcript_navigation_response(
             after_cursor: None,
         },
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CodexItems,
         turn_navigation,
     })
+}
+
+fn project_conversation_context_messages(messages: &mut Vec<Value>) {
+    const KEYS: &[&str] = &[
+        "id",
+        "clientUserMessageId",
+        "role",
+        "content",
+        "status",
+        "runtimeStatus",
+        "turnId",
+        "subtaskId",
+        "createdAt",
+        "completedAt",
+        "messageIndex",
+    ];
+
+    messages.retain_mut(|message| {
+        let Some(object) = message.as_object_mut() else {
+            return false;
+        };
+        let visible_role = object
+            .get("role")
+            .and_then(Value::as_str)
+            .is_some_and(|role| {
+                role.eq_ignore_ascii_case("user") || role.eq_ignore_ascii_case("assistant")
+            });
+        if !visible_role {
+            return false;
+        }
+        object.retain(|key, _| KEYS.contains(&key.as_str()));
+        true
+    });
 }
 
 fn transcript_navigation_message_id(message: &Value, message_index: usize) -> String {
@@ -731,17 +789,30 @@ fn attach_user_message_presentations_for_page(
         let content = string_field(message, "content").unwrap_or_default();
         let presentation_content = string_field(&presentation, "content").unwrap_or_default();
         let attachments = normalized_attachments(presentation.get("attachments"));
+        // Codex replaces file/folder mentions with paths, losing their display labels.
+        let restore_content = !attachments.is_empty()
+            || local_presentation_reference_descriptors(&presentation_content)
+                .iter()
+                .any(|reference| {
+                    reference["href"]
+                        .as_str()
+                        .is_some_and(is_local_path_reference)
+                });
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
+            .filter(|_| !restore_content)
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
-            if !attachments.is_empty() {
+            if restore_content {
                 message.insert(
                     "content".to_owned(),
                     Value::String(presentation_content),
                 );
+                message.remove("presentationReferences");
+            }
+            if !attachments.is_empty() {
                 message.insert("attachments".to_owned(), Value::Array(attachments));
             }
             if !references.is_empty() {
@@ -800,34 +871,14 @@ fn presentation_belongs_to_transcript_page(
 }
 
 fn local_presentation_reference_descriptors(content: &str) -> Vec<Value> {
-    let mut references = Vec::new();
-    let mut offset = 0;
-
-    while let Some(relative_start) = content[offset..].find("[$") {
-        let name_start = offset + relative_start + 2;
-        let Some(relative_name_end) = content[name_start..].find("](") else {
-            break;
-        };
-        let name_end = name_start + relative_name_end;
-        let href_start = name_end + 2;
-        let Some(relative_href_end) = content[href_start..].find(')') else {
-            break;
-        };
-        let href_end = href_start + relative_href_end;
-        offset = href_end + 1;
-
-        let name = &content[name_start..name_end];
-        let href = &content[href_start..href_end];
-        let Some(token) = local_presentation_reference_token(name, href) else {
-            continue;
-        };
-        references.push(json!({
-            "token": token,
-            "href": href,
-        }));
-    }
-
-    references
+    crate::prompt_mentions::prompt_mentions(content)
+        .into_iter()
+        .filter_map(|reference| {
+            let name = reference.name()?;
+            let token = local_presentation_reference_token(name, &reference.href)?;
+            Some(json!({ "token": token, "href": reference.href }))
+        })
+        .collect()
 }
 
 fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Value> {
@@ -882,16 +933,18 @@ fn is_presentation_token_continuation(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '-' | '_' | ':')
 }
 
-fn is_local_skill_reference(href: &str) -> bool {
-    let path = href.strip_prefix("skill://").unwrap_or(href);
-    path.starts_with('/') && path.ends_with("/SKILL.md")
+fn is_local_path_reference(href: &str) -> bool {
+    href.starts_with("file://") || href.starts_with("folder://")
 }
 
 fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> {
     if name.is_empty() {
         return None;
     }
-    if is_local_skill_reference(href) {
+    if crate::prompt_mentions::is_skill_reference(href) {
+        return Some(format!("${}", crate::prompt_mentions::skill_name(name)));
+    }
+    if is_local_path_reference(href) {
         return Some(format!("${name}"));
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))

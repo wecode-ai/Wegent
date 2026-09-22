@@ -5,6 +5,45 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn get_task(&self, payload: &Value) -> Result<Value, AppIpcError> {
+        let task_id = runtime_task_id(payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let link = self
+            .store
+            .get_task_summary(&task_id)
+            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link));
+        let Some(mut link) = link else {
+            return Ok(json!({
+                "success": false,
+                "code": "task_not_found",
+                "error": "Task not found on the owning Runtime",
+            }));
+        };
+        apply_local_execution_state(
+            &mut link,
+            self.is_active_local_task(&task_id),
+            self.queued_local_task_position(&task_id),
+        );
+        // Return only the identity/configuration needed by a client to continue.
+        // Execution profiles and transcript caches remain on the owning Runtime.
+        if let Some(handle) = link.runtime_handle.as_object_mut() {
+            handle.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "runtime"
+                        | "wegentTeam"
+                        | "modelSelection"
+                        | "model_selection"
+                        | "queuePosition"
+                )
+            });
+        }
+        Ok(json!({
+            "success": true,
+            "task": crate::runtime_work::response::local_task_json(link),
+        }))
+    }
+
     pub(super) async fn read_codex_recent_turns(&self, thread_id: &str) -> Result<Value, String> {
         load_codex_transcript(
             &self.codex_app_server,
@@ -44,7 +83,6 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn list_tasks(&self, payload: &Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
-        let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
         let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
@@ -60,6 +98,17 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
+        self.list_tasks_with_project_index(payload, &project_index, started_at)
+            .await
+    }
+
+    pub(super) async fn list_tasks_with_project_index(
+        &self,
+        payload: &Value,
+        project_index: &CodexGlobalProjectIndex,
+        started_at: Instant,
+    ) -> Result<Value, AppIpcError> {
+        let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         let stage_started_at = Instant::now();
         let collected_links = if prefer_cached {
             self.collect_cached_links(false)
@@ -76,7 +125,7 @@ impl RuntimeWorkRpcHandler {
             &[("links", collected_links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let links = self.visible_links_for_projects(collected_links, &project_index);
+        let links = self.visible_links_for_projects(collected_links, project_index);
         log_runtime_work_list_diagnostic(
             "project_filter_applied",
             started_at,
@@ -84,7 +133,7 @@ impl RuntimeWorkRpcHandler {
             &[("visible_links", links.len().to_string())],
         );
         let stage_started_at = Instant::now();
-        let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
+        let workspaces = workspace_response(links, codex_project_workspaces(project_index));
         let task_count = workspaces
             .iter()
             .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
@@ -229,9 +278,21 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let task_id = runtime_task_id(&payload);
+        let mut response = self.read_transcript(payload).await?;
+        if let Some(link) = task_id.as_deref().and_then(|id| self.local_task_link(id)) {
+            if let Some(origin) = link.runtime_handle.get("origin") {
+                response["origin"] = origin.clone();
+            }
+        }
+        Ok(response)
+    }
+
+    async fn read_transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        delay_desktop_e2e_transcript_response().await;
         let limit = transcript_limit(&payload);
         let before_cursor = string_field(&payload, "beforeCursor")
             .or_else(|| string_field(&payload, "before_cursor"));
@@ -245,6 +306,9 @@ impl RuntimeWorkRpcHandler {
         }
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
+            .unwrap_or(false);
+        let conversation_context_only = bool_field(&payload, "conversationContextOnly")
+            .or_else(|| bool_field(&payload, "conversation_context_only"))
             .unwrap_or(false);
         let navigation_only = bool_field(&payload, "navigationOnly")
             .or_else(|| bool_field(&payload, "navigation_only"))
@@ -358,6 +422,9 @@ impl RuntimeWorkRpcHandler {
                         false,
                         false,
                     );
+                    if conversation_context_only {
+                        project_conversation_context_messages(&mut messages);
+                    }
                     log_runtime_transcript_finished(RuntimeTranscriptLog {
                         started_at,
                         local_task_id: &local_task_id,
@@ -388,7 +455,10 @@ impl RuntimeWorkRpcHandler {
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
         }) {
-            let messages = cached_runtime_transcript_messages(link);
+            let mut messages = cached_runtime_transcript_messages(link);
+            if conversation_context_only {
+                project_conversation_context_messages(&mut messages);
+            }
             log_runtime_transcript_finished(RuntimeTranscriptLog {
                 started_at,
                 local_task_id: &local_task_id,
@@ -439,6 +509,7 @@ impl RuntimeWorkRpcHandler {
                 running: local_execution_running,
                 pagination,
                 full_content: include_full_content,
+                conversation_context_only,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
                 turn_navigation: Vec::new(),
             }));
@@ -614,6 +685,7 @@ impl RuntimeWorkRpcHandler {
                 },
             },
             full_content: include_full_content,
+            conversation_context_only,
             turn_item_source: TranscriptTurnItemSource::CodexItems,
             turn_navigation,
         });
@@ -677,6 +749,17 @@ impl RuntimeWorkRpcHandler {
             .filter(|entry| entry.cached_at.elapsed() < CODEX_TRANSCRIPT_NAVIGATION_CACHE_TTL)
             .map(|entry| entry.navigation.clone())
     }
+}
+
+async fn delay_desktop_e2e_transcript_response() {
+    let Some(delay_ms) = std::env::var("WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+    else {
+        return;
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(delay_ms.min(10_000))).await;
 }
 
 fn mark_prepend_item_turns(response: &mut Value, turn_ids: &HashSet<String>) {

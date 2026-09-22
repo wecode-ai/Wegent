@@ -4,7 +4,7 @@ sidebar_position: 12
 
 # Wework API Client
 
-Operate independent Wework conversations over HTTP. This API uses the same device Runtime conversations, transcripts, and execution state as the mobile client. It adds no database tables or duplicate conversation storage.
+Operate Wework conversations over HTTP, including standalone chats, project-directory tasks, and worktree tasks. The API Client shares Wework's device Runtime conversations, message dispatch, and execution state. It adds no database tables or duplicate conversation storage.
 
 ## Authentication and base URL
 
@@ -29,7 +29,7 @@ Set the OpenAI SDK `base_url` to `https://example.com/api/v1` and pass the targe
 | Method and path (relative to the base path) | Purpose |
 | --- | --- |
 | `GET /devices` | Current user devices, including offline devices |
-| `GET /conversations?limit=20&after=...` | Independent conversations on online devices |
+| `GET /conversations?limit=20&after=...` | Conversations on online devices, including project workspace tasks |
 | `GET /conversations/{id}?limit=20&before=...` | Paginated transcript and `latest_response` |
 | `POST /responses` | Create or continue a conversation |
 | `GET /responses/{id}` | Read one turn's current status and output from Runtime |
@@ -40,6 +40,24 @@ Set the OpenAI SDK `base_url` to `https://example.com/api/v1` and pass the targe
 Each user message defines a response turn. A response ID encodes its Runtime address and native user-message identity; no Backend lookup table is required. IDs grant no permissions. Every read, continuation, and cancellation checks the caller's accessible devices and conversations.
 
 PC/mobile conversations are accessible too. Use `latest_response.id` from conversation details to inspect, subscribe to, or cancel their latest turn. `is_latest` identifies the last user turn; `status` describes that turn's execution state.
+
+## Current session information available to the model
+
+Every turn in a Codex conversation started from desktop, mobile, or the API receives `wework.session.current` through `additionalContext`. The model can read these values without asking the user to copy IDs:
+
+| Field | Meaning |
+| --- | --- |
+| `base_url` | HTTP API address including `/api/v1`; `null` when no backend is configured |
+| `api_conversation_supported` | Whether the conversation supports the API; Codex standalone, project-directory, and worktree tasks are supported; does not indicate connectivity or authorization |
+| `conversation_id` | Current `conv_...` ID for conversation queries and follow-ups |
+| `response_id` | Current user turn's `resp_...` ID for querying, streaming, and cancellation |
+| `execution` | `type: "wework"` and the current `device_id` for new requests |
+| `model` | Full cloud model API ID, such as `public:default:0:my-model` |
+| `model_name`, `model_type` | Selected model name and source |
+
+These are HTTP API routing IDs, distinct from native Codex thread/turn IDs. A conversation ID encodes the device ID and Runtime-local task ID; project-directory and worktree tasks can use these IDs directly for retrieval and continuation. Follow-ups retain the conversation ID, receive a new response ID, and refresh the selected model information. Local models and selections without cloud catalog identity have `model: null`; choose an available model from `GET /models?execution=wework` for HTTP requests.
+
+Each turn includes only these fields and brief usage guidance; full API instructions remain in this document to avoid repeating them in the context. Wait for the current turn to finish before continuing it, use either `conversation` or `previous_response_id`, and omit device and title. No personal API Keys, login tokens, or model secrets are injected; HTTP calls still require a separately supplied personal API Key.
 
 ## Create a task
 
@@ -100,6 +118,8 @@ Continue with `conversation`, omitting device and title:
 
 Alternatively, supply `previous_response_id`. It must identify the latest finished turn; historical branching is unsupported. A running conversation returns 409; wait for it or request cancellation first.
 
+`GET /models` uses the same cloud catalog, permissions, and availability filters as the Wework desktop. Native Codex Shell protocol restrictions do not exclude gateway-backed models. Device-local catalogs such as “My CodeX” are separate from this cloud list. Use the exact returned model `id`, formatted as `type:namespace:resourceUserId:name`, such as `public:default:0:my-model`.
+
 ## Status, streaming, and cancellation
 
 Statuses include `queued`, `in_progress`, `completed`, `failed`, `cancelled`, and `incomplete`. GET builds a snapshot from native history; model information reflects the Runtime's current conversation configuration.
@@ -109,6 +129,12 @@ Subscribing to a running response starts with new events from the time of subscr
 Disconnecting SSE does not cancel execution. `cancellation_requested: true` means Runtime accepted the cancellation request; use GET for the eventual execution state. Cancelling a finished older turn cannot stop a newer task. If native turn identity is insufficient for safe cancellation, the API returns 409.
 
 The owning device must be online and allow remote control. Offline device conversations cannot be read or executed. An RPC submission timeout does not prove that execution did not start: use the error's `response_id` and `conversation_id` to inspect the result before resubmitting.
+
+Continuation calls `runtime.tasks.get` by ID to retrieve the original workspace, Team binding, and model options, then reuses Wework execution configuration compilation and `runtime.tasks.send`. It does not list tasks or scan other workspaces. Validation of `previous_response_id` reuses the same task lookup. Explicit model options override the original options while retaining the task's workspace and binding.
+
+Update backend and Executor together to versions supporting `runtime.tasks.get`. Older Executors return an explicit unsupported RPC error; there is no fallback to listing all tasks.
+
+Offline devices return 503 `device_offline`; missing or inaccessible devices return 404 `device_not_found`; missing tasks on an online device return 404 `task_not_found`; Runtime lookup failures return 502. A missing task is not reported as an offline device.
 
 ## Architecture
 

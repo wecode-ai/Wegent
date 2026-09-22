@@ -35,35 +35,19 @@ function getStore(): ComposerAppsStore {
   return window.__weworkComposerAppsStore
 }
 
-function isLocalDeviceApp(value: unknown): value is LocalDeviceApp {
-  if (!value || typeof value !== 'object') return false
-  const app = value as LocalDeviceApp
-  return typeof app.id === 'string' && typeof app.name === 'string'
-}
-
 function notifyComposerAppsListeners() {
   getStore().listeners.forEach(listener => listener())
 }
 
-/** Last successful composer plugin list for instant toolbar paint. */
+/** Legacy durable snapshot. Composer membership now reloads from the shared inventory. */
 export function readComposerAppsSnapshot(): LocalDeviceApp[] {
-  try {
-    const raw = window.localStorage.getItem(COMPOSER_APPS_SNAPSHOT_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter(isLocalDeviceApp)
-  } catch {
-    return []
-  }
+  clearComposerAppsSnapshot()
+  return []
 }
 
 export function writeComposerAppsSnapshot(apps: LocalDeviceApp[]): void {
-  try {
-    window.localStorage.setItem(COMPOSER_APPS_SNAPSHOT_KEY, JSON.stringify(apps))
-  } catch {
-    // Ignore quota / private-mode failures; live fetch still works.
-  }
+  void apps
+  clearComposerAppsSnapshot()
 }
 
 export function clearComposerAppsSnapshot(): void {
@@ -80,18 +64,16 @@ export function clearComposerAppsSnapshot(): void {
  * must read the same list or it briefly shows “no plugins” while `/` still works.
  */
 export function getComposerApps(): LocalDeviceApp[] {
-  const store = getStore()
-  if (store.memoryApps.length > 0) return store.memoryApps
-  return readComposerAppsSnapshot()
+  return getStore().memoryApps
 }
 
-/** Publish a non-empty composer app list to memory + localStorage. */
+/** Publish a non-empty composer app list to shared renderer memory. */
 export function publishComposerApps(apps: LocalDeviceApp[]): void {
   if (apps.length === 0) return
   const store = getStore()
   store.memoryApps = apps
   store.suppressEmptySync = false
-  writeComposerAppsSnapshot(apps)
+  clearComposerAppsSnapshot()
   notifyComposerAppsListeners()
 }
 
@@ -100,8 +82,7 @@ export function replaceComposerApps(apps: LocalDeviceApp[]): void {
   const store = getStore()
   store.memoryApps = apps
   store.suppressEmptySync = apps.length === 0
-  if (apps.length > 0) writeComposerAppsSnapshot(apps)
-  else clearComposerAppsSnapshot()
+  clearComposerAppsSnapshot()
   notifyComposerAppsListeners()
 }
 

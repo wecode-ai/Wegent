@@ -45,9 +45,10 @@ const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
 }))
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
+const deviceSurfaceExtensionMock = vi.hoisted(() => ({
   available: true,
   DeviceAction: vi.fn(),
+  supportsDevice: vi.fn((device: { device_type: string }) => device.device_type === 'cloud'),
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
@@ -60,8 +61,8 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: deviceSurfaceExtensionMock,
 }))
 
 vi.mock('@extensions/remote-device-onboarding', () => ({
@@ -313,16 +314,16 @@ describe('ConnectionsSettingsPage', () => {
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
-    cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+    deviceSurfaceExtensionMock.available = true
+    deviceSurfaceExtensionMock.DeviceAction.mockImplementation(
       ({ deviceId, disabled, onOpened }) => (
         <button
           type="button"
-          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          data-testid={`connection-device-surface-button-${deviceId}`}
           disabled={disabled}
           onClick={onOpened}
         >
-          桌面
+          设备界面
         </button>
       )
     )
@@ -1718,6 +1719,7 @@ describe('ConnectionsSettingsPage', () => {
       '本地设备代理'
     )
     expect(screen.getByTestId('proxy-config-cloud-required')).toHaveTextContent('云端设备代理')
+    await userEvent.click(screen.getByTestId('local-proxy-mode-custom'))
     await userEvent.type(
       screen.getByTestId('local-proxy-config-url-input'),
       'http://127.0.0.1:7890'
@@ -1725,7 +1727,9 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('local-proxy-config-save-button'))
 
     expect(requestLocalExecutor).not.toHaveBeenCalled()
-    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('本地设备代理已保存')
+    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent(
+      '本地设备网络设置已保存'
+    )
     const restartCodexButton = screen.getByTestId('local-proxy-config-restart-codex-button')
     expect(restartCodexButton).toHaveTextContent('重启 Codex')
     await userEvent.click(restartCodexButton)
@@ -1735,11 +1739,52 @@ describe('ConnectionsSettingsPage', () => {
       })
     )
     expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
-    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
-      'http://127.0.0.1:7890'
+    expect(screen.getByTestId('local-proxy-config-status')).toHaveTextContent('自定义代理')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      'http://127.0.0.1:7890（自定义代理）'
     )
     expect(userApi.getProxyConfig).not.toHaveBeenCalled()
     expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
+  })
+
+  test('forces direct local Codex connections without resolving the system proxy', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    const resolveProxy = vi.fn().mockResolvedValue('http://system-proxy.example.com:7890')
+    window.weworkElectronNetwork = { resolveProxy }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('跟随系统')
+
+    await userEvent.click(screen.getByTestId('local-proxy-mode-direct'))
+    await userEvent.click(screen.getByTestId('local-proxy-config-save-button'))
+
+    expect(screen.getByTestId('local-proxy-config-status')).toHaveTextContent('强制直连')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      '直连（已忽略系统代理）'
+    )
+    const restartCodexButton = screen.getByTestId('local-proxy-config-restart-codex-button')
+    await userEvent.click(restartCodexButton)
+
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+        proxyUrl: null,
+      })
+    )
+    expect(resolveProxy).toHaveBeenCalledTimes(1)
   })
 
   test('shows the effective system proxy used by local Codex', async () => {
@@ -1752,7 +1797,7 @@ describe('ConnectionsSettingsPage', () => {
       disconnect: vi.fn(),
     }
     window.weworkElectronNetwork = {
-      resolveCodexProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
+      resolveProxy: vi.fn().mockResolvedValue('http://system-proxy.example.com:7890'),
     }
     api.getAllDevices.mockResolvedValue([localDevice()])
 
@@ -1764,9 +1809,37 @@ describe('ConnectionsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('settings-nav-proxy'))
 
-    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('系统代理')
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('跟随系统')
     expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
-      'http://system-proxy.example.com:7890'
+      'http://system-proxy.example.com:7890（系统代理）'
+    )
+  })
+
+  test('explains when system proxy rules choose a direct connection', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    window.weworkElectronNetwork = {
+      resolveProxy: vi.fn().mockResolvedValue(null),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('local-proxy-config-status')).toHaveTextContent('跟随系统')
+    expect(screen.getByTestId('local-proxy-effective-url')).toHaveTextContent(
+      '直连（系统未使用代理）'
     )
   })
 
@@ -1863,7 +1936,7 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent('当前有任务运行')
     expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent(
-      '终端、IDE 和桌面不可用'
+      '终端、IDE 等设备连接不可用'
     )
 
     await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
@@ -1872,7 +1945,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(notice).toHaveTextContent('设备将短暂离线')
     expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
-    expect(screen.getByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-device-surface-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
     expect(
       within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
@@ -2024,14 +2097,14 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('connection-upgrade-badge-device-1')).toBeVisible()
   })
 
-  test('keeps connection settings open after the cloud desktop extension opens', async () => {
+  test('keeps connection settings open after the device surface extension opens', async () => {
     const onBack = vi.fn()
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={onBack} />)
 
-    const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
-    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+    const button = await screen.findByTestId('connection-device-surface-button-device-1')
+    expect(deviceSurfaceExtensionMock.DeviceAction).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
         disabled: false,
@@ -2044,23 +2117,40 @@ describe('ConnectionsSettingsPage', () => {
     expect(onBack).not.toHaveBeenCalled()
   })
 
-  test('does not render a cloud desktop action when the extension is unavailable', async () => {
-    cloudDesktopExtensionMock.available = false
+  test('does not render a device surface action for an unsupported remote device', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-remote-device')
+    expect(
+      screen.queryByTestId('connection-device-surface-button-remote-device')
+    ).not.toBeInTheDocument()
+  })
+
+  test('does not render a device surface action when the extension is unavailable', async () => {
+    deviceSurfaceExtensionMock.available = false
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     await screen.findByTestId('connection-device-device-1')
-    expect(screen.queryByTestId('connection-cloud-desktop-button-device-1')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('connection-device-surface-button-device-1')
+    ).not.toBeInTheDocument()
   })
 
-  test('passes an offline device as disabled to the cloud desktop action', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+  test('passes an offline device as disabled to the device surface action', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        status: 'offline',
+      }),
+    ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
-    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+    expect(await screen.findByTestId('connection-device-surface-button-device-1')).toBeDisabled()
+    expect(deviceSurfaceExtensionMock.DeviceAction).toHaveBeenCalledWith(
       expect.objectContaining({ deviceId: 'device-1', disabled: true }),
       undefined
     )

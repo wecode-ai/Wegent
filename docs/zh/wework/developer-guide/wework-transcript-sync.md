@@ -8,6 +8,16 @@ Wework 的 Core DSH 插件 `@wegent/dsh-transcript-sync` 同步原生 Codex
 rollout、任务工作区、旧版本同结构的回合摘要和可移植偏好。双机恢复不再把会话压缩成
 用户/助手文本，也不再通过 `thread/inject_items` 重建历史。
 
+## 可用性与显式开启
+
+跨设备同步属于实验性功能，默认关闭。用户需要先在“通用”设置中开启“实验性功能”，
+再到“云端连接”中手动开启“跨设备同步会话和配置”。关闭时 Wework 仍会保留本地任务、
+会话和待上传定位信息，但不会上传、下载或同步偏好配置。
+
+升级到采用显式授权策略的版本时，已有设备即使曾经开启同步，也会一次性迁移为关闭，
+并在任何云端同步请求发出前持久化该状态。用户迁移后重新手动开启会记录新的授权版本，
+后续启动保持开启，不会再次重置。
+
 ## 存储边界
 
 Backend 使用三张表：
@@ -50,11 +60,21 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
 - 新完整快照提交后，服务端保留“上一个完整快照 + 其后的全部 segment”，删除更旧的
   OSS 对象和元数据。快照间隔为 10 时，每个持续活跃的 transcript 通常保留 11 个、
   峰值不超过约 20 个对象，不会随对话轮数无限增长。
+- 单个原生 rollout segment 的明文上限为 256 MiB。生成增量时 Executor 从已同步的
+  rollout offset 开始读取后缀，不会先把整个持续增长的 rollout 文件读入内存；因此
+  总 rollout 超过旧版 128 MiB 阈值时，只要本次待同步 segment 未超过上限，仍可继续
+  上传。
 
-两台电脑可以同时保持 Wework 打开。客户端每 5 秒拉取一次云端进度，写入时才申请短租约，
-上传完成立即释放；没有新 turn 的公司电脑不会长期占锁。正在运行的本地任务不会被云端恢复
-覆盖。两台电脑若同时完成同一 sequence，先提交者进入主线，后提交者按确定性 ID 建立分支，
-两边内容都保留。
+两台电脑可以同时保持 Wework 打开。Wework 为每个桌面安装持久化一个稳定设备 ID。
+`writer_client_id` 在租约有效时表示当前写入设备，租约释放后保留为最近一次写入设备；
+租约是否有效只由 `writer_lease_expires_at` 判断。客户端每 5 秒只拉取未归档会话：最近
+写入设备只上传该 transcript，不下载恢复；其他设备在本机缺少该 transcript 时自动恢复。
+因此全新设备会恢复其他设备上所有未归档任务，而同步来源设备不会反复下载自己生成的
+工作区。归档任务不会自动恢复。写入时才申请短租约，上传完成立即释放；没有新 turn 的
+电脑不会长期占锁。正在运行或已经绑定的本地任务不会被云端恢复覆盖。两台电脑若同时完成
+同一 sequence，先提交者进入主线，后提交者按确定性 ID 建立分支，两边内容都保留。
+设备创建冲突分支后，原本的本地任务会转为该 fork；同步器只恢复因此缺失的父主线，
+让主线与分支成为两个独立本地任务。fork 本身仍由来源设备只上传、不下载。
 
 已有 `wework_transcript_turns` 表继续保留，并沿用旧版本的摘要字段。该表不参与双机
 恢复，也不能替代原生 tgz。
@@ -77,7 +97,7 @@ stateDiagram-v2
     Reconcile --> BranchSnapshot: 对象或摘要不存在/不一致
     BranchSnapshot --> LeaseHeld: 创建确定性 fork transcript
 
-    [*] --> RestoreRequired: 本机没有该 transcript 或本机落后
+    [*] --> RestoreRequired: 非最近写入设备缺少未归档 transcript
     RestoreRequired --> Downloading: 经 Backend 下载最近快照和连续增量
     Downloading --> Staging: 下载并校验 SHA-256
     Staging --> Bound: 恢复工作区、rollout、thread 元数据和动态工具
@@ -143,5 +163,23 @@ GitHub CI 的执行前提。
 调整数据库结构。对象存储不可用时，segment 不会提交到 MySQL，outbox 继续保留定位
 信息，本地任务仍可离线执行。
 
+transcript bucket 与附件 bucket 是两个独立桶，`ATTACHMENT_S3_*` 对应的账号必须对该桶
+持有 `ListBucket`、`GetObject`、`PutObject`、`DeleteObject` 权限。只授权了附件桶的账号
+会在首次上传时以 503 失败；此时 Backend 日志记录 S3 错误码，设备侧错误信息末尾括号内
+也会给出同一错误码（如 `AccessDenied`）。
+
 未配置独立根密钥时兼容使用 `SECRET_KEY`。生产环境应配置独立值，并在相关 tgz 保留期间
 保持不变。
+
+## 故障语义与排查
+
+设置页会按 `Conversation upload`、`Conversation download` 和
+`Preference synchronization` 标注失败阶段，避免把上传租约、归档下载和偏好同步错误
+合并成无法定位的通用异常。Electron 请求失败时会保留底层网络原因，但会清除错误文本中的
+URL 凭据。
+
+如果数据库中的 archive 索引仍存在、对应对象却已从对象存储丢失，下载接口返回
+`404 archive_not_found`。客户端会记录 transcript ID、archive ID 和 sequence，跳过该条
+无法完整恢复的云端 transcript，并继续同步其他会话；普通对象存储故障仍会使本轮下载失败，
+不会被误判为单个归档缺失。该处理只隔离损坏数据，不会伪造或重建丢失对象；运维仍需根据
+Backend 日志和对象存储审计记录定位对象被删除的原因。

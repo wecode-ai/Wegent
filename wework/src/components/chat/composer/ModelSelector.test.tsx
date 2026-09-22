@@ -34,7 +34,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ModelSelector } from './ModelSelector'
-import { getDesktopModelSelectorCollisionPadding } from './model-selector-layout'
+import { getDesktopModelSelectorCollisionPadding } from '@wegent/collaboration/controls/model-selector-layout'
 
 const SHELL_LEFT = 800
 const WINDOW_INNER_WIDTH = 1200

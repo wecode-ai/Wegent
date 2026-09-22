@@ -114,6 +114,7 @@ function createApi() {
         taskBindings: [],
       }),
       get: vi.fn().mockResolvedValue(issue),
+      markRead: vi.fn().mockResolvedValue({ ...issue, is_unread: false }),
       create: vi.fn().mockResolvedValue(issue),
       update: vi
         .fn()
@@ -209,6 +210,30 @@ describe("collaboration workspace controller", () => {
     expect(state.projectTaskBindings).toEqual({ [project.id]: [] });
     expect(state.loading).toBe(false);
     expect(state.error).toBeNull();
+  });
+
+  it("shares an in-flight board load with refresh requests and fetches again after completion", async () => {
+    state = { ...state, projects: [project] };
+    const { api, commands } = createController();
+    const snapshot = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const pending = deferred<typeof snapshot>();
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(pending.promise);
+
+    const initialLoad = commands.loadProject(project.id);
+    const refresh = commands.loadProjectSnapshot(project.id);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+    pending.resolve(snapshot);
+    await Promise.all([initialLoad, refresh]);
+    expect(state.issues).toEqual([issue]);
+    expect(state.loading).toBe(false);
+
+    await commands.loadProjectSnapshot(project.id);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a successful project catalog when My Work fails", async () => {
@@ -317,6 +342,90 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
+  it("persists read state on detail open and updates every board snapshot", async () => {
+    const unread = { ...issue, is_unread: true, content_revision: 2 };
+    const read = { ...unread, is_unread: false };
+    const { api, commands } = createController();
+    vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+      items: [unread],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    vi.mocked(api.issues.get).mockResolvedValue(unread);
+    vi.mocked(api.issues.markRead).mockResolvedValue(read);
+
+    await commands.loadProject(project.id);
+    expect(api.issues.markRead).not.toHaveBeenCalled();
+    await commands.loadSelectedIssue(issue.id);
+
+    expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
+    expect(state.selectedIssue).toEqual(read);
+    expect(state.issues).toEqual([read]);
+    expect(state.projectItems[project.id]).toEqual([read]);
+    commands.clearSelectedIssue();
+    expect(state.issues[0].is_unread).toBe(false);
+    await commands.markIssueRead(read);
+    expect(api.issues.markRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves unread state on failure and allows retry without reopening detail", async () => {
+    const unread = { ...issue, is_unread: true };
+    const { api, commands, notify } = createController();
+    vi.mocked(api.issues.get).mockResolvedValue(unread);
+    vi.mocked(api.issues.markRead).mockRejectedValueOnce(new Error("offline"));
+
+    await commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue?.is_unread).toBe(true);
+    expect(state.error).toBe("save failed");
+    expect(notify).toHaveBeenCalledWith("save failed", "error");
+    await commands.markIssueRead(unread);
+    expect(state.selectedIssue?.is_unread).toBe(false);
+  });
+
+  it.each([1, 2])(
+    "deduplicates read requests and preserves newer content at version %s",
+    async (version) => {
+      const unread = { ...issue, is_unread: true, content_revision: 2 };
+      const newer = {
+        ...unread,
+        title: "New update",
+        version,
+        content_revision: 3,
+      };
+      const response = deferred<CollaborationIssue>();
+      const { api, commands } = createController();
+      vi.mocked(api.issues.markRead).mockReturnValue(response.promise);
+      state = {
+        ...state,
+        issues: [unread],
+        projectItems: { [project.id]: [unread] },
+      };
+
+      const previewRead = commands.markIssueRead(unread);
+      const detailRead = commands.markIssueRead(unread);
+      commands.replaceIssue(newer);
+      response.resolve({ ...unread, is_unread: false });
+      await Promise.all([previewRead, detailRead]);
+
+      expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
+      expect(state.issues).toEqual([newer]);
+      expect(state.selectedIssue).toBeNull();
+    },
+  );
+
+  it("does not mark an issue read if navigation closes it before detail loads", async () => {
+    const { api, commands } = createController();
+    const response = deferred<CollaborationIssue>();
+    vi.mocked(api.issues.get).mockReturnValue(response.promise);
+    const load = commands.loadSelectedIssue(issue.id);
+    commands.clearSelectedIssue();
+    response.resolve({ ...issue, is_unread: true });
+    await load;
+    expect(api.issues.markRead).not.toHaveBeenCalled();
+  });
+
   it("selects a cached board issue before its detail snapshot finishes loading", async () => {
     state = {
       ...state,
@@ -384,6 +493,34 @@ describe("collaboration workspace controller", () => {
     expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([newerComment]);
     expect(state.assignments).toEqual([loadedAssignment]);
+  });
+
+  it("keeps a saved issue when an older detail load finishes afterward", async () => {
+    state = { ...state, project, issues: [issue] };
+    const assignmentsResponse = deferred<CollaborationAssignment[]>();
+    const api = createApi();
+    api.assignments = {
+      list: vi.fn().mockReturnValue(assignmentsResponse.promise),
+      create: vi.fn(),
+    };
+    const { commands } = createController(api);
+    const load = commands.loadSelectedIssue(issue.id);
+    await vi.waitFor(() => {
+      expect(api.assignments?.list).toHaveBeenCalledWith(issue.id);
+    });
+    const savedIssue = {
+      ...issue,
+      title: "Saved while loading",
+      version: issue.version + 1,
+    };
+
+    commands.replaceIssue(savedIssue);
+    assignmentsResponse.resolve([]);
+
+    expect(await load).toEqual(savedIssue);
+    expect(state.selectedIssue).toEqual(savedIssue);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
   });
 
   it("ignores a collection mutation that belongs to another issue", () => {
@@ -1042,6 +1179,96 @@ describe("collaboration workspace controller", () => {
     });
 
     expect(state.issues).toEqual([movedIssue]);
+  });
+
+  it("does not let an older reorder response revert another issue moved concurrently", async () => {
+    const secondIssue: CollaborationIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Second issue",
+      sort_order: 1,
+    };
+    const movedIssue = {
+      ...issue,
+      status: "completed",
+      version: 2,
+    };
+    const concurrentlyMovedIssue = {
+      ...secondIssue,
+      status: "completed",
+      version: 2,
+    };
+    const reorderResponse = deferred<CollaborationIssue[]>();
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue, secondIssue],
+      projectItems: { [project.id]: [issue, secondIssue] },
+    };
+    const api = createApi();
+    api.issues.reorder = vi.fn(() => reorderResponse.promise);
+    const { commands } = createController(api);
+
+    const reorder = commands.reorderIssue({
+      issue: movedIssue,
+      status: "completed",
+      laneIds: [movedIssue.id],
+      optimisticItems: [movedIssue, secondIssue],
+    });
+    commands.replaceIssue(concurrentlyMovedIssue);
+    reorderResponse.resolve([{ ...movedIssue, version: 3 }]);
+    await reorder;
+
+    expect(state.issues).toEqual([
+      { ...movedIssue, version: 3 },
+      concurrentlyMovedIssue,
+    ]);
+    expect(state.projectItems[project.id]).toEqual(state.issues);
+  });
+
+  it("merges queued reorder responses against reducer state", () => {
+    const secondIssue: CollaborationIssue = {
+      ...issue,
+      id: "issue-2",
+      sequence_number: 2,
+      title: "Second issue",
+      sort_order: 1,
+    };
+    const acknowledgedIssue = {
+      ...issue,
+      title: "Server acknowledged",
+      status: "completed",
+      version: 3,
+    };
+    const staleIssue = {
+      ...issue,
+      status: "completed",
+      version: 2,
+    };
+    state = {
+      ...state,
+      project,
+      projects: [project],
+      issues: [issue, secondIssue],
+      projectItems: { [project.id]: [issue, secondIssue] },
+    };
+
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "merge-reorder-issues",
+      issues: [acknowledgedIssue, secondIssue],
+    });
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "merge-reorder-issues",
+      issues: [staleIssue, { ...secondIssue, status: "completed", version: 2 }],
+    });
+
+    expect(state.issues).toEqual([
+      acknowledgedIssue,
+      { ...secondIssue, status: "completed", version: 2 },
+    ]);
+    expect(state.projectItems[project.id]).toEqual(state.issues);
   });
 
   it("keeps the mutated project in the catalog used by background refreshes", async () => {

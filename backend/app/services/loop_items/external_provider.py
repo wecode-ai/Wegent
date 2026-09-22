@@ -13,7 +13,7 @@ import re
 import tempfile
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, BinaryIO
 from urllib.parse import quote
@@ -237,6 +237,38 @@ class ExternalLoopItemProvider:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         return response
 
+    def get_many(
+        self,
+        db: Session,
+        project_id: str,
+        user_id: int,
+        item_ids: list[str],
+    ) -> list[dict[str, object]]:
+        """Load selected provider tasks without serial per-task requests."""
+
+        if not item_ids:
+            return []
+        access = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        project = access.project
+        self._require_external(project)
+        item_id_by_number = {
+            number: item_id
+            for item_id in item_ids
+            if (number := self._item_number(project, item_id)) is not None
+        }
+        issues = self._get_issues(project, list(item_id_by_number))
+        responses: list[dict[str, object]] = []
+        for issue in issues:
+            number = self._number(issue)
+            if number not in item_id_by_number:
+                continue
+            response = self._response(db, project, issue, access, user_id)
+            if response["can_view_detail"]:
+                responses.append(response)
+        return responses
+
     def create(
         self,
         db: Session,
@@ -257,13 +289,18 @@ class ExternalLoopItemProvider:
             access.role, BaseRole.Reporter
         ):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        item_status = values.status or "inbox"
+        if item_status not in EXTERNAL_BOARD_STATUSES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Unsupported board status"
+            )
         assignee_label = self._assignee_label_for_values(
             db, project, values, user_id=user_id
         )
         labels = self._labels_for_write(
             values.tags + [f"{CREATOR_PREFIX}{user_id}:{self._safe_name(user_name)}"],
             values.priority,
-            values.status,
+            item_status,
             assignee=assignee_label,
         )
         issue = self._create_issue(
@@ -1581,6 +1618,14 @@ class ExternalLoopItemProvider:
         return resolved
 
     @staticmethod
+    def _item_number(project: CloudProject, item_id: str) -> int | None:
+        prefix = f"{project.project_key}-"
+        if not item_id.startswith(prefix):
+            return None
+        raw_number = item_id.removeprefix(prefix)
+        return int(raw_number) if raw_number.isdigit() else None
+
+    @staticmethod
     def _find_project(db: Session, item_id: str) -> tuple[CloudProject, int] | None:
         key, separator, raw_number = item_id.rpartition("-")
         if not separator or not raw_number.isdigit():
@@ -1857,6 +1902,55 @@ class ExternalLoopItemProvider:
             else f"/projects/{quote(repository, safe='')}/issues/{number}"
         )
         return self._request(project, "GET", path)
+
+    def _get_issues(
+        self, project: CloudProject, numbers: list[int]
+    ) -> list[dict[str, Any]]:
+        unique_numbers = list(dict.fromkeys(numbers))
+        if not unique_numbers:
+            return []
+        if project.task_provider == "gitlab":
+            repository = self._repository(project)
+            path = f"/projects/{quote(repository, safe='')}/issues"
+            issues: list[dict[str, Any]] = []
+            for offset in range(0, len(unique_numbers), ISSUE_LIST_PAGE_SIZE):
+                batch_numbers = unique_numbers[offset : offset + ISSUE_LIST_PAGE_SIZE]
+                issues.extend(
+                    self._request(
+                        project,
+                        "GET",
+                        path,
+                        params={
+                            "iids[]": batch_numbers,
+                            "state": "all",
+                            "per_page": len(batch_numbers),
+                        },
+                    )
+                )
+            return issues
+
+        issues_by_number: dict[int, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=min(8, len(unique_numbers))) as executor:
+            future_by_number = {
+                executor.submit(self._get_issue, project, number): number
+                for number in unique_numbers
+            }
+            for future in as_completed(future_by_number):
+                number = future_by_number[future]
+                try:
+                    issues_by_number[number] = future.result()
+                except Exception:
+                    logger.warning(
+                        "[External tasks] Skip provider issue project_id=%s number=%s",
+                        project.id,
+                        number,
+                        exc_info=True,
+                    )
+        return [
+            issues_by_number[number]
+            for number in unique_numbers
+            if number in issues_by_number
+        ]
 
     def _create_issue(
         self, project: CloudProject, title: str, body: str, labels: list[str]

@@ -10,6 +10,7 @@ only repairs durable leases, detects stalls, and publishes queue metrics.
 
 import logging
 
+import socketio
 from prometheus_client import Counter, Gauge
 from sqlalchemy import func, select
 
@@ -65,6 +66,7 @@ def scan_robot_queue(self) -> dict:
                     [run.id for run in stalled],
                 )
                 emit_runtime_cancels(stalled)
+                emit_managed_cancels(stalled)
             ROBOT_QUEUE_DEPTH.set(
                 db.scalar(
                     select(func.count(LoopItemExecution.id)).where(
@@ -81,6 +83,7 @@ def scan_robot_queue(self) -> dict:
                 )
                 or 0
             )
+            _publish_work_availability(_queued_devices(db))
             return {
                 "status": "ok",
                 "requeued": requeued,
@@ -104,7 +107,30 @@ def _queued_devices(db) -> list[tuple[int, str]]:
         )
         .distinct()
     ).all()
-    return [(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]]
+    devices = {(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]}
+    from app.services.workspace_cleanup_intents import due_execution_targets
+
+    devices.update(due_execution_targets(db))
+    return sorted(devices)
+
+
+def _publish_work_availability(devices: list[tuple[int, str]]) -> None:
+    """Publish from Celery without borrowing the uvicorn event loop."""
+
+    if not devices:
+        return
+    logger.info(
+        "[RobotQueue] Publishing work availability source=celery targets=%s",
+        devices,
+    )
+    manager = socketio.RedisManager(settings.REDIS_URL, write_only=True)
+    for owner_user_id, device_id in devices:
+        manager.emit(
+            "runtime.tasks.available",
+            {},
+            room=f"execution-target:{owner_user_id}:{device_id}",
+            namespace="/local-executor",
+        )
 
 
 async def consume_queues_background() -> None:
@@ -116,6 +142,11 @@ async def consume_queues_background() -> None:
     try:
         with get_db_session() as db:
             devices = _queued_devices(db)
+        if devices:
+            logger.info(
+                "[RobotQueue] Publishing work availability source=api targets=%s",
+                devices,
+            )
         for owner_user_id, device_id in devices:
             await get_sio().emit(
                 "runtime.tasks.available",
@@ -187,6 +218,37 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
                 execution.id,
             )
     return confirmed_execution_ids
+
+
+def emit_managed_cancels(executions: list[LoopItemExecution]) -> set[int]:
+    """Stop managed Wegent runs, which have no device Runtime to receive an RPC."""
+
+    import asyncio
+
+    from app.services.project_automation_managed_execution import (
+        project_automation_managed_execution_service,
+    )
+
+    cancelled_execution_ids: set[int] = set()
+    for execution in executions:
+        if not execution.team_id or not execution.backend_task_id:
+            continue
+        try:
+            asyncio.run(
+                project_automation_managed_execution_service.cancel(
+                    task_id=execution.backend_task_id,
+                    user_id=execution.executor_owner_user_id,
+                    source="board_team_assignment",
+                )
+            )
+        except Exception:
+            logger.exception(
+                "[RobotQueue] Managed cancel failed execution=%s",
+                execution.id,
+            )
+            continue
+        cancelled_execution_ids.add(execution.id)
+    return cancelled_execution_ids
 
 
 async def reconcile_device_executions(

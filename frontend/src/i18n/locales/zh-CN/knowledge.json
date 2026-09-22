@@ -71,6 +71,10 @@
     "document": "文档知识"
   },
   "document": {
+    "dingtalkAutoSync": {
+      "label": "自动更新钉钉文档",
+      "description": "每天检查已导入的钉钉文档，有更新时同步到知识库。"
+    },
     "title": "文档知识",
     "personal": "个人知识",
     "team": "团队知识",
@@ -191,6 +195,8 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "advancedMode": "高级",
+      "advancedModeDescription": "显示代码 Wiki",
       "createDialogDescription": "配置知识库名称、可见范围和检索设置。",
       "createDesc": "创建您的第一个知识库",
       "notebookDesc": "默认进入工作台，可对话并使用工具处理知识和数据",
@@ -348,6 +354,9 @@
       "reindexFailed": "启动重新索引失败",
       "retryImportSuccess": "已开始重试导入",
       "retryImportFailed": "启动导入重试失败",
+      "resync": "重新同步",
+      "resyncSuccess": "已开始从 Wiki 重新同步",
+      "resyncFailed": "启动 Wiki 重新同步失败",
       "excelFileSizeExceeded": "文件大小超过限制：Excel 文件（{{extension}}）必须小于等于 {{limit}}MB 才能索引。当前文件大小：{{size}}MB。请减小文件大小或拆分为多个小文件。",
       "openLink": "打开链接",
       "download": "下载",
@@ -364,13 +373,19 @@
       },
       "type": {
         "web": "网页",
-        "external": "外部"
+        "external": "外部",
+        "wiki": "外部 Wiki"
       },
       "sourceInaccessible": "来源不可访问",
       "sourceInaccessibleHint": "外部来源已被删除或失去访问权限；恢复访问后可重试导入",
+      "sourceSyncFailed": "同步失败",
+      "sourceSyncFailedHint": "最近一次同步失败；已有本地内容仍可使用，系统将在后续重试",
+      "wikiSourceMissing": "Wiki 源文档不存在",
+      "wikiSourceMissingHint": "Wiki 页面已被删除，知识库继续使用最近一次成功同步的索引内容",
       "externalSource": {
         "lastImportedAt": "最近导入 {{time}}",
-        "accessible": "来源正常"
+        "accessible": "来源正常",
+        "wikiConnectionName": "Wiki 连接：{{name}}"
       },
       "search": "搜索文档",
       "searchInFolder": "在 {{folder}} 中搜索文档",
@@ -631,7 +646,12 @@
       "discardTitle": "放弃未提交的内容？",
       "discardDescription": "关闭会清除所有来源中未提交的内容。已添加的资料不受影响。",
       "keepEditing": "继续编辑",
-      "discard": "放弃并关闭"
+      "discard": "放弃并关闭",
+      "wiki": {
+        "entry": "外部 Wiki",
+        "noPermission": "没有绑定外部 Wiki 文档的权限",
+        "busy": "正在处理其他资料，请稍候"
+      }
     },
     "permission": {
       "noAccess": "您没有操作权限",
@@ -1156,7 +1176,10 @@
       "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
       "modelPlaceholder": "选择模型",
       "modelRequired": "请选择生成模型",
-      "created": "代码 Wiki 已创建，正在生成内容。"
+      "created": "代码 Wiki 已创建，正在生成内容。",
+      "scheduleNotConfigured": "代码 Wiki 已创建，但定期更新未保存；可进入 Wiki 后重新配置。",
+      "scheduledUpdate": "定期更新",
+      "scheduledUpdateHint": "首次生成会在创建后立即开始；也可以启用后续定期检查。"
     },
     "strategy": {
       "label": "生成策略",
@@ -1192,6 +1215,7 @@
       "updateDescription": "选择本次更新方式。实际模式由服务端检查仓库后决定。",
       "checkAndUpdate": "检查并更新（推荐）",
       "checkAndUpdateHint": "没有变化时不生成；适合增量时增量更新，否则自动全量更新。",
+      "updateStrategyHint": "需要全量生成时，会使用知识库设置中保存的生成策略。",
       "fullUpdate": "全量重新生成",
       "startUpdate": "开始更新",
       "regenerate": "重新生成",
@@ -1220,6 +1244,65 @@
       "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
       "emptyFailed": "上次生成没有完成",
       "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
+    },
+    "scheduledUpdate": {
+      "title": "定期更新",
+      "button": "定期更新",
+      "description": "定期检查仓库；失败会记录原因并在下个周期继续尝试。关闭不会清除设置。",
+      "draftDescription": "保存此知识库后才会应用这些修改。",
+      "readOnly": "只有知识库所有者或系统管理员可以修改定期更新。",
+      "pendingConfigure": "定期更新修改将在保存知识库后生效。",
+      "pendingDelete": "定期更新将在保存知识库后删除。",
+      "pendingDeleteDescription": "当前已选择删除定期更新。修改并应用这里的设置会取消待删除状态；最终仍需保存知识库。",
+      "enabled": "启用定期更新",
+      "enabledCadence": "定期更新 · {{cadence}}",
+      "days": "每 {{days}} 天",
+      "cadence": "更新周期",
+      "customDays": "自定义周期天数（2–365 天）",
+      "invalidCustomDays": "请输入 2 到 365 之间的整数天数。",
+      "invalidTime": "请选择有效时间。",
+      "weekday": "星期",
+      "time": "时间",
+      "timezone": "时区",
+      "timezoneHint": "时区：{{timezone}}",
+      "advanced": "高级设置",
+      "settingsHint": "在此 Code Wiki 中配置周期、时间和后续生成者。",
+      "configure": "配置",
+      "apply": "应用修改",
+      "runner": "后续生成者",
+      "runnerHint": "留空则使用知识库 owner。只影响未来生成，不改变历史、当前文件或知识库所属。",
+      "runnerPlaceholder": "搜索用户；留空使用 owner",
+      "history": "最近检查记录",
+      "results": {
+        "repositoryUnchanged": "仓库没有变化",
+        "deleted": "定期更新已删除，本次检查已跳过",
+        "disabled": "定期更新已关闭，本次检查已跳过",
+        "generationRunning": "已有生成任务运行中，本次检查已跳过",
+        "wikiUnavailable": "Code Wiki 已不存在或关联关系发生变化",
+        "generationStarted": "已启动{{mode}}"
+      },
+      "weekdays": {
+        "0": "星期一",
+        "1": "星期二",
+        "2": "星期三",
+        "3": "星期四",
+        "4": "星期五",
+        "5": "星期六",
+        "6": "星期日"
+      },
+      "daily": "每日",
+      "weekly": "每周",
+      "biweekly": "每两周",
+      "four_weeks": "每四周",
+      "custom": "自定义",
+      "next": "下次检查：{{when}}",
+      "afterSave": "保存后计算",
+      "saved": "定期更新设置已保存",
+      "saving": "保存中…",
+      "delete": "删除定期更新",
+      "deleteTitle": "删除定期更新？",
+      "deleteDescription": "保存此知识库后会停止后续检查并移除此定期更新，已有执行历史会保留。",
+      "deleted": "定期更新已删除"
     },
     "progress": {
       "title": "生成中",
@@ -1288,6 +1371,8 @@
       "republishSyncingTitle": "正在恢复并同步版本",
       "republishSyncingBody": "正在写入页面、清理旧内容并刷新阅读视图。请保持此窗口打开。",
       "republishSyncing": "正在同步…",
+      "republishScheduledWarning": "定期更新仍处于启用状态，未来运行可能再次覆盖这个版本；如需冻结，请先关闭定期更新。",
+      "republishScheduleUnknownWarning": "无法确认定期更新状态，未来的定时运行可能再次覆盖这个版本；如需冻结，请检查 Wiki 设置。",
       "viewFailure": "查看完整错误",
       "failureDetailsTitle": "生成错误",
       "failureDetailsDescription": "本次生成的完整错误信息。"
@@ -1298,6 +1383,48 @@
       "task_not_created": "无法创建执行任务",
       "worker_abandoned": "执行进程失联，该次运行已被回收",
       "publish_refused": "版本已写好，但发布被闸门拒绝"
+    }
+  },
+  "wikiSection": {
+    "synced_badge": "同步 Wiki",
+    "connection": "Wiki 连接",
+    "project": "仓库",
+    "branch": "分支",
+    "no_projects": "没有可访问的仓库",
+    "no_branches": "仓库暂无分支",
+    "load_projects_failed": "加载 GitLab 仓库失败",
+    "load_branches_failed": "加载 GitLab 分支失败",
+    "loading": "正在加载 Wiki 绑定…",
+    "load_failed": "加载 Wiki 绑定失败",
+    "add_failed": "绑定失败",
+    "remove_failed": "解绑失败",
+    "unbind": "解除绑定",
+    "tree_empty": "绑定范围内没有已发布页面",
+    "load_tree_failed": "加载 Wiki 页面失败",
+    "page_list_truncated": "该站点页面数量超过浏览上限，目前仅显示最近更新的页面。如需浏览更早页面，请联系管理员提高 WIKI_TREE_MAX_PAGES。",
+    "connection_failed_tooltip": "连接失败：{{message}}",
+    "need_connection": "请先在「设置 → 集成」配置外部 Wiki 连接",
+    "bound_title": "已绑定文档",
+    "bound_empty": "尚未绑定 Wiki 文档",
+    "picker_title": "选择要绑定的 Wiki 页面（可多选）",
+    "picker_search": "搜索标题或路径",
+    "item_count": "（{{count}}）",
+    "select_all": "全选",
+    "clear_selection": "取消全选",
+    "select_directory": "选择目录“{{name}}”",
+    "clear_directory_selection": "取消选择目录“{{name}}”",
+    "expand_directory": "展开目录“{{name}}”",
+    "collapse_directory": "收起目录“{{name}}”",
+    "already_bound": "已绑定",
+    "already_bound_n": "{{count}} 个 Wiki 文档已绑定，本次跳过",
+    "resynced_n": "已重新同步 {{count}} 个 Wiki 文档",
+    "processing_n": "{{count}} 个 Wiki 文档正在处理中，本次跳过",
+    "bind_selected": "绑定选中（{{count}}）",
+    "bind_scope_success_n": "已绑定 {{count}} 个 Wiki 文档",
+    "unsupported": {
+      "invalid_file_name": "文件名无效",
+      "missing_file_extension": "缺少扩展名",
+      "unsupported_file_type": "不支持此文件类型"
     }
   }
 }

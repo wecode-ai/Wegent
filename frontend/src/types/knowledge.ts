@@ -379,6 +379,7 @@ export interface KnowledgeBase {
   show_generation_task?: boolean
   /** Default generation strategy for this code wiki. */
   generation_strategy?: string | null
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Which model this knowledge base's own generation runs on. */
@@ -421,6 +422,7 @@ export interface KnowledgeBaseCreate {
   allow_document_download?: boolean
   retrieval_config?: RetrievalConfigDraft
   rag_config_mode?: RagConfigMode
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Default opening view: 'notebook' or 'classic' (documents) */
@@ -443,6 +445,17 @@ export interface KnowledgeBaseCreate {
   execution_model_ref?: SummaryModelRef | null
   /** Only for `kb_type: 'code_wiki'` — leave unset to use the deployment default. */
   generation_strategy?: string
+  /** Optional future updates; the first generation always starts after creation. */
+  scheduled_update?: {
+    enabled: boolean
+    cadence: 'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
+    interval_days: number
+    weekday: number
+    hour: number
+    minute: number
+    timezone: string
+    execution_principal_user_id?: number | null
+  } | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
@@ -477,6 +490,7 @@ export interface KnowledgeBaseUpdate {
   direct_access_requirement?: DirectAccessRequirement
   allow_document_download?: boolean
   retrieval_config?: RetrievalConfigUpdate
+  dingtalk_auto_sync_enabled?: boolean
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Editable: applies to the next run, not one already going. */

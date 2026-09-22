@@ -4,6 +4,7 @@
 """Focused contracts for task assignment, robot approval, and queue state."""
 
 import uuid
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.schemas.delivery import LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
 from tests.utils.agent_resources import create_runnable_wegent_team
@@ -115,6 +117,58 @@ def _active_execution(db: Session, item: LoopItem) -> LoopItemExecution | None:
         .order_by(LoopItemExecution.id.desc())
         .first()
     )
+
+
+def test_collaboration_group_owner_is_project_scoped_and_persisted(
+    test_db: Session, test_user: User
+):
+    db = test_db
+    project = _make_project(db, test_user)
+    item = _make_item(db, project, test_user)
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "members": [],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        updated = loop_item_service.update(
+            db,
+            item.id,
+            test_user.id,
+            LoopItemUpdate(version=item.version, assignee_group_id="group-1"),
+        )
+    db.refresh(updated)
+    assert updated.metadata_json["collaboration_group"]["id"] == "group-1"
+    assert updated.assignee_user_id is None
+    values = loop_item_service.response_values(db, updated, test_user.id)
+    assert values["assignee_group_name"] == "Delivery team"
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[],
+    ):
+        with pytest.raises(HTTPException) as error:
+            loop_item_service.update(
+                db,
+                item.id,
+                test_user.id,
+                LoopItemUpdate(
+                    version=updated.version, assignee_group_id="other-project-team"
+                ),
+            )
+    assert error.value.status_code == 422
+    restored = loop_item_service.update(
+        db,
+        item.id,
+        test_user.id,
+        LoopItemUpdate(version=updated.version, assignee_user_id=test_user.id),
+    )
+    assert not restored.metadata_json.get("collaboration_group")
+    assert restored.assignee_user_id == test_user.id
 
 
 def _make_member(db: Session, project: CloudProject, name: str, role: BaseRole) -> User:
@@ -599,3 +653,34 @@ def test_my_work_uses_latest_execution_truth_instead_of_task_binding(
     assert row["execution_attempt_no"] == 2
     assert row["execution_last_event_seq"] == 17
     assert row["ai_state"]["status"] == "unknown"
+
+
+def test_my_work_limits_results_before_loading_item_details(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    base_time = datetime(2026, 1, 1)
+    item_ids = [f"LIMIT-{index:03d}" for index in range(105)]
+    test_db.add_all(
+        [
+            LoopItem(
+                id=item_id,
+                cloud_project_id=project.id,
+                title=item_id,
+                description="",
+                status="inbox",
+                created_by_user_id=test_user.id,
+                metadata_json={},
+                updated_at=base_time + timedelta(minutes=index),
+            )
+            for index, item_id in enumerate(item_ids)
+        ]
+    )
+    test_db.commit()
+
+    rows = loop_item_service.list_my_work(test_db, test_user.id)
+
+    assert len(rows) == 100
+    assert [row["id"] for row in rows] == list(reversed(item_ids[5:]))
+    with pytest.raises(ValueError, match="limit must be between 1 and 100"):
+        loop_item_service.list_my_work(test_db, test_user.id, limit=101)

@@ -1,3 +1,4 @@
+import { useCollaborationPortalTheme } from "../theme";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import type {
@@ -86,6 +87,7 @@ export function WorkflowStageCompletionDialog({
   onClose,
   onSubmit,
 }: WorkflowStageCompletionDialogProps) {
+  const portalTheme = useCollaborationPortalTheme();
   const t = translate;
   const canSubmit =
     !busy &&
@@ -110,7 +112,8 @@ export function WorkflowStageCompletionDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
+      {...portalTheme}
+      className={`${portalTheme.className} fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm`}
       onMouseDown={(event) =>
         event.currentTarget === event.target && !busy && onClose()
       }

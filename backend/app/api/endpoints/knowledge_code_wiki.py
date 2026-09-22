@@ -54,6 +54,8 @@ from app.schemas.knowledge import (
     CodeWikiRunRecord,
     CodeWikiRunResponse,
     CodeWikiRunStatus,
+    CodeWikiScheduledUpdate,
+    CodeWikiScheduledUpdateRequest,
     KnowledgeBaseResponse,
     KnowledgeBaseType,
     ResourceScope,
@@ -93,6 +95,11 @@ from app.services.knowledge.code_wiki.runner import (
     republish_generation,
     start_first_run,
     start_run,
+)
+from app.services.knowledge.code_wiki.scheduled_update import (
+    configure_scheduled_update,
+    delete_scheduled_update,
+    read_scheduled_update,
 )
 from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
@@ -311,6 +318,10 @@ def create_code_wiki(
         assert_user_can_read_source(db, current_user.id, source)
     except SourceAccessDenied as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except (CodeWikiRunError, ValueError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
     existing_id = existing_wiki_id(db, source, owner_id=current_user.id)
     if existing_id:
@@ -473,6 +484,90 @@ def _assert_caller_may_manage_generation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Knowledge Base manage permission is required to manage generations",
         )
+
+
+def _assert_caller_owns_schedule(user: User, knowledge_base: Kind) -> None:
+    if user.id != knowledge_base.user_id and user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the Knowledge Base owner or a system administrator may configure scheduled updates",
+        )
+
+
+def _assert_code_wiki_schedule_target(knowledge_base: Kind) -> None:
+    if (knowledge_base.json or {}).get("spec", {}).get("kbType") != (
+        KnowledgeBaseType.CODE_WIKI.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Code wiki not found"
+        )
+
+
+@router.get(
+    "/{knowledge_base_id}/code-wiki/scheduled-update",
+    response_model=CodeWikiScheduledUpdate,
+)
+@trace_sync("get_code_wiki_scheduled_update", "knowledge.api")
+def get_code_wiki_scheduled_update(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> CodeWikiScheduledUpdate:
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_code_wiki_schedule_target(knowledge_base)
+    return read_scheduled_update(
+        db,
+        knowledge_base=knowledge_base,
+        can_configure=(
+            current_user.id == knowledge_base.user_id or current_user.role == "admin"
+        ),
+    )
+
+
+@router.put(
+    "/{knowledge_base_id}/code-wiki/scheduled-update",
+    response_model=CodeWikiScheduledUpdate,
+)
+@trace_sync("put_code_wiki_scheduled_update", "knowledge.api")
+def put_code_wiki_scheduled_update(
+    knowledge_base_id: int,
+    data: CodeWikiScheduledUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> CodeWikiScheduledUpdate:
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_code_wiki_schedule_target(knowledge_base)
+    _assert_caller_owns_schedule(current_user, knowledge_base)
+    try:
+        configure_scheduled_update(db, knowledge_base=knowledge_base, data=data)
+    except (CodeWikiRunError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return get_code_wiki_scheduled_update(knowledge_base_id, current_user, db)
+
+
+@router.delete(
+    "/{knowledge_base_id}/code-wiki/scheduled-update",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@trace_sync("delete_code_wiki_scheduled_update", "knowledge.api")
+def delete_code_wiki_scheduled_update(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_code_wiki_schedule_target(knowledge_base)
+    _assert_caller_owns_schedule(current_user, knowledge_base)
+    try:
+        delete_scheduled_update(db, knowledge_base=knowledge_base)
+    except CodeWikiRunError as exc:
+        if str(exc) != "Code Wiki no longer exists":
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Code wiki not found"
+        ) from exc
 
 
 @router.get("/{knowledge_base_id}/code-wiki/status", response_model=CodeWikiRunStatus)

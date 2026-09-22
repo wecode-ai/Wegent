@@ -10,6 +10,8 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useMemo: <T,>(factory: () => T) => factory(),
+    useRef: <T,>(value: T) => ({ current: value }),
+    useLayoutEffect: (effect: () => void) => effect(),
     useState: <T,>(initialValue: T) => [initialValue, vi.fn()],
   };
 });
@@ -71,13 +73,21 @@ function descendants(node: ReactNode): ReactElement[] {
   const element = node as ReactElement;
   return [
     element,
-    ...Children.toArray(element.props.children).flatMap((child) =>
-      descendants(child),
-    ),
+    ...Children.toArray(
+      typeof element.props.children === "function"
+        ? element.props.children(vi.fn())
+        : element.props.children,
+    ).flatMap((child) => descendants(child)),
   ];
 }
 
 function editorFrom(element: ReactElement): ReactElement {
+  while (
+    typeof element.type === "function" &&
+    element.type !== SharedIssueDetailEditor
+  ) {
+    element = (element.type as (props: unknown) => ReactElement)(element.props);
+  }
   const editor = descendants(element).find(
     (candidate) => candidate.type === SharedIssueDetailEditor,
   );
@@ -129,7 +139,7 @@ describe("IssueDetail browser due date boundary", () => {
       const extensions = editor.props.extensions;
 
       if (_ === "edit") {
-        expect(editor.props.showAssignee).toBe(false);
+        expect(editor.props.showAssignee).toBe(true);
       }
       expect(extensions.dueDateInputType).toBe("datetime-local");
       expect(extensions.dueDateFromSource(issue.due_at)).toBe(

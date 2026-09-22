@@ -31,7 +31,11 @@ import {
   writeFile,
 } from './shared.mjs'
 
-import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  currentRuntimeTaskFromDebugSnapshot,
+  waitForWorkbenchDebugState,
+} from './workspace-flows.mjs'
 
 async function verifyShortConversationLayout({ composerSelector, control, restartDesktopApp }) {
   const taskRowsBeforeConversation = new Set(
@@ -53,7 +57,11 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await sendPrompt(
+    control,
+    composerSelector,
+    `${FRESH_CHAT_PROMPT} FOLLOW_UP\n${Array.from({ length: 40 }, (_, index) => `Expansion line ${index + 1}`).join('\n')}`
+  )
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -160,6 +168,31 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+
+  const toggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-user-message-button"]`
+  const expandableContentSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]:has([data-testid="toggle-user-message-button"]) [data-testid="user-message-content"]`
+  const beforeExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The collapsed user message'
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, { stableMs: 300 })
+  const afterExpansion = await getSingleElementMetrics(
+    control,
+    expandableContentSelector,
+    'The expanded user message'
+  )
+  assert.ok(
+    afterExpansion.height > beforeExpansion.height,
+    'Expanding the user message did not reveal more content'
+  )
+  assert.ok(
+    Math.abs(afterExpansion.top - beforeExpansion.top) <= 8,
+    `Expanding the user message moved its top from ${beforeExpansion.top}px to ${afterExpansion.top}px`
+  )
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="false"]`, { stableMs: 300 })
 
   const taskRowsBeforeRace = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -311,7 +344,6 @@ async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) 
   const taskRow = `[data-testid="${taskRowTestId}"]`
   const renameMenuItem = `[data-testid="runtime-local-task-menu-rename-${taskId}"]`
   const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
-  const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
   const sortable = `[data-sidebar-sortable-id]:has(${taskRow})`
 
   await control.command('contextMenu', taskRow)
@@ -324,17 +356,115 @@ async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) 
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const originalTitle = await control.command('getValue', renameInput)
   await control.command('press', renameInput, { key: 'Space' })
   assert.equal(
     await control.command('getAttribute', sortable, { value: 'data-dragging' }),
     '',
     'Typing a space in the conversation rename input started sidebar dragging'
   )
-  await control.command('click', renameCloseButton)
+  await control.command('nativePress', renameInput, { key: 'Escape' })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
-    'The rename dialog did not close after the space-key drag regression check'
+    'Escape did not cancel conversation renaming'
+  )
+
+  const reopenRename = async () => {
+    await control.command('contextMenu', taskRow)
+    await control.command('waitFor', renameMenuItem, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', renameMenuItem)
+    await control.command('waitFor', renameInput, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await reopenRename()
+  assert.equal(
+    await control.command('getValue', renameInput),
+    originalTitle,
+    'Escape saved the discarded rename draft'
+  )
+  const changedTitle = `${originalTitle} keyboard check`
+  await control.command('fill', renameInput, { value: changedTitle })
+  await control.command('nativePress', renameInput, { key: 'Enter' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
+    'Enter did not save and close the rename dialog'
+  )
+  await reopenRename()
+  assert.equal(
+    await control.command('getValue', renameInput),
+    changedTitle,
+    'Enter did not persist the changed title'
+  )
+  await control.command('fill', renameInput, { value: originalTitle })
+  await control.command('nativePress', renameInput, { key: 'Enter' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
+    'Could not restore the original title'
+  )
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await control.command('doubleClick', taskRow)
+    await control.command('waitFor', renameInput, { visible: true })
+    assert.equal(
+      await control.command('getActiveElementTestId', 'body'),
+      `rename-runtime-local-task-input-${taskId}`,
+      `Repeated rename ${attempt + 1} lost input focus`
+    )
+    assert.equal(await control.command('getValue', renameInput), originalTitle)
+    await control.command('nativePress', renameInput, { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
+      `Escape did not close repeated rename ${attempt + 1}`
+    )
+  }
+
+  const headerRename = '[data-testid="conversation-rename-button"]'
+  const headerInput = '[data-testid="conversation-rename-input"]'
+  await control.command('click', headerRename)
+  await control.command('waitFor', headerInput, { visible: true })
+  assert.equal(await control.command('getValue', headerInput), originalTitle)
+  await control.command('fill', headerInput, { value: changedTitle })
+  await control.command('nativePress', headerInput, { key: 'Escape' })
+  await control.command('click', headerRename)
+  await control.command('waitFor', headerInput, { visible: true })
+  assert.equal(await control.command('getValue', headerInput), originalTitle)
+  await control.command('fill', headerInput, { value: changedTitle })
+  await control.command('nativePress', headerInput, { key: 'Enter' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-rename-input'),
+    'Header rename did not close after Enter'
+  )
+  await reopenRename()
+  assert.equal(await control.command('getValue', renameInput), changedTitle)
+  await control.command('fill', renameInput, { value: originalTitle })
+  await control.command('nativePress', renameInput, { key: 'Enter' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
+    'Could not restore the header title'
+  )
+
+  await control.command('click', '[data-testid="conversation-project-button"]')
+  await control.command('waitFor', '[data-testid="conversation-project-popover"]', {
+    visible: true,
+  })
+  await control.command('nativePress', '[data-testid="conversation-project-popover"]', {
+    key: 'Escape',
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-project-popover'),
+    'Escape did not dismiss project details'
   )
 }
 
@@ -908,7 +1038,12 @@ async function createCheckpointTaskFixture(
   return waitForNewTaskRow(control, knownTaskRows, 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK')
 }
 
-async function verifyWorktreeCreationStatus({ composerSelector, control, workspacePath }) {
+async function verifyWorktreeCreationStatus({
+  composerSelector,
+  control,
+  workspacePath,
+  restartDesktopApp,
+}) {
   const projectMenusBeforeCreate = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('project-menu-')
@@ -947,19 +1082,18 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   )
   await captureVerificationScreenshot(control, 'worktree-status-02-mode-selected.png')
 
-  control.setScenario('checkpoint_task')
-  const scenarioRequest = control.awaitScenarioRequest('checkpoint_task')
-  await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
-  const creatingSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('worktree-creation-status') ||
-      snapshot.text.includes(CHECKPOINT_TASK_PROMPT),
-    'The worktree task neither showed creation progress nor entered the conversation'
-  )
-  // Fast local fixtures can finish creating the worktree between waitFor and getText.
-  // Validate the transient status only when it is still present.
-  if (creatingSnapshot.testIds.includes('worktree-creation-status')) {
+  const scenario = 'worktree_status_hold'
+  const scenarioCompletionText = 'WORKTREE_STATUS_HOLD_COMPLETE'
+  control.holdScenarioResponse(scenario)
+  control.setScenario(scenario)
+  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  try {
+    await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+    const creatingSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes('worktree-creation-status'),
+      'The worktree task did not show creation progress'
+    )
     assert.match(
       creatingSnapshot.text,
       /正在搭建你的独立工作树|Building your independent worktree/,
@@ -971,26 +1105,88 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
       'The composer remained interactive while the worktree was being created'
     )
     await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
-  }
-  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
-    text: CHECKPOINT_TASK_PROMPT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
 
-  await withTimeout(
-    scenarioRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The worktree task did not reach the model service after creation'
-  )
+    await withTimeout(
+      scenarioRequest,
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The worktree task did not reach the model service after creation'
+    )
+    const waitingSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(CHECKPOINT_TASK_PROMPT) &&
+        !snapshot.testIds.includes('worktree-creation-status'),
+      'The worktree task did not enter its conversation after creation'
+    )
+    assert.equal(
+      waitingSnapshot.testIds.includes('thinking-indicator'),
+      true,
+      'The worktree task first rendered an idle conversation after creation'
+    )
+    assert.equal(
+      waitingSnapshot.text.includes(scenarioCompletionText),
+      false,
+      'The held worktree response completed before the thinking state was verified'
+    )
+    await captureVerificationScreenshot(control, 'worktree-status-04-waiting-for-assistant.png')
+  } finally {
+    control.releaseScenarioResponse(scenario)
+  }
+
   await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    text: scenarioCompletionText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'worktree-status-04-task-started.png')
+  await captureVerificationScreenshot(control, 'worktree-status-05-task-started.png')
+
+  const beforeRestart = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const restoredTaskId = currentRuntimeTaskFromDebugSnapshot(beforeRestart)?.taskId
+  assert.ok(restoredTaskId, 'The project task must be selected before restarting')
+  await restartDesktopApp()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: scenarioCompletionText,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId === restoredTaskId,
+    'Startup did not restore the project task without sidebar navigation',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('click', '[data-testid="conversation-project-button"]')
+  await control.command('waitFor', '[data-testid="conversation-project-task-count"]', {
+    visible: true,
+  })
+  assert.match(
+    await control.command('getText', '[data-testid="conversation-project-task-count"]'),
+    /^\s*(?:1\s*个任务|1\s*tasks?)\s*$/u,
+    'The project popover did not recover its task count on startup without switching tasks'
+  )
+  assert.equal(
+    await control.command('getText', '[data-testid="conversation-project-root"]'),
+    workspacePath.replace(/^\/Users\/[^/]+(?=\/|$)/u, '~'),
+    'The project popover showed the task worktree instead of the configured project root'
+  )
+  await control.command('click', '[data-testid="conversation-project-edit"]')
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', { visible: true })
+  await control.command('nativePress', '[data-testid="local-project-name-input"]', {
+    key: 'Escape',
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-edit-dialog'),
+    'Escape did not close the project editor opened from the conversation header'
+  )
+  assert.notEqual(
+    await control.command('getActiveElementTestId', 'body'),
+    'conversation-project-button',
+    'Closing the project editor forced focus onto the folder button'
+  )
 
   const taskDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-  const worktreeTaskId = taskDebugSnapshot.workbench?.currentRuntimeTask?.taskId
-  const worktreePath = taskDebugSnapshot.workbench?.currentRuntimeTask?.workspacePath
+  const currentWorktreeTask = currentRuntimeTaskFromDebugSnapshot(taskDebugSnapshot)
+  const worktreeTaskId = currentWorktreeTask?.taskId
+  const worktreePath = currentWorktreeTask?.workspacePath
   assert.ok(worktreeTaskId, 'The worktree task did not expose its runtime task ID')
   assert.ok(worktreePath, 'The worktree task did not expose its workspace path')
   const worktreeContainer = join(worktreePath, '..')
@@ -1010,25 +1206,31 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
       testId.startsWith('runtime-local-task-row-')
     )
   )
-  await control.command(
-    'clickDescendantInElementWithText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      target: '[data-testid="fork-message-button"]',
-      text: CHECKPOINT_TASK_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  const assistantMessageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  const assistantHoverRegionSelector = `${assistantMessageSelector} [data-testid="message-hover-region"]`
+  const firstTurnForkButtonSelector = `${assistantHoverRegionSelector} [data-testid="fork-message-button"]`
+  await control.command('hover', assistantHoverRegionSelector)
+  await control.command('waitFor', firstTurnForkButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickDescendantInElementWithText', assistantHoverRegionSelector, {
+    target: '[data-testid="fork-message-button"]',
+    text: scenarioCompletionText,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   const forkDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const currentForkTask = currentRuntimeTaskFromDebugSnapshot(forkDebugSnapshot)
   assert.equal(
-    forkDebugSnapshot.workbench?.currentRuntimeTask?.taskId,
+    currentForkTask?.taskId,
     forkTaskId,
     'Forking a worktree task did not open the forked task'
   )
   assert.equal(
-    forkDebugSnapshot.workbench?.currentRuntimeTask?.workspacePath,
+    currentForkTask?.workspacePath,
     worktreePath,
     'The forked task did not inherit the managed source worktree'
   )
@@ -1048,7 +1250,7 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
     text: FORK_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'worktree-status-05-fork-follow-up-complete.png')
+  await captureVerificationScreenshot(control, 'worktree-status-06-fork-follow-up-complete.png')
 
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
   await withTimeout(

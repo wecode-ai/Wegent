@@ -164,11 +164,38 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn start_queue_run(&self, local_task_id: &str) {
-        let Ok(store) = LocalTaskStore::open(self.task_store_path.as_ref()) else {
+    pub(super) fn project_queue_progress(&self, local_task_id: &str, content: &str) {
+        if !self
+            .local_task_link(local_task_id)
+            .is_some_and(|link| link.runtime_handle["origin"]["projectStore"] == "local")
+        {
             return;
-        };
-        let _ = store.mark_runtime_running(local_task_id);
+        }
+        if let Err(error) = LocalTaskStore::open(self.task_store_path.as_ref())
+            .and_then(|store| store.update_execution_progress(local_task_id, content))
+        {
+            log_executor_event(
+                "local Issue progress persistence failed",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("error", error.to_string()),
+                ],
+            );
+        }
+    }
+
+    pub(super) fn start_queue_run(&self, local_task_id: &str) {
+        if let Err(error) = LocalTaskStore::open(self.task_store_path.as_ref())
+            .and_then(|store| store.mark_runtime_running(local_task_id))
+        {
+            log_executor_event(
+                "local Issue start persistence failed",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("error", error.to_string()),
+                ],
+            );
+        }
     }
 
     /// Report a finished local-project robot run back to the store.
@@ -184,26 +211,47 @@ impl RuntimeWorkRpcHandler {
         error: Option<String>,
         result_content: Option<String>,
     ) {
-        let Ok(store) = LocalTaskStore::open(self.task_store_path.as_ref()) else {
-            return;
-        };
-        let Ok(Some(execution)) = store.execution_by_runtime_task_id(local_task_id) else {
-            return;
-        };
-        let execution_id = execution.id;
-        let error_text = error.unwrap_or_else(|| "Local runtime run failed".to_owned());
-        match status {
-            AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
-                let content = result_content.unwrap_or_default();
-                let _ = store.complete_execution(execution_id, Some(&content));
+        let result = (|| {
+            let store = LocalTaskStore::open(self.task_store_path.as_ref())?;
+            let result_text = result_content.unwrap_or_default();
+            let error_text = error.unwrap_or_else(|| "Local runtime run failed".to_owned());
+            let (comment_status, comment_content) = match status {
+                AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
+                    ("completed", result_text.as_str())
+                }
+                AutomationRunStatus::Failed => ("failed", error_text.as_str()),
+                AutomationRunStatus::Cancelled => ("cancelled", error_text.as_str()),
+                _ => ("streaming", ""),
+            };
+            if comment_status != "streaming" {
+                store.finish_runtime_comment(local_task_id, comment_status, comment_content)?;
             }
-            AutomationRunStatus::Failed => {
-                let _ = store.fail_execution(execution_id, &error_text, true);
+            let Some(execution) = store.execution_by_runtime_task_id(local_task_id)? else {
+                return Ok(());
+            };
+            let execution_id = execution.id;
+            match status {
+                AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
+                    store.complete_execution(execution_id, Some(&result_text))?;
+                }
+                AutomationRunStatus::Failed => {
+                    store.fail_execution(execution_id, &error_text, true)?;
+                }
+                AutomationRunStatus::Cancelled => {
+                    store.cancel_execution_observed(execution_id, Some(&error_text))?;
+                }
+                _ => {}
             }
-            AutomationRunStatus::Cancelled => {
-                let _ = store.cancel_execution_observed(execution_id, Some(&error_text));
-            }
-            _ => {}
+            Ok::<_, crate::task_runtime::TaskRuntimeError>(())
+        })();
+        if let Err(error) = result {
+            log_executor_event(
+                "local Issue result persistence failed",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("error", error.to_string()),
+                ],
+            );
         }
     }
 }

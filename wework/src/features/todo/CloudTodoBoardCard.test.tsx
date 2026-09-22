@@ -191,6 +191,77 @@ describe('CloudTodoBoardCard', () => {
     expect(screen.getByTestId('cloud-todo-card-more-WEG-85')).toBeInTheDocument()
   })
 
+  it('closes the card menu when clicking outside of it', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-more-WEG-85'))
+    expect(screen.getByTestId('cloud-todo-card-menu-WEG-85')).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByTestId('cloud-todo-card-menu-WEG-85')).not.toBeInTheDocument()
+  })
+
+  it('keeps the card menu open when clicking inside it', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-more-WEG-85'))
+    const menu = screen.getByTestId('cloud-todo-card-menu-WEG-85')
+    fireEvent.mouseDown(menu)
+    expect(screen.getByTestId('cloud-todo-card-menu-WEG-85')).toBeInTheDocument()
+  })
+
+  it('toggles the card menu from its trigger button', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const trigger = screen.getByTestId('cloud-todo-card-more-WEG-85')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('cloud-todo-card-menu-WEG-85')).toBeInTheDocument()
+    await userEvent.click(trigger)
+    expect(screen.queryByTestId('cloud-todo-card-menu-WEG-85')).not.toBeInTheDocument()
+  })
+
   it('opens execution configuration from the blocking card action', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()
@@ -422,13 +493,13 @@ describe('CloudTodoBoardCard', () => {
 
     expect(summary).toHaveClass('relative')
     expect(changeRequest.parentElement?.parentElement).toHaveClass('absolute', 'right-0', 'top-0')
-    expect(response).toHaveClass('h-5', 'truncate', 'pr-7')
+    expect(response).toHaveClass('line-clamp-2', 'pr-7')
     expect(response).not.toHaveClass('min-h-[60px]', 'border-l', 'pl-2')
     expect(summary).not.toHaveTextContent('Fix the board popup')
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
   })
 
-  it('uses spacing instead of full-width separators between card sections', () => {
+  it('keeps normal priority out of the compact card', () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
 
     render(
@@ -454,19 +525,19 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    const priority = screen.getByText('普通')
-    expect(priority.parentElement).not.toHaveClass('border-t')
+    expect(screen.queryByText('普通')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
   })
 
-  it('renders the shared issue reference, tags, deadline and resolved assignee', () => {
+  it('renders the shared issue reference, tags, creation date and resolved assignee', () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
 
     render(
       <CloudTodoBoardCard
         item={{
           ...item,
-          due_at: '2026-09-12T03:00:00Z',
+          created_at: '2026-09-12T03:00:00Z',
+          due_at: '2026-09-23T03:00:00Z',
           tags: ['frontend', 'shared', 'architecture'],
           priority: 'high',
           assignee_agent_id: 'agent-1',
@@ -484,14 +555,162 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    const card = screen.getByTestId('cloud-todo-card-WEG-85')
-    expect(card).toHaveTextContent('WEG-85')
+    const card = screen.getByTestId('cloud-todo-card-drop-WEG-85')
+    expect(screen.getByTestId('cloud-todo-card-reference-WEG-85')).toHaveTextContent('#85')
+    expect(screen.getByTestId('cloud-todo-card-reference-WEG-85')).toHaveAttribute(
+      'title',
+      'WEG-85'
+    )
     expect(card).toHaveTextContent('高')
-    expect(card).toHaveTextContent('2026-09-12')
+    expect(card.querySelector('time')).toHaveAttribute('dateTime', '2026-09-12')
+    expect(card.querySelector('time')).toHaveAttribute('title', '创建时间: 2026-09-12')
     expect(card).toHaveTextContent('frontend')
-    expect(card).toHaveTextContent('shared')
-    expect(card).toHaveTextContent('+1')
+    expect(screen.getByTitle('frontend, shared, architecture')).toHaveTextContent('frontend')
+    expect(card).toHaveTextContent('+2')
     expect(screen.getByTestId('cloud-todo-card-assignee-WEG-85')).toHaveTextContent('Codex')
+  })
+
+  it('keeps creation time stable after updates and respects the date display setting', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    const props = {
+      item: {
+        ...item,
+        created_at: '2026-09-14T08:00:00Z',
+        due_at: '2026-09-23',
+        updated_at: '2026-09-21T08:00:00Z',
+      },
+      onClick: vi.fn(),
+      onArchive: vi.fn(),
+      processingStatus: false,
+      display: { showAssignee: false, showPriority: false, showTags: false, showDate: true },
+    }
+    const { rerender } = render(<CloudTodoBoardCard {...props} />)
+    const date = screen.getByLabelText('创建时间: 2026-09-14')
+    expect(date).toHaveAttribute('datetime', '2026-09-14')
+    expect(date).toHaveTextContent('09-14')
+    expect(date).not.toHaveTextContent('今天截止')
+    expect(date).not.toHaveClass('text-amber-600')
+
+    rerender(
+      <CloudTodoBoardCard {...props} item={{ ...props.item, updated_at: '2026-09-22T08:00:00Z' }} />
+    )
+    expect(screen.getByLabelText('创建时间: 2026-09-14')).toHaveAttribute('datetime', '2026-09-14')
+
+    rerender(<CloudTodoBoardCard {...props} display={{ ...props.display, showDate: false }} />)
+    expect(screen.queryByLabelText('创建时间: 2026-09-14')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { status: 'pending', running: false, bound: false, visible: false },
+    { status: 'in_progress', running: false, bound: false, visible: false },
+    { status: 'in_review', running: false, bound: false, visible: false },
+    { status: 'pending', running: false, bound: true, visible: false },
+    { status: 'in_progress', running: false, bound: true, visible: true },
+    { status: 'in_review', running: false, bound: true, visible: true },
+    { status: 'completed', running: false, bound: true, visible: false },
+    { status: 'cancelled', running: false, bound: true, visible: false },
+    { status: 'pending', running: true, bound: true, visible: true },
+    { status: 'completed', running: true, bound: true, visible: true },
+  ])(
+    'shows progress=$visible for $status with bound=$bound, running=$running',
+    ({ status, running, bound, visible }) => {
+      changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+      render(
+        <CloudTodoBoardCard
+          item={{ ...item, status }}
+          taskBindings={
+            bound
+              ? [{ id: 85, device_id: 'local', task_id: 'task-85', task_title: 'Task', running }]
+              : []
+          }
+          processingStatus={status === 'in_progress'}
+          onClick={vi.fn()}
+          onArchive={vi.fn()}
+          display={{ showAssignee: true, showPriority: true, showTags: true, showDate: true }}
+        />
+      )
+      expect(screen.getByTestId('cloud-todo-card-WEG-85').getAttribute('aria-haspopup')).toBe(
+        visible ? 'dialog' : null
+      )
+    }
+  )
+
+  it('keeps a stopped task accessible while its change request is open', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, status: 'completed' }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Task',
+            running: false,
+            changeRequestTarget: snapshot.target,
+          },
+        ]}
+        processingStatus={false}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{ showAssignee: false, showPriority: false, showTags: false, showDate: false }}
+      />
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-85')).toHaveAttribute('aria-haspopup', 'dialog')
+  })
+
+  it('hides progress and its summaries when the Issue cannot be viewed', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, can_view_detail: false }}
+        taskBindings={[
+          { id: 85, device_id: 'local', task_id: 'task-85', task_title: 'Task', running: true },
+        ]}
+        processingStatus={false}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{ showAssignee: false, showPriority: false, showTags: false, showDate: false }}
+      />
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-85')).not.toHaveAttribute('aria-haspopup')
+    expect(screen.queryByTestId('cloud-todo-card-tasks-WEG-85')).not.toBeInTheDocument()
+  })
+
+  it('places the response between the title and metadata and separates preview from navigation', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    seedAssistantResponse('Latest response')
+    const onClick = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          due_at: '2026-09-23',
+          assignee_agent_name: 'Codex',
+          assignee_agent_id: 'agent-1',
+        }}
+        taskBindings={[
+          { id: 85, device_id: 'local', task_id: 'task-85', task_title: 'Task', running: false },
+        ]}
+        processingStatus={false}
+        onClick={onClick}
+        onArchive={vi.fn()}
+        display={{ showAssignee: true, showPriority: true, showTags: true, showDate: true }}
+      />
+    )
+    const title = screen.getByTestId('cloud-todo-card-WEG-85')
+    const response = screen.getByTestId('cloud-todo-card-final-response-WEG-85')
+    const metadata = screen.getByTestId('cloud-todo-card-metadata-WEG-85')
+    expect(title.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      response.compareDocumentPosition(metadata) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    fireEvent.click(metadata)
+    expect(onClick).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cloud-todo-card-open-task-WEG-85'))
+    expect(onClick).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-85')).not.toBeInTheDocument()
   })
 
   it('does not open a progress preview when the card has no progress binding', async () => {
@@ -510,7 +729,7 @@ describe('CloudTodoBoardCard', () => {
     )
 
     expect(screen.queryByTestId(/cloud-todo-card-goal-/)).not.toBeInTheDocument()
-
+    expect(screen.queryByTestId('cloud-todo-card-open-task-WEG-85')).not.toBeInTheDocument()
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     await new Promise(resolve => window.setTimeout(resolve, 500))
@@ -577,11 +796,11 @@ describe('CloudTodoBoardCard', () => {
     )
 
     const card = screen.getByTestId('cloud-todo-card-drop-WEG-85')
-    expect(card).toHaveClass('transition-shadow', 'hover:shadow-md')
+    expect(card).toHaveClass('transition-colors')
     expect(card).not.toHaveClass('hover:-translate-y-px')
   })
 
-  it('mounts the shared task conversation in the hover preview', async () => {
+  it('mounts the shared task conversation in the explicitly opened preview', async () => {
     seedAssistantResponse(
       '第一行：完成布局\n第二行：保留工具层级\n第三行：展示完整回复\n第四行：展示验证结果\n第五行：展示提交状态\n第六行：等待确认'
     )
@@ -612,7 +831,7 @@ describe('CloudTodoBoardCard', () => {
       '第六行：等待确认'
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')
     expect(conversation).toHaveAttribute('data-device-id', 'local')
@@ -687,8 +906,7 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
-    await act(async () => vi.advanceTimersByTime(450))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85')).toBeInTheDocument()
 
     await act(async () => vi.advanceTimersByTime(2999))
@@ -726,21 +944,17 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    const card = screen.getByTestId('cloud-todo-card-WEG-85')
-    fireEvent.mouseEnter(card)
-    await act(async () => vi.advanceTimersByTime(450))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     await act(async () => vi.advanceTimersByTime(2000))
 
-    fireEvent.mouseLeave(card)
-    fireEvent.pointerMove(document.body)
-    await act(async () => vi.advanceTimersByTime(120))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85-close'))
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-85')).not.toBeInTheDocument()
 
     await act(async () => vi.advanceTimersByTime(1000))
     expect(onMarkRead).not.toHaveBeenCalled()
   })
 
-  it('shows the current conversation goal and pins the same hover preview', async () => {
+  it('shows the current conversation goal and opens the progress panel', async () => {
     const onClick = vi.fn()
     const onPreviewPinnedChange = vi.fn()
     render(
@@ -786,17 +1000,16 @@ describe('CloudTodoBoardCard', () => {
       '让用户在看板悬浮态快速理解当前会话正在完成什么'
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-85-85')).toHaveTextContent(
       '让用户在看板悬浮态快速理解当前会话正在完成什么'
     )
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-pin-WEG-85'))
     expect(onPreviewPinnedChange).toHaveBeenCalledWith(true)
     expect(onClick).not.toHaveBeenCalled()
   })
 
-  it('forwards the bound task model to the shared hover conversation', async () => {
+  it('forwards the bound task model to the shared progress conversation', async () => {
     render(
       <CloudTodoBoardCard
         item={item}
@@ -825,7 +1038,7 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     expect(await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
       'data-model-name',
@@ -833,7 +1046,7 @@ describe('CloudTodoBoardCard', () => {
     )
   })
 
-  it('pins task progress without opening the Issue card', () => {
+  it('opens task progress without opening the Issue card', () => {
     const onClick = vi.fn()
     const onPreviewPinnedChange = vi.fn()
     render(
@@ -860,40 +1073,13 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    const progressTrigger = screen.getByTestId('cloud-todo-card-tasks-WEG-85')
-    fireEvent.click(progressTrigger)
-    fireEvent.keyDown(progressTrigger, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     expect(onClick).not.toHaveBeenCalled()
     expect(onPreviewPinnedChange).toHaveBeenNthCalledWith(1, true)
-    expect(onPreviewPinnedChange).toHaveBeenNthCalledWith(2, true)
   })
 
-  it('keeps repeated task text out of the card and switches the shared hover conversation', async () => {
-    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-      const isPreview = this.dataset.testid === 'cloud-todo-card-progress-popup-WEG-85'
-      const isAnchor =
-        this.firstElementChild?.getAttribute('data-testid') === 'cloud-todo-card-drop-WEG-85'
-      if (!isPreview && !isAnchor) return originalGetBoundingClientRect.call(this)
-
-      const left = isPreview ? 0 : 100
-      const top = isPreview ? 0 : 80
-      const width = isPreview ? 480 : 280
-      const height = isPreview ? 300 : 160
-      return {
-        x: left,
-        y: top,
-        width,
-        height,
-        top,
-        right: left + width,
-        bottom: top + height,
-        left,
-        toJSON: () => undefined,
-      }
-    })
-
+  it('keeps repeated task text out of the card and switches the shared progress conversation', async () => {
     render(
       <CloudTodoBoardCard
         item={{ ...item, description: 'This description must be hidden from the card' }}
@@ -930,11 +1116,10 @@ describe('CloudTodoBoardCard', () => {
       'Fix the board popup'
     )
 
-    fireEvent.mouseEnter(card)
+    fireEvent.click(screen.getByTestId('cloud-todo-card-WEG-85'))
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
     expect(popup).toHaveClass('w-[480px]', 'overflow-x-hidden')
     expect(popup).toHaveAttribute('role', 'dialog')
-    expect(popup).toHaveStyle({ left: '390px', top: '80px' })
     expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-85')).toHaveTextContent(
       'Keep the pull request popup visible'
     )
@@ -942,9 +1127,12 @@ describe('CloudTodoBoardCard', () => {
     expect(popup).toHaveTextContent('Fix the board popup')
     expect(popup).toHaveTextContent('Verify the hover behavior')
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-progress-task-WEG-85-86'))
-    expect(screen.queryByText('Fix the board popup')).not.toBeInTheDocument()
-    expect(screen.getByText('Verify the hover behavior')).toBeInTheDocument()
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-progress-select-WEG-85-86'))
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
+      'data-task-id',
+      'task-85'
+    )
+    fireEvent.click(screen.getByTestId('cloud-todo-card-progress-select-WEG-85-86'))
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
       'data-task-id',
       'task-86'

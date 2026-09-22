@@ -1690,6 +1690,19 @@ def test_todo_lifecycle_and_multiple_local_tasks(
     assert my_work.json()["items"][0]["has_active_task"] is True
 
 
+def test_my_work_rejects_limit_above_cap(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    response = test_client.get(
+        "/api/v1/cloud-work-items/my-work",
+        headers=_auth(test_token),
+        params={"limit": 101},
+    )
+
+    assert response.status_code == 422
+
+
 def test_loop_item_tags_roundtrip(
     test_client: TestClient,
     test_db: Session,
@@ -2884,3 +2897,162 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     assert read_content.status_code == 200
     assert read_content.content == b"report"
     assert read_content.headers["content-type"] == "application/pdf"
+
+
+def test_execution_environment_initialization_keeps_the_client_version_token(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed preparation must stay retryable and never hold the project row."""
+
+    monkeypatch.setattr(
+        "app.services.workspaces.environment_status.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
+    )
+    device = Kind(
+        kind="Device",
+        name="environment-init-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "environment-init-device"},
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "envinit", "name": "Environment initialization"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    bound = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environments",
+        headers=_auth(test_token),
+        json={"device_id": device.id},
+    )
+    assert bound.status_code == 201, bound.text
+
+    configured = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setup_steps": [],
+            },
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    configured_version = configured.json()["version"]
+
+    open_transactions: list[bool] = []
+
+    def prepare(status_value: str, error: str) -> AsyncMock:
+        async def _prepare(*, db: Session, device: Kind, **_: object) -> dict:
+            open_transactions.append(db.in_transaction())
+            return {
+                "status": status_value,
+                "workspace_path": "" if error else "/workspace/ready",
+                "prepared_at": None,
+                "error": error,
+            }
+
+        return AsyncMock(side_effect=_prepare)
+
+    monkeypatch.setattr(
+        "app.services.cloud_projects.service.initialize_execution_environment",
+        prepare("error", "Failed to prepare execution repositories: boom"),
+    )
+    failed = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environment/initialize",
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": configured_version},
+    )
+    assert failed.status_code == 200, failed.text
+    failed_devices = failed.json()["execution_environment"]["devices"]
+    assert failed_devices[device.name]["status"] == "error"
+    assert failed_devices[device.name]["error"] == (
+        "Failed to prepare execution repositories: boom"
+    )
+    # The preparation result is not a configuration change, so the token survives.
+    assert failed.json()["version"] == configured_version
+
+    monkeypatch.setattr(
+        "app.services.cloud_projects.service.initialize_execution_environment",
+        prepare("ready", ""),
+    )
+    retried = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/execution-environment/initialize",
+        headers=_auth(test_token),
+        json={"device_id": device.id, "version": configured_version},
+    )
+    assert retried.status_code == 200, retried.text
+    retried_devices = retried.json()["execution_environment"]["devices"]
+    assert retried_devices[device.name]["status"] == "ready"
+    assert retried_devices[device.name]["workspace_path"] == "/workspace/ready"
+    assert retried.json()["version"] == configured_version
+
+    saved_again = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": configured_version,
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setup_steps": [],
+            },
+        },
+    )
+    assert saved_again.status_code == 200, saved_again.text
+    assert saved_again.json()["execution_environment"]["devices"] == retried_devices
+
+    changed = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": saved_again.json()["version"],
+            "execution_environment": {
+                "repositories": [
+                    {
+                        "name": "wegent",
+                        "url": "ssh://git@example.invalid:2222/wegent.git",
+                        "ref": "develop",
+                        "path": "wegent",
+                        "primary": True,
+                    }
+                ],
+                "setup_steps": [{"command": "true", "working_directory": "wegent"}],
+            },
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["execution_environment"]["devices"] == {}
+
+    # The project row must be unlocked while the device prepares the environment.
+    assert open_transactions == [False, False]

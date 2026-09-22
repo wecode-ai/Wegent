@@ -1,12 +1,27 @@
-import { render, screen } from '@testing-library/react'
+import { render as renderComponent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import type { ReactElement } from 'react'
+
+function render(element: ReactElement) {
+  return renderComponent(
+    <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore()}>
+      {element}
+    </RuntimeTaskLifecycleProvider>
+  )
+}
+
 const reloadRuntimeTranscript = vi.fn()
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
   useWorkbenchPaneContext: () => ({
     state: {
       runtimeWork: {
@@ -15,12 +30,35 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
           {
             deviceId: 'device-1',
             projectId: null,
-            tasks: [{ taskId: 'codex-queue-1', title: 'Implement quicksort' }],
+            tasks: [
+              {
+                taskId: 'codex-queue-1',
+                title: 'Implement quicksort',
+                modelSelection: {
+                  modelName: 'current-cloud-model',
+                  modelType: 'user',
+                  options: {},
+                },
+              },
+            ],
           },
         ],
         totalTasks: 1,
       },
-      devices: [{ device_id: 'device-1', name: 'Cloud Device' }],
+      devices: [
+        {
+          device_id: 'device-1',
+          name: 'Cloud Device',
+          runtime_routes: [
+            {
+              kind: 'cloud-relay',
+              device_id: 'device-1',
+              runtime_device_id: 'runtime-device-1',
+              status: 'online',
+            },
+          ],
+        },
+      ],
     },
     cancelRuntimeTask: vi.fn(),
     openRuntimeTask: vi.fn(),
@@ -50,6 +88,32 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
 }))
 
 describe('RuntimeTaskExecutionOverlay', () => {
+  it('shows the runtime model instead of stale activity metadata', () => {
+    render(
+      <RuntimeTaskExecutionOverlay
+        address={{ deviceId: 'device-1', taskId: 'codex-queue-1' }}
+        senderName="Bot"
+        modelName="stale-model"
+        onClose={vi.fn()}
+      />
+    )
+    expect(screen.getByText(/current-cloud-model/)).toBeInTheDocument()
+    expect(screen.queryByText(/stale-model/)).not.toBeInTheDocument()
+  })
+
+  it('shows the device name when the runtime address uses a route id', () => {
+    render(
+      <RuntimeTaskExecutionOverlay
+        address={{ deviceId: 'runtime-device-1', taskId: 'codex-queue-1' }}
+        senderName="Bot"
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText(/执行设备: Cloud Device/)).toBeInTheDocument()
+    expect(screen.queryByText(/执行设备: runtime-device-1/)).not.toBeInTheDocument()
+  })
+
   it('separates transcript timeout from the running execution and offers retry', async () => {
     const user = userEvent.setup()
 

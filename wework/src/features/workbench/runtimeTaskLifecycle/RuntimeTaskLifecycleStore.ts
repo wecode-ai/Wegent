@@ -37,6 +37,7 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getSnapshot',
   'getCurrentTask',
   'getTask',
+  'getTaskRevision',
   'selectTask',
 ])
 
@@ -78,6 +79,12 @@ export class RuntimeTaskLifecycleStore {
     if (!address) return null
     const canonicalAddress = this.canonicalizeAddress(address)
     return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getSnapshot() ?? null
+  }
+
+  getTaskRevision(address: RuntimeTaskAddress | null | undefined): number {
+    if (!address) return 0
+    const canonicalAddress = this.canonicalizeAddress(address)
+    return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getRevision() ?? 0
   }
 
   selectTask(
@@ -260,18 +267,17 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
-    this.syncRuntimeTranscriptSnapshot(address, transcript)
+    const ignoreStaleIdleTranscript =
+      transcript.running === false &&
+      options.preserveActiveTurn === true &&
+      (this.getTask(address)?.derived.isRunning ?? false)
+    if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
-    const ignoreStaleIdleTranscript =
-      transcript.running === false &&
-      options.preserveActiveTurn === true &&
-      (current?.derived.isRunning ?? false)
-
     if (hasStreamingTurn) {
       if (ignoreStaleRunningTranscript) return
       this.executorStarted(address)

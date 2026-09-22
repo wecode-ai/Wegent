@@ -108,6 +108,36 @@ describe('ToolBlockItem', () => {
     expect(document.body.textContent).not.toContain('/bin/zsh')
   })
 
+  test('hides the shell launcher from expanded command details', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'shell-command-detail',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: {
+            cmd: "/opt/homebrew/bin/zsh -lc 'node wework/e2e/desktop/run-checkpoints.mjs --segment offline-local-project-space'",
+            cwd: '/Users/axb-mac/.wework/workspace/worktrees/runtime-782010714/Wegent',
+          },
+          status: 'done',
+          createdAt: 1770000000000,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(
+      screen.getByText(
+        'node wework/e2e/desktop/run-checkpoints.mjs --segment offline-local-project-space'
+      )
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('/opt/homebrew/bin/zsh')
+  })
+
   test('uses the standard tool row height for file changes', () => {
     render(
       <ToolBlockItem

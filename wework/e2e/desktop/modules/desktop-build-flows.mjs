@@ -436,9 +436,16 @@ async function resolveDesktopCodexBinary() {
   }
 
   const target = hostCodexTarget()
-  await runChecked('pnpm', ['run', 'prepare:codex', '--target', target], {
-    cwd: weworkDir,
-  })
+  // The desktop wire client must stay runnable without workspace tooling, so prepare the binary with
+  // the interpreter that already runs this check instead of a `pnpm` launcher, which Windows cannot
+  // spawn without a command interpreter.
+  await runChecked(
+    process.execPath,
+    [join(weworkDir, 'scripts', 'prepare-codex-binary.mjs'), '--target', target],
+    {
+      cwd: weworkDir,
+    }
+  )
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
   const entry = lock.targets?.[target]
   const binaryRelativePath = entry?.binaryPath
@@ -1190,10 +1197,10 @@ async function verifyCloudProjectFlow(
     false,
     'The bottom workspace add menu exposed IDE'
   )
-  assert.equal(
-    addMenuSnapshot.testIds.includes('workspace-add-desktop-option'),
-    false,
-    'The external build exposed the internal desktop extension'
+  assert.deepEqual(
+    addMenuSnapshot.testIds.filter(id => id.startsWith('workspace-add-') && id.endsWith('-option')),
+    ['workspace-add-terminal-option'],
+    'The external build exposed an unexpected workspace action'
   )
   await control.command('press', 'body', { key: 'Escape' })
   await captureVerificationScreenshot(control, 'cloud-05b-historical-terminal-restored.png')
@@ -1351,6 +1358,16 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
+  )
+  const failedDurationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:has([data-testid="assistant-error-card"]) [data-testid="processing-duration-label"]`
+  await control.command('waitFor', failedDurationSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  const failedDuration = await control.command('getText', failedDurationSelector)
+  assert.match(failedDuration, /用时/, 'The failed turn retained its running duration label')
+  await new Promise(resolve => setTimeout(resolve, 2100))
+  assert.equal(
+    await control.command('getText', failedDurationSelector),
+    failedDuration,
+    'The failed turn duration kept advancing after the error'
   )
   const retryDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const retryTaskId = retryDebugSnapshot.workbench?.currentRuntimeTask?.taskId

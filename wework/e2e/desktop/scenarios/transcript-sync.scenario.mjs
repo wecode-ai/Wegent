@@ -130,6 +130,17 @@ function seedCloudCredential(electronUserDataDirectory, apiBaseUrl) {
   )
 }
 
+async function sendTranscriptPrompt(control, prompt, timeoutMs) {
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
+  // A restored editor can mount before its model selection is ready to submit.
+  await control.command(
+    'waitFor',
+    '[data-testid="desktop-workbench-main"] [data-testid="send-message-button"]',
+    { enabled: true, timeoutMs }
+  )
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+}
+
 async function waitFor(predicate, timeoutMs, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -161,7 +172,7 @@ function summary(transcriptId, transcript) {
     state: 'active',
     currentSequence: transcript.currentSequence,
     archivedThroughSequence: latestSnapshot?.toSequence ?? 0,
-    writerClientId: null,
+    writerClientId: transcript.writerClientId,
     writerLeaseExpiresAt: null,
     archives: transcript.archives,
     createdAt: '2026-09-08T00:00:00.000Z',
@@ -185,6 +196,7 @@ export function createDesktopScenario({
 
   const transcripts = new Map()
   const objects = new Map()
+  const segmentUploadCounts = new Map()
   const requestLog = []
   const modelRequests = []
   let activeTranscriptId = null
@@ -274,10 +286,12 @@ export function createDesktopScenario({
           title: body.title ?? transcriptId,
           parentTranscriptId: body.parentTranscriptId ?? null,
           forkedAtSequence: body.forkedAtSequence ?? null,
+          writerClientId: body.clientId,
           currentSequence: 0,
           archives: [],
           turns: [],
         }
+        transcript.writerClientId = body.clientId
         transcripts.set(transcriptId, transcript)
         fencingToken += 1
         leases.set(transcriptId, { clientId: body.clientId, fencingToken })
@@ -301,7 +315,6 @@ export function createDesktopScenario({
         const upload = await multipartUpload(request)
         const body = upload.metadata
         const transcript = transcripts.get(transcriptId)
-        assert.equal(body.baseSequence, transcript.currentSequence)
         assert.deepEqual(
           { clientId: body.clientId, fencingToken: body.fencingToken },
           leases.get(transcriptId)
@@ -309,9 +322,51 @@ export function createDesktopScenario({
         const objectId = `${transcriptId}-${body.sequence}-${body.sha256}`
         assert.equal(upload.file.byteLength, body.sizeBytes)
         assert.equal(createHash('sha256').update(upload.file).digest('hex'), body.sha256)
-        objects.set(objectId, upload.file)
         const existing = transcript.archives.find(archive => archive.toSequence === body.sequence)
         const existingTurn = transcript.turns.find(turn => turn.sequence === body.sequence)
+        if (!existing) assert.equal(body.baseSequence, transcript.currentSequence)
+        if (
+          !existing &&
+          body.format.includes('delta') &&
+          transcript.archives.some(archive => !objects.has(archive.objectId))
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'snapshot_required',
+              message: 'The cloud transcript recovery chain is incomplete',
+            },
+          })
+          return true
+        }
+        if (
+          existing &&
+          (existing.sha256 !== body.sha256 ||
+            existing.sizeBytes !== body.sizeBytes ||
+            existing.format !== body.format)
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'segment_conflict',
+              message: 'A different native segment already exists at this sequence',
+            },
+          })
+          return true
+        }
+        if (
+          existingTurn &&
+          (existingTurn.turnId !== body.turnId ||
+            JSON.stringify(existingTurn.payload) !== JSON.stringify(body.summary))
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'turn_conflict',
+              message: 'A different transcript summary already exists for this turn or sequence',
+            },
+          })
+          return true
+        }
+        objects.set(objectId, upload.file)
+        segmentUploadCounts.set(objectId, (segmentUploadCounts.get(objectId) ?? 0) + 1)
         assert.equal(typeof body.turnId, 'string')
         assert.equal(typeof body.summary, 'object')
         if (!existing) {
@@ -332,12 +387,15 @@ export function createDesktopScenario({
             createdAt: '2026-09-08T00:00:00.000Z',
           })
           transcript.currentSequence = body.sequence
-        } else {
-          assert.equal(existingTurn.turnId, body.turnId)
-          assert.deepEqual(existingTurn.payload, body.summary)
         }
         if (body.sequence === 1 && !firstCommitResponseDropped) {
           firstCommitResponseDropped = true
+          // The commit is durable, but its object is lost and the client must never observe the
+          // response. A Chromium network stack replays a request that dies before any response byte
+          // arrives, so flush the response head and then drop the connection with the body missing.
+          objects.delete(objectId)
+          response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          response.flushHeaders()
           response.destroy()
           return true
         }
@@ -420,6 +478,69 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      const transcriptRequestCount = () =>
+        requestLog.filter(value => value.includes('/api/wework-transcripts')).length
+      const enableTranscriptSync = async ({ verifyExperimentalGate = false } = {}) => {
+        const requestsBeforeOptIn = transcriptRequestCount()
+        const experimentalToggle = '[data-testid="general-experimental-features-toggle"]'
+
+        await control.command('click', '[data-testid="settings-button"]')
+        await control.command('click', '[data-testid="settings-menu-button"]')
+        await control.command('waitFor', experimentalToggle, { timeoutMs: uiTimeoutMs })
+        const experimentalEnabled =
+          (await control.command('getAttribute', experimentalToggle, {
+            value: 'aria-checked',
+          })) === 'true'
+
+        if (verifyExperimentalGate) {
+          assert.equal(experimentalEnabled, false)
+          await control.command('click', '[data-testid="settings-nav-connections"]')
+          assert.equal(
+            Number(
+              await control.command(
+                'getElementCount',
+                '[data-testid="transcript-sync-settings-section"]',
+                { visible: true }
+              )
+            ),
+            0,
+            'Transcript sync must stay hidden until experimental features are enabled'
+          )
+          assert.equal(transcriptRequestCount(), requestsBeforeOptIn)
+          await control.command('click', '[data-testid="settings-nav-general"]')
+          await control.command('waitFor', experimentalToggle, { timeoutMs: uiTimeoutMs })
+        }
+
+        if (!experimentalEnabled) {
+          await control.command('click', experimentalToggle)
+          await waitFor(
+            async () =>
+              (await control.command('getAttribute', experimentalToggle, {
+                value: 'aria-checked',
+              })) === 'true',
+            uiTimeoutMs,
+            'Experimental features were not enabled'
+          )
+        }
+
+        await control.command('click', '[data-testid="settings-nav-connections"]')
+        await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+          text: '同步已关闭',
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          transcriptRequestCount(),
+          requestsBeforeOptIn,
+          'Transcript sync contacted the cloud before explicit opt-in'
+        )
+        await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
+        await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+          text: '同步正常',
+          timeoutMs: uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        })
+        await control.command('click', '[data-testid="settings-back-button"]')
+      }
+
       const deviceAStatePath = join(
         electronUserDataDirectory,
         'dsh-core',
@@ -430,11 +551,11 @@ export function createDesktopScenario({
         'dsh-core',
         'wework-transcript-sync-outbox.sqlite3'
       )
+      await enableTranscriptSync({ verifyExperimentalGate: true })
       await createSingleRootLocalProject(control, workspacePath, 'transcript-sync')
       await writeFile(join(workspacePath, 'transcript-sync-restore-marker.txt'), 'snapshot\n')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FIRST_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, FIRST_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -444,9 +565,10 @@ export function createDesktopScenario({
           activeTranscriptId &&
           activeTranscript()?.currentSequence === 1 &&
           firstCommitResponseDropped &&
+          objects.size === 0 &&
           sqliteOutboxCount(deviceAOutboxPath) === 1,
         uiTimeoutMs,
-        'Native snapshot was not retained after losing the commit response'
+        'Native snapshot was not retained after its object disappeared with the commit response'
       )
       assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
@@ -458,14 +580,17 @@ export function createDesktopScenario({
       )
       assert.equal(activeTranscript().archives[0].format, 'codex-snapshot.v1.tgz.aes256gcm')
       assert.equal(activeTranscript().turns[0].payload.assistantMessage, FIRST_COMPLETION)
+      const repairedSnapshotObjectId = activeTranscript().archives[0].objectId
+      assert.equal(segmentUploadCounts.get(repairedSnapshotObjectId), 2)
+      assert.ok(objects.get(repairedSnapshotObjectId)?.byteLength > 0)
       await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
+      objects.delete(repairedSnapshotObjectId)
 
       await writeFile(
         join(workspacePath, 'transcript-sync-restore-marker.txt'),
         `${RESTORED_WORKSPACE_MARKER}\n`
       )
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: SECOND_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, SECOND_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -476,18 +601,20 @@ export function createDesktopScenario({
           sqliteOutboxCount(deviceAOutboxPath) === 0 &&
           leases.size === 0,
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Second turn did not upload a native rollout delta'
+        'Second turn did not replace the broken recovery chain with a native snapshot'
       )
-      assert.equal(activeTranscript().archives[1].format, 'codex-delta.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().archives[1].format, 'codex-snapshot.v1.tgz.aes256gcm')
       assert.equal(activeTranscript().turns[1].payload.assistantMessage, SECOND_COMPLETION)
-      await captureScreenshot(control, 'transcript-sync-02-device-a-delta-uploaded.png', 'body')
-      const snapshotObject = objects.get(activeTranscript().archives[0].objectId)
-      const deltaObject = objects.get(activeTranscript().archives[1].objectId)
-      assert.ok(snapshotObject.byteLength > 0)
-      assert.ok(deltaObject.byteLength > 0)
-      assert.equal(snapshotObject.subarray(0, 4).toString('ascii'), 'WTRN')
-      assert.equal(deltaObject.subarray(0, 4).toString('ascii'), 'WTRN')
-      assert.notDeepEqual([...snapshotObject.subarray(0, 2)], [0x1f, 0x8b])
+      await captureScreenshot(
+        control,
+        'transcript-sync-02-device-a-repaired-snapshot-uploaded.png',
+        'body'
+      )
+      assert.equal(objects.has(activeTranscript().archives[0].objectId), false)
+      const repairedSnapshotObject = objects.get(activeTranscript().archives[1].objectId)
+      assert.ok(repairedSnapshotObject.byteLength > 0)
+      assert.equal(repairedSnapshotObject.subarray(0, 4).toString('ascii'), 'WTRN')
+      assert.notDeepEqual([...repairedSnapshotObject.subarray(0, 2)], [0x1f, 0x8b])
 
       const secondRequest = modelRequests.find(request =>
         JSON.stringify(request).includes(SECOND_PROMPT)
@@ -538,6 +665,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await enableTranscriptSync({ verifyExperimentalGate: true })
       const restoredTask = await waitFor(
         async () => {
           try {
@@ -573,8 +701,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'transcript-sync-03-device-b-restored-history.png', 'body')
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: RESTORED_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, RESTORED_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: RESTORED_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -614,8 +741,7 @@ export function createDesktopScenario({
         value.includes('/api/wework-transcripts')
       ).length
       await control.command('click', '[data-testid="settings-back-button"]')
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: THIRD_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, THIRD_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: THIRD_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -672,6 +798,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await enableTranscriptSync({ verifyExperimentalGate: true })
       await waitFor(
         async () => {
           try {
@@ -694,8 +821,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', deviceCRestoredTaskRowSelector)
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: REMOTE_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, REMOTE_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: REMOTE_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -798,8 +924,7 @@ export function createDesktopScenario({
       const beforeNewChatIds = new Set(transcripts.keys())
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: NEW_CHAT_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, NEW_CHAT_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: NEW_CHAT_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -830,8 +955,7 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: OTHER_PROJECT_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await sendTranscriptPrompt(control, OTHER_PROJECT_PROMPT, uiTimeoutMs)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: OTHER_PROJECT_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -861,6 +985,8 @@ export function createDesktopScenario({
       assert.equal(newChatTranscript.currentSequence, 1)
 
       const persisted = JSON.parse(await readFile(deviceBStatePath, 'utf8'))
+      assert.equal(persisted.optInVersion, 1)
+      assert.equal(persisted.enabled, true)
       assert.equal(Object.hasOwn(persisted.transcripts[activeTranscriptId], 'turns'), false)
       assert.ok((await readFile(deviceAStatePath, 'utf8')).includes(activeTranscriptId))
       assert.equal(
@@ -883,6 +1009,7 @@ export function createDesktopScenario({
         modelRequests,
         objectSizes: Object.fromEntries([...objects].map(([key, value]) => [key, value.length])),
         requestLog,
+        segmentUploadCounts: Object.fromEntries(segmentUploadCounts),
         transcripts: Object.fromEntries(transcripts),
       }
     },

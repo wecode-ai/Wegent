@@ -175,12 +175,22 @@ class KnowledgeBaseDefaultRef(BaseModel):
     name: str
 
 
+class BaseGhostRef(BaseModel):
+    """Reference to a system Ghost used as the capability baseline."""
+
+    name: str
+    namespace: str = "default"
+    user_id: int = 0
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
+    baseGhostRef: Optional[BaseGhostRef] = None
     mcpServers: Optional[Dict[str, Any]] = None
+    plugins: Optional[List[Dict[str, Any]]] = None
     defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
@@ -462,6 +472,7 @@ class BotSpec(BaseModel):
     ghostRef: GhostRef
     shellRef: ShellRef
     modelRef: Optional[ModelRef] = None
+    capability_mode: str = "follow_device"
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "
@@ -1130,6 +1141,7 @@ class KnowledgeBaseSpec(BaseModel):
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    dingtalkAutoSyncEnabled: bool = Field(default=False)
     summaryEnabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",

@@ -55,6 +55,38 @@ If the current branch has no PR or MR, the environment panel continues to show t
 
 After enabling **Settings → General → Experimental features**, open **Edit project** for a local project and configure **Automatically join project space**. A local project is the code and execution workspace, while a project space is the task-tracking and collaboration board. Linking them does not move or copy project files, and neither resource replaces the other.
 
+### Create a local or cloud project space
+
+The Collaboration page always shows the current device's **Local space** in
+the sidebar. When it is empty, the guide offers **Add folder**. After you choose
+a directory and confirm the project name, Wework registers it as a Task project
+and adds it to the local space. Cloud projects are still created inside a cloud
+space, and the creation UI identifies the actual storage location:
+
+- A **local project** is stored on the current device and is available only on that device.
+- A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
+
+The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
+
+### Import more projects into the local space
+
+Wework automatically adds local Task projects to the local space during initial
+setup. To add more projects later, open the local space's **…** menu or the
+project page's **Add project** menu:
+
+- **Import existing project** lists projects that already exist on the Tasks
+  page but are not yet in the local space. Wework deduplicates them by runtime
+  project identity and normalized workspace roots, so projects already shown in
+  the local space are excluded.
+- **Add folder** selects a new local directory, registers its Task project, and
+  adds it to the local space immediately.
+
+Background synchronization does not automatically restore an archived local
+collaboration project, preventing a project the user removed from reappearing.
+Explicitly choosing its Task project from **Import existing project** restores
+the corresponding local collaboration project. The sidebar refreshes after the
+import, and restarting Wework does not create a duplicate.
+
 New conversations started in that local project inherit the selected project space. Before the first message is sent, the composer shows **Add to board · Project space name**. Sending creates a task in the selected local or cloud project space and links the conversation. Repeated synchronization of the same conversation does not create duplicate board tasks.
 
 The default project space belongs to the local project's settings and is stored with that project's device-local state; the project space does not keep a reverse link. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
@@ -84,6 +116,8 @@ Opening an issue from a project-space board shows its attachments directly in th
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
 The Executor is the single writer of the linked issue's execution status and derives it from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload.
+
+An issue that is no longer needed can be deleted from the board card menu, the table row actions, or the detail panel's "…" menu. Deletion is a soft delete: the issue and its sub-issues disappear from the board while their data is kept, and any run still executing is cancelled first so no orphaned process is left behind.
 
 ## Project-space files
 

@@ -1,3 +1,6 @@
+import { normalizeProjectPluginNames } from '@wegent/chat-core/composer-plugin-scope'
+import { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
+export { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
@@ -10,8 +13,8 @@ import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
+  RuntimeProjectWork,
   RuntimeTaskAddress,
-  RuntimeTaskCreateRequest,
   RuntimeTaskPinRequest,
   RuntimeWorkListResponse,
   User,
@@ -21,7 +24,28 @@ import { normalizeRuntimeTaskSummary } from './runtimeTaskLifecycle/projection'
 
 export const STANDALONE_PROJECT_ID = 0
 export const EMPTY_MESSAGE_TASK_TITLE = '新对话'
-export const MAX_RUNTIME_TASK_TITLE_LENGTH = 60
+import { truncateRuntimeTaskTitle } from '@wegent/chat-core/runtime-task-title'
+export {
+  truncateRuntimeTaskTitle,
+  MAX_RUNTIME_TASK_TITLE_LENGTH,
+} from '@wegent/chat-core/runtime-task-title'
+
+export function findRuntimeTaskProjectWork(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeProjectWork | null {
+  if (!address) return null
+  return (
+    runtimeWork?.projects.find(project =>
+      project.deviceWorkspaces.some(
+        workspace =>
+          (workspace.deviceId === address.deviceId ||
+            workspace.remoteHostId === address.deviceId) &&
+          workspace.tasks.some(task => task.taskId === address.taskId)
+      )
+    ) ?? null
+  )
+}
 
 export async function createConversationWorkspace(
   deviceApi: {
@@ -362,14 +386,6 @@ export function readLastProjectId(userId: number): number | null | undefined {
   }
 }
 
-export function findRuntimeTask(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress | null | undefined
-): RuntimeTaskSummary | null {
-  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
-  return workspace?.tasks.find(item => item.taskId === address?.taskId) ?? null
-}
-
 export function resolveComposerProjectPluginNames(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   currentProjectId: number | null | undefined,
@@ -399,35 +415,6 @@ export function resolveComposerProjectPluginNames(
   if (project?.project.source !== 'local_project') return null
   return normalizeProjectPluginNames(
     (project.project.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
-  )
-}
-
-function normalizeProjectPluginNames(pluginIds: string[]): string[] {
-  return Array.from(
-    new Set(
-      pluginIds.map(id => {
-        const separator = id.lastIndexOf('@')
-        return separator > 0 ? id.slice(0, separator) : id
-      })
-    )
-  ).sort()
-}
-
-export function findRuntimeTaskWorkspace(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress | null | undefined
-): RuntimeDeviceWorkspace | null {
-  if (!runtimeWork || !address) return null
-  const workspaces = [
-    ...runtimeWork.chats,
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-  ]
-  return (
-    workspaces.find(
-      workspace =>
-        (workspace.deviceId === address.deviceId || workspace.remoteHostId === address.deviceId) &&
-        workspace.tasks.some(task => task.taskId === address.taskId)
-    ) ?? null
   )
 }
 
@@ -574,38 +561,12 @@ function runtimeTitleText(value: string): string {
     .trim()
 }
 
-export function truncateRuntimeTaskTitle(title: string | null | undefined): string | null {
-  const normalizedTitle = title?.trim()
-  if (!normalizedTitle) return null
-
-  const characters = Array.from(normalizedTitle)
-  if (characters.length <= MAX_RUNTIME_TASK_TITLE_LENGTH) return normalizedTitle
-
-  return `${characters.slice(0, MAX_RUNTIME_TASK_TITLE_LENGTH - 1).join('')}…`
-}
-
 export function buildRuntimeTaskTitle(message: string, fallback?: string): string {
   const title = runtimeTitleText(fallback || message)
   return truncateRuntimeTaskTitle(title) ?? EMPTY_MESSAGE_TASK_TITLE
 }
 
-function stableRuntimeTaskId(value: string): number {
-  let hash = 0
-  for (const char of value) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  }
-  return (hash % 1_000_000_000) + 1
-}
-
-export function createRuntimeTaskIdFromSeed(seed: string): string {
-  return `runtime-${stableRuntimeTaskId(seed)}`
-}
-
-export function createRuntimeTaskId(runtime: RuntimeTaskCreateRequest['runtime']): string {
-  const prefix = runtime === 'codex' ? 'codex' : 'runtime'
-  const randomId =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return `${prefix}-${randomId}`
-}
+export {
+  createRuntimeTaskId,
+  createRuntimeTaskIdFromSeed,
+} from '@wegent/chat-core/runtime-task-identity'

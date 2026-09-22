@@ -13,6 +13,10 @@ from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String
 from .base import Base
 
 
+def utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Kind(Base):
     """Unified Kind model for all Kubernetes-style resources."""
 
@@ -25,13 +29,11 @@ class Kind(Base):
     namespace = Column(String(100), nullable=False, default="default")
     json = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
     )
 
     __table_args__ = (
@@ -43,6 +45,10 @@ class Kind(Base):
         # Composite index for group resources query:
         # SELECT * FROM kinds WHERE kind=? AND namespace=? AND is_active=1
         Index("ix_kinds_kind_ns_active", "kind", "namespace", "is_active"),
+        # Exact resource-name lookups across users, including admin device APIs.
+        Index(
+            "idx_kinds_name_kind_ns_active", "name", "kind", "namespace", "is_active"
+        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

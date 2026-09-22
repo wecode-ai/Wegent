@@ -3,12 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { publishSelectedTextSelection, SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 import { WORKSPACE_PATH_DRAG_TYPE, writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
+import '@/i18n'
 import { SystemDragBridge } from './SystemDragBridge'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   pending: [] as Array<{ action: string; text: string | null; paths: string[] }>,
   setInput: vi.fn(),
+  setWorkbenchError: vi.fn(),
   handleFileSelect: vi.fn(),
   startNewChat: vi.fn(),
   getAppPreferences: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       handleFileSelect: mocks.handleFileSelect,
     },
     startNewChat: mocks.startNewChat,
+    setWorkbenchError: mocks.setWorkbenchError,
   }),
 }))
 vi.mock('@/features/workbench/workbenchRuntimeHelpers', () => ({
@@ -550,13 +553,11 @@ describe('SystemDragBridge', () => {
     expect(mocks.startNewChat).not.toHaveBeenCalled()
   })
 
-  test('adds dropped folders and ordinary files as path references without reading them', async () => {
+  test('attaches dropped files and retains folders as path references', async () => {
+    const file = new File(['test content'], 'README.md', { type: 'text/markdown' })
     mocks.resolveStoredPaths.mockResolvedValue({
-      attachmentFiles: [],
-      referenceEntries: [
-        { path: '/tmp/project', isDirectory: true },
-        { path: '/tmp/project/README.md', isDirectory: false },
-      ],
+      attachmentFiles: [file],
+      referenceEntries: [{ path: '/tmp/project', isDirectory: true }],
     })
     render(<SystemDragBridge />)
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
@@ -568,14 +569,21 @@ describe('SystemDragBridge', () => {
     })
 
     await waitFor(() =>
-      expect(mocks.setInput).toHaveBeenCalledWith(
-        '[$project](folder://%2Ftmp%2Fproject) [$README.md](file://%2Ftmp%2Fproject%2FREADME.md)'
-      )
+      expect(mocks.setInput).toHaveBeenCalledWith('[$project](folder://%2Ftmp%2Fproject)')
     )
     expect(mocks.resolveStoredPaths).toHaveBeenCalledWith(
       ['/tmp/project', '/tmp/project/README.md'],
       false
     )
+    expect(mocks.handleFileSelect).toHaveBeenCalledWith([file])
+  })
+
+  test('reports a failed system file transfer', async () => {
+    mocks.resolveStoredPaths.mockRejectedValue(new Error('File unavailable'))
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
+    emitDrop({ action: 'new-chat', text: null, paths: ['/tmp/test.md'] })
+    await waitFor(() => expect(mocks.setWorkbenchError).toHaveBeenCalledWith('File unavailable'))
     expect(mocks.handleFileSelect).not.toHaveBeenCalled()
   })
 

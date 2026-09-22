@@ -546,6 +546,25 @@ export async function openLocalFile(path?: string): Promise<void> {
   await invokeDesktopHost<void>('shell.openPath', { path: trimmedPath })
 }
 
+export async function openLocalFileInWorkspaceApp(
+  path: string,
+  workspacePath?: string
+): Promise<void> {
+  if (!isLocalTerminalAvailable()) {
+    throw new Error(i18n.t('localRuntime:local_file_opening_unavailable'))
+  }
+  const trimmedPath = path.trim()
+  if (!trimmedPath) throw new Error('Local file path is empty')
+  const { getPreferredWorkspaceOpener, resolveWorkspaceOpener } =
+    await import('./workspace-opener-preferences')
+  const available = (await listLocalWorkspaceOpeners())
+    .filter(item => item.available)
+    .map(item => item.id)
+  const opener = resolveWorkspaceOpener(available, getPreferredWorkspaceOpener(workspacePath))
+  if (!opener) throw new Error('No available file opener')
+  await invokeDesktopHost<void>('workspace.openFile', { opener, path: trimmedPath })
+}
+
 export async function revealLocalFile(path?: string): Promise<void> {
   if (!isLocalTerminalAvailable()) {
     throw new Error(i18n.t('localRuntime:local_file_revealing_unavailable'))

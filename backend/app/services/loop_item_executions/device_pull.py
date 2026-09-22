@@ -21,6 +21,7 @@ from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     loop_item_execution_service,
 )
+from app.services.workspace_cleanup_intents import pull_due
 
 logger = logging.getLogger(__name__)
 
@@ -190,16 +191,25 @@ def pull_execution(
         runtime_lock,
         expire_seconds=DEVICE_PULL_LOCK_SECONDS,
     ) as runtime_acquired:
-        if not runtime_acquired:
-            return {"success": True, "task": None}
-        return _claim_execution(
-            owner_user_id=owner_user_id,
-            execution_target_id=execution_target_id,
-            runtime_device_id=runtime_device_id,
-            runtime_instance_id=runtime_instance_id,
-            environment=environment,
-            runtime_capacity=runtime_capacity,
+        result = (
+            _claim_execution(
+                owner_user_id=owner_user_id,
+                execution_target_id=execution_target_id,
+                runtime_device_id=runtime_device_id,
+                runtime_instance_id=runtime_instance_id,
+                environment=environment,
+                runtime_capacity=runtime_capacity,
+            )
+            if runtime_acquired
+            else {"success": True, "task": None}
         )
+    with get_db_session() as db:
+        result["workspace_cleanup_intents"] = pull_due(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_device_id=runtime_device_id,
+        )
+    return result
 
 
 def acknowledge_execution(

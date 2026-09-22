@@ -62,6 +62,8 @@ export function ProjectManageView<
   section = "all",
   renderProviderSettings,
   onProjectUpdated,
+  openMembersRequestId,
+  onOpenMembersRequestConsumed,
 }: {
   api: ProjectManageApi<Project, Member, Item, User>;
   host: ProjectManageHost;
@@ -73,6 +75,8 @@ export function ProjectManageView<
     context: ProjectManageExtensionContext<Project>,
   ): React.ReactNode;
   onProjectUpdated?(project: Project): void;
+  openMembersRequestId?: number;
+  onOpenMembersRequestConsumed?(requestId: number): void;
 }) {
   const { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } =
     host.icons;
@@ -92,6 +96,8 @@ export function ProjectManageView<
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [memberQuery, setMemberQuery] = useState("");
+  const memberSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const memberSearchFocusRequestRef = useRef<number | null>(null);
   const [memberResults, setMemberResults] = useState<User[]>([]);
   const [memberRole, setMemberRole] = useState<ProjectManageRole>("Developer");
   const [savingUserId, setSavingUserId] = useState<number | null>(null);
@@ -207,6 +213,21 @@ export function ProjectManageView<
     boardCardDisplay?.showTags,
     project,
   ]);
+
+  useEffect(() => {
+    if (openMembersRequestId === undefined) return;
+    memberSearchFocusRequestRef.current = openMembersRequestId;
+    setMembersOpen(true);
+    onOpenMembersRequestConsumed?.(openMembersRequestId);
+  }, [openMembersRequestId, onOpenMembersRequestConsumed]);
+
+  useEffect(() => {
+    if (!membersOpen || memberSearchFocusRequestRef.current === null) return;
+    const input = memberSearchInputRef.current;
+    if (!input) return;
+    input.focus();
+    memberSearchFocusRequestRef.current = null;
+  }, [membersOpen, openMembersRequestId]);
 
   const reportError = useCallback((cause: unknown, fallback: string) => {
     setError(cause instanceof Error ? cause.message : fallback);
@@ -409,6 +430,17 @@ export function ProjectManageView<
       setMembers((current) => [...current, member]);
       setMemberQuery("");
       host.trackCompleted("member_invite");
+      try {
+        const nextMembers = await api.listMembers(scope.projectId);
+        if (projectScopeRef.current !== scope) return;
+        setMembers(nextMembers);
+      } catch (cause) {
+        if (projectScopeRef.current !== scope) return;
+        reportError(
+          cause,
+          host.translate("todo.load_project_failed", "加载项目失败"),
+        );
+      }
     } catch (cause) {
       if (projectScopeRef.current !== scope) return;
       host.trackFailed();
@@ -798,7 +830,7 @@ export function ProjectManageView<
               <p className="mt-1 text-sm text-text-muted">
                 {host.translate(
                   "todo.project_members_description",
-                  "成员可以访问项目任务和共享文件。",
+                  "管理成员访问和项目角色。填写职责与能力后会自动保存，AI 托管会据此选择合适的负责人。",
                 )}
               </p>
             </div>
@@ -843,45 +875,72 @@ export function ProjectManageView<
             </button>
           ) : (
             <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
+              <div className="hidden grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px] items-center gap-3 px-3 py-1.5 text-xs font-medium text-text-muted md:grid">
+                <span>{host.translate("todo.project_member", "成员")}</span>
+                <span data-testid="cloud-project-member-capability-heading">
+                  {host.translate(
+                    "todo.project_member_capability",
+                    "职责与能力",
+                  )}
+                </span>
+                <span>
+                  {host.translate("todo.project_member_role", "项目角色")}
+                </span>
+                <span className="sr-only">
+                  {host.translate("todo.project_member_actions", "成员操作")}
+                </span>
+              </div>
               {members.map((member) => (
                 <div
                   key={member.user_id}
                   data-testid={`cloud-project-member-${member.user_id}`}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-background/70"
+                  className="grid grid-cols-1 items-center gap-3 rounded-lg bg-background/60 px-3 py-2 transition-colors hover:bg-background md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]"
                 >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
-                    {member.user_name.slice(0, 1)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {member.user_name}
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
+                      {member.user_name.slice(0, 1)}
                     </span>
-                    <span className="block truncate text-xs text-text-muted">
-                      {member.email}
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">
+                        {member.user_name}
+                      </span>
+                      <span className="block truncate text-xs text-text-muted">
+                        {member.email}
+                      </span>
                     </span>
                   </span>
-                  <input
-                    data-testid={`cloud-project-member-capability-${member.user_id}`}
-                    defaultValue={member.capability_description}
-                    disabled={savingUserId === member.user_id}
-                    onBlur={(event) =>
-                      void updateMemberCapability(member, event.target.value)
-                    }
-                    className="h-8 min-w-40 rounded-lg border border-border bg-background px-2 text-xs outline-none placeholder:text-text-tertiary"
-                    placeholder={host.translate(
-                      "workbench.project_member_capability_placeholder",
-                      "",
-                    )}
-                    aria-label={host.translate(
-                      "workbench.project_member_capability_label",
-                      "",
-                      {
-                        name: member.user_name,
-                      },
-                    )}
-                  />
+                  <label className="min-w-0">
+                    <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
+                      {host.translate(
+                        "todo.project_member_capability",
+                        "职责与能力",
+                      )}
+                    </span>
+                    <input
+                      data-testid={`cloud-project-member-capability-${member.user_id}`}
+                      defaultValue={member.capability_description}
+                      disabled={savingUserId === member.user_id}
+                      onBlur={(event) =>
+                        void updateMemberCapability(member, event.target.value)
+                      }
+                      className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-text-tertiary focus:border-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                      placeholder={host.translate(
+                        "todo.project_member_capability_placeholder",
+                        "例如：前端开发、产品验收",
+                      )}
+                      aria-label={host.translate(
+                        "todo.project_member_capability_label",
+                        "{{name}} 的职责与能力",
+                        {
+                          name: member.user_name,
+                        },
+                      )}
+                    />
+                  </label>
                   {member.role === "Owner" ? (
-                    <span className="text-xs text-text-secondary">Owner</span>
+                    <span className="flex h-9 items-center px-2 text-sm text-text-secondary">
+                      Owner
+                    </span>
                   ) : (
                     <>
                       <select
@@ -896,7 +955,12 @@ export function ProjectManageView<
                             >,
                           )
                         }
-                        className="h-8 rounded-lg border border-border bg-background px-2 text-xs outline-none"
+                        className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
+                        aria-label={host.translate(
+                          "todo.project_member_role_label",
+                          "{{name}} 的项目角色",
+                          { name: member.user_name },
+                        )}
                       >
                         <option value="Maintainer">Maintainer</option>
                         <option value="Developer">Developer</option>
@@ -933,10 +997,11 @@ export function ProjectManageView<
                   )}
                 </div>
               ))}
-              <div className="flex gap-2 rounded-lg bg-background/70 p-2">
-                <label className="flex h-9 min-w-0 flex-1 items-center rounded-lg border border-border bg-background px-3">
+              <div className="grid grid-cols-1 items-end gap-3 rounded-lg bg-background/60 px-3 py-2 md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]">
+                <label className="flex h-9 min-w-0 items-center rounded-lg border border-border bg-background px-3 md:col-span-2">
                   <Search className="h-4 w-4 text-text-muted" />
                   <input
+                    ref={memberSearchInputRef}
                     data-testid="cloud-member-search"
                     value={memberQuery}
                     onChange={(event) => {
@@ -952,20 +1017,34 @@ export function ProjectManageView<
                       "todo.member_search_placeholder",
                       "添加成员：搜索用户名或邮箱",
                     )}
+                    aria-label={host.translate(
+                      "todo.member_search_placeholder",
+                      "添加成员：搜索用户名或邮箱",
+                    )}
                   />
                 </label>
-                <select
-                  data-testid="cloud-member-role"
-                  value={memberRole}
-                  onChange={(event) =>
-                    setMemberRole(event.target.value as ProjectManageRole)
-                  }
-                  className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none"
-                >
-                  <option value="Maintainer">Maintainer</option>
-                  <option value="Developer">Developer</option>
-                  <option value="Reporter">Reporter</option>
-                </select>
+                <label>
+                  <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
+                    {host.translate("todo.project_member_role", "项目角色")}
+                  </span>
+                  <select
+                    data-testid="cloud-member-role"
+                    value={memberRole}
+                    onChange={(event) =>
+                      setMemberRole(event.target.value as ProjectManageRole)
+                    }
+                    className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
+                    aria-label={host.translate(
+                      "todo.new_project_member_role_label",
+                      "新成员的项目角色",
+                    )}
+                  >
+                    <option value="Maintainer">Maintainer</option>
+                    <option value="Developer">Developer</option>
+                    <option value="Reporter">Reporter</option>
+                  </select>
+                </label>
+                <span aria-hidden="true" className="hidden h-7 w-7 md:block" />
               </div>
               {visibleMemberResults.map((user) => (
                 <button
@@ -1222,6 +1301,7 @@ export function ProjectManageView<
             statusBusy={statusBusy}
             displayBusy={displayBusy}
             canEditStatuses={project.task_provider === "local"}
+            embedded={embedded}
             onStatusesChange={(next) => void saveStatuses(next)}
             onDisplayChange={(key, checked) => void saveDisplay(key, checked)}
             renderActionMenu={host.renderActionMenu}

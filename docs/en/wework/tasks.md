@@ -12,6 +12,12 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+### Edit Markdown and tables
+
+Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
+
+Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
+
 ## Add a conversation to a project-space board
 
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. Sending the first message creates the corresponding board task and links the conversation. A project space inherited from the local-project automatic-join setting appears through the same control.
@@ -29,7 +35,15 @@ When the destination differs from the current board, Wework asks you to confirm 
 
 The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a distinct blue-accent background and border in addition to the unread indicator, then return to the standard card style after they are opened.
 
-Hover anywhere on a card to open a lightweight task workspace. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
+Click a card to open a lightweight task workspace without leaving the board. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Selecting an individual task narrows the preview to that task's progress. To open the full Task page, use the corner action that appears at the bottom right of the currently hovered or focused card; the action does not appear on the other cards at the same time.
+
+### Create the first project and hand work to the device assistant
+
+When you enter Collaboration with no projects yet, Wework presents one continuous getting-started path: create a project, create an issue, hand it to an assistant, then review and accept the result. Select **Create project** first, then choose a local or cloud collaboration space; storage location is not split into separate entry points before the project flow begins.
+
+When an executable issue is open in Wework, its detail view shows the **Device assistant**. It represents the default execution environment on the current device and uses the models, plugins, Skills, local files, and desktop capabilities already available there. Selecting **Hand off to Device assistant** opens the task composer. The resulting run stays linked to the current issue so its result can be reviewed and accepted from the issue.
+
+The Device assistant is not a separate cloud Agent that must be created, and it does not synchronize device accounts, files, or system permissions to other devices. To reuse or share a stable prompt, plugin, Skill, or MCP configuration, create an Agent and configure its capability source explicitly; device-specific capabilities still depend on the device that runs it.
 
 ## Manage project-space automation
 
@@ -68,6 +82,8 @@ bash executor/scripts/dev-cloud-device.sh stop     # stop
 ## Models and devices
 
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.
+
+The coding-tool selector in the task composer chooses a local runtime such as Codex or Claude Code. The task composer currently does not provide a direct cloud Wegent Agent selector. To have a cloud Agent process project tasks automatically, configure its robot and execution environment under project-space **Automation**.
 
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
 
@@ -113,6 +129,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 ## Manage conversations
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 
 ### Export a conversation
 

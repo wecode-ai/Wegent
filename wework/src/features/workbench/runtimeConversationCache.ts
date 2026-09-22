@@ -1,3 +1,16 @@
+export {
+  getConversationScrollSnapshot,
+  hasConversationScrollSnapshot,
+  cacheConversationScrollSnapshot,
+  getConversationVirtualMeasurements,
+  cacheConversationVirtualMeasurements,
+  type ConversationScrollSnapshot,
+} from '@wegent/collaboration/conversation/conversationViewportCache'
+import {
+  evictConversationViewport,
+  clearConversationViewportCache,
+  getConversationViewportCacheStats,
+} from '@wegent/collaboration/conversation/conversationViewportCache'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
@@ -15,7 +28,6 @@ import type {
   RuntimeSubagentStatus,
   WorkbenchMessage,
 } from '@/types/workbench'
-import type { VirtualItem } from '@tanstack/react-virtual'
 import {
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
@@ -59,8 +71,6 @@ const hydrationByConversation = new Map<
 const queuedMessagesByConversation = new Map<string, RuntimePaneQueuedMessage[]>()
 const queuedMessagesPausedByConversation = new Map<string, boolean>()
 const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
-const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
-const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 const pendingStreamingNotifications = new Map<string, () => void>()
 const terminalConversationEvictionTimers = new Map<
   string,
@@ -68,11 +78,6 @@ const terminalConversationEvictionTimers = new Map<
 >()
 const goalSnapshotVersionsByConversation = new Map<string, number>()
 let nextRuntimeGoalSnapshotVersion = 1
-
-export interface ConversationScrollSnapshot {
-  distanceFromBottomPx: number
-  pinnedToBottom: boolean
-}
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
@@ -295,6 +300,14 @@ export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): 
   const token = Symbol(key)
   hydrationByConversation.set(key, { token, bufferedActions: [] })
   return token
+}
+
+export function runtimeConversationHydrationHasUpdates(
+  address: RuntimeTaskAddress,
+  token: symbol
+): boolean {
+  const hydration = hydrationByConversation.get(runtimeConversationKey(address))
+  return hydration?.token === token && hydration.bufferedActions.length > 0
 }
 
 export function completeRuntimeConversationHydration(
@@ -798,29 +811,6 @@ export function runtimeConversationKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
 }
 
-export function getConversationScrollSnapshot(key: string): ConversationScrollSnapshot | undefined {
-  return touchEntry(scrollSnapshotsByConversation, key)
-}
-
-export function hasConversationScrollSnapshot(key: string): boolean {
-  return scrollSnapshotsByConversation.has(key)
-}
-
-export function cacheConversationScrollSnapshot(key: string, snapshot: ConversationScrollSnapshot) {
-  cacheBoundedEntry(scrollSnapshotsByConversation, key, snapshot)
-}
-
-export function getConversationVirtualMeasurements(key: string): VirtualItem[] | undefined {
-  return touchEntry(virtualMeasurementsByConversation, key)
-}
-
-export function cacheConversationVirtualMeasurements(key: string, measurements: VirtualItem[]) {
-  virtualMeasurementsByConversation.delete(key)
-  if (measurements.length > 0) {
-    cacheBoundedEntry(virtualMeasurementsByConversation, key, measurements)
-  }
-}
-
 function updateRuntimeConversationMetadata(
   address: RuntimeTaskAddress,
   update: (current: RuntimeConversationMetadata) => RuntimeConversationMetadata
@@ -928,15 +918,13 @@ function evictRuntimeConversationKey(key: string) {
   queuedMessagesByConversation.delete(key)
   queuedMessagesPausedByConversation.delete(key)
   interruptedGuidanceIdsByConversation.delete(key)
-  scrollSnapshotsByConversation.delete(key)
-  virtualMeasurementsByConversation.delete(key)
+  evictConversationViewport(key)
 }
 
 export function getRuntimeConversationCacheStats() {
   return {
     messageEntries: turnsByConversation.size,
-    scrollSnapshotEntries: scrollSnapshotsByConversation.size,
-    virtualMeasurementEntries: virtualMeasurementsByConversation.size,
+    ...getConversationViewportCacheStats(),
   }
 }
 
@@ -957,8 +945,7 @@ export function clearRuntimeConversationCacheForTests() {
   queuedMessagesByConversation.clear()
   queuedMessagesPausedByConversation.clear()
   interruptedGuidanceIdsByConversation.clear()
-  scrollSnapshotsByConversation.clear()
-  virtualMeasurementsByConversation.clear()
+  clearConversationViewportCache()
 }
 
 function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction) {
@@ -1028,6 +1015,18 @@ function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTu
     cancelPendingStreamingNotification(evictedKey)
     cancelTerminalConversationEviction(evictedKey)
   })
+  const queuedMessages = queuedMessagesByConversation.get(key)
+  if (queuedMessages) {
+    const remaining = queuedMessages.filter(
+      message =>
+        message.status !== 'sending' ||
+        message.deliveryMode !== 'message' ||
+        !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
+    )
+    if (remaining.length !== queuedMessages.length) {
+      cacheRuntimeConversationQueuedMessagesByKey(key, remaining)
+    }
+  }
   scheduleTerminalConversationEviction(key)
 }
 

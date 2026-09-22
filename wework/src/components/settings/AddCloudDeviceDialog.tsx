@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Check, Cloud, Copy, Plus, Server, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createHttpClient } from '@/api/http'
@@ -25,7 +26,7 @@ interface AddCloudDeviceDialogProps {
   hasCloudDevice?: boolean
   cloudConnection: CloudDeviceDialogConnection
   onClose: () => void
-  onCreated: (devices?: DeviceInfo[]) => void | Promise<void>
+  onCreated: (devices?: DeviceInfo[], createdDeviceId?: number) => void | Promise<void>
   onCreatingChange?: (creating: boolean) => void
 }
 
@@ -105,7 +106,7 @@ export function AddCloudDeviceDialog({
           }
           const versionMismatch = device.executor_version === 'dev' || device.update_available
           setRemoteStatus(versionMismatch ? 'version_mismatch' : 'online')
-          await onCreatedRef.current(devices)
+          await onCreatedRef.current(devices, device.id)
           if (!cancelled) onCloseRef.current()
           return
         } catch {
@@ -134,11 +135,11 @@ export function AddCloudDeviceDialog({
     setLoading(true)
     setError(null)
     try {
-      await createCloudDeviceApi(cloudConnection).createCloudDevice()
+      const created = await createCloudDeviceApi(cloudConnection).createCloudDevice()
       track('feature_action_completed', { domain: 'cloud_device', action: 'create' })
       onCreatingChange?.(true)
       onClose()
-      onCreated()
+      onCreated(undefined, created.id)
     } catch (e) {
       track('operation_failed', { operation: 'cloud_device_action' })
       setError(e instanceof Error ? e.message : t('workbench.add_device_cloud_create_failed'))
@@ -175,6 +176,10 @@ export function AddCloudDeviceDialog({
     }
   }, [remoteCommand, t])
 
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(() => {
+    if (!loading && !remoteLoading) onClose()
+  }, open)
+
   if (!open) return null
 
   return (
@@ -185,6 +190,10 @@ export function AddCloudDeviceDialog({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('workbench.add_device_dialog_title')}
         data-testid="add-cloud-device-dialog"
         className="max-h-[calc(100vh-32px)] w-full max-w-[800px] overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
         onClick={e => e.stopPropagation()}

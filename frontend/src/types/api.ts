@@ -13,6 +13,7 @@ export interface QuickAccessConfig {
 }
 
 export interface UserPreferences {
+  composer_quick_phrases?: import('@wegent/chat-core/composer-quick-phrases').QuickPhrase[] | null
   send_key: 'enter' | 'cmd_enter'
   follow_up_behavior?: 'queue' | 'guide'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
@@ -98,6 +99,9 @@ export interface Bot {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  plugins?: import('@wegent/collaboration').UnifiedAgentPluginRef[]
+  capability_mode?: 'follow_device' | 'manual'
+  inherit_base_capabilities?: boolean
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[] // Skills associated with this bot
   skill_refs?: Record<string, SkillRefMeta>

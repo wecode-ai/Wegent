@@ -32,7 +32,7 @@ replace the preparation animation with the concrete error and a retry action.
 
 ## Project Space Board Progress
 
-项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示三行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中与待确认两列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；入口作为独立的视图操作右对齐展示。该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。
+项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示两行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中与待确认两列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；入口作为独立的视图操作右对齐展示。该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。
 
 Running cards on project-space boards show the agent's current process output
 instead of internal thinking text. The standard view grows naturally with the
@@ -52,6 +52,33 @@ processing summary only after final text has stopped streaming and the active
 turn has settled. While output is streaming, Wework keeps the processing layout
 stable so the completed state cannot repeatedly appear and disappear or make
 following text flicker.
+
+## Embedded Browser Navigation
+
+内嵌浏览器首次加载实际页面时会移除初始化用的 `about:blank` 历史项，
+避免后退到空白宿主页；后续页面的前进、后退记录正常保留。
+
+The embedded browser removes its bootstrap `about:blank` history entry when the
+first real page commits. Later navigation retains normal Back and Forward history.
+
+## Collaboration Loading
+
+协作侧栏的空间与项目摘要是跨页面复用的导航状态。进入 Issue 首页、项目或空间时不得清空或
+重新请求已有导航；本地与云端数据源分别完成后合并展示，一个数据源的加载或失败不得移除
+另一个数据源的现有条目。页面数据按当前视图加载：成员、智能体、协作组、设备和运行记录
+只能在消费它们的页面请求。空间首页可以后台渐进加载各项目的 Issue 摘要，但不得等待所有
+项目完成后才显示空间框架。Wework 的本地项目 Issue 操作必须始终路由到本地适配器。
+
+Collaboration workspace and project summaries are reusable navigation state
+across pages. Opening the Issue home, a project, or a workspace must not clear
+or refetch navigation that is already available. Local and cloud sources merge
+as each source completes; loading or failure in one source must not remove
+existing entries from the other. Page data is loaded only by the view that
+consumes it: members, agents, collaboration groups, devices, and executions
+must not be fetched for unrelated pages. A workspace home may progressively
+load per-project Issue summaries in the background, but it must render the
+workspace shell without waiting for every project. Issue operations for local
+Wework projects must always use the local adapter.
 
 ## Development
 

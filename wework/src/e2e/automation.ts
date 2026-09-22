@@ -1,4 +1,5 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
+import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
@@ -33,7 +34,11 @@ import {
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { getLocalExecutorStatus, readLocalExecutorLog } from '@/desktop/localExecutor'
+import {
+  failNextLocalExecutorRequestForE2E,
+  getLocalExecutorStatus,
+  readLocalExecutorLog,
+} from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
@@ -46,6 +51,12 @@ import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
+import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
+import type {
+  WeworkConversationAssetChunk,
+  WeworkConversationSnapshot,
+} from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
@@ -85,6 +96,7 @@ interface ScrollStabilitySample {
 }
 
 interface ElementMetricsSamplePoint {
+  elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
   connected: boolean
   height: number
   label: string | null
@@ -816,12 +828,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
-function pressDesktopControlPointer(selector: string): string {
-  const element = findDesktopControlElements(selector)[0]
+function pressDesktopControlPointer(selector: string, click = false): string {
+  const elements = findDesktopControlElements(selector)
+  const element = click ? elements.find(desktopControlElementVisible) : elements[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  if (click && !desktopControlElementEnabled(element))
+    throw new Error(`Pointer target is disabled: "${selector}"`)
   const options = desktopControlEventOptions(element)
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   dispatchDesktopControlPointerEvent(element, 'pointerup', options)
+  if (click) {
+    if (!element.isConnected) throw new Error(`Pointer target detached before click: "${selector}"`)
+    if (!desktopControlElementEnabled(element))
+      throw new Error(`Pointer target is disabled: "${selector}"`)
+    element.click()
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -994,6 +1015,39 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
 async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   await startDesktopControlDrag(command)
   return endDesktopControlDrag(command)
+}
+
+async function dragDesktopControlElementBy(command: DesktopControlCommand): Promise<string> {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const delta = JSON.parse(command.value ?? '{}') as { x?: number; y?: number }
+  const deltaX = Number(delta.x ?? 0)
+  const deltaY = Number(delta.y ?? 0)
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+    throw new Error('dragBy requires finite x and y deltas')
+  }
+
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && activeElement !== element) {
+    activeElement.blur()
+    await waitForDesktopControlTick()
+  }
+
+  const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
+  const endOptions = {
+    ...startOptions,
+    clientX: Math.max(0, Math.floor(Number(startOptions.clientX ?? 0) + deltaX)),
+    clientY: Math.max(0, Math.floor(Number(startOptions.clientY ?? 0) + deltaY)),
+  }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+  dispatchDesktopControlPointerEvent(element, 'pointerup', { ...endOptions, buttons: 0 })
+  await waitForDesktopControlTick()
+  return element.textContent?.trim() ?? ''
 }
 
 let activeDesktopControlDataTransfer: {
@@ -1484,10 +1538,10 @@ function pasteDesktopControlText(command: DesktopControlCommand): string {
   return text
 }
 
-function dispatchDesktopControlPaths(
+async function dispatchDesktopControlPaths(
   command: DesktopControlCommand,
   eventType: 'drop' | 'paste'
-): string {
+): Promise<string> {
   const element = findDesktopControlElements(command.selector)[0]
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const descriptors = JSON.parse(command.value ?? '[]') as Array<{
@@ -1504,9 +1558,17 @@ function dispatchDesktopControlPaths(
 
   const transfer = new DataTransfer()
   for (const descriptor of descriptors) {
-    const file = new File(descriptor.isDirectory ? [] : ['path-reference'], descriptor.name, {
-      type: descriptor.mimeType ?? '',
-    })
+    const { fileUrlToPath } = await import('@/lib/workspace-path-transfer')
+    const { readElectronLocalFile } = await import('@/lib/electron-local-file')
+    const path = fileUrlToPath(descriptor.uri)
+    if (!path) throw new Error(`Invalid file URI: ${descriptor.uri}`)
+    const file = new File(
+      descriptor.isDirectory ? [] : [await readElectronLocalFile(path)],
+      descriptor.name,
+      {
+        type: descriptor.mimeType ?? '',
+      }
+    )
     transfer.items.add(file)
     const item = transfer.items[transfer.items.length - 1]
     if (item && descriptor.isDirectory) {
@@ -1665,6 +1727,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       await waitForDesktopControlTick()
       return ''
+    case 'failNextLocalCodexModelList': {
+      const failedRequest = failNextLocalExecutorRequestForE2E(
+        'runtime.codex.models.list',
+        'Desktop E2E intentional local Codex catalog failure'
+      )
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      await failedRequest
+      await waitForDesktopControlTick()
+      return ''
+    }
     case 'dispatchRuntimeLifecycleEvent':
       window.dispatchEvent(
         new CustomEvent('wework:e2e:runtime-task-lifecycle', {
@@ -1752,6 +1824,87 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getRuntimeConversationMessages': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
       return JSON.stringify(getRuntimeConversationMessagesForLogicalAddress(address))
+    }
+    case 'openConversationExportFixture': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        assetPath?: string
+        fileSize?: number
+        filename?: string
+        imagePath?: string
+        imageSize?: number
+      }
+      if (
+        !input.assetPath ||
+        !input.filename ||
+        typeof input.fileSize !== 'number' ||
+        !input.imagePath ||
+        typeof input.imageSize !== 'number'
+      ) {
+        throw new Error(
+          'openConversationExportFixture requires assetPath, filename, fileSize, imagePath, and imageSize'
+        )
+      }
+      const snapshot: WeworkConversationSnapshot = {
+        reference: {
+          deviceId: 'desktop-e2e-device',
+          taskId: 'conversation-export-fixture',
+          workspacePath: '/conversation/workspace',
+        },
+        title: 'Conversation export fixture',
+        complete: true,
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'done',
+            items: [
+              {
+                id: 'user-1',
+                type: 'user_message',
+                content: 'Export the attached evidence.',
+                status: 'done',
+                attachments: [
+                  {
+                    id: 1,
+                    filename: input.filename,
+                    fileSize: input.fileSize,
+                    mimeType: 'text/plain',
+                    localPath: input.assetPath,
+                  },
+                  {
+                    id: 2,
+                    filename: 'outside-workspace.png',
+                    fileSize: input.imageSize,
+                    mimeType: 'image/png',
+                    localPath: input.imagePath,
+                  },
+                ],
+              },
+              {
+                id: 'assistant-1',
+                type: 'assistant_text',
+                content: 'The evidence is attached.',
+              },
+            ],
+          },
+        ],
+      }
+      bindDshConversationController({
+        getTranscript: async () => snapshot,
+        readAssetChunk: async (_reference, request) =>
+          readConversationAssetChunk(snapshot, request, chunkRequest =>
+            invokeDesktopHost<WeworkConversationAssetChunk>(
+              'filesystem.readFileChunk',
+              chunkRequest
+            )
+          ),
+      })
+      window.dispatchEvent(
+        new CustomEvent('wework:conversation-export:open', {
+          detail: snapshot.reference,
+        })
+      )
+      await waitForDesktopControlTick()
+      return ''
     }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
@@ -1919,6 +2072,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dragBy':
+      return dragDesktopControlElementBy(command)
     case 'dragDataTransfer':
       return dragDesktopControlDataTransfer(command)
     case 'dragDataTransferStart':
@@ -1983,8 +2138,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         : initialElements[0]
       if (!initialElement) throw new Error(`Unable to find selector "${command.selector}"`)
       activeElementMetricsSample?.stop()
-      const startedAt = performance.now()
+      let startedAt: number | undefined
       let animationFrame = 0
+      const sampleElements = command.target
+        ? createElementFrameSampler(initialElement, command.target)
+        : undefined
       const sample: ElementMetricsSample = {
         done: false,
         frames: [],
@@ -1996,6 +2154,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (animationFrame) window.cancelAnimationFrame(animationFrame)
       }
       const captureFrame = (time: number) => {
+        startedAt ??= time
         const element = initialElement
         const rect = element?.getBoundingClientRect()
         const testIds = element
@@ -2004,6 +2163,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               .filter((testId): testId is string => Boolean(testId))
           : []
         sample.frames.push({
+          elements: sampleElements?.(),
           connected: element?.isConnected ?? false,
           height: rect?.height ?? 0,
           label: element?.dataset.weworkBrowserWebview ?? null,
@@ -2022,7 +2182,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       sample.stop = finish
       activeElementMetricsSample = sample
-      animationFrame = window.requestAnimationFrame(captureFrame)
+      // Use the rAF clock for every sample, including the baseline. Its timestamp
+      // can precede performance.now() when a callback runs in the current frame.
+      await new Promise<void>(resolve => {
+        animationFrame = window.requestAnimationFrame(time => {
+          captureFrame(time)
+          resolve()
+        })
+      })
       return ''
     }
     case 'getElementMetricsSample': {
@@ -2587,6 +2754,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerClick':
+      // Keep one gesture together across transient hover UI, without transport gaps.
+      return pressDesktopControlPointer(command.selector, true)
     case 'pointerDownOnly': {
       await invokeDesktopHost('e2e.focusMainWindow')
       const result = startDesktopControlPointer(command.selector)

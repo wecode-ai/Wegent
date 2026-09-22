@@ -355,6 +355,8 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       dueAt: '2026-09-11',
       parentId: null,
       localProjectId: 3,
+      assigneeUserId: 8,
+      notifyAssignee: false,
       automationRuleId: 'automation-1',
     })
     expect(deliveryApi.createLoopItem).toHaveBeenCalledWith(
@@ -364,6 +366,8 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         due_at: '2026-09-11',
         parent_id: null,
         local_project_id: 3,
+        assignee_user_id: 8,
+        notify_assignee: false,
         automation_rule_id: 'automation-1',
       })
     )
@@ -702,12 +706,8 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       execution_environment: {
         repositories: [],
         setup_steps: [],
-        status: 'uninitialized',
         fingerprint: '',
-        prepared_device_id: '',
-        prepared_workspace_path: '',
-        prepared_at: null,
-        error: '',
+        devices: {},
       },
     }
     const client = {
@@ -966,6 +966,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'automationExecutionCatalog',
         'workspaces',
         'resources',
+        'gitRepositories',
         'projects',
         'myWork',
         'issues',

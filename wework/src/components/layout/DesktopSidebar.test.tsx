@@ -242,21 +242,62 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
-  test('renders Board as the selected default work-items view', async () => {
-    const onOpenMyWork = vi.fn()
+  test('changes the primary task view action and icon after selecting Board', async () => {
+    const onToggleMyWork = vi.fn()
 
+    renderSidebar({ onToggleMyWork })
+
+    expect(screen.queryByTestId('task-my-work-button')).not.toBeInTheDocument()
+    const primaryButton = screen.getByTestId('runtime-priority-filter-button')
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    const boardItem = screen.getByTestId('runtime-task-view-board')
+    expect(boardItem).toHaveTextContent('看板')
+
+    await userEvent.click(boardItem)
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
+
+    await userEvent.click(primaryButton)
+    expect(onToggleMyWork).toHaveBeenCalledTimes(2)
+  })
+
+  test('selects priority as the primary action and closes the board surface', async () => {
+    const onToggleMyWork = vi.fn()
     renderSidebar({
       taskView: 'default-work-items',
-      onOpenMyWork,
+      onToggleMyWork,
     })
 
-    const myWorkButton = screen.getByTestId('task-my-work-button')
-    expect(myWorkButton).toHaveTextContent('看板')
-    expect(myWorkButton).toHaveAttribute('aria-current', 'page')
+    const primaryButton = screen.getByTestId('runtime-priority-filter-button')
+    expect(primaryButton.querySelector('.lucide-columns-3')).toBeInTheDocument()
 
-    await userEvent.click(myWorkButton)
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    const priorityItem = screen.getByTestId('runtime-task-view-priority')
 
-    expect(onOpenMyWork).toHaveBeenCalledOnce()
+    await userEvent.click(priorityItem)
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    expect(primaryButton.querySelector('.lucide-list-todo')).toBeInTheDocument()
+    expect(primaryButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('clears the priority filter before opening the selected board surface', async () => {
+    const onToggleMyWork = vi.fn()
+    renderSidebar({ onToggleMyWork })
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    await userEvent.click(screen.getByTestId('runtime-task-view-priority'))
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+    await userEvent.click(screen.getByTestId('runtime-task-view-board'))
+
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {
@@ -288,6 +329,53 @@ describe('DesktopSidebar', () => {
     })
 
     expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+  })
+
+  test.each(['projects-create-button', 'projects-empty-create-button'])(
+    'closes project creation with Escape without refocusing the clicked %s',
+    async triggerTestId => {
+      renderSidebar({
+        projects: [],
+        runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+        cloudWorkStatus: cloudWorkStatus({
+          availability: 'empty',
+          checks: { runtimeWork: 'empty' },
+        }),
+      })
+      const user = userEvent.setup()
+      const trigger = screen.getByTestId(triggerTestId)
+      await user.click(trigger)
+      const localOption = screen.getByTestId('project-create-local-option')
+      expect(localOption).toHaveFocus()
+
+      fireEvent.keyDown(localOption, { key: 'Escape', isComposing: true })
+      expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+      expect(trigger).not.toHaveFocus()
+      await user.keyboard('{Enter}')
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+    }
+  )
+
+  test('keeps project creation keyboard navigation inside the dialog and returns to its keyboard trigger', async () => {
+    renderSidebar()
+    const user = userEvent.setup()
+    const trigger = screen.getByTestId('projects-create-button')
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('project-create-local-option')).toHaveFocus()
+
+    await user.tab()
+    expect(screen.getByTestId('project-create-remote-option')).toHaveFocus()
+    await user.tab()
+    expect(screen.getByTestId('close-project-source-dialog')).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(screen.getByTestId('project-create-remote-option')).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   test('does not show the empty project creation action before runtime work loads', () => {
@@ -1358,6 +1446,23 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
   })
 
+  test('switches from the board surface to priority when using the shortcut', () => {
+    const onToggleMyWork = vi.fn()
+    renderSidebar({
+      taskView: 'default-work-items',
+      onToggleMyWork,
+    })
+
+    fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
+
+    expect(onToggleMyWork).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
   test('uses the configured priority shortcut and ignores editable targets', () => {
     setActiveKeybindings([
       {
@@ -1522,22 +1627,24 @@ describe('DesktopSidebar', () => {
     )
 
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
-    expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
+    expect(screen.getByTestId('sidebar-worklists-scroll-area')).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
-    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
-    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('border-transparent')
+    expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-none', 'scrollbar-soft')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     fireEvent.scroll(scrollContainer, { target: { scrollTop: 24 } })
 
     expect(scrollContainer).toHaveAttribute('data-scrolled', 'true')
-    expect(scrollContainer).toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('border-border')
     expect(scrollContainer).not.toHaveClass('border-transparent', 'scrollbar-none')
 
     fireEvent.scroll(scrollContainer, { target: { scrollTop: 0 } })
 
     expect(scrollContainer).toHaveAttribute('data-scrolled', 'false')
-    expect(scrollContainer).toHaveClass('border-transparent', 'scrollbar-none')
+    expect(scrollContainer).toHaveClass('border-transparent')
     expect(scrollContainer).not.toHaveClass('border-border', 'scrollbar-soft')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     expect(searchButton.parentElement?.parentElement?.parentElement).toHaveClass(
       'h-9',
@@ -1569,7 +1676,7 @@ describe('DesktopSidebar', () => {
       fireEvent.pointerMove(window, { clientX: 600, clientY: 680 })
     })
 
-    expect(scrollContainer).toHaveClass('overflow-y-hidden')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'hidden' })
     scrollContainer.scrollTop = 240
     fireEvent.scroll(scrollContainer)
     expect(scrollContainer.scrollTop).toBe(120)
@@ -1577,7 +1684,7 @@ describe('DesktopSidebar', () => {
     act(() => {
       fireEvent.pointerMove(window, { clientX: 120, clientY: 680 })
     })
-    expect(scrollContainer).toHaveClass('overflow-y-auto')
+    expect(scrollContainer).toHaveStyle({ overflowY: 'scroll' })
 
     act(() => {
       dispatchWorkbenchSidebarPaneDragCancel()
@@ -2808,10 +2915,10 @@ describe('DesktopSidebar', () => {
     })
 
     const firstSortable = document.querySelector(
-      '[data-sidebar-sortable-id="local-device:thread-1"]'
+      '[data-sidebar-sortable-id="local-device:chat-1"]'
     ) as HTMLElement
     const secondSortable = document.querySelector(
-      '[data-sidebar-sortable-id="local-device:thread-2"]'
+      '[data-sidebar-sortable-id="local-device:chat-2"]'
     ) as HTMLElement
     expect(screen.getByTestId('runtime-chat-task-sortable-list')).toContainElement(firstSortable)
     expect(firstSortable).toHaveAttribute('tabindex', '0')
@@ -2819,7 +2926,7 @@ describe('DesktopSidebar', () => {
     expect(secondSortable).toHaveAttribute('tabindex', '0')
 
     const firstActivator = screen.getByTestId('runtime-local-task-drag-activator-chat-1')
-    const firstTitleSpace = firstActivator.parentElement as HTMLElement
+    const firstTitleSpace = screen.getByTestId('runtime-local-task-title-chat-1')
     const firstTrailing = screen.getByTestId('runtime-local-task-trailing-chat-1')
     const firstActions = screen.getByTestId('runtime-local-task-hover-actions-chat-1')
     mockSidebarSortableRect(firstSortable, 0)
@@ -3017,8 +3124,7 @@ describe('DesktopSidebar', () => {
     expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
 
     await user.clear(renameInput)
-    await user.type(renameInput, '对齐方案')
-    await user.click(screen.getByTestId('confirm-rename-runtime-local-task-codex-rename'))
+    await user.type(renameInput, '对齐方案{Enter}')
 
     await waitFor(() => {
       expect(onRenameRuntimeTask).toHaveBeenCalledWith(
@@ -3064,12 +3170,19 @@ describe('DesktopSidebar', () => {
       onRenameRuntimeTask,
     })
 
-    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-double-click'))
-
-    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('rename-runtime-local-task-input-codex-double-click')).toHaveValue(
-      'Double click rename'
-    )
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-double-click'))
+      expect(onOpenRuntimeTask).toHaveBeenCalledTimes(attempt)
+      const input = screen.getByTestId('rename-runtime-local-task-input-codex-double-click')
+      expect(input).toHaveValue('Double click rename')
+      expect(input).toHaveFocus()
+      await user.type(input, `Draft ${attempt}`)
+      await user.keyboard('{Escape}')
+      expect(
+        screen.queryByTestId('rename-runtime-local-task-input-codex-double-click')
+      ).not.toBeInTheDocument()
+    }
+    expect(onRenameRuntimeTask).not.toHaveBeenCalled()
   })
 
   test('renders project runtime tasks directly under projects and opens by address', async () => {
@@ -3609,7 +3722,13 @@ describe('DesktopSidebar', () => {
     expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
     expect(spinnerLayer).toHaveClass('will-change-transform')
     expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
-    expect(screen.getByTestId('runtime-local-task-goal-dot-codex-running')).toBeInTheDocument()
+    const goalIndicator = screen.getByTestId('runtime-local-task-goal-dot-codex-running')
+    expect(goalIndicator).toHaveClass('h-4', 'w-4', 'text-[rgb(var(--color-sidebar-text-muted))]')
+    const goalCenter = screen.getByTestId('runtime-local-task-goal-center-codex-running')
+    expect(goalCenter).toHaveClass('h-1', 'w-1', 'rounded-full', 'bg-current')
+    expect(spinnerLayer).not.toContainElement(goalCenter)
+    expect(goalIndicator.querySelector('.animate-spin')).toBe(spinnerLayer)
+    expect(goalIndicator.querySelector('.lucide-loader-circle')).toBeInTheDocument()
     expect(
       screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
     ).not.toBeInTheDocument()
@@ -4000,7 +4119,7 @@ describe('DesktopSidebar', () => {
     })
 
     try {
-      renderSidebar({
+      const sidebarProps = {
         runtimeWork: {
           projects: [
             {
@@ -4031,10 +4150,11 @@ describe('DesktopSidebar', () => {
           totalTasks: 1,
         },
         onArchiveRuntimeTask,
-      })
+      }
+      const rendered = renderSidebar(sidebarProps)
 
       await user.click(screen.getByTestId('project-item-button'))
-      const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      let taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
       const rowChildren = Array.from(taskRow.children)
 
       expect(screen.getByTestId('runtime-local-task-mark-codex-1')).toBeInTheDocument()
@@ -4080,6 +4200,14 @@ describe('DesktopSidebar', () => {
         'pointer-events-auto'
       )
 
+      rendered.unmount()
+      renderSidebar(sidebarProps)
+      await user.click(screen.getByTestId('project-item-button'))
+      taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
+        '撤销'
+      )
+
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
 
       expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
@@ -4104,6 +4232,78 @@ describe('DesktopSidebar', () => {
       setTimeoutSpy.mockRestore()
       clearTimeoutSpy.mockRestore()
     }
+  })
+
+  test('preserves pending archive undo when a runtime task gains its thread id', async () => {
+    const user = userEvent.setup()
+    const onArchiveRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const initialTask = {
+      taskId: 'codex-1',
+      workspacePath: '/repo/Wegent',
+      title: 'Fix reconnect',
+      runtime: 'codex' as const,
+      updatedAt: '2026-06-20T02:00:00Z',
+    }
+    const runtimeWork = (threadId?: string) => ({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              tasks: [{ ...initialTask, ...(threadId ? { threadId } : {}) }],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const initialProps = createSidebarProps({
+      runtimeWork: runtimeWork(),
+      onArchiveRuntimeTask,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-archive-identity-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await user.click(screen.getByTestId('project-item-button'))
+    await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
+
+    expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toBeInTheDocument()
+
+    const nextProps = {
+      ...initialProps,
+      runtimeWork: runtimeWork('thread-1'),
+    }
+    act(() => {
+      lifecycleStore.syncRuntimeWork(nextProps.runtimeWork)
+      view.rerender(
+        <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+          <DesktopSidebar {...nextProps} />
+        </RuntimeTaskLifecycleProvider>
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('runtime-local-task-row-codex-1').closest('[data-sidebar-sortable-id]')
+    ).toHaveAttribute('data-sidebar-sortable-id', 'local-device:codex-1')
+
+    await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
+
+    expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('runtime-local-task-row-codex-1')).not.toHaveClass('hidden')
   })
 
   test('offers force archive when a worktree task has uncommitted changes', async () => {
@@ -4407,7 +4607,7 @@ describe('DesktopSidebar', () => {
     )
   })
 
-  test('reserves runtime task hover actions without padding the truncated title', async () => {
+  test('overlays task actions without resizing the full task title', async () => {
     const user = userEvent.setup()
     const taskTitle = '修复进行中任务未显示 tool 调用'
 
@@ -4446,13 +4646,17 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('project-item-button'))
 
     const titleActivator = screen.getByText(taskTitle)
-    const title = titleActivator.parentElement as HTMLElement
+    const title = screen.getByTestId('runtime-local-task-title-codex-1')
     const trailing = screen.getByTestId('runtime-local-task-trailing-codex-1')
     const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
 
-    expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(title).toHaveClass('min-w-0', 'flex-1')
+    expect(title).not.toHaveClass('truncate')
+    expect(titleActivator).toHaveTextContent(taskTitle)
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[30px]', 'group-hover/task:w-[68px]')
+    expect(trailing).toHaveClass('min-w-[30px]')
+    expect(trailing).not.toHaveClass('group-hover/task:w-[68px]')
+    expect(hoverActions).toHaveAttribute('data-sidebar-title-actions')
     expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 

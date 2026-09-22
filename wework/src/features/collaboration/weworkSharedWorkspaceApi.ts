@@ -107,7 +107,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'remove',
   ],
   collaborators: ['list', 'add', 'remove'],
-  taskBindings: ['list'],
+  taskBindings: ['list', 'bindTask', 'unbindTask'],
   workflowPlans: [
     'get',
     'approve',
@@ -524,6 +524,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
                 DeliveryApi['createLoopItem']
               >[1]['execution_config'],
               automation_rule_id: input.automationRuleId,
+              assignee_user_id: input.assigneeUserId,
+              notify_assignee: input.notifyAssignee,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
           )
           .then(toIssue)
@@ -540,6 +542,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               priority: input.priority,
               parent_id: input.parentId,
               assignee_user_id: input.assigneeUserId,
+              assignee_group_id: input.assigneeGroupId,
               assignee_agent_id: input.assigneeAgentId,
               assignee_team_id: input.assigneeTeamId,
               due_at: input.dueAt,
@@ -622,6 +625,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
     },
     taskBindings: {
+      bindTask: deliveryApi.bindTask,
+      unbindTask: deliveryApi.unbindTask,
       async list(issueId, projectId) {
         return (await deliveryApi.listTaskBindings(issueId)).map(binding =>
           mapWorkspaceTaskBindingDto(binding, projectId)
@@ -908,6 +913,7 @@ export function createWeworkSharedWorkspaceApi<
     ...delivery,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
+    gitRepositories: sharedHttpApi.gitRepositories,
     projects: {
       ...delivery.projects,
       ...sharedHttpApi.projects,

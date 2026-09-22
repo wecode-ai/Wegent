@@ -2,11 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react'
 import type { ProjectAgentConfigurationHost } from '@wegent/collaboration'
 import { Bot, Plus } from 'lucide-react'
 
-import type { Bot as AgentBot, Team } from '@/types/api'
 import {
   simpleChoiceCardBaseClass,
   simpleChoiceCardSelectedClass,
@@ -29,72 +27,7 @@ import {
 } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { cn } from '@/lib/utils'
-import { useToast } from '@/hooks/use-toast'
-import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
-import { fetchBotsList } from '@/features/settings/services/bots'
-import { fetchTeamsList } from '@/features/settings/services/teams'
-
-function ResourceLibraryAgentCreator({
-  namespace,
-  onClose,
-  onCreated,
-  workspaceName,
-}: {
-  namespace: string
-  onClose(): void
-  onCreated(agent: { name: string; teamId: number }): Promise<void>
-  workspaceName: string
-}) {
-  const { toast } = useToast()
-  const [teams, setTeams] = useState<Team[]>([])
-  const [bots, setBots] = useState<AgentBot[]>([])
-  const resourceScope = namespace === 'default' ? 'personal' : 'group'
-
-  useEffect(() => {
-    let active = true
-    void Promise.all([
-      fetchTeamsList(resourceScope, namespace === 'default' ? undefined : namespace),
-      fetchBotsList(resourceScope, namespace === 'default' ? undefined : namespace),
-    ])
-      .then(([nextTeams, nextBots]) => {
-        if (!active) return
-        setTeams(nextTeams)
-        setBots(nextBots)
-      })
-      .catch(error => {
-        if (!active) return
-        toast({
-          variant: 'destructive',
-          title: error instanceof Error ? error.message : '加载智能体创建配置失败',
-        })
-      })
-    return () => {
-      active = false
-    }
-  }, [namespace, resourceScope, toast])
-
-  return (
-    <TeamEditDialog
-      bots={bots}
-      createTarget={
-        namespace === 'default'
-          ? { scope: 'personal' }
-          : { scope: 'group', groupName: namespace, groupNames: [namespace] }
-      }
-      editingTeamId={0}
-      fixedCreateTargetLabel={workspaceName}
-      onClose={onClose}
-      onSaved={team => onCreated({ name: team.displayName || team.name, teamId: team.id })}
-      open
-      scope={resourceScope}
-      groupName={namespace === 'default' ? undefined : namespace}
-      setBots={setBots}
-      setTeams={setTeams}
-      teams={teams}
-      toast={toast}
-    />
-  )
-}
+import { WebAgentResourceForm } from './WebAgentResourceForm'
 
 const modeIcons = {
   create: Plus,
@@ -102,8 +35,9 @@ const modeIcons = {
 } as const
 
 export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
+  supportsExistingAgentSelection: true,
   renderAgentCreator(props) {
-    return <ResourceLibraryAgentCreator {...props} />
+    return <WebAgentResourceForm {...props} />
   },
   renderDialog({ busy, children, closeLabel, description, onClose, testIds, title }) {
     return (
@@ -141,10 +75,7 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
     return (
       <RadioGroup
         className="grid grid-cols-2 gap-2"
-        onValueChange={nextValue => {
-          const option = options.find(candidate => candidate.value === nextValue)
-          if (!option?.disabled) onChange(nextValue as typeof value)
-        }}
+        onValueChange={nextValue => onChange(nextValue as typeof value)}
         value={value}
       >
         {options.map(option => {
@@ -152,14 +83,9 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
           const selected = option.value === value
           return (
             <label
-              aria-disabled={option.disabled || undefined}
               className={cn(
                 simpleChoiceCardBaseClass,
-                option.disabled
-                  ? 'cursor-not-allowed opacity-45'
-                  : selected
-                    ? simpleChoiceCardSelectedClass
-                    : simpleChoiceCardUnselectedClass
+                selected ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass
               )}
               data-testid={`${option.testId}-card`}
               key={option.value}
@@ -167,7 +93,6 @@ export const webProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
               <RadioGroupItem
                 aria-label={option.label}
                 data-testid={option.testId}
-                disabled={option.disabled}
                 value={option.value}
               />
               <span className="min-w-0 flex-1">

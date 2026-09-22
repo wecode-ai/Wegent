@@ -2,15 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ChangeEventHandler } from "react";
+import {
+  useRef,
+  useState,
+  type ChangeEventHandler,
+  type ReactNode,
+} from "react";
+import * as Popover from "@radix-ui/react-popover";
+import { Check, Search } from "lucide-react";
 
-import type {
-  CollaborationAgent,
-  CollaborationMember,
-  CollaborationPriority,
-  CollaborationStatus,
-} from "../types";
-import type { IssueAssigneeTarget } from "./IssueDetailDraft";
+import type { CollaborationPriority, CollaborationStatus } from "../types";
+import { useCollaborationPortalTheme } from "../theme";
 
 export interface IssueDetailSelectProps<TValue extends string> {
   value: TValue;
@@ -93,77 +95,180 @@ export function IssueDetailPrioritySelect({
   );
 }
 
-export interface IssueDetailAssigneeTeam {
-  id: number;
-  name: string;
-  displayName?: string | null;
+export interface IssueDetailSearchableSelectOption<
+  TValue extends string = string,
+> {
+  value: TValue;
+  label: string;
+  group?: string;
+  searchText?: string;
 }
 
-export interface IssueDetailAssigneeSelectProps {
-  value: IssueAssigneeTarget;
-  members: Array<Pick<CollaborationMember, "user_id" | "user_name">>;
-  agents: Array<Pick<CollaborationAgent, "id" | "name">>;
-  teams?: IssueDetailAssigneeTeam[];
+export interface IssueDetailSearchableSelectAction {
+  label: string;
+  icon?: ReactNode;
+  testId: string;
+  onSelect(): void;
+}
+
+export interface IssueDetailSearchableSelectProps<TValue extends string> {
+  value: TValue;
+  options: IssueDetailSearchableSelectOption<TValue>[];
+  actions?: IssueDetailSearchableSelectAction[];
   testId: string;
   accessibleLabel: string;
   className?: string;
   disabled?: boolean;
-  labels: {
-    empty: string;
-    members: string;
-    agents: string;
-    teams: string;
-  };
-  onChange(value: IssueAssigneeTarget): void;
+  searchPlaceholder: string;
+  emptyLabel: string;
+  onChange(value: TValue): void;
 }
 
-export function IssueDetailAssigneeSelect({
+export function IssueDetailSearchableSelect<TValue extends string>({
   value,
-  members,
-  agents,
-  teams = [],
+  options,
+  actions = [],
   testId,
   accessibleLabel,
   className,
   disabled,
-  labels,
+  searchPlaceholder,
+  emptyLabel,
   onChange,
-}: IssueDetailAssigneeSelectProps) {
+}: IssueDetailSearchableSelectProps<TValue>) {
+  const portalTheme = useCollaborationPortalTheme();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleOptions = normalizedQuery
+    ? options.filter((option) =>
+        `${option.label} ${option.searchText ?? ""} ${option.group ?? ""}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery),
+      )
+    : options;
+
   return (
-    <select
-      data-testid={testId}
-      aria-label={accessibleLabel}
-      value={value}
-      onChange={(event) => onChange(event.target.value as IssueAssigneeTarget)}
-      disabled={disabled}
-      className={className}
+    <Popover.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) setQuery("");
+      }}
     >
-      <option value="">{labels.empty}</option>
-      <optgroup label={labels.members}>
-        {members.map((member) => (
-          <option key={member.user_id} value={`user:${member.user_id}`}>
-            {member.user_name}
-          </option>
-        ))}
-      </optgroup>
-      {agents.length ? (
-        <optgroup label={labels.agents}>
-          {agents.map((agent) => (
-            <option key={agent.id} value={`agent:${agent.id}`}>
-              {agent.name}
-            </option>
-          ))}
-        </optgroup>
-      ) : null}
-      {teams.length ? (
-        <optgroup label={labels.teams}>
-          {teams.map((team) => (
-            <option key={team.id} value={`team:${team.id}`}>
-              {team.displayName || team.name}
-            </option>
-          ))}
-        </optgroup>
-      ) : null}
-    </select>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          data-testid={testId}
+          data-value={value}
+          aria-label={accessibleLabel}
+          aria-haspopup="listbox"
+          disabled={disabled}
+          className={className}
+        />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          {...portalTheme}
+          data-testid={`${testId}-menu`}
+          sideOffset={4}
+          collisionPadding={8}
+          style={portalTheme.style}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            searchInputRef.current?.focus({ preventScroll: true });
+          }}
+          className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg`}
+        >
+          <label className="flex h-8 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+            <Search className="h-3.5 w-3.5 shrink-0" />
+            <input
+              ref={searchInputRef}
+              data-testid={`${testId}-search`}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
+              className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+            />
+          </label>
+          <div
+            role="listbox"
+            aria-label={accessibleLabel}
+            className="mt-1 min-h-0 overflow-y-auto overscroll-contain"
+          >
+            {visibleOptions.map((option, index) => {
+              const previousGroup = visibleOptions[index - 1]?.group;
+              const showGroup = Boolean(
+                option.group && option.group !== previousGroup,
+              );
+              return (
+                <div key={option.value}>
+                  {showGroup ? (
+                    <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-text-muted">
+                      {option.group}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={option.value === value}
+                    data-testid={`${testId}-option-${option.value || "empty"}`}
+                    onClick={() => {
+                      onChange(option.value);
+                      setOpen(false);
+                    }}
+                    className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${
+                      option.value === value ? "bg-muted font-medium" : ""
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {option.label}
+                    </span>
+                    {option.value === value ? (
+                      <Check className="h-3.5 w-3.5 shrink-0" />
+                    ) : null}
+                  </button>
+                </div>
+              );
+            })}
+            {visibleOptions.length === 0 ? (
+              <p className="px-3 py-6 text-center text-xs text-text-muted">
+                {emptyLabel}
+              </p>
+            ) : null}
+          </div>
+          {actions.length > 0 ? (
+            <div className="mt-1 shrink-0 border-t border-border pt-1">
+              {actions.map((action) => (
+                <button
+                  key={action.testId}
+                  type="button"
+                  data-testid={action.testId}
+                  onClick={() => {
+                    setOpen(false);
+                    action.onSelect();
+                  }}
+                  className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                >
+                  {action.icon ? (
+                    <span
+                      aria-hidden="true"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center"
+                    >
+                      {action.icon}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate">
+                    {action.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }

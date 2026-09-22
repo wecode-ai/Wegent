@@ -29,10 +29,15 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
     normalize_provider_config,
 )
-from app.services.cloud_project_visibility import accessible_cloud_projects
+from app.services.cloud_project_visibility import (
+    accessible_cloud_projects,
+    workspace_project_ids,
+)
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.execution_environment_initialization import (
     initialize_execution_environment,
+    merge_execution_environment_device_state,
     preparing_execution_environment,
 )
 from app.services.loop_item_status_history import write_status_change
@@ -43,7 +48,6 @@ from app.services.workspaces.environment_status import execution_environment_sta
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
-    project_ids_for_workspace,
     resource_grant,
     workspace_id_for_project,
 )
@@ -192,12 +196,10 @@ class CloudProjectService:
         *,
         workspace_id: int | None = None,
     ) -> list[CloudProject]:
-        if workspace_id is not None:
-            require_workspace_role(db, workspace_id, user_id)
         query = accessible_cloud_projects(db, user_id)
         if workspace_id is not None:
             query = query.filter(
-                CloudProject.id.in_(project_ids_for_workspace(db, workspace_id))
+                CloudProject.id.in_(workspace_project_ids(workspace_id))
             )
         return query.order_by(CloudProject.updated_at.desc()).all()
 
@@ -316,7 +318,8 @@ class CloudProjectService:
                 and values.execution_environment is not None
             ):
                 metadata["execution_environment"] = preparing_execution_environment(
-                    values.execution_environment.model_dump()
+                    values.execution_environment.model_dump(),
+                    metadata.get("execution_environment"),
                 )
                 updates.pop("execution_environment", None)
             if (
@@ -397,18 +400,31 @@ class CloudProjectService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Execution device is not available in this Project",
             )
-        metadata = dict(project.metadata_json or {})
-        definition = metadata.get("execution_environment")
+        definition = (project.metadata_json or {}).get("execution_environment")
         definition = definition if isinstance(definition, dict) else {}
+        # Preparation runs on the device for minutes, so the project row must not
+        # stay locked while it runs; otherwise every concurrent project write
+        # blocks for the whole preparation and then fails the version check.
+        db.commit()
         state = await initialize_execution_environment(
             db=db,
             device=device,
             environment_id=f"project-{cloud_project_id}",
             definition=definition,
         )
-        metadata["execution_environment"] = state
+        project = self._lock_project(db, cloud_project_id)
+        if project.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Project changed")
+        metadata = dict(project.metadata_json or {})
+        environment = metadata.get("execution_environment")
+        metadata["execution_environment"] = merge_execution_environment_device_state(
+            environment if isinstance(environment, dict) else {},
+            device_key=runtime_device_route_id(device),
+            device_state=state,
+        )
         project.metadata_json = metadata
-        project.version += 1
+        # Recording a preparation result is not a configuration change, so the
+        # client keeps a usable version token and can retry after a failure.
         db.commit()
         db.refresh(project)
         return project

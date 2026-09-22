@@ -24,11 +24,11 @@ The suite must prove that:
 
 ## Audited Runtime Models
 
-The three agent runtimes do not currently share one configuration model. E2E fixtures must not fabricate a unified abstraction that does not exist in the product.
+Wegent Shells and Wework project agents use different configuration models. E2E fixtures must identify the runtime chain under test.
 
-### Wegent Chat and ClaudeCode
+### Wegent Chat, ClaudeCode, and Codex
 
-Chat and ClaudeCode use the Wegent CRD resource chain:
+Chat, ClaudeCode, and Codex use the Wegent CRD resource chain:
 
 ```text
 Team
@@ -36,7 +36,7 @@ Team
     -> Ghost
       -> Skill references
       -> MCP servers
-    -> Shell: Chat | ClaudeCode
+    -> Shell: Chat | ClaudeCode | Codex
     -> optional Model
 ```
 
@@ -46,12 +46,11 @@ Team
 - After Task creation, the backend resolves Team, Bot, Ghost, Skill, and MCP data to build the real execution request.
 - Chat Shell enters Chat Runtime.
 - ClaudeCode Shell is scheduled through Executor Manager to a real Executor that starts Claude Code CLI.
+- The public Codex Shell is also scheduled through Executor Manager to a real Executor that starts Codex app-server.
 
-### Codex
+### Wework Codex project agents
 
-Codex is not currently a Wegent public Shell type and is not created through the Team → Bot → Ghost chain above.
-
-Codex uses the Wework project-agent and local-runtime chain:
+In addition to the public Shell, Codex supports the Wework project-agent and local-runtime chain. E2E-06 in this plan verifies this chain:
 
 ```text
 ProjectChatAgent
@@ -65,7 +64,7 @@ ProjectChatAgent
 - A project agent is represented by `ProjectChatAgent`.
 - Codex Skills, MCPs, and Plugins are materialized into an isolated Codex Home.
 - A Plugin may provide a Skill, MCP, and other Codex extensions.
-- E2E must verify the Wegent agent chain and the Wework Codex chain separately. It must not describe Codex as a nonexistent Wegent `Codex` Shell.
+- E2E must verify the Wegent Codex Shell chain and the Wework Codex project-agent chain separately. Evidence from one chain cannot substitute for the other.
 
 ### Human
 
@@ -311,7 +310,7 @@ Steps:
 
 Required proof:
 
-- The scheduled object is a ProjectChatAgent, not a fabricated Wegent `Codex` Shell.
+- The scheduled object in this scenario is a ProjectChatAgent; the Wegent `Codex` Shell requires separate verification.
 - The target Plugin files are materialized in Codex Home.
 - The correct Skill locator appears in an initial request or tool output.
 - Codex actually reads the target `SKILL.md`.
@@ -591,11 +590,17 @@ execution environment on a Wework device:
 3. Add the Wework device associated with the desktop App from Project settings, enter a valid
    repository and setup step, and click Create Environment.
 4. The environment preparation command must target the selected device record's
-   `app-record-{id}` route, reach `ready`, and keep the logical device ID in the persisted
-   `prepared_device_id`.
+   `app-record-{id}` route, reach `ready`, and persist its state under that route in the
+   execution environment's `devices` map.
 5. After removing that Wework device, initialize the real cloud Executor and complete the
    existing two-agent automation chain, proving that record-scoped routing does not break
    subsequent scheduling.
+
+Environment preparation clones repositories with the Git credentials configured on the device,
+matching how tasks dispatched to a device behave: the Backend sends no task-scoped token because
+one execution environment may hold repositories from several domains. A private repository
+therefore requires the Git accounts to be synchronized to that device first, otherwise the clone
+fails for missing credentials.
 
 ### `cloud-device-lifecycle`
 
@@ -674,10 +679,10 @@ archiveProjectAndWorkspace
 
 Fixtures only establish prerequisites. The critical user action under test must still be performed through the relevant product UI.
 
-Chat, ClaudeCode, and Codex may share execution-evidence assertion interfaces, but they must not share a fabricated resource-creation interface:
+Runtime chains may share execution-evidence assertion interfaces, but fixtures must create the corresponding real resources:
 
-- Chat and ClaudeCode fixtures create Team, Bot, and Ghost resources.
-- Codex fixtures create ProjectChatAgent and an isolated Codex Runtime.
+- Wegent Chat, ClaudeCode, and Codex Shell fixtures create Team, Bot, and Ghost resources.
+- Wework Codex project-agent fixtures create ProjectChatAgent and an isolated Codex Runtime.
 - The shared layer describes execution evidence only and does not erase the different runtime models.
 
 ## Cleanup Order
@@ -727,13 +732,21 @@ The complete collaboration execution E2E suite passes only when all criteria bel
 - A real Executor generates the exact file artifact.
 - Task, Runtime, and Issue status complete.
 
-### Codex
+### Wegent Codex Shell
+
+- The execution target is a Team/Bot/Ghost using the Codex Shell through the standard Executor.
+- The Ghost Skill is loaded, MCP is invoked by a real Codex app-server, and its output enters the next request.
+- A real Executor generates the exact file artifact, and Task, project message, and Issue status complete.
+- Preserve this path's scheduling identity, runtime logs, and artifact evidence; Wework Runtime results cannot substitute for it.
+
+### Wework Codex Project Agent
 
 - The execution target is ProjectChatAgent/Wework Runtime.
 - Skill, MCP, and Plugin are all loaded by a real Codex Runtime.
 - Plugin MCP is actually invoked and its output enters the next request.
 - A real artifact contains all three independent probes.
 - Task and Issue status complete.
+- Preserve independent runtime evidence for this path; Wegent Codex Shell results cannot substitute for it.
 
 ### Human
 

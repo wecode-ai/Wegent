@@ -316,4 +316,46 @@ describe('useDocuments query parameters', () => {
       expect(result.current.documents.map(doc => doc.id)).toEqual([2, 1])
     })
   })
+
+  it('sorts synchronized wiki rows by the synchronized content time', async () => {
+    const olderWiki = createDocument(1, 'older-wiki.md', {
+      source_type: 'external',
+      created_at: '2026-09-05T00:00:00Z',
+      updated_at: '2026-09-05T00:00:00Z',
+      source_config: {
+        external: {
+          provider: 'wiki',
+          sync: { enabled: true, content_version: '2026-09-01T00:00:00Z' },
+        },
+      },
+    })
+    const newerWiki = createDocument(2, 'newer-wiki.md', {
+      source_type: 'external',
+      created_at: '2026-09-04T00:00:00Z',
+      updated_at: '2026-09-04T00:00:00Z',
+      source_config: {
+        external: {
+          provider: 'wiki',
+          sync: { enabled: true, content_version: '2026-09-03T12:34:56Z' },
+        },
+      },
+    })
+    mockListDocuments.mockResolvedValue(createListResponseFromItems([olderWiki, newerWiki]))
+
+    const { result } = renderHook(() =>
+      useDocuments({
+        knowledgeBaseId: 1,
+        paginationEnabled: true,
+        sortBy: 'updatedAt',
+        sortOrder: 'desc',
+      })
+    )
+
+    await waitFor(() => {
+      expect(result.current.documents.map(doc => doc.name)).toEqual([
+        'newer-wiki.md',
+        'older-wiki.md',
+      ])
+    })
+  })
 })

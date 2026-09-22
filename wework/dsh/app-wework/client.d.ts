@@ -205,8 +205,26 @@ export interface WeworkConversationSnapshot {
   readonly turns: readonly WeworkConversationTurn[]
 }
 
+export interface WeworkConversationAssetChunkRequest {
+  readonly path: string
+  readonly workspacePath?: string | null
+  readonly offset: number
+  readonly length: number
+}
+
+export interface WeworkConversationAssetChunk {
+  readonly chunkBase64: string
+  readonly bytesRead: number
+  readonly eof: boolean
+  readonly size: number
+}
+
 export interface WeworkConversationService {
   getTranscript(reference: WeworkConversationReference): Promise<WeworkConversationSnapshot>
+  readAssetChunk(
+    reference: WeworkConversationReference,
+    request: WeworkConversationAssetChunkRequest
+  ): Promise<WeworkConversationAssetChunk>
 }
 
 export interface WeworkDialogService {

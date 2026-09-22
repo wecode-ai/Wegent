@@ -15,15 +15,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.plugin_package_scanner import scan_plugin_package
+from app.utils.semver import parse_semver
 
 MAX_SMART_APP_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
 SMART_APP_PACKAGE_TYPE = "deepseek-harness-plugin-bundle"
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-SEMVER_PATTERN = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
-    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
-)
 
 
 @dataclass(frozen=True)
@@ -98,10 +94,12 @@ class SmartAppPackageParser:
                 status_code=400,
                 detail="Smart app displayName and description are required",
             )
-        if not SEMVER_PATTERN.fullmatch(version):
+        try:
+            parse_semver(version)
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400, detail="Smart app version must be SemVer"
-            )
+            ) from exc
         entry = manifest.get("entry")
         requirements = manifest.get("requirements")
         if not isinstance(entry, dict) or not all(

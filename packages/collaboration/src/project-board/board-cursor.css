@@ -1,0 +1,83 @@
+/* The active board owns the page policy, including portals attached to body.
+   Hidden workspace tabs must not affect another page's cursor. */
+body:has(
+    [data-board-cursor-policy="arrow"]:not(
+      [hidden],
+      [hidden] *,
+      [inert],
+      [inert] *,
+      .hidden,
+      .hidden *,
+      [style*="display: none"],
+      [style*="display: none"] *,
+      [aria-hidden="true"],
+      [aria-hidden="true"] *
+    )
+  )
+  :is(
+    button,
+    a[href],
+    label,
+    select,
+    summary,
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    input[type="checkbox"],
+    input[type="radio"],
+    [role="button"],
+    [role="link"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="option"],
+    [role="checkbox"],
+    [role="switch"],
+    .cursor-pointer
+  ):not(
+    [role="separator"],
+    [contenteditable="true"],
+    .cursor-grab,
+    .cursor-grabbing,
+    .cursor-move,
+    .cursor-text,
+    .cursor-wait,
+    .cursor-not-allowed,
+    .cursor-col-resize,
+    .cursor-row-resize,
+    .cursor-ew-resize,
+    .cursor-ns-resize
+  ) {
+  /* Override component recipes and utility classes at this policy boundary. */
+  cursor: default !important;
+}
+
+.project-board-scrollbar {
+  z-index: 10;
+  display: flex;
+  touch-action: none;
+  user-select: none;
+  background: transparent;
+}
+
+.project-board-scrollbar-horizontal {
+  flex-direction: column;
+  height: 8px;
+  transform: translateY(-3px);
+}
+
+.project-board-scrollbar-vertical {
+  width: 8px;
+  transform: translateX(-3px);
+}
+
+.project-board-scrollbar-thumb {
+  position: relative;
+  flex: 1;
+  border-radius: 9999px;
+  background-color: rgb(var(--color-text-primary) / 0.08);
+}
+
+.project-board-scrollbar:hover .project-board-scrollbar-thumb,
+.project-board-scrollbar:active .project-board-scrollbar-thumb {
+  background-color: rgb(var(--color-text-primary) / 0.16);
+}

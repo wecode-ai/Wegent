@@ -1,0 +1,943 @@
+import { useCollaborationPortalTheme } from '../theme'
+import {
+  Check,
+  ChevronDown,
+  Cloud,
+  Folder,
+  FolderPlus,
+  FolderX,
+  HardDrive,
+  Search,
+  X,
+} from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
+import { ProjectFolderIcon } from './ProjectFolderIcon'
+import { isCloudDevice } from '@wegent/chat-core/device-selection'
+import { isWeWorkExecutorVersionCompatible } from '@wegent/chat-core/device-capabilities'
+import {
+  buildProjectWorkspaceOptions,
+  isSelectableProjectWorkspace,
+} from '@wegent/chat-core/project-workspace-selection'
+import { resolveRuntimeTaskProjects, runtimeProjectUiId } from '@wegent/chat-core/runtime-project'
+import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import type { DeviceInfo, ProjectWithTasks } from '@wegent/chat-core/execution-project'
+import type {
+  RuntimeDeviceWorkspace,
+  RuntimeWorkListResponse,
+} from '@wegent/chat-core/runtime-task-api-types'
+import type { CollaborationTranslate } from '../i18n'
+export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
+import {
+  getProjectDeviceId,
+  getProjectMenuDeviceLabel,
+  getProjectMenuFitHeight,
+  isLocalProjectWorkspaceDevice,
+} from './project-work-bar-utils'
+import { useOutsideClick } from '../composer/useOutsideClick'
+
+const PROJECT_MENU_MAX_HEIGHT = 480
+const PROJECT_MENU_LIST_MAX_HEIGHT = 230
+const PROJECT_MENU_WIDTH = 320
+const PROJECT_MENU_ANCHOR_GAP = 8
+const PROJECT_MENU_VIEWPORT_MARGIN = 16
+
+function ProjectMenuPortal({ children, enabled }: { children: ReactNode; enabled: boolean }) {
+  if (!enabled || typeof document === 'undefined') return children
+  return createPortal(children, document.body)
+}
+
+function workspaceFolderName(path: string): string {
+  const normalized = path.trim().replace(/[\\/]+$/, '')
+  return normalized.split(/[\\/]/).filter(Boolean).at(-1) || normalized || path
+}
+
+function workspacePathSummary(path: string): string {
+  const parts = path
+    .trim()
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .filter(Boolean)
+  if (parts.length <= 2) return path
+  return `…/${parts.slice(-2).join('/')}`
+}
+
+export interface ProjectWorkBarProps {
+  translate: CollaborationTranslate
+  isMobile: boolean
+  renderCreateSection?(closeMenu: () => void): ReactNode
+  renderWorkSection?(project: ProjectWithTasks | null | undefined): ReactNode
+  projects: ProjectWithTasks[]
+  devices: DeviceInfo[]
+  runtimeWork?: RuntimeWorkListResponse | null
+  currentProject?: ProjectWithTasks | null
+  currentProjectId?: number
+  currentStandaloneDeviceId?: string | null
+  selectedDeviceWorkspaceId?: number | null
+  pendingProjectWorkspaceProjectId?: number | null
+  onSelectProject: (projectId: number | null) => void
+  onSelectStandaloneDevice: (deviceId: string | null) => void
+  onSelectProjectWorkspace?: (
+    projectId: number,
+    deviceWorkspaceId: number | null,
+    workspace?: RuntimeDeviceWorkspace
+  ) => void
+  onBindProjectWorkspace?: (projectId: number) => void
+  onCreateProjectMode?: (mode: ProjectCreateMode) => void
+  className?: string
+  buttonClassName?: string
+  menuClassName?: string
+  emptyLabel?: string
+  showProjectSelector?: boolean
+  // When false, the desktop trigger shows a static folder icon instead of the
+  // hover-to-clear button (used when the current project is a default the user
+  // cannot clear from here).
+  showClearButton?: boolean
+  projectMenuOpenSignal?: number
+  externalMenuOpenSignal?: number
+  projectMenuAnchorElement?: HTMLElement | null
+  middleContext?: ReactNode
+  trailingContext?: ReactNode
+  endContext?: ReactNode
+}
+
+export function ProjectWorkBar({
+  translate: t,
+  isMobile,
+  renderCreateSection,
+  renderWorkSection,
+  projects = [],
+  devices,
+  runtimeWork = null,
+  currentProject: currentProjectProp = null,
+  currentProjectId,
+  selectedDeviceWorkspaceId = null,
+  pendingProjectWorkspaceProjectId = null,
+  onSelectProject,
+  onSelectProjectWorkspace,
+  onBindProjectWorkspace,
+  onCreateProjectMode,
+  className,
+  buttonClassName,
+  menuClassName,
+  emptyLabel,
+  showProjectSelector = true,
+  showClearButton = true,
+  projectMenuOpenSignal,
+  externalMenuOpenSignal,
+  projectMenuAnchorElement = null,
+  middleContext,
+  trailingContext,
+  endContext,
+}: ProjectWorkBarProps) {
+  const portalTheme = useCollaborationPortalTheme()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const triggerButtonRef = useRef<HTMLButtonElement>(null)
+  const handledProjectMenuOpenSignalRef = useRef<number | undefined>(undefined)
+  const handledExternalMenuOpenSignalRef = useRef<number | undefined>(undefined)
+
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(false)
+  const [projectQuery, setProjectQuery] = useState('')
+  const [expandedMultiProjectId, setExpandedMultiProjectId] = useState<number | null>(null)
+  const [externalMenuAnchorElement, setExternalMenuAnchorElement] = useState<HTMLElement | null>(
+    null
+  )
+  const outsideMenuRefs = useMemo(() => [menuRef], [])
+  const [menuLayout, setMenuLayout] = useState<{
+    placement: 'below' | 'above'
+    maxHeight: number
+    fixedTop?: number
+    fixedLeft?: number
+  }>({ placement: 'below', maxHeight: PROJECT_MENU_MAX_HEIGHT })
+  const closeMenu = useCallback(() => {
+    setOpen(false)
+    setProjectQuery('')
+    setExternalMenuAnchorElement(null)
+  }, [])
+
+  const availableProjectChoices = useMemo(
+    () => resolveRuntimeTaskProjects(projects, runtimeWork),
+    [projects, runtimeWork]
+  )
+  const runtimeProjectWorkById = useMemo(
+    () =>
+      new Map((runtimeWork?.projects ?? []).map(item => [runtimeProjectUiId(item.project), item])),
+    [runtimeWork?.projects]
+  )
+  const currentProject = useMemo(
+    () =>
+      currentProjectProp?.id === currentProjectId
+        ? currentProjectProp
+        : availableProjectChoices.find(project => project.id === currentProjectId),
+    [availableProjectChoices, currentProjectId, currentProjectProp]
+  )
+  const getDeviceForProject = useCallback(
+    (project: ProjectWithTasks): DeviceInfo | undefined => {
+      const deviceId = getProjectDeviceId(project)
+      if (!deviceId) return undefined
+      return devices.find(d => d.device_id === deviceId)
+    },
+    [devices]
+  )
+  const hasRuntimeWork = runtimeWork != null
+  const availableProjects = availableProjectChoices
+  const projectWorkspaceOptions = useMemo(
+    () =>
+      buildProjectWorkspaceOptions({
+        projects: availableProjectChoices,
+        devices,
+        runtimeWork,
+      }),
+    [availableProjectChoices, devices, runtimeWork]
+  )
+  const projectWorkspaceOptionByProjectId = useMemo(
+    () => new Map(projectWorkspaceOptions.map(option => [option.project.id, option])),
+    [projectWorkspaceOptions]
+  )
+  const currentProjectWorkspaceOption = currentProject
+    ? projectWorkspaceOptionByProjectId.get(currentProject.id)
+    : undefined
+  const selectedDeviceWorkspace = useMemo(() => {
+    if (!currentProjectWorkspaceOption) return null
+    if (selectedDeviceWorkspaceId != null) {
+      const workspace = currentProjectWorkspaceOption.workspaces.find(
+        item => item.id === selectedDeviceWorkspaceId
+      )
+      if (workspace) return workspace
+    }
+    if (currentProjectWorkspaceOption.kind === 'single')
+      return currentProjectWorkspaceOption.workspace
+    return null
+  }, [currentProjectWorkspaceOption, selectedDeviceWorkspaceId])
+  const selectedWorkspaceDevice = selectedDeviceWorkspace
+    ? devices.find(device => device.device_id === selectedDeviceWorkspace.deviceId)
+    : undefined
+  const selectedWorkspaceIsRemote = Boolean(
+    currentProject &&
+    selectedDeviceWorkspace &&
+    selectedWorkspaceDevice &&
+    !isLocalProjectWorkspaceDevice(selectedWorkspaceDevice)
+  )
+  const selectedWorkspaceDeviceIp = selectedWorkspaceIsRemote
+    ? getProjectMenuDeviceLabel(selectedWorkspaceDevice, selectedDeviceWorkspace)
+    : null
+  const updateMenuLayout = useCallback(() => {
+    if (!open || isMobile || typeof window === 'undefined') return
+
+    const anchorElement =
+      externalMenuAnchorElement ?? containerRef.current ?? triggerButtonRef.current
+    const triggerRect = anchorElement?.getBoundingClientRect()
+    if (!triggerRect) return
+
+    const visibleBounds = {
+      top: PROJECT_MENU_VIEWPORT_MARGIN,
+      bottom: window.innerHeight - PROJECT_MENU_VIEWPORT_MARGIN,
+    }
+    const spaceBelow = visibleBounds.bottom - triggerRect.bottom
+    const spaceAbove = triggerRect.top - visibleBounds.top
+    const targetHeight = getProjectMenuFitHeight(
+      availableProjectChoices.length,
+      Boolean(onCreateProjectMode)
+    )
+    const placement = spaceBelow >= targetHeight || spaceBelow >= spaceAbove ? 'below' : 'above'
+    const availableSpace = Math.max(
+      (placement === 'below' ? spaceBelow : spaceAbove) - PROJECT_MENU_ANCHOR_GAP,
+      0
+    )
+    const maxHeight = Math.min(PROJECT_MENU_MAX_HEIGHT, availableSpace)
+    const fixedTop = Math.round(
+      placement === 'below'
+        ? triggerRect.bottom + PROJECT_MENU_ANCHOR_GAP
+        : triggerRect.top - PROJECT_MENU_ANCHOR_GAP - maxHeight
+    )
+    const desiredLeft = externalMenuAnchorElement
+      ? triggerRect.left + (triggerRect.width - PROJECT_MENU_WIDTH) / 2
+      : triggerRect.left
+    const fixedLeft = Math.round(
+      Math.max(
+        PROJECT_MENU_VIEWPORT_MARGIN,
+        Math.min(desiredLeft, window.innerWidth - PROJECT_MENU_VIEWPORT_MARGIN - PROJECT_MENU_WIDTH)
+      )
+    )
+
+    setMenuLayout(current => {
+      if (
+        current.placement === placement &&
+        current.maxHeight === maxHeight &&
+        current.fixedTop === fixedTop &&
+        current.fixedLeft === fixedLeft
+      ) {
+        return current
+      }
+      return { placement, maxHeight, fixedTop, fixedLeft }
+    })
+  }, [
+    availableProjectChoices.length,
+    externalMenuAnchorElement,
+    isMobile,
+    onCreateProjectMode,
+    open,
+  ])
+
+  useLayoutEffect(() => {
+    updateMenuLayout()
+  }, [updateMenuLayout])
+
+  useEffect(() => {
+    if (!open) return
+
+    const handleResize = () => {
+      updateMenuLayout()
+    }
+
+    window.addEventListener('resize', handleResize)
+    window.addEventListener('scroll', handleResize, true)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('scroll', handleResize, true)
+    }
+  }, [open, updateMenuLayout])
+
+  useEffect(() => {
+    if (!open) return
+    if (isMobile) return
+
+    searchInputRef.current?.focus()
+  }, [isMobile, open])
+
+  const handleSelectDeviceWorkspace = useCallback(
+    (projectId: number, workspace: RuntimeDeviceWorkspace) => {
+      if (!isSelectableProjectWorkspace(workspace, devices)) return
+      onSelectProjectWorkspace?.(projectId, workspace.id ?? null, workspace)
+      setExpandedMultiProjectId(null)
+      closeMenu()
+    },
+    [closeMenu, devices, onSelectProjectWorkspace]
+  )
+
+  const sortedProjects = useMemo(() => {
+    return [...availableProjects].sort((a, b) => {
+      const deviceA = getDeviceForProject(a)
+      const deviceB = getDeviceForProject(b)
+      const onlineA = deviceA?.status === 'online' ? 1 : 0
+      const onlineB = deviceB?.status === 'online' ? 1 : 0
+      return onlineB - onlineA
+    })
+  }, [availableProjects, getDeviceForProject])
+  const normalizedProjectQuery = projectQuery.trim().toLowerCase()
+  const filteredProjects = useMemo(() => {
+    if (!normalizedProjectQuery) return sortedProjects
+
+    return sortedProjects.filter(project => {
+      const device = getDeviceForProject(project)
+      const runtimeProject = runtimeProjectWorkById.get(project.id)
+      const searchableText = [
+        project.name,
+        project.description ?? '',
+        device?.name ?? '',
+        device?.device_id ?? '',
+        ...(runtimeProject?.project.roots?.map(root => root.path) ?? []),
+        ...(runtimeProject?.deviceWorkspaces.map(workspace => workspace.workspacePath) ?? []),
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return searchableText.includes(normalizedProjectQuery)
+    })
+  }, [getDeviceForProject, normalizedProjectQuery, runtimeProjectWorkById, sortedProjects])
+  const projectWorkTriggerLabel =
+    emptyLabel ??
+    (isMobile
+      ? t('workbench.enter_project_work', '进入项目工作')
+      : t('workbench.project_select_placeholder', '请选择项目'))
+  const unboundWorkspaceLabel = t('workbench.project_workspace_unbound', '未绑定设备工作区')
+  const pendingWorkspaceSelection =
+    currentProject &&
+    pendingProjectWorkspaceProjectId === currentProject.id &&
+    !selectedDeviceWorkspace
+  const projectWorkTriggerAriaLabel = currentProject?.name ?? projectWorkTriggerLabel
+
+  useOutsideClick(containerRef, open, closeMenu, outsideMenuRefs)
+  useEffect(() => {
+    if (!projectMenuOpenSignal) return
+    if (handledProjectMenuOpenSignalRef.current === projectMenuOpenSignal) return
+
+    handledProjectMenuOpenSignalRef.current = projectMenuOpenSignal
+    setExternalMenuAnchorElement(isMobile ? null : projectMenuAnchorElement)
+    setOpen(true)
+  }, [isMobile, projectMenuAnchorElement, projectMenuOpenSignal])
+
+  useEffect(() => {
+    if (!externalMenuOpenSignal) return
+    if (handledExternalMenuOpenSignalRef.current === externalMenuOpenSignal) return
+
+    handledExternalMenuOpenSignalRef.current = externalMenuOpenSignal
+    setExternalMenuAnchorElement(null)
+    setOpen(true)
+  }, [externalMenuOpenSignal])
+
+  const handleSelectProject = (projectId: number) => {
+    const option = projectWorkspaceOptionByProjectId.get(projectId)
+    if (hasRuntimeWork && option?.kind === 'multi') {
+      const localMultiRoot = option.workspaces.every(workspace => {
+        const workspaceDevice = devices.find(item => item.device_id === workspace.deviceId)
+        return Boolean(workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice))
+      })
+      if (localMultiRoot) {
+        const workspace =
+          (projectId === currentProjectId
+            ? option.workspaces.find(item => item.id === selectedDeviceWorkspaceId)
+            : null) ?? option.workspaces.find(item => isSelectableProjectWorkspace(item, devices))
+        if (workspace) {
+          onSelectProjectWorkspace?.(projectId, workspace.id ?? null, workspace)
+        }
+        closeMenu()
+        return
+      }
+      setExpandedMultiProjectId(projectId)
+      if (projectId !== currentProjectId) {
+        onSelectProjectWorkspace?.(projectId, null)
+      }
+      return
+    }
+    if (hasRuntimeWork && option?.kind === 'single' && option.workspace?.id && option.selectable) {
+      onSelectProjectWorkspace?.(projectId, option.workspace.id, option.workspace)
+      closeMenu()
+      return
+    }
+    if (hasRuntimeWork && option?.kind === 'empty' && onBindProjectWorkspace) {
+      onBindProjectWorkspace?.(projectId)
+      closeMenu()
+      return
+    }
+    onSelectProject(projectId)
+    closeMenu()
+  }
+
+  const handleClearProject = () => {
+    onSelectProject(null)
+    closeMenu()
+  }
+
+  const handleCreateProject = (mode: ProjectCreateMode) => {
+    onCreateProjectMode?.(mode)
+    closeMenu()
+  }
+
+  const handleToggleMenu = () => {
+    if (open) {
+      closeMenu()
+      return
+    }
+    setExternalMenuAnchorElement(null)
+    setOpen(true)
+  }
+
+  const renderMobileSheetHeader = (title: string, subtitle: string, onClose: () => void) => (
+    <>
+      <div className="mx-auto mt-3 h-1 w-11 shrink-0 rounded-full bg-border" />
+      <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
+          <p className="mt-1 truncate text-xs text-text-muted">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          data-testid="project-work-mobile-close-button"
+          aria-label={t('workbench.close_menu', '关闭菜单')}
+          onClick={onClose}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+    </>
+  )
+
+  const renderMobileBackdrop = (onClose: () => void) => (
+    <div className="fixed inset-0 z-modal bg-black/25" onClick={onClose} />
+  )
+
+  const getCompactWorkspaceStatusLabel = (
+    status: RuntimeDeviceWorkspace['deviceStatus'] | DeviceInfo['status'] | undefined,
+    versionCompatible = true
+  ) => {
+    if (!versionCompatible) {
+      return t('workbench.project_device_upgrade_required_short')
+    }
+    if (status === 'online') {
+      return t('workbench.project_device_status_online', '在线')
+    }
+    if (status === 'busy') {
+      return t('workbench.project_device_status_busy', '忙碌')
+    }
+    return t('workbench.project_device_status_offline', '离线')
+  }
+
+  const getWorkspaceStatusDotClass = (
+    status: RuntimeDeviceWorkspace['deviceStatus'] | DeviceInfo['status'] | undefined
+  ) => {
+    if (status === 'online') return 'bg-primary'
+    if (status === 'busy') return 'bg-amber-500'
+    return 'bg-text-muted'
+  }
+
+  return (
+    <div
+      data-testid="project-work-bar"
+      className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}
+    >
+      {showProjectSelector ? (
+        <div
+          ref={containerRef}
+          className={cn('relative min-w-0', !isMobile && 'max-w-[18rem] shrink')}
+        >
+          {open && isMobile && renderMobileBackdrop(closeMenu)}
+          {open && (
+            <ProjectMenuPortal enabled={!isMobile}>
+              <div
+                {...portalTheme}
+                ref={menuRef}
+                data-testid="project-work-menu"
+                data-mobile={isMobile ? 'true' : undefined}
+                className={cn(
+                  portalTheme.className,
+                  isMobile
+                    ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                    : cn(
+                        'z-popover flex w-80 flex-col overflow-hidden rounded-2xl border border-border bg-popover p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                        'fixed'
+                      ),
+                  !isMobile && menuClassName
+                )}
+                style={
+                  isMobile
+                    ? portalTheme.style
+                    : {
+                        ...portalTheme.style,
+                        maxHeight: menuLayout.maxHeight,
+                        top: menuLayout.fixedTop,
+                        left: menuLayout.fixedLeft,
+                      }
+                }
+              >
+                {isMobile &&
+                  renderMobileSheetHeader(
+                    t('workbench.project_sheet_title', '选择项目'),
+                    currentProject?.name ??
+                      emptyLabel ??
+                      t('workbench.enter_project_work', '进入项目工作'),
+                    closeMenu
+                  )}
+                <div className={cn('flex min-h-0 flex-1 flex-col', isMobile && 'px-5 pb-5')}>
+                  <label
+                    className={cn(
+                      'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+                      isMobile && 'h-11 rounded-2xl text-base'
+                    )}
+                  >
+                    <Search className="h-4 w-4 shrink-0" />
+                    <input
+                      ref={searchInputRef}
+                      data-testid="project-search-input"
+                      type="search"
+                      value={projectQuery}
+                      onChange={event => setProjectQuery(event.target.value)}
+                      placeholder={t('workbench.search_projects', '搜索项目')}
+                      className={cn(
+                        'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                        isMobile && 'text-base leading-5'
+                      )}
+                    />
+                  </label>
+                  {availableProjects.length === 0 ? (
+                    <div
+                      data-testid="project-empty-state"
+                      className="px-4 py-3 text-sm leading-[18px]"
+                    >
+                      <div className="text-text-secondary">
+                        {t('workbench.no_projects', '暂无项目')}
+                      </div>
+                      <div className="mt-1 text-xs leading-4 text-text-muted">
+                        {t('workbench.no_projects_action', '请添加本地项目或远程项目后重试。')}
+                      </div>
+                    </div>
+                  ) : filteredProjects.length === 0 ? (
+                    <div
+                      data-testid="project-search-empty"
+                      className="px-4 py-3 text-sm leading-[18px] text-text-muted"
+                    >
+                      {t('workbench.project_search_no_results', '没有匹配的项目')}
+                    </div>
+                  ) : (
+                    <div
+                      data-testid="project-options-list"
+                      className={cn(
+                        'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
+                        isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2'
+                      )}
+                      style={{
+                        maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT,
+                      }}
+                    >
+                      {filteredProjects.map(project => {
+                        const option = projectWorkspaceOptionByProjectId.get(project.id)
+                        const singleWorkspace = option?.kind === 'single' ? option.workspace : null
+                        const summaryWorkspace = singleWorkspace ?? option?.workspaces[0] ?? null
+                        const summaryWorkspaceDevice = summaryWorkspace
+                          ? devices.find(item => item.device_id === summaryWorkspace.deviceId)
+                          : undefined
+                        const device = getDeviceForProject(project) ?? summaryWorkspaceDevice
+                        const deviceLabel = getProjectMenuDeviceLabel(device, summaryWorkspace)
+                        const deviceStatus = device?.status ?? summaryWorkspace?.deviceStatus
+                        const versionCompatible = device
+                          ? isWeWorkExecutorVersionCompatible(device.executor_version)
+                          : true
+                        const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
+                        const localMultiRootWorkspace =
+                          option?.kind === 'multi' &&
+                          option.workspaces.every(workspace => {
+                            const workspaceDevice = devices.find(
+                              item => item.device_id === workspace.deviceId
+                            )
+                            return Boolean(
+                              workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
+                            )
+                          })
+                            ? ((project.id === currentProjectId
+                                ? option.workspaces.find(
+                                    workspace => workspace.id === selectedDeviceWorkspaceId
+                                  )
+                                : null) ?? option.workspaces[0])
+                            : null
+                        const selected = project.id === currentProjectId
+                        const expanded =
+                          option?.kind === 'multi' &&
+                          !localMultiRootWorkspace &&
+                          (expandedMultiProjectId === project.id ||
+                            pendingProjectWorkspaceProjectId === project.id)
+                        const bindRequired =
+                          hasRuntimeWork &&
+                          option?.kind === 'empty' &&
+                          Boolean(onBindProjectWorkspace)
+                        const runtimeProject = runtimeProjectWorkById.get(project.id)?.project
+                        const workspacePath =
+                          summaryWorkspace?.workspacePath?.trim() ||
+                          runtimeProject?.roots?.find(root => root.path.trim())?.path.trim() ||
+                          null
+                        const projectDescription = project.description?.trim() || null
+                        const projectDetail =
+                          (workspacePath && workspacePathSummary(workspacePath)) ||
+                          projectDescription ||
+                          unboundWorkspaceLabel
+                        return (
+                          <div key={project.id} className="space-y-0.5">
+                            <button
+                              type="button"
+                              data-testid={`project-option-${project.id}`}
+                              onClick={() => handleSelectProject(project.id)}
+                              className="flex min-h-14 w-full rounded-lg px-4 py-2 text-left text-text-primary hover:bg-muted"
+                            >
+                              <div className="flex min-w-0 w-full items-center gap-3">
+                                <ProjectFolderIcon
+                                  project={project}
+                                  testId={`project-available-icon-${project.id}`}
+                                  className="h-4 w-4 shrink-0 text-text-secondary"
+                                />
+                                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                  <span className="truncate text-sm font-normal leading-[18px] text-text-primary">
+                                    {project.name}
+                                  </span>
+                                  <span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-text-muted">
+                                    <span
+                                      data-testid={`project-option-detail-${project.id}`}
+                                      className="min-w-0 flex-1 truncate"
+                                      title={workspacePath ?? projectDetail}
+                                    >
+                                      {projectDetail}
+                                    </span>
+                                    {bindRequired && (workspacePath || projectDescription) && (
+                                      <span className="shrink-0">{unboundWorkspaceLabel}</span>
+                                    )}
+                                    {!bindRequired && deviceLabel && (
+                                      <span className="flex min-w-0 items-center gap-1">
+                                        <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                        <span
+                                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${getWorkspaceStatusDotClass(deviceStatus)}`}
+                                        />
+                                        <span className="min-w-0 max-w-16 truncate text-text-secondary">
+                                          {deviceLabel}
+                                        </span>
+                                        <span className="shrink-0">
+                                          {getCompactWorkspaceStatusLabel(
+                                            deviceStatus,
+                                            versionCompatible
+                                          )}
+                                        </span>
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                                {selected && (
+                                  <Check
+                                    data-testid={`project-selected-icon-${project.id}`}
+                                    className="h-3.5 w-3.5 shrink-0 text-text-primary"
+                                  />
+                                )}
+                              </div>
+                            </button>
+                            {bindRequired && (
+                              <button
+                                type="button"
+                                data-testid={`project-bind-workspace-${project.id}`}
+                                onClick={() => {
+                                  onBindProjectWorkspace?.(project.id)
+                                  closeMenu()
+                                }}
+                                className={cn(
+                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted',
+                                  isMobile && 'h-11'
+                                )}
+                              >
+                                <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                                <span>
+                                  {t('workbench.bind_project_workspace', '绑定设备工作区')}
+                                </span>
+                              </button>
+                            )}
+                            {expanded &&
+                              option?.workspaces.map((workspace, workspaceIndex) => {
+                                const workspaceSelected =
+                                  selectedDeviceWorkspaceId != null &&
+                                  workspace.id === selectedDeviceWorkspaceId
+                                const selectable = isSelectableProjectWorkspace(workspace, devices)
+                                const workspaceDevice = devices.find(
+                                  item => item.device_id === workspace.deviceId
+                                )
+                                const WorkspaceDeviceIcon =
+                                  workspaceDevice && isCloudDevice(workspaceDevice)
+                                    ? Cloud
+                                    : HardDrive
+                                const localWorkspace = Boolean(
+                                  workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
+                                )
+                                return (
+                                  <button
+                                    key={`${workspace.deviceId}:${workspace.workspacePath}`}
+                                    type="button"
+                                    data-testid={`project-workspace-option-${workspace.id ?? `${workspace.deviceId}-${workspaceIndex}`}`}
+                                    disabled={!selectable}
+                                    onClick={() =>
+                                      handleSelectDeviceWorkspace(project.id, workspace)
+                                    }
+                                    className={cn(
+                                      'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                                      selectable
+                                        ? 'text-text-secondary hover:bg-muted'
+                                        : 'cursor-not-allowed text-text-muted opacity-60',
+                                      workspaceSelected && 'bg-muted text-text-primary'
+                                    )}
+                                  >
+                                    {localWorkspace ? (
+                                      <Folder className="h-4 w-4 shrink-0" />
+                                    ) : (
+                                      <WorkspaceDeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                    )}
+                                    {!localWorkspace && (
+                                      <span
+                                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                          workspace.deviceStatus === 'online'
+                                            ? 'bg-primary'
+                                            : workspace.deviceStatus === 'busy'
+                                              ? 'bg-amber-500'
+                                              : 'bg-text-muted'
+                                        }`}
+                                      />
+                                    )}
+                                    <span
+                                      className="min-w-0 flex-1 truncate"
+                                      title={workspace.workspacePath}
+                                    >
+                                      {localWorkspace
+                                        ? workspaceFolderName(workspace.workspacePath)
+                                        : workspace.deviceName?.trim() ||
+                                          t('workbench.environment_device_unknown', '未知设备')}
+                                    </span>
+                                    {!localWorkspace && (
+                                      <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
+                                        {workspace.workspacePath}
+                                      </span>
+                                    )}
+                                    {workspaceSelected && (
+                                      <Check className="h-3.5 w-3.5 shrink-0" />
+                                    )}
+                                  </button>
+                                )
+                              })}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <div className="my-1.5 shrink-0 border-t border-border" />
+                  <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
+                    {onCreateProjectMode && (
+                      <div>
+                        <button
+                          type="button"
+                          data-testid="add-local-project-option"
+                          onClick={() => handleCreateProject('existing')}
+                          className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                        >
+                          <FolderPlus className="h-4 w-4 shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            {t('workbench.add_local_project', '添加本地项目')}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                    {renderCreateSection?.(closeMenu)}
+                    {showClearButton ? (
+                      <div>
+                        <button
+                          type="button"
+                          data-testid="no-project-option"
+                          onClick={handleClearProject}
+                          className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                        >
+                          <FolderX className="h-4 w-4 shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            {t('workbench.no_project', '不使用项目')}
+                          </span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </ProjectMenuPortal>
+          )}
+          {isMobile ? (
+            <button
+              ref={triggerButtonRef}
+              type="button"
+              data-testid="project-work-button"
+              onClick={handleToggleMenu}
+              className={cn(
+                'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
+                buttonClassName
+              )}
+              aria-expanded={open}
+              aria-label={projectWorkTriggerAriaLabel}
+            >
+              {currentProject ? (
+                <>
+                  <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
+                  <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+                </>
+              ) : (
+                <>
+                  <FolderPlus className="h-5 w-5" />
+                  <span className="shrink-0">{projectWorkTriggerLabel}</span>
+                </>
+              )}
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          ) : currentProject ? (
+            <div className="flex h-8 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary">
+              {showClearButton ? (
+                <button
+                  type="button"
+                  data-testid="clear-project-button"
+                  onClick={handleClearProject}
+                  title={t('workbench.no_project', '不使用项目')}
+                  aria-label={t('workbench.no_project', '不使用项目')}
+                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                >
+                  <ProjectFolderIcon
+                    project={currentProject}
+                    className="h-4 w-4 group-hover:hidden"
+                  />
+                  <X className="hidden h-4 w-4 group-hover:block" />
+                </button>
+              ) : (
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                  <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
+                </span>
+              )}
+              <button
+                ref={triggerButtonRef}
+                type="button"
+                data-testid="project-work-button"
+                onClick={handleToggleMenu}
+                title={t('workbench.change_project', '更改项目')}
+                className={cn(
+                  'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                  open && 'bg-background/70 text-text-primary',
+                  buttonClassName
+                )}
+                aria-expanded={open}
+                aria-label={projectWorkTriggerAriaLabel}
+              >
+                <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+                {pendingWorkspaceSelection ? (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="shrink-0 text-text-secondary">
+                      {t('workbench.select_workspace', '选择工作区')}
+                    </span>
+                  </>
+                ) : null}
+              </button>
+            </div>
+          ) : (
+            <button
+              ref={triggerButtonRef}
+              type="button"
+              data-testid="project-work-button"
+              onClick={handleToggleMenu}
+              className={cn(
+                'flex h-8 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                open && 'bg-background/70 text-text-primary',
+                buttonClassName
+              )}
+              aria-expanded={open}
+              aria-label={projectWorkTriggerAriaLabel}
+            >
+              <FolderPlus className="h-4 w-4" />
+              <span className="shrink-0">{projectWorkTriggerLabel}</span>
+            </button>
+          )}
+        </div>
+      ) : null}
+      {middleContext}
+      {trailingContext}
+      {renderWorkSection?.(currentProject)}
+      {endContext}
+      {selectedWorkspaceIsRemote && selectedWorkspaceDeviceIp && (
+        <div
+          data-testid="project-work-remote-status"
+          className="ml-auto flex min-w-0 items-center gap-2 text-sm font-medium leading-[18px] text-text-primary"
+        >
+          <span className="truncate">{selectedWorkspaceDeviceIp}</span>
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${getWorkspaceStatusDotClass(
+              selectedDeviceWorkspace?.deviceStatus ?? selectedWorkspaceDevice?.status
+            )}`}
+          />
+        </div>
+      )}
+    </div>
+  )
+}

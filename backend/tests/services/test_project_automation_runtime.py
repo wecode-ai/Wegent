@@ -32,6 +32,33 @@ def test_manager_type_rejects_unknown_sources(value):
         manager_type(value)
 
 
+def test_human_assigned_issue_does_not_match_event_automation():
+    db = MagicMock()
+    processor = ProjectAutomationProcessor()
+
+    matches = processor.matching_rules(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.tag_added",
+            project_id="project-1",
+            subject_id="task-1",
+            source="board",
+            actor_user_id=7,
+            payload={
+                "title": "Human-owned Issue",
+                "human_work": {
+                    "assignment_id": "assignment-1",
+                    "assignee_user_id": 7,
+                    "state": "none",
+                },
+            },
+        ),
+    )
+
+    assert matches == []
+    db.query.assert_not_called()
+
+
 def _dispatch_objects(configuration: dict[str, object]):
     owner = SimpleNamespace(id=7)
     project = SimpleNamespace(id="project-1")

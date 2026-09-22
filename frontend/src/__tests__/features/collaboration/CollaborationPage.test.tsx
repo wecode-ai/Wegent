@@ -122,10 +122,9 @@ describe('CollaborationPage platform routing', () => {
       })
     )
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
-    expect(screen.getByTestId('collaboration-page-main').parentElement?.parentElement).toHaveClass(
-      '[--collaboration-primary-background:rgb(var(--color-primary))]',
-      '[--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]'
-    )
+    const theme = screen.getByTestId('collaboration-page-main').closest('.collaboration-theme')
+    expect(theme).toHaveAttribute('data-theme', 'light')
+    expect(theme).toHaveStyle({ display: 'contents', '--font-size-ui': '14px' })
     expect(screen.getByTestId('collaboration-context-sidebar')).toBeInTheDocument()
     expect(screen.queryByTestId('task-sidebar-system-navigation')).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-context-sidebar')).toContainElement(
@@ -324,6 +323,22 @@ describe('CollaborationPage platform routing', () => {
       '/collaboration/runs'
     )
   })
+
+  it.each(['agents', 'teams', 'devices'] as const)(
+    'round-trips the %s resource root without treating it as a legacy project',
+    rootView => {
+      mockPathname = `/collaboration/${rootView}`
+
+      render(<CollaborationPage />)
+
+      expect(mockReplace).not.toHaveBeenCalled()
+      expect(mockGetProject).not.toHaveBeenCalled()
+      expect(capturedHost?.location).toEqual(
+        expect.objectContaining({ rootView, workspaceId: null, projectId: null })
+      )
+      expect(collaborationLocationPath(capturedHost!.location)).toBe(mockPathname)
+    }
+  )
 
   it('opens My Work as a first-class collaboration root view', () => {
     mockPathname = '/collaboration/my-work'

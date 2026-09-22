@@ -19,6 +19,32 @@ export interface SmartAppGeneratedEventMap {
     domain: 'smart_app'
     failure_stage: 'preview' | 'validate' | 'install' | 'confirm'
   }
+  smart_app_create_succeeded: { domain: 'smart_app' }
+  smart_app_create_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_copy_succeeded: { domain: 'smart_app' }
+  smart_app_copy_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_link_succeeded: { domain: 'smart_app' }
+  smart_app_link_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_export_succeeded: { domain: 'smart_app' }
+  smart_app_export_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_publish_succeeded: { domain: 'smart_app' }
+  smart_app_publish_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_share_succeeded: { domain: 'smart_app' }
+  smart_app_share_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_uninstall_succeeded: { domain: 'smart_app' }
+  smart_app_uninstall_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_start_succeeded: { domain: 'smart_app' }
+  smart_app_start_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_stop_succeeded: { domain: 'smart_app' }
+  smart_app_stop_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_configure_succeeded: { domain: 'smart_app' }
+  smart_app_configure_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_verify_succeeded: { domain: 'smart_app' }
+  smart_app_verify_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_add_plugin_succeeded: { domain: 'smart_app' }
+  smart_app_add_plugin_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
+  smart_app_publish_request_succeeded: { domain: 'smart_app' }
+  smart_app_publish_request_failed: { domain: 'smart_app'; failure_stage: 'request' | 'confirm' }
 }
 
 export type SmartAppGeneratedEventName = keyof SmartAppGeneratedEventMap
@@ -33,6 +59,32 @@ export const SMART_APP_EVENT_PROPERTY_KEYS = {
   smart_app_update_failed: ['domain', 'failure_stage'],
   smart_app_zip_import_succeeded: ['domain'],
   smart_app_zip_import_failed: ['domain', 'failure_stage'],
+  smart_app_create_succeeded: ['domain'],
+  smart_app_create_failed: ['domain', 'failure_stage'],
+  smart_app_copy_succeeded: ['domain'],
+  smart_app_copy_failed: ['domain', 'failure_stage'],
+  smart_app_link_succeeded: ['domain'],
+  smart_app_link_failed: ['domain', 'failure_stage'],
+  smart_app_export_succeeded: ['domain'],
+  smart_app_export_failed: ['domain', 'failure_stage'],
+  smart_app_publish_succeeded: ['domain'],
+  smart_app_publish_failed: ['domain', 'failure_stage'],
+  smart_app_share_succeeded: ['domain'],
+  smart_app_share_failed: ['domain', 'failure_stage'],
+  smart_app_uninstall_succeeded: ['domain'],
+  smart_app_uninstall_failed: ['domain', 'failure_stage'],
+  smart_app_start_succeeded: ['domain'],
+  smart_app_start_failed: ['domain', 'failure_stage'],
+  smart_app_stop_succeeded: ['domain'],
+  smart_app_stop_failed: ['domain', 'failure_stage'],
+  smart_app_configure_succeeded: ['domain'],
+  smart_app_configure_failed: ['domain', 'failure_stage'],
+  smart_app_verify_succeeded: ['domain'],
+  smart_app_verify_failed: ['domain', 'failure_stage'],
+  smart_app_add_plugin_succeeded: ['domain'],
+  smart_app_add_plugin_failed: ['domain', 'failure_stage'],
+  smart_app_publish_request_succeeded: ['domain'],
+  smart_app_publish_request_failed: ['domain', 'failure_stage'],
 } as const
 
 export const SMART_APP_EVENT_VALUE_CONSTRAINTS = {
@@ -65,6 +117,97 @@ export const SMART_APP_EVENT_VALUE_CONSTRAINTS = {
   smart_app_zip_import_failed: {
     domain: ['smart_app'],
     failure_stage: ['preview', 'validate', 'install', 'confirm'],
+  },
+  smart_app_create_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_create_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_copy_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_copy_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_link_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_link_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_export_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_export_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_publish_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_publish_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_share_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_share_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_uninstall_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_uninstall_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_start_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_start_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_stop_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_stop_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_configure_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_configure_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_verify_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_verify_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_add_plugin_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_add_plugin_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
+  },
+  smart_app_publish_request_succeeded: {
+    domain: ['smart_app'],
+  },
+  smart_app_publish_request_failed: {
+    domain: ['smart_app'],
+    failure_stage: ['request', 'confirm'],
   },
 } as const
 
@@ -117,6 +260,71 @@ export const SMART_APP_OPERATION_DEFINITIONS = [
     action: 'zip_import',
     failureStages: ['preview', 'validate', 'install', 'confirm'],
     key: 'smart_app.zip_import',
+  },
+  {
+    action: 'create',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.create',
+  },
+  {
+    action: 'copy',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.copy',
+  },
+  {
+    action: 'link',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.link',
+  },
+  {
+    action: 'export',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.export',
+  },
+  {
+    action: 'publish',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.publish',
+  },
+  {
+    action: 'share',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.share',
+  },
+  {
+    action: 'uninstall',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.uninstall',
+  },
+  {
+    action: 'start',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.start',
+  },
+  {
+    action: 'stop',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.stop',
+  },
+  {
+    action: 'configure',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.configure',
+  },
+  {
+    action: 'verify',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.verify',
+  },
+  {
+    action: 'add_plugin',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.add_plugin',
+  },
+  {
+    action: 'publish_request',
+    failureStages: ['request', 'confirm'],
+    key: 'smart_app.publish_request',
   },
 ] as const
 

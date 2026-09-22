@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createBackendWorkbenchServices } from './backendServices'
 
+const composerMocks = vi.hoisted(() => ({ request: vi.fn(), installed: vi.fn(), dispose: vi.fn() }))
+vi.mock('@wegent/chat-core', async importOriginal => ({
+  ...(await importOriginal<typeof import('@wegent/chat-core')>()),
+  createCloudRuntimeIpcClient: () => ({
+    request: composerMocks.request,
+    dispose: composerMocks.dispose,
+  }),
+}))
+vi.mock('@/api/plugins', () => ({
+  createPluginApi: () => ({ listInstalledPlugins: composerMocks.installed }),
+}))
+
 const baseOptions = {
   apiBaseUrl: 'https://backend.example.com/api',
   socketBaseUrl: 'https://backend.example.com',
@@ -11,6 +23,35 @@ const baseOptions = {
 describe('createBackendWorkbenchServices', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.clearAllMocks()
+  })
+
+  test('reads the addressed composer through runtime IPC and disposes its connection', async () => {
+    composerMocks.request.mockResolvedValue({
+      taskId: 'side-task',
+      workspacePath: '/remote',
+      projectPluginIds: [],
+      apps: [],
+      skills: [],
+      marketplaces: [],
+      store: { storePath: '/store', plugins: [] },
+    })
+    composerMocks.installed.mockResolvedValue({ items: [] })
+    const services = createBackendWorkbenchServices(baseOptions)
+    await expect(
+      services.composerCatalogApi!.readCatalog(
+        { deviceId: 'remote-device', taskId: 'side-task' },
+        true
+      )
+    ).resolves.toMatchObject({ taskId: 'side-task', workspacePath: '/remote' })
+    expect(composerMocks.request).toHaveBeenCalledWith(
+      'runtime.composer.catalog.read',
+      { taskId: 'side-task', forceRefresh: true },
+      'remote-device'
+    )
+    expect(composerMocks.installed).toHaveBeenCalledWith('remote-device')
+    services.socketClient!.dispose()
+    expect(composerMocks.dispose).toHaveBeenCalledTimes(1)
   })
 
   test('does not submit feedback to the connected Backend by default', () => {

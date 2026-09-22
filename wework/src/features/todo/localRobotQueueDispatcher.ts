@@ -57,10 +57,23 @@ export async function stopLocalRobotQueueExecution(
  * back to the queue.
  */
 export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () => void {
+  const stopLocal = startQueueDispatcher(services, 'local')
+  const stopCloud = services.projectAutomationApi
+    ? startQueueDispatcher(services, 'cloud')
+    : undefined
+  return () => {
+    stopLocal()
+    stopCloud?.()
+  }
+}
+
+function startQueueDispatcher(services: WorkbenchServices, source: 'local' | 'cloud'): () => void {
   const executionApi = services.localLoopItemExecutionApi
   const cloudExecutionApi = services.projectAutomationApi
-  const runtimeWorkApi = services.runtimeWorkApi
-  const deviceApi = services.deviceApi
+  const executionServices =
+    source === 'local' ? (services.localExecutionServices ?? services) : services
+  const runtimeWorkApi = executionServices.runtimeWorkApi
+  const deviceApi = executionServices.deviceApi
   if (!executionApi || !runtimeWorkApi || !deviceApi) {
     console.warn('[local-robot-queue] dispatcher unavailable', {
       hasExecutionApi: Boolean(executionApi),
@@ -72,6 +85,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
 
   let disposed = false
   let dispatching = false
+  const heartbeats = new Set<number>()
   let resolvedDeviceIds: string[] | null = null
   let deviceCacheExpiresAt = 0
 
@@ -107,8 +121,10 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       execution_device_id: deviceId,
       lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
     }
-    const cloudExecution = await cloudExecutionApi?.claimNext(claim)
-    if (cloudExecution) return { execution: cloudExecution, cloud: true }
+    if (source === 'cloud') {
+      const execution = await cloudExecutionApi!.claimNext(claim)
+      return execution ? { execution, cloud: true } : null
+    }
     const localExecution = await executionApi.claimNext(claim)
     return localExecution ? { execution: localExecution, cloud: false } : null
   }
@@ -119,6 +135,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     taskId: string,
     cloud: boolean
   ) => {
+    if (disposed) return
     // Long runs outlive the 5-minute claim lease. Heartbeat until the run
     // reaches a terminal state (heartbeat returns null for terminal rows) so
     // the lease recovery never requeues a task that is still executing.
@@ -132,13 +149,17 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         : executionApi.heartbeat(execution.id, deviceId, taskId, LOCAL_QUEUE_LEASE_SECONDS)
       void heartbeat
         .then(updated => {
-          if (!updated) window.clearInterval(timer)
+          if (!updated) {
+            window.clearInterval(timer)
+            heartbeats.delete(timer)
+          }
         })
         .catch(() => {
           // Transient IPC failures keep the current lease; recovery handles
           // runs that truly expired while the app was unavailable.
         })
     }, LOCAL_QUEUE_HEARTBEAT_INTERVAL_MS)
+    heartbeats.add(timer)
   }
 
   const dispatchOnce = async (): Promise<void> => {
@@ -191,8 +212,8 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       if (payloadTaskId !== taskId) {
         throw new Error(`Runtime task identity '${payloadTaskId}' does not match '${taskId}'`)
       }
-      if (runtimePayload.runtime !== 'codex') {
-        throw new Error('Transient runtime payload must target the Codex runtime')
+      if (runtimePayload.runtime !== 'codex' && runtimePayload.runtime !== 'claude_code') {
+        throw new Error('Transient runtime payload must target a supported local runtime')
       }
       const cloudProjectId = nonEmptyString(runtimePayload.cloudProjectId)
       if (!cloudProjectId || cloudProjectId !== execution.cloud_project_id) {
@@ -230,7 +251,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         ...(runtimePayload as unknown as RuntimeTaskCreateRequest),
         schemaVersion: 2,
         taskId,
-        runtime: 'codex',
+        runtime: runtimePayload.runtime,
         message: prompt,
         title,
         cloudProjectId,
@@ -249,17 +270,18 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         model: request.modelId ?? null,
         hasAdditionalContext: true,
       })
-      const fenced = isCloudExecution
-        ? await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
-        : await executionApi.startRequested(
-            execution.id,
-            deviceId,
-            taskId,
-            LOCAL_QUEUE_LEASE_SECONDS
-          )
-      if (!fenced) throw new Error('Execution is no longer dispatchable')
-      startRequested = true
-      const response = await runtimeWorkApi.createRuntimeTask(request)
+      const response = await runtimeWorkApi.createRuntimeTask(request, async () => {
+        const fenced = isCloudExecution
+          ? await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
+          : await executionApi.startRequested(
+              execution.id,
+              deviceId,
+              taskId,
+              LOCAL_QUEUE_LEASE_SECONDS
+            )
+        if (!fenced) throw new Error('Execution is no longer dispatchable')
+        startRequested = true
+      })
       if (response.taskId !== taskId) {
         throw new Error(`Runtime accepted task '${response.taskId}' instead of '${taskId}'`)
       }
@@ -370,7 +392,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     if (disposed || dispatching) return
     dispatching = true
     recoveryCountdown -= LOCAL_QUEUE_POLL_MS
-    const recoveryDue = recoveryCountdown <= 0
+    const recoveryDue = source === 'local' && recoveryCountdown <= 0
     if (recoveryDue) {
       recoveryCountdown = LOCAL_QUEUE_RECOVERY_INTERVAL_MS
     }
@@ -382,5 +404,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   return () => {
     disposed = true
     window.clearInterval(interval)
+    for (const timer of heartbeats) window.clearInterval(timer)
+    heartbeats.clear()
   }
 }

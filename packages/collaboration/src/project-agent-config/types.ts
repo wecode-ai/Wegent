@@ -8,7 +8,6 @@ export type ProjectAgentMode = "existing" | "create";
 
 export interface ProjectAgentModeOption {
   description: string;
-  disabled?: boolean;
   label: string;
   testId: string;
   value: ProjectAgentMode;
@@ -19,16 +18,46 @@ export interface ProjectAgentSelectOption {
   value: string;
 }
 
+export interface ProjectAgentOwnerOption {
+  label: string;
+  namespace: string;
+}
+
 export interface ProjectAgentConfigurationHost {
-  existingAgentSelection?: {
-    description?: string;
-    disabled: boolean;
-  };
+  /**
+   * Whether the host lets the user pick an already existing Agent resource.
+   * Defaults to true; hosts that only manage Agents through their own resource
+   * library set it to false so the picker is never rendered.
+   */
+  supportsExistingAgentSelection?: boolean;
   renderAgentCreator?(props: {
     namespace: string;
     onClose(): void;
     onCreated(agent: { name: string; teamId: number }): Promise<void>;
+    ownerOptions?: ProjectAgentOwnerOption[];
     workspaceName: string;
+  }): ReactNode;
+  renderLocalAgentCreator?(props: {
+    onClose(): void;
+    onCreated(): Promise<void>;
+    projectId?: string;
+  }): ReactNode;
+  /**
+   * Edits the Agent resource behind a configured project Agent. Hosts that
+   * cannot reach the resource library omit it and no edit action is rendered.
+   */
+  renderAgentEditor?(props: {
+    agent: { teamId: number };
+    namespace: string;
+    onClose(): void;
+    onSaved(agent: { name: string; teamId: number }): Promise<void>;
+    workspaceName: string;
+  }): ReactNode;
+  renderLocalAgentEditor?(props: {
+    projectId?: string;
+    resourceId: string;
+    onClose(): void;
+    onSaved(): Promise<void>;
   }): ReactNode;
   renderDialog(props: {
     busy: boolean;

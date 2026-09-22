@@ -29,7 +29,7 @@ import { AlertCircle, AlertTriangle, Loader2 } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import { botApis } from '@/apis/bots'
-import { modelApis, type ModelTypeEnum, type UnifiedModel } from '@/apis/models'
+import type { ModelTypeEnum } from '@/apis/models'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
 import {
@@ -61,6 +61,8 @@ import TeamModeSelector from './team-edit/TeamModeSelector'
 import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
+import { toModelSelectValue } from './team-edit/model-select-utils'
+import { useShellModels } from '../hooks/useShellModels'
 import {
   bindModeRequiresCodingAgent,
   DEFAULT_CODING_EXECUTOR_RUNTIME,
@@ -278,6 +280,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   const handleAfterTeamSave = useCallback(
     async (team: Team) => {
+      let publicationFailed = false
       try {
         if (isEditing) {
           if (editingPublishTarget === 'marketplace') {
@@ -346,13 +349,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         }
       } catch (error) {
         console.error('Failed to update Agent publication after save:', error)
+        publicationFailed = true
+      }
+
+      await onSaved?.(team)
+      if (publicationFailed) {
         toast({
           variant: 'destructive',
           title: t('resource-library:messages.agent_saved_publication_failed'),
         })
       }
 
-      await onSaved?.(team)
       invalidateTeams()
       setUnsavedPrompts({})
       onClose()
@@ -399,6 +406,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleModelType, setSimpleModelType] = useState<ModelTypeEnum | undefined>(undefined)
   const [simpleModelNamespace, setSimpleModelNamespace] = useState<string | undefined>(undefined)
   const [simplePrompt, setSimplePrompt] = useState('')
+  const [simpleInheritBaseCapabilities, setSimpleInheritBaseCapabilities] = useState(true)
   const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
   const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
     Record<string, SkillRefMeta>
@@ -407,8 +415,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
   const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
   const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
-  const [simpleModels, setSimpleModels] = useState<UnifiedModel[]>([])
-  const [simpleLoadingModels, setSimpleLoadingModels] = useState(false)
   const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >([])
@@ -501,6 +507,44 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
   const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
+  const handleModelLoadError = useCallback(() => {
+    toast({ variant: 'destructive', title: modelLoadingFailedTitle })
+  }, [modelLoadingFailedTitle, toast])
+  const {
+    models: simpleModels,
+    isLoading: simpleLoadingModels,
+    hasLoaded: simpleModelsLoaded,
+    shellChanged: simpleModelShellChanged,
+  } = useShellModels({
+    enabled: open && useSimpleEditor,
+    shellName: selectedSimpleShell?.name,
+    scope,
+    groupName,
+    category: getModelCategoryTypeForBindMode(bindMode),
+    onError: handleModelLoadError,
+  })
+  const simpleModelIsCompatible = simpleModels.some(
+    model =>
+      toModelSelectValue(model.name, model.type, model.namespace || 'default') ===
+      toModelSelectValue(
+        simpleModelName,
+        simpleModelType || 'public',
+        simpleModelNamespace || 'default'
+      )
+  )
+
+  useEffect(() => {
+    if (
+      simpleModelsLoaded &&
+      simpleModelShellChanged &&
+      simpleModelName &&
+      !simpleModelIsCompatible
+    ) {
+      setSimpleModelName('')
+      setSimpleModelType(undefined)
+      setSimpleModelNamespace(undefined)
+    }
+  }, [simpleModelsLoaded, simpleModelShellChanged, simpleModelName, simpleModelIsCompatible])
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -562,6 +606,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleCustomShellName(executor.customShellName)
       setSimpleBotName(fullLeaderBot?.name || '')
       setSimplePrompt(fullLeaderBot?.system_prompt || '')
+      setSimpleInheritBaseCapabilities(fullLeaderBot?.inherit_base_capabilities === true)
       setSimpleSelectedSkills(fullLeaderBot?.skills || [])
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
@@ -634,6 +679,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleModelType(undefined)
       setSimpleModelNamespace(undefined)
       setSimplePrompt('')
+      setSimpleInheritBaseCapabilities(true)
       setSimpleSelectedSkills([])
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
@@ -798,56 +844,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     reloadSimpleSkills()
   }, [open, reloadSimpleSkills, useSimpleEditor])
 
-  useEffect(() => {
-    if (!open || !useSimpleEditor || !selectedSimpleShell) return
-
-    let cancelled = false
-    const modelCategoryType = getModelCategoryTypeForBindMode(bindMode)
-
-    const fetchModels = async () => {
-      setSimpleLoadingModels(true)
-      try {
-        const response = await modelApis.getUnifiedModels(
-          undefined,
-          false,
-          scope,
-          groupName,
-          modelCategoryType
-        )
-        if (!cancelled) {
-          setSimpleModels(response.data)
-        }
-      } catch {
-        if (!cancelled) {
-          setSimpleModels([])
-          toast({
-            variant: 'destructive',
-            title: modelLoadingFailedTitle,
-          })
-        }
-      } finally {
-        if (!cancelled) {
-          setSimpleLoadingModels(false)
-        }
-      }
-    }
-
-    fetchModels()
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    bindMode,
-    groupName,
-    modelLoadingFailedTitle,
-    open,
-    scope,
-    selectedSimpleShell,
-    toast,
-    useSimpleEditor,
-  ])
-
   // Check if mode change needs confirmation
   const needsModeChangeConfirmation = useCallback(() => {
     const hasSelectedBots = selectedBotKeys.length > 0 || leaderBotId !== null
@@ -998,6 +994,14 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }
 
   const handleSimpleSave = async (confirmation?: TeamIdentityConfirmation) => {
+    if (simpleModelName && (!simpleModelsLoaded || !simpleModelIsCompatible)) {
+      toast({
+        variant: 'destructive',
+        title: t('common:bot.errors.model_not_available_for_shell'),
+      })
+      return
+    }
+
     const selectedShell = resolveShellForExecutor(
       shells,
       simpleExecutorMode,
@@ -1049,6 +1053,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           modelType: simpleModelType,
           modelNamespace: simpleModelNamespace,
           prompt: simplePrompt,
+          inheritBaseCapabilities: simpleInheritBaseCapabilities,
           selectedSkills: simpleSelectedSkills,
           selectedSkillRefs: simpleSelectedSkillRefs,
           preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
@@ -1580,6 +1585,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   mcpAgentType={simpleMcpAgentType}
                   prompt={simplePrompt}
                   onPromptChange={setSimplePrompt}
+                  inheritBaseCapabilities={simpleInheritBaseCapabilities}
+                  onInheritBaseCapabilitiesChange={setSimpleInheritBaseCapabilities}
                   toast={toast}
                   scope={scope}
                   groupName={groupName}
@@ -1714,7 +1721,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <Button variant="outline" onClick={onClose}>
               {t('common:actions.cancel')}
             </Button>
-            <Button onClick={() => void handleSave()} disabled={saving} variant="primary">
+            <Button
+              onClick={() => void handleSave()}
+              disabled={saving || (useSimpleEditor && !!simpleModelName && simpleLoadingModels)}
+              variant="primary"
+            >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>

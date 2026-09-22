@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
+#[path = "support/runtime_task_project_move.rs"]
+mod runtime_task_project_move;
+
 struct EnvLockGuard {
     _guard: OwnedMutexGuard<()>,
 }
@@ -1068,6 +1071,20 @@ async fn runtime_tasks_reject_side_source_without_parent_workspace() {
 
 #[tokio::test]
 async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects_missing_turn() {
+    assert_runtime_tasks_fork_completed_turn(false, false).await;
+}
+
+#[tokio::test]
+async fn runtime_tasks_fork_preserves_created_task_when_transcript_fails() {
+    assert_runtime_tasks_fork_completed_turn(true, false).await;
+}
+
+#[tokio::test]
+async fn runtime_tasks_fork_cloud_model_without_a_registered_source_route() {
+    assert_runtime_tasks_fork_completed_turn(false, true).await;
+}
+
+async fn assert_runtime_tasks_fork_completed_turn(fail_transcript: bool, cloud_model: bool) {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -1081,8 +1098,18 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
             .display()
             .to_string(),
     );
+    let _wework_codex_home = EnvGuard::set(
+        "WEGENT_CODEX_HOME",
+        &temp_path("runtime-fork-wework-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
     let log_path = temp_path("runtime-fork-turn-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
+    if fail_transcript {
+        fs::write(format!("{}.fail-fork-read", log_path.display()), "fail")
+            .expect("fork read failure marker should be written");
+    }
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let created = handler
@@ -1101,12 +1128,30 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
     wait_for_thread_mapping(&handler, "source-task-1", "thread-1").await;
     wait_until_task_idle(&handler, "source-task-1").await;
 
+    let fork_model_config = if cloud_model {
+        json!({
+            "model": "openai",
+            "model_id": "gpt-5.6-sol",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true
+        })
+    } else {
+        json!({ "model": "openai", "model_id": "gpt-5.6-sol" })
+    };
     let forked = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.fork_at_turn",
             "payload": {
                 "taskId": "source-task-1",
-                "lastTurnId": "turn-1"
+                "lastTurnId": "turn-1",
+                "modelSelection": {
+                    "modelName": "gpt-5.6-sol",
+                    "modelType": "runtime",
+                    "options": {"reasoning": "high"}
+                },
+                "modelConfig": fork_model_config
             }
         }))
         .await
@@ -1116,6 +1161,15 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
     assert_eq!(forked["source"]["workspacePath"], "/tmp/project");
     assert_eq!(forked["target"]["taskId"], "thread-fork-1");
     assert_eq!(forked["target"]["workspacePath"], "/tmp/project");
+    if fail_transcript {
+        assert!(forked["transcript"].is_null());
+        assert!(forked["setupError"]
+            .as_str()
+            .is_some_and(|error| error.contains("fork transcript unavailable")));
+    } else {
+        assert!(forked["transcript"].is_object());
+        assert!(forked["setupError"].is_null());
+    }
 
     let listed = handler
         .handle_runtime_rpc(json!({"method": "runtime.tasks.list", "payload": {}}))
@@ -1128,6 +1182,18 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
     assert!(tasks
         .iter()
         .all(|task| task["workspacePath"] == "/tmp/project"));
+    let forked_task = tasks
+        .iter()
+        .find(|task| task["taskId"] == "thread-fork-1")
+        .expect("forked task should be listed");
+    assert_eq!(
+        forked_task["runtimeHandle"]["executionRequest"]["model_config"]["model_id"],
+        "gpt-5.6-sol"
+    );
+    assert_eq!(
+        forked_task["runtimeHandle"]["modelSelection"]["modelName"],
+        "gpt-5.6-sol"
+    );
 
     let calls = read_json_lines(&log_path);
     let fork_call = calls
@@ -1136,10 +1202,23 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
         .expect("turn-bounded thread/fork should be called");
     assert_eq!(fork_call["params"]["threadId"], "thread-1");
     assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
-    assert_eq!(fork_call["params"]["model"], "gpt-5.5");
-    assert_eq!(fork_call["params"]["modelProvider"], "openai");
+    assert_eq!(fork_call["params"]["model"], "gpt-5.6-sol");
+    assert_eq!(
+        fork_call["params"]["modelProvider"],
+        if cloud_model {
+            "wework-router"
+        } else {
+            "openai"
+        }
+    );
     assert_eq!(fork_call["params"]["excludeTurns"], true);
 
+    let mut follow_up_request = if cloud_model {
+        execution_request_with_model_config("follow up", "/tmp/project", fork_model_config)
+    } else {
+        codex_execution_request("follow up", "/tmp/project", "gpt-5.5")
+    };
+    follow_up_request["task_id"] = json!("thread-fork-1");
     let follow_up = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.send",
@@ -1147,11 +1226,7 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
                 "taskId": "thread-fork-1",
                 "workspacePath": "/tmp/project",
                 "message": "follow up",
-                "executionRequest": codex_execution_request(
-                    "follow up",
-                    "/tmp/project",
-                    "gpt-5.5"
-                )
+                "executionRequest": follow_up_request
             }
         }))
         .await
@@ -1167,8 +1242,33 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_model_and_rejects
             call["method"] == "thread/resume" && call["params"]["threadId"] == "thread-fork-1"
         })
         .expect("fork follow-up should resume the forked thread");
-    assert_eq!(resume_call["params"]["model"], "gpt-5.5");
-    assert_eq!(resume_call["params"]["modelProvider"], "openai");
+    assert_eq!(
+        resume_call["params"]["model"],
+        if cloud_model {
+            "gpt-5.6-sol"
+        } else {
+            "gpt-5.5"
+        }
+    );
+    assert_eq!(
+        resume_call["params"]["modelProvider"],
+        if cloud_model {
+            "wework-router"
+        } else {
+            "openai"
+        }
+    );
+    if cloud_model {
+        let fork_proxy_url = fork_call["params"]["config"]
+            ["model_providers.wework-router.base_url"]
+            .as_str()
+            .expect("cloud fork should configure an authenticated proxy route");
+        assert_eq!(
+            resume_call["params"]["config"]["model_providers.wework-router.base_url"].as_str(),
+            Some(fork_proxy_url),
+            "fork follow-up should reuse its own authenticated route"
+        );
+    }
 
     let missing = handler
         .handle_runtime_rpc(json!({
@@ -3909,7 +4009,7 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
         .iter()
         .find(|call| call["method"] == "thread/list")
         .expect("send should recover from thread list");
-    assert_eq!(list["params"]["sortKey"], "updated_at");
+    assert_eq!(list["params"]["sortKey"], "recency_at");
     let resume = calls
         .iter()
         .find(|call| call["method"] == "thread/resume")
@@ -4002,6 +4102,14 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
+      case "$line" in
+        *'"threadId":"thread-fork-1"'*)
+          if [ -f "$LOG_PATH.fail-fork-read" ]; then
+            printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32603,"message":"fork transcript unavailable"}}}}'
+            continue
+          fi
+          ;;
+      esac
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       ;;
     *'"method":"thread/turns/list"'*)

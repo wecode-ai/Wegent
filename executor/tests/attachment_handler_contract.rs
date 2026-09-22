@@ -126,10 +126,11 @@ fn string_prompt_does_not_inject_layout_guidance_in_local_mode() {
 }
 
 #[test]
-fn project_zero_workspace_downloads_to_project_attachment_layout() {
+fn project_attachment_downloads_to_device_private_layout() {
     let project_workspace = PathBuf::from("/tmp/chats/2026-06-12/hello");
-    let local_image = project_workspace
-        .join(".wegent/attachments/31/45/image.png")
+    let executor_workspace = PathBuf::from("/tmp/executor/workspace");
+    let local_image = executor_workspace
+        .join("attachments/runtime/31/45/image.png")
         .display()
         .to_string();
     let sandbox_path = "/home/user/31:executor:attachments/45/image.png";
@@ -157,16 +158,13 @@ fn project_zero_workspace_downloads_to_project_attachment_layout() {
             "type": "input_text",
             "text": format!("<attachment>[Image Attachment: image.png | ID: 16 | File Path(already in sandbox): {sandbox_path}]</attachment>")
         }]),
-        Path::new("/unused"),
+        &executor_workspace,
         &downloader,
     );
 
     let calls = downloader.calls.borrow();
     let (config, attachments) = calls.first().unwrap();
-    assert_eq!(
-        config.workspace,
-        project_workspace.join(".wegent/attachments")
-    );
+    assert_eq!(config.workspace, executor_workspace);
     assert!(config.project_layout);
     assert_eq!(config.subtask_id, "45");
     assert_eq!(

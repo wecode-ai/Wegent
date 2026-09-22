@@ -152,6 +152,12 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+  MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_INITIAL_PROMPT,
+  MODEL_SERVICE_CONNECTION_ERROR,
+  MODEL_SERVICE_CONNECTION_PROMPT,
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -223,6 +229,7 @@ import {
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
   SIDE_CHAT_GUIDANCE_COMPLETION,
+  SIDE_CHAT_QUEUE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
@@ -396,6 +403,12 @@ function readyPluginWorkspaceResult(body) {
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
+
+const HELD_WORKTREE_SCENARIOS = new Set([
+  'worktree_queue_hold',
+  'worktree_restart_hold',
+  'worktree_status_hold',
+])
 
 class DesktopE2EServer {
   constructor(
@@ -813,11 +826,12 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'model_service_connection_error',
         'anthropic_empty_response',
         'reconnect',
+        'model_proxy_restart',
         'checkpoint_task',
-        'worktree_queue_hold',
-        'worktree_restart_hold',
+        ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -853,7 +867,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      HELD_WORKTREE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -3919,7 +3933,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
@@ -4204,20 +4218,18 @@ class DesktopE2EServer {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
       const requestText = JSON.stringify(body).replaceAll('\\', '/')
       const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'
       )
       assert.ok(
-        requestText.includes(filePath),
-        'The pasted file reference was not forwarded to the real Codex request'
+        requestText.includes(PASTED_PATH_FILE_NAME),
+        'The pasted file attachment was not forwarded to the real Codex request'
       )
       assert.equal(
-        requestText.includes('nested path context') ||
-          requestText.includes('# Pasted path context'),
+        requestText.includes('nested path context'),
         false,
-        'The pasted paths copied file contents into the model request'
+        'The pasted directory was incorrectly read as a file'
       )
       this.writeSse(response, [
         responseCreated(responseId),
@@ -4231,20 +4243,18 @@ class DesktopE2EServer {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
       const requestText = JSON.stringify(body).replaceAll('\\', '/')
       const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'
       )
       assert.ok(
-        requestText.includes(filePath),
-        'The dropped file reference was not forwarded to the real Codex request'
+        requestText.includes(DROPPED_PATH_FILE_NAME),
+        'The dropped file attachment was not forwarded to the real Codex request'
       )
       assert.equal(
-        requestText.includes('nested dropped path context') ||
-          requestText.includes('# Dropped path context'),
+        requestText.includes('nested dropped path context'),
         false,
-        'The dropped paths copied file contents into the model request'
+        'The dropped directory was incorrectly read as a file'
       )
       this.writeSse(response, [
         responseCreated(responseId),
@@ -4284,6 +4294,28 @@ class DesktopE2EServer {
         this.writeSse(response, [
           responseCreated(responseId),
           ...functionCall('wework-e2e-side-chat-guidance-tool', tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestCount >= 3 && requestCount <= 5) {
+        const queueIndex = requestCount - 2
+        const expectedPrompt =
+          queueIndex === 1
+            ? SIDE_CHAT_QUEUE_FOLLOW_UP
+            : `${SIDE_CHAT_QUEUE_FOLLOW_UP}_${queueIndex}`
+        assert.ok(
+          requestText.includes(expectedPrompt),
+          `Side-chat queued reply ${queueIndex} was not sent after the preceding turn`
+        )
+        assert.equal(
+          requestText.includes(`${SIDE_CHAT_QUEUE_FOLLOW_UP}_${queueIndex + 1}`),
+          false,
+          'The side-chat queue sent replies out of order'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
           responseCompleted(responseId),
         ])
         return
@@ -4410,10 +4442,24 @@ class DesktopE2EServer {
           latestModelInputText(body).includes(RETRY_PROMPT),
           'The initial Codex request did not contain the retry scenario prompt'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          responseFailed(responseId, RETRY_FAILURE_TEXT),
-        ])
+        const processText = '检查失败前的处理状态。'
+        const stream = streamingTextEvents(responseId, processText, 'commentary')
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: processText,
+              offset: 0,
+            },
+          ])
+        )
+        await new Promise(resolve => setTimeout(resolve, 2100))
+        response.end(createSse([responseFailed(responseId, RETRY_FAILURE_TEXT)]))
         return
       }
       const continuationInput = latestModelInputText(body)
@@ -4455,6 +4501,19 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'model_service_connection_error') {
+      this.recordScenarioRequest('model_service_connection_error', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(MODEL_SERVICE_CONNECTION_PROMPT),
+        'The real Codex request did not contain the model-service connection prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, MODEL_SERVICE_CONNECTION_ERROR, 'other'),
+      ])
+      return
+    }
+
     if (this.scenario === 'reconnect') {
       this.recordScenarioRequest('reconnect', modelRequest)
       assert.ok(
@@ -4479,6 +4538,41 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(RECONNECT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'model_proxy_restart') {
+      this.recordScenarioRequest('model_proxy_restart', modelRequest)
+      const requests = this.scenarioRequests.get('model_proxy_restart') ?? []
+      const requestText = JSON.stringify(body)
+      const threadId = body.client_metadata?.thread_id
+      assert.ok(threadId, 'The model-proxy restart request did not include its Codex thread ID')
+      if (requests.length === 1) {
+        assert.ok(
+          requestText.includes(MODEL_PROXY_RESTART_INITIAL_PROMPT),
+          'The initial model-proxy restart request lost its prompt'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        threadId,
+        requests[0].body.client_metadata?.thread_id,
+        'The executor restart created a different Codex conversation'
+      )
+      assert.ok(
+        requestText.includes(MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT),
+        'The post-restart request lost its follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

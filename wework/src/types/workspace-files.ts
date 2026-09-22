@@ -1,38 +1,16 @@
-import type { BrowserAnnotationContextData, StyleAdjustment } from './browser-annotation'
+export type { CodeCommentContext } from '@wegent/chat-core/code-comment'
 
-export interface WorkspaceFileEntry {
-  name: string
-  path: string
-  isDirectory: boolean
-  size: number
-  modifiedAt?: string | null
-}
-
-export interface WorkspaceTreeResponse {
-  path: string
-  entries: WorkspaceFileEntry[]
-}
-
-export interface WorkspaceTextFileResponse {
-  path: string
-  name: string
-  content: string
-  editable: boolean
-  revision: string
-  truncated: boolean
-  size: number
-  modifiedAt?: string | null
-}
-
-export interface WorkspaceFileChunkResponse {
-  path: string
-  name: string
-  contentBase64: string
-  offset: number
-  eof: boolean
-  size: number
-  modifiedAt?: string | null
-}
+import type {
+  WorkspaceFileChunkResponse,
+  WorkspaceTextFileResponse,
+  WorkspaceTreeResponse,
+} from '@wegent/chat-core/workspace-files'
+export type {
+  WorkspaceFileEntry,
+  WorkspaceFileChunkResponse,
+  WorkspaceTextFileResponse,
+  WorkspaceTreeResponse,
+} from '@wegent/chat-core/workspace-files'
 
 export interface WorkspaceFileApi {
   listWorkspaceEntries: (
@@ -84,19 +62,11 @@ export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {
   id: number
   path: string
   target?: WorkspaceTarget
+  attachment?: WorkspaceAttachmentPreviewSource
 }
 
-export interface CodeCommentContext {
-  id: string
-  source?: 'browser_annotation' | 'code_selection'
-  filePath: string
-  fileName: string
-  startLine: number
-  endLine: number
-  selectedText: string
-  comment: string
-  createdAt: string
-  updatedAt?: string
-  browserAnnotation?: BrowserAnnotationContextData
-  adjustments?: StyleAdjustment[]
+export interface WorkspaceAttachmentPreviewSource {
+  filename: string
+  contentType: string
+  loadFile: () => Promise<Blob>
 }
