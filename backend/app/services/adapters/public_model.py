@@ -29,6 +29,61 @@ def is_public_model_visible(json_data: Optional[Dict[str, Any]]) -> bool:
     return value if isinstance(value, bool) else True
 
 
+def get_public_model_allowed_users(
+    json_data: Optional[Dict[str, Any]],
+) -> List[str]:
+    """Return the user-name whitelist of a public model (empty = everyone)."""
+    if not isinstance(json_data, dict):
+        return []
+    spec = json_data.get("spec")
+    if not isinstance(spec, dict):
+        return []
+    raw = spec.get("allowedUsers")
+    if not isinstance(raw, list):
+        return []
+    return [name.strip() for name in raw if isinstance(name, str) and name.strip()]
+
+
+def is_public_model_whitelist_enabled(json_data: Optional[Dict[str, Any]]) -> bool:
+    """Return whether whitelist-only mode is active for a public model.
+
+    Active only when ``spec.allowedUsersEnabled`` is True. A non-empty
+    ``spec.allowedUsers`` list without the switch is preserved for later use
+    but does not restrict access.
+    """
+    if not isinstance(json_data, dict):
+        return False
+    spec = json_data.get("spec")
+    if not isinstance(spec, dict):
+        return False
+    return spec.get("allowedUsersEnabled") is True
+
+
+def is_public_model_allowed_for_user(
+    json_data: Optional[Dict[str, Any]], user_name: Optional[str]
+) -> bool:
+    """Return whether the user may see and use the public model.
+
+    A model without whitelist-only mode is available to everyone. When the
+    mode is active, only users whose ``user_name`` appears in
+    ``allowedUsers`` qualify; an empty list then denies everyone.
+    """
+    if not is_public_model_whitelist_enabled(json_data):
+        return True
+    allowed_users = get_public_model_allowed_users(json_data)
+    return bool(user_name) and user_name in allowed_users
+
+
+def is_public_model_allowed_for_user_id(
+    db: Session, json_data: Optional[Dict[str, Any]], user_id: Optional[int]
+) -> bool:
+    """Return whether the given user id may see and use the public model."""
+    if user_id is None:
+        return is_public_model_allowed_for_user(json_data, None)
+    user = db.query(User).filter(User.id == user_id).first()
+    return is_public_model_allowed_for_user(json_data, user.user_name if user else None)
+
+
 def with_public_model_visibility(
     json_data: Optional[Dict[str, Any]], is_visible: bool
 ) -> Dict[str, Any]:
@@ -83,6 +138,7 @@ class ModelAdapter:
         max_output_tokens = None
         cost_index = None
         model_capabilities = None
+        allowed_users: List[str] = []
         if isinstance(kind.json, dict):
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
@@ -129,6 +185,7 @@ class ModelAdapter:
                         model_capabilities = normalize_model_capabilities(
                             legacy_model_capabilities
                         )
+                    allowed_users = get_public_model_allowed_users(kind.json)
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -149,6 +206,7 @@ class ModelAdapter:
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
                     cost_index = spec.get("costIndex")
+                    allowed_users = get_public_model_allowed_users(kind.json)
                     model_config = spec.get("modelConfig")
                     if isinstance(model_config, dict):
                         context_window = ModelSpec._model_config_token_limit(
@@ -200,6 +258,8 @@ class ModelAdapter:
             "maxOutputTokens": max_output_tokens,
             "costIndex": cost_index,
             "modelCapabilities": model_capabilities,
+            "allowedUsers": allowed_users,
+            "allowedUsersEnabled": is_public_model_whitelist_enabled(kind.json),
             "model_category_type": model_category_type,
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
@@ -399,13 +459,13 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             .order_by(Kind.created_at.desc())
             .all()
         )
-        selected_models = (
-            public_models
-            if include_hidden
-            else [
-                model for model in public_models if is_public_model_visible(model.json)
-            ]
-        )
+        user_name = current_user.user_name if current_user else None
+        selected_models = [
+            model
+            for model in public_models
+            if (include_hidden or is_public_model_visible(model.json))
+            and is_public_model_allowed_for_user(model.json, user_name)
+        ]
         return [
             ModelAdapter.to_model_dict(model)
             for model in selected_models[skip : skip + limit]
@@ -451,7 +511,12 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             )
             .all()
         )  # noqa: E712
-        return sum(1 for model in public_models if is_public_model_visible(model.json))
+        return sum(
+            1
+            for model in public_models
+            if is_public_model_visible(model.json)
+            and is_public_model_allowed_for_user(model.json, current_user.user_name)
+        )
 
     def list_model_names(
         self, db: Session, *, current_user: User, shell_type: str
@@ -546,6 +611,8 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
 
         for m in public_models:
             if is_public_model_visible(m.json) and is_model_compatible(m.json):
+                if not is_public_model_allowed_for_user(m.json, current_user.user_name):
+                    continue
                 # Only add if not already present (user models take precedence)
                 if m.name not in result_models:
                     display_name = get_model_display_name(m.json)
