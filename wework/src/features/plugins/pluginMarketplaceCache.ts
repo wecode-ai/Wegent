@@ -392,6 +392,11 @@ export interface PluginInventoryUninstallIdentity {
   installedIds: Array<string | number | null | undefined>
   marketplaceItemIds: Array<string | number | null | undefined>
   pluginKeys: Array<string | null | undefined>
+  marketplaceId?: string | null
+}
+
+function normalizedMarketplaceIdentity(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase()
 }
 
 function normalizedInventoryIdentities(
@@ -426,6 +431,7 @@ export function removePluginMarketplaceInstallation(
   const installedIds = normalizedInventoryIdentities(identity.installedIds)
   const marketplaceItemIds = normalizedInventoryIdentities(identity.marketplaceItemIds)
   const pluginKeys = normalizedInventoryIdentities(identity.pluginKeys)
+  const marketplaceId = normalizedMarketplaceIdentity(identity.marketplaceId)
   const installedPlugins = current.installedPlugins.filter(item => {
     const labels = item.raw.metadata.labels
     const labelId =
@@ -444,7 +450,17 @@ export function removePluginMarketplaceInstallation(
       typeof item.raw.metadata.name === 'string' ? item.raw.metadata.name : null,
       item.name,
     ])
-    return !intersects(itemIds, installedIds) && !intersects(itemKeys, pluginKeys)
+    const itemMarketplaceId = normalizedMarketplaceIdentity(
+      item.raw.spec.source.marketplace ||
+        (typeof item.raw.spec.sourcePayload?.marketplaceName === 'string'
+          ? item.raw.spec.sourcePayload.marketplaceName
+          : null) ||
+        item.raw.spec.source.providerKey ||
+        (typeof item.raw.metadata.namespace === 'string' ? item.raw.metadata.namespace : null)
+    )
+    const keyMatches =
+      intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
+    return !intersects(itemIds, installedIds) && !keyMatches
   })
   const marketplaceItems = current.marketplaceItems.map(item => {
     const itemIds = normalizedInventoryIdentities([
@@ -453,10 +469,15 @@ export function removePluginMarketplaceInstallation(
       item.remotePluginId,
     ])
     const itemKeys = normalizedInventoryIdentities([item.name, item.displayName])
+    const itemMarketplaceId = normalizedMarketplaceIdentity(
+      typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : null
+    )
+    const keyMatches =
+      intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
     if (
       !intersects(itemIds, installedIds) &&
       !intersects(itemIds, marketplaceItemIds) &&
-      !intersects(itemKeys, pluginKeys)
+      !keyMatches
     ) {
       return item
     }

@@ -35,6 +35,8 @@ pub(super) fn acquire_personal_marketplace_lock(
     options.create(true).truncate(false).read(true).write(true);
     #[cfg(unix)]
     options.mode(0o600);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
     let lock = options
         .open(&lock_path)
         .map_err(|error| format!("Failed to open {}: {error}", lock_path.display()))?;

@@ -123,3 +123,23 @@ async def test_partial_plugin_failure_is_not_acknowledged_as_reconciled(reconcil
         "Plugin reconciliation failed for example: PLUGIN_DOWNLOAD_FAILED"
     )
     record.assert_not_called()
+
+
+def test_failure_detail_preserves_executor_error_without_code_or_stage():
+    result = DeviceCapabilitySyncResult(
+        device_id="device",
+        success=False,
+        scope="plugins",
+        plugins=[
+            {
+                "id": 12,
+                "name": "example",
+                "status": "failed",
+                "error": "package checksum mismatch",
+            }
+        ],
+    )
+
+    assert module.reconciliation_failure_detail(result) == (
+        "Plugin reconciliation failed for example: package checksum mismatch"
+    )

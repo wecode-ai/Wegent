@@ -51,6 +51,53 @@ function item(
   }
 }
 
+function installedItem(id: string, marketplaceId: string, pluginKey: string): InstalledPluginItem {
+  return {
+    id,
+    name: pluginKey,
+    description: '',
+    enabled: true,
+    version: '1.0.0',
+    origin: 'market',
+    sourceLabel: marketplaceId,
+    distribution: 'personal',
+    updateAvailable: false,
+    componentCounts: {},
+    raw: {
+      apiVersion: 'v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: pluginKey, namespace: marketplaceId, labels: { id } },
+      spec: {
+        source: {
+          type: 'local',
+          providerKey: marketplaceId,
+          pluginKey,
+          marketplace: marketplaceId,
+        },
+        origin: 'market',
+        displayName: pluginKey,
+        description: '',
+        installState: 'installed',
+        enabled: true,
+        componentStates: {},
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+          connectors: [],
+        },
+        interface: null,
+      },
+      status: { state: 'enabled' },
+    },
+  }
+}
+
 describe('pluginMarketplaceCache', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -318,6 +365,49 @@ describe('pluginMarketplaceCache', () => {
         installedPluginId: null,
         enabled: false,
       }),
+    ])
+  })
+
+  test('scopes plugin-key uninstall fallbacks to the selected marketplace', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-marketplace-scope')
+    const first = installedItem('59', 'market-a', 'shared-name')
+    const second = installedItem('60', 'market-b', 'shared-name')
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [
+        item({
+          id: 1,
+          name: 'shared-name',
+          installed: true,
+          installedPluginId: '59',
+          manifest: { marketplaceId: 'market-a' },
+        }),
+        item({
+          id: 2,
+          name: 'shared-name',
+          installed: true,
+          installedPluginId: '60',
+          manifest: { marketplaceId: 'market-b' },
+        }),
+      ],
+      installedPlugins: [first, second],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+
+    const next = removePluginMarketplaceInstallation(key, {
+      installedIds: ['59'],
+      marketplaceItemIds: [1],
+      pluginKeys: ['shared-name'],
+      marketplaceId: 'market-a',
+    })
+
+    expect(next?.installedPlugins).toEqual([second])
+    expect(next?.marketplaceItems).toEqual([
+      expect.objectContaining({ id: 1, installed: false, installedPluginId: null }),
+      expect.objectContaining({ id: 2, installed: true, installedPluginId: '60' }),
     ])
   })
 

@@ -84,6 +84,7 @@ export function retainMarketplaceInstalledState(input: {
   previousInstalled: InstalledPluginItem[]
   nextInstalled: InstalledPluginItem[]
   previousStateMatchesScope: boolean
+  authoritativeInstalledState?: boolean
 }): { items: PluginMarketplaceItem[]; installed: InstalledPluginItem[] } {
   if (!input.previousStateMatchesScope) {
     return { items: input.nextItems, installed: input.nextInstalled }
@@ -105,11 +106,13 @@ export function retainMarketplaceInstalledState(input: {
 
   const installed = [...input.nextInstalled]
   const installedIds = new Set(installed.map(plugin => String(plugin.id)))
-  for (const plugin of input.previousInstalled) {
-    const id = String(plugin.id)
-    if (!retainedPluginIds.has(id) || installedIds.has(id)) continue
-    installed.push(plugin)
-    installedIds.add(id)
+  if (!input.authoritativeInstalledState) {
+    for (const plugin of input.previousInstalled) {
+      const id = String(plugin.id)
+      if (!retainedPluginIds.has(id) || installedIds.has(id)) continue
+      installed.push(plugin)
+      installedIds.add(id)
+    }
   }
   const items = hintedItems.map(item => {
     const next = nextItemsById.get(String(item.id))

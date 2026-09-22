@@ -884,9 +884,17 @@ class DeviceCapabilitySyncService:
             "source": source,
         }
         catalog_item_id = spec.get("pluginId") or source.get("catalogItemId")
-        try:
+        if isinstance(catalog_item_id, bool):
+            cloud_plugin_id = None
+        elif isinstance(catalog_item_id, int):
+            cloud_plugin_id = catalog_item_id
+        elif (
+            isinstance(catalog_item_id, str)
+            and catalog_item_id.isascii()
+            and catalog_item_id.isdecimal()
+        ):
             cloud_plugin_id = int(catalog_item_id)
-        except (TypeError, ValueError):
+        else:
             cloud_plugin_id = None
         if cloud_plugin_id is not None and cloud_plugin_id > 0:
             payload["cloud_plugin_id"] = cloud_plugin_id

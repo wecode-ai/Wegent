@@ -49,7 +49,9 @@ def reconciliation_failure_detail(result: DeviceCapabilitySyncResult) -> str:
     failed = next((item for item in result.plugins if item.status == "failed"), None)
     if failed is not None:
         identity = failed.name or str(failed.id or "plugin")
-        reason = failed.error_code or failed.stage or "device_sync_failed"
+        reason = (
+            failed.error_code or failed.stage or failed.error or "device_sync_failed"
+        )
         return f"Plugin reconciliation failed for {identity}: {reason}"
     if result.error:
         return f"Plugin reconciliation failed: {result.error}"

@@ -410,6 +410,7 @@ export function PluginsWorkspace({
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(
     () => initialMarketplaceCache?.selectedMarketplaceKey || rememberedMarketplaceKey()
   )
+  const authoritativeInventoryRefreshRef = useRef(false)
   // Always open the marketplace on the "全部" distribution tab; do not restore a
   // previously selected local marketplace filter when navigating back from another route.
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
@@ -1627,6 +1628,7 @@ export function PluginsWorkspace({
       },
     },
     onComplete: () => {
+      authoritativeInventoryRefreshRef.current = true
       setReconciliationRevision(previous => previous + 1)
       refreshLocalMarketplace()
       setPluginOperationNotice({
@@ -2771,6 +2773,9 @@ export function PluginsWorkspace({
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
+    const authoritativeInventoryRefresh =
+      isExplicitRefresh && authoritativeInventoryRefreshRef.current
+    authoritativeInventoryRefreshRef.current = false
     if (isExplicitRefresh) {
       lastMarketplaceRefreshTickRef.current = marketplaceRefreshTick
     }
@@ -2935,6 +2940,8 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+        authoritativeInstalledState:
+          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3164,6 +3171,8 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+        authoritativeInstalledState:
+          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3281,6 +3290,8 @@ export function PluginsWorkspace({
             nextInstalled: nextInstalledRaw,
             previousStateMatchesScope:
               marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
+            authoritativeInstalledState:
+              authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
           })
           const heldBack = holdBackInFlightMarketplaceInstalls({
             items: retained.items,

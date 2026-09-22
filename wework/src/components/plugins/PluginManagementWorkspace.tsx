@@ -426,6 +426,9 @@ export function PluginManagementWorkspace({
             plugin.raw.spec.pluginId,
             linkedCloudPluginId(plugin.raw),
           ],
+          marketplaceId:
+            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+            installedPluginMarketplaceId(plugin.raw),
           pluginKeys: [
             plugin.raw.spec.source.pluginKey,
             typeof plugin.raw.metadata.name === 'string' ? plugin.raw.metadata.name : null,

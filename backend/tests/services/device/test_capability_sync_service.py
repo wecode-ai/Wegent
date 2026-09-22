@@ -160,6 +160,46 @@ def test_resolve_payload_includes_selected_installed_plugins(test_db):
     ]
 
 
+@pytest.mark.parametrize("catalog_item_id", [True, 41.9, "41.9", " 41", "４１"])
+def test_resolve_payload_rejects_lossy_cloud_plugin_ids(test_db, catalog_item_id):
+    installed = Kind(
+        id=303,
+        user_id=7,
+        kind="InstalledPlugin",
+        name="invalid-catalog-id",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "invalid-catalog-id", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "marketplace": "wegent",
+                    "pluginKey": "invalid-catalog-id",
+                    "catalogItemId": catalog_item_id,
+                },
+                "displayName": "Invalid catalog ID",
+                "installState": "installed",
+                "enabled": True,
+            },
+        },
+    )
+    test_db.add(installed)
+    test_db.flush()
+
+    resolved = device_capability_sync_service.resolve_payload(
+        test_db,
+        user=User(id=7, user_name="alice"),
+        skill_ids=[],
+        installed_plugin_ids=[303],
+        mode="merge",
+    )
+
+    assert "cloud_plugin_id" not in resolved["plugins"][0]
+
+
 def test_resolve_payload_uses_uploaded_plugin_key_and_download_ref(test_db):
     installed = Kind(
         id=302,
