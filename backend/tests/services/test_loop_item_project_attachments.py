@@ -20,7 +20,7 @@ from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
 from app.services.attachment.storage_backend import generate_storage_key
 from app.services.delivery.storage import DeliveryStorageUnavailableError
-from app.services.loop_items import loop_item_service
+from app.services.loop_items.service import loop_item_service
 
 
 class FakeDeliveryStorage:
