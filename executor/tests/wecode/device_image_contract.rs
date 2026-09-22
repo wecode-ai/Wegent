@@ -15,6 +15,8 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(gitlab_pipeline.contains(
         "DEVICE_IMAGE_VERSION=\"${EXECUTOR_IMAGE_TAG:?missing wegent-executor image tag}\""
     ));
+    assert!(gitlab_pipeline
+        .contains("EXECUTOR_VERSION=\"${EXECUTOR_VERSION:?missing resolved Executor version}\""));
     assert!(gitlab_pipeline.contains("resource_group: wegent-device-image"));
     assert!(gitlab_pipeline.contains("docker/device/**/*"));
     assert!(gitlab_pipeline.contains("wecode/docker/device/**/*"));
@@ -44,7 +46,7 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("https://npmmirror.com/mirrors/node"));
     assert!(publish_script.contains("https://registry.npmmirror.com"));
     assert!(publish_script.contains(
-        "CODE_SERVER_REPOSITORY_RAW=${CODE_SERVER_REPOSITORY_RAW:-https://raw.githubusercontent.com/coder/code-server}"
+        "CODE_SERVER_RELEASE_BASE=${CODE_SERVER_RELEASE_BASE:-https://github.com/coder/code-server/releases/download}"
     ));
     assert!(publish_script.contains(
         "CODE_SERVER_HTTPS_PROXY=${CODE_SERVER_HTTPS_PROXY:-http://wproxy.intra.weibo.com:8889}"
@@ -81,8 +83,36 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("test \"$actual_version\" = \"$EXECUTOR_VERSION\""));
     assert!(publish_script.contains("test \"$published_executor_version\" = \"$EXECUTOR_VERSION\""));
     assert!(publish_script.contains("${MASTER_BRANCH:-main}"));
-    assert!(publish_script.contains("executor_version_push_image"));
-    assert!(publish_script.contains("executor_version_runtime_image"));
+    assert!(publish_script.contains("EXECUTOR_VERSION is required for main-branch device builds"));
+    assert!(!publish_script.contains("executor_version_push_image"));
+    assert!(!publish_script.contains("executor_version_runtime_image"));
+    assert!(!publish_script.contains("Published main-branch compatibility tag"));
+
+    let export_script =
+        fs::read_to_string("../wecode/docker/executor/build-and-export-image-tag.sh").unwrap();
+    assert!(export_script.contains("resolve-version.sh"));
+    assert!(export_script.contains("export EXECUTOR_VERSION"));
+    assert!(export_script.contains("EXECUTOR_VERSION=%s"));
+
+    let resolver_script =
+        fs::read_to_string("../wecode/docker/executor/resolve-version.sh").unwrap();
+    assert!(resolver_script.contains(
+        "https://ai-state-machine.intra.weibo.com/ai-tool-box/wegent-executor-linux-amd64/update.json"
+    ));
+    assert!(resolver_script.contains("--connect-timeout 10"));
+    assert!(resolver_script.contains("--max-time 30"));
+    assert!(resolver_script.contains("source=%s"));
+
+    let prepare_script = fs::read_to_string("../wecode/docker/executor/prepare_build.sh").unwrap();
+    assert!(prepare_script.contains("missing resolved Executor version"));
+    assert!(prepare_script.contains("executor/.build-version"));
+
+    let executor_dockerfile = fs::read_to_string("../wecode/docker/executor/Dockerfile").unwrap();
+    assert!(executor_dockerfile.contains("COPY executor/.build-version"));
+    assert!(executor_dockerfile.contains("WEGENT_EXECUTOR_BUILD_VERSION"));
+    assert!(executor_dockerfile
+        .contains("test \"$(target/release/wegent-executor --version)\" = \"$executor_version\""));
+    assert!(!executor_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
 
     let device_dockerfile = fs::read_to_string("../wecode/docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile
@@ -93,6 +123,13 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(device_dockerfile.contains("gh_${GH_VERSION}_linux_${cli_arch}.tar.gz"));
     assert!(device_dockerfile.contains("glab_${GLAB_VERSION}_linux_${cli_arch}.tar.gz"));
     assert!(device_dockerfile.contains("gh --version && glab --version"));
+    assert!(device_dockerfile
+        .contains("code-server-${CODE_SERVER_VERSION}-linux-${code_server_arch}.tar.gz"));
+    assert!(device_dockerfile.contains("--retry-all-errors"));
+    assert!(device_dockerfile.contains("--retry-delay 2"));
+    assert!(device_dockerfile.contains("--retry-max-time 120"));
+    assert!(device_dockerfile.contains("tar -xzf \"$code_server_archive\" --strip-components=1"));
+    assert!(!device_dockerfile.contains("install-code-server.sh"));
     assert!(device_dockerfile.contains("COPY sdk/plugin-auth /build/sdk/plugin-auth"));
     assert!(device_dockerfile.contains("COPY sdk/plugin-creator /build/sdk/plugin-creator"));
     assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
@@ -117,16 +154,26 @@ fn executor_ci_build_exports_tomas_image_tag() {
 
     let temp = tempfile::tempdir().unwrap();
     let fake_build_image = temp.path().join("build_image");
+    let fake_curl = temp.path().join("curl");
     fs::write(
         &fake_build_image,
         "#!/usr/bin/env bash\n\
+         test \"$EXECUTOR_VERSION\" = \"2.0.20-fix-executor-update-json-version\"\n\
          echo 'last_image:ci/wegent-executor:1.0.236'\n\
          echo 'image: ci/wegent-executor:1.0.237-feature-device-tag'\n",
+    )
+    .unwrap();
+    fs::write(
+        &fake_curl,
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"version\":\"2.0.20\"}'\n",
     )
     .unwrap();
     let mut permissions = fs::metadata(&fake_build_image).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&fake_build_image, permissions).unwrap();
+    let mut permissions = fs::metadata(&fake_curl).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_curl, permissions).unwrap();
 
     let current_path = std::env::var("PATH").unwrap();
     let export_script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -134,6 +181,13 @@ fn executor_ci_build_exports_tomas_image_tag() {
     let output = Command::new("bash")
         .arg(export_script)
         .env("PATH", format!("{}:{current_path}", temp.path().display()))
+        .env(
+            "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+            "fix/executor-update-json-version",
+        )
+        .env_remove("CI_COMMIT_BRANCH")
+        .env_remove("CI_COMMIT_REF_NAME")
+        .env_remove("MASTER_BRANCH")
         .current_dir(temp.path())
         .output()
         .unwrap();
@@ -145,8 +199,96 @@ fn executor_ci_build_exports_tomas_image_tag() {
     );
     assert_eq!(
         fs::read_to_string(temp.path().join("executor-image.env")).unwrap(),
-        "EXECUTOR_IMAGE_TAG=1.0.237-feature-device-tag\n"
+        "EXECUTOR_IMAGE_TAG=1.0.237-feature-device-tag\n\
+         EXECUTOR_VERSION=2.0.20-fix-executor-update-json-version\n"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn executor_version_resolver_uses_exact_main_version_and_branch_suffix_elsewhere() {
+    let main = run_version_resolver(
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"version\":\"2.0.20\"}'\n",
+        &[("CI_COMMIT_BRANCH", "main")],
+    );
+    assert!(main.status.success());
+    assert_eq!(String::from_utf8(main.stdout).unwrap().trim(), "2.0.20");
+
+    let feature = run_version_resolver(
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"version\":\"2.0.20\"}'\n",
+        &[("CI_COMMIT_BRANCH", "Feature/Version_Test")],
+    );
+    assert!(feature.status.success());
+    assert_eq!(
+        String::from_utf8(feature.stdout).unwrap().trim(),
+        "2.0.20-feature-version-test"
+    );
+
+    let merge_request = run_version_resolver(
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"version\":\"2.0.20\"}'\n",
+        &[
+            ("CI_COMMIT_BRANCH", "main"),
+            (
+                "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+                "fix/executor-update-json-version",
+            ),
+        ],
+    );
+    assert!(merge_request.status.success());
+    assert_eq!(
+        String::from_utf8(merge_request.stdout).unwrap().trim(),
+        "2.0.20-fix-executor-update-json-version"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn executor_version_resolver_fails_closed_on_invalid_update_source() {
+    for curl_script in [
+        "#!/usr/bin/env bash\nexit 22\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' 'not-json'\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"notes\":\"missing version\"}'\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"version\":\"2.0.20-beta.1\"}'\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"version\":\"02.0.20\"}'\n",
+    ] {
+        let output =
+            run_version_resolver(curl_script, &[("CI_COMMIT_BRANCH", "feature/version-test")]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("Unable to resolve a valid Executor version"));
+    }
+}
+
+#[cfg(unix)]
+fn run_version_resolver(curl_script: &str, environment: &[(&str, &str)]) -> std::process::Output {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    let temp = tempfile::tempdir().unwrap();
+    let fake_curl = temp.path().join("curl");
+    fs::write(&fake_curl, curl_script).unwrap();
+    let mut permissions = fs::metadata(&fake_curl).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_curl, permissions).unwrap();
+
+    let current_path = std::env::var("PATH").unwrap();
+    let resolver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../wecode/docker/executor/resolve-version.sh");
+    let mut command = Command::new("bash");
+    command
+        .arg(resolver)
+        .env("PATH", format!("{}:{current_path}", temp.path().display()));
+    for name in [
+        "CI_COMMIT_BRANCH",
+        "CI_COMMIT_REF_NAME",
+        "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+        "MASTER_BRANCH",
+    ] {
+        command.env_remove(name);
+    }
+    for (name, value) in environment {
+        command.env(name, value);
+    }
+    command.output().unwrap()
 }
 
 #[test]

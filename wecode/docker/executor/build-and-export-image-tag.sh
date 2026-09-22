@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
+
+EXECUTOR_VERSION="$(bash "$script_dir/resolve-version.sh")"
+export EXECUTOR_VERSION
 
 build_image 2>&1 | tee "$build_log"
 
@@ -17,5 +21,9 @@ if [[ -z "$executor_image_tag" || "${#executor_image_tag}" -gt 128 ]]; then
   exit 1
 fi
 
-printf 'EXECUTOR_IMAGE_TAG=%s\n' "$executor_image_tag" > executor-image.env
-printf 'Exported wegent-executor image tag: %s\n' "$executor_image_tag"
+{
+  printf 'EXECUTOR_IMAGE_TAG=%s\n' "$executor_image_tag"
+  printf 'EXECUTOR_VERSION=%s\n' "$EXECUTOR_VERSION"
+} > executor-image.env
+printf 'Exported wegent-executor image tag: %s version: %s\n' \
+  "$executor_image_tag" "$EXECUTOR_VERSION"
