@@ -235,7 +235,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(wecode_executor_dockerfile.contains("COPY sdk/plugin-creator /app/sdk/plugin-creator"));
     assert!(wecode_executor_dockerfile.contains("target/release/wegent-executor"));
     assert!(wecode_executor_dockerfile.contains("ENV EXECUTOR_MODE=docker"));
-    assert!(wecode_executor_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
     assert!(!wecode_executor_dockerfile.contains("file_change_sender"));
     assert!(!wecode_executor_dockerfile.contains("CUSTOM_CONFIG"));
 

@@ -45,19 +45,21 @@ RUN mkdir -p /app/executor/src/bin \
 
 # Build stage: compile executor Rust binary.
 FROM builder-deps AS builder
-ARG APP_VERSION=dev
 
+COPY executor/.build-version /app/executor/.build-version
 COPY executor/src /app/executor/src
 COPY sdk/plugin-auth /app/sdk/plugin-auth
 COPY sdk/plugin-creator /app/sdk/plugin-creator
 COPY shared/assets /app/shared/assets
 RUN cd /app/executor \
     && find src -type f -exec touch {} + \
-    && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor
+    && executor_version="$(cat .build-version)" \
+    && WEGENT_EXECUTOR_BUILD_VERSION="$executor_version" \
+        cargo build --release --locked --bin wegent-executor \
+    && test "$(target/release/wegent-executor --version)" = "$executor_version"
 
 # Runtime stage: internal executor environment plus the Rust binary.
 FROM ${BASE_IMAGE}
-ARG APP_VERSION=dev
 
 WORKDIR /app
 
@@ -126,7 +128,6 @@ COPY --from=builder /app/executor/target/release/wegent-executor /app/executor
 
 ENV PORT=10001
 ENV EXECUTOR_MODE=docker
-ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 ENV NODE_PATH=/usr/lib/node_modules
 
 # Run the Rust executor binary.

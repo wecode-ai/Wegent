@@ -5,7 +5,13 @@ set -euo pipefail
 DEVICE_IMAGE_REPOSITORY="${DEVICE_IMAGE_REPOSITORY:-registry.api.weibo.com/ci/wegent-device}"
 DEVICE_IMAGE_PUSH_REPOSITORY="${DEVICE_IMAGE_PUSH_REPOSITORY:-pushregistry.api.weibo.com/ci/wegent-device}"
 BUILDKIT_IMAGE="${BUILDKIT_IMAGE:-registry.api.weibo.com/ci/moby/buildkit:buildx-stable-1}"
-EXECUTOR_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' executor/Cargo.toml | head -1)"
+if [[ -z "${EXECUTOR_VERSION:-}" ]]; then
+  if [[ "${CI_COMMIT_BRANCH:-}" == "${MASTER_BRANCH:-main}" ]]; then
+    echo "EXECUTOR_VERSION is required for main-branch device builds" >&2
+    exit 1
+  fi
+  EXECUTOR_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' executor/Cargo.toml | head -1)"
+fi
 DEVICE_IMAGE_VERSION="${DEVICE_IMAGE_VERSION:-$EXECUTOR_VERSION}"
 
 if [[ -z "$EXECUTOR_VERSION" ]]; then
@@ -52,8 +58,6 @@ docker buildx inspect "$BUILDER_NAME" --bootstrap
 
 push_image="${DEVICE_IMAGE_PUSH_REPOSITORY}:${DEVICE_IMAGE_VERSION}"
 runtime_image="${DEVICE_IMAGE_REPOSITORY}:${DEVICE_IMAGE_VERSION}"
-executor_version_push_image="${DEVICE_IMAGE_PUSH_REPOSITORY}:${EXECUTOR_VERSION}"
-executor_version_runtime_image="${DEVICE_IMAGE_REPOSITORY}:${EXECUTOR_VERSION}"
 docker buildx build \
   --builder "$BUILDER_NAME" \
   --platform linux/amd64 \
@@ -75,7 +79,7 @@ docker buildx build \
   --build-arg "NODE_VERSION=${NODE_VERSION:-22.23.2}" \
   --build-arg "NODE_DIST_MIRROR=${NODE_DIST_MIRROR:-https://npmmirror.com/mirrors/node}" \
   --build-arg "NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmmirror.com}" \
-  --build-arg "CODE_SERVER_REPOSITORY_RAW=${CODE_SERVER_REPOSITORY_RAW:-https://raw.githubusercontent.com/coder/code-server}" \
+  --build-arg "CODE_SERVER_RELEASE_BASE=${CODE_SERVER_RELEASE_BASE:-https://github.com/coder/code-server/releases/download}" \
   --build-arg "CODE_SERVER_HTTPS_PROXY=${CODE_SERVER_HTTPS_PROXY:-http://wproxy.intra.weibo.com:8889}" \
   --tag "$push_image" \
   --load \
@@ -154,11 +158,3 @@ test "$published_architecture" = "amd64"
 test "$published_version" = "$EXECUTOR_VERSION"
 test "$published_revision" = "$CI_COMMIT_SHA"
 test "$published_executor_version" = "$EXECUTOR_VERSION"
-
-if [[ "${CI_COMMIT_BRANCH:-}" = "${MASTER_BRANCH:-main}" \
-  && "$DEVICE_IMAGE_VERSION" != "$EXECUTOR_VERSION" ]]; then
-  docker tag "$push_image" "$executor_version_push_image"
-  docker push "$executor_version_push_image"
-  wait_for_runtime_digest "$executor_version_runtime_image" "$pushed_digest"
-  printf 'Published main-branch compatibility tag: %s\n' "$executor_version_runtime_image"
-fi

@@ -164,7 +164,7 @@ wegent-device:
     - job: wegent-executor
       artifacts: true
   script:
-    - DEVICE_IMAGE_VERSION="${EXECUTOR_IMAGE_TAG:?missing wegent-executor image tag}" bash wecode/docker/device/build-and-publish.sh
+    - EXECUTOR_VERSION="${EXECUTOR_VERSION:?missing resolved Executor version}" DEVICE_IMAGE_VERSION="${EXECUTOR_IMAGE_TAG:?missing wegent-executor image tag}" bash wecode/docker/device/build-and-publish.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never

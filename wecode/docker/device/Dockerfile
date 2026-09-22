@@ -84,7 +84,7 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG GH_VERSION=2.100.0
 ARG GLAB_VERSION=1.116.0
 ARG CODE_SERVER_VERSION=4.121.0
-ARG CODE_SERVER_REPOSITORY_RAW=https://raw.githubusercontent.com/coder/code-server
+ARG CODE_SERVER_RELEASE_BASE=https://github.com/coder/code-server/releases/download
 ARG CODE_SERVER_HTTPS_PROXY=http://wproxy.intra.weibo.com:8889
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -156,14 +156,24 @@ RUN if [ -n "$CODE_SERVER_HTTPS_PROXY" ]; then \
       export HTTPS_PROXY="$CODE_SERVER_HTTPS_PROXY"; \
       export https_proxy="$CODE_SERVER_HTTPS_PROXY"; \
     fi \
-    && curl -fsSL --retry 5 --retry-all-errors \
-      "${CODE_SERVER_REPOSITORY_RAW%/}/v${CODE_SERVER_VERSION}/install.sh" \
-      -o /tmp/install-code-server.sh \
-    && sh /tmp/install-code-server.sh \
-      --method=standalone \
-      --prefix=/usr/local \
-      --version="${CODE_SERVER_VERSION}" \
-    && rm -f /tmp/install-code-server.sh \
+    && case "$DEVICE_IMAGE_PLATFORM" in \
+        linux/amd64) code_server_arch=amd64 ;; \
+        linux/arm64) code_server_arch=arm64 ;; \
+        *) echo "Unsupported DEVICE_IMAGE_PLATFORM=$DEVICE_IMAGE_PLATFORM" >&2; exit 1 ;; \
+    esac \
+    && code_server_archive=/tmp/code-server.tar.gz \
+    && code_server_dir="/usr/local/lib/code-server-${CODE_SERVER_VERSION}" \
+    && curl -fsSL \
+      --retry 5 \
+      --retry-all-errors \
+      --retry-delay 2 \
+      --retry-max-time 120 \
+      "${CODE_SERVER_RELEASE_BASE%/}/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-${code_server_arch}.tar.gz" \
+      -o "$code_server_archive" \
+    && install -d "$code_server_dir" \
+    && tar -xzf "$code_server_archive" --strip-components=1 -C "$code_server_dir" \
+    && ln -sf "$code_server_dir/bin/code-server" /usr/local/bin/code-server \
+    && rm -f "$code_server_archive" \
     && installed_code_server_version="$(code-server --version | tail -n 1 | awk '{print $1}')" \
     && test "$installed_code_server_version" = "$CODE_SERVER_VERSION" \
     && rm -rf /root/.config/code-server
