@@ -900,6 +900,241 @@ def test_public_project_visitors_only_access_their_own_todo_details(
     assert hidden_credential.status_code == 404
 
 
+def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    visitor = User(
+        user_name="related-task-visitor",
+        password_hash="unused",
+        email="related-task-visitor@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    maintainer = User(
+        user_name="related-task-maintainer",
+        password_hash="unused",
+        email="related-task-maintainer@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    developer = User(
+        user_name="related-task-developer",
+        password_hash="unused",
+        email="related-task-developer@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add_all([visitor, maintainer, developer])
+    test_db.commit()
+    test_db.refresh(visitor)
+    test_db.refresh(maintainer)
+    test_db.refresh(developer)
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+    maintainer_token = create_access_token(data={"sub": maintainer.user_name})
+    developer_token = create_access_token(data={"sub": developer.user_name})
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "RELATED",
+            "name": "Related tasks only",
+            "visibility": "public_restricted",
+        },
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+    owner_item = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Owner task", "description": "owner-only details"},
+    ).json()
+    add_developer = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": developer.id, "role": "Developer"},
+    )
+    assert add_developer.status_code == 201
+    developer_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(developer_token),
+    )
+    assert developer_items.status_code == 200
+    assert developer_items.json()["items"] == []
+    assigned_item_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Developer task",
+            "description": "assigned details",
+            "assignee_user_id": developer.id,
+        },
+    )
+    assert assigned_item_response.status_code == 201
+    assigned_item = assigned_item_response.json()
+    developer_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(developer_token),
+    )
+    assert [item["id"] for item in developer_items.json()["items"]] == [
+        assigned_item["id"]
+    ]
+
+    listed_projects = test_client.get(
+        "/api/v1/cloud-projects",
+        headers=_auth(visitor_token),
+    )
+    assert listed_projects.status_code == 200
+    visible_project = next(
+        item for item in listed_projects.json()["items"] if item["id"] == project["id"]
+    )
+    assert visible_project["visibility"] == "public_restricted"
+
+    empty_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+    )
+    assert empty_items.status_code == 200
+    assert empty_items.json()["items"] == []
+    assert (
+        test_client.get(
+            f"/api/v1/loop-items/{owner_item['id']}",
+            headers=_auth(visitor_token),
+        ).status_code
+        == 404
+    )
+
+    visitor_item_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+        json={"title": "Visitor task", "description": "visitor details"},
+    )
+    assert visitor_item_response.status_code == 201
+    visitor_item = visitor_item_response.json()
+    visitor_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+    ).json()["items"]
+    assert [item["id"] for item in visitor_items] == [visitor_item["id"]]
+
+    added = test_client.post(
+        f"/api/v1/loop-items/{owner_item['id']}/collaborators",
+        headers=_auth(test_token),
+        json={"user_id": visitor.id},
+    )
+    assert added.status_code == 201
+    related_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+    ).json()["items"]
+    assert {item["id"] for item in related_items} == {
+        owner_item["id"],
+        visitor_item["id"],
+    }
+    related_detail = test_client.get(
+        f"/api/v1/loop-items/{owner_item['id']}",
+        headers=_auth(visitor_token),
+    )
+    assert related_detail.status_code == 200
+    assert related_detail.json()["description"] == "owner-only details"
+    assert related_detail.json()["can_edit"] is False
+
+    executions = [
+        LoopItemExecution(
+            loop_item_id=item_id,
+            cloud_project_id=str(project["id"]),
+            executor_owner_user_id=visitor.id,
+            agent_id=f"related-agent-{index}",
+            status="queued",
+        )
+        for index, item_id in enumerate(
+            [owner_item["id"], visitor_item["id"], assigned_item["id"]],
+            start=1,
+        )
+    ]
+    test_db.add_all(executions)
+    test_db.commit()
+    execution_list = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(visitor_token),
+    )
+    assert execution_list.status_code == 200
+    assert {item["loopItemId"] for item in execution_list.json()["items"]} == {
+        owner_item["id"],
+        visitor_item["id"],
+    }
+
+    add_maintainer = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": maintainer.id, "role": "Maintainer"},
+    )
+    assert add_maintainer.status_code == 201
+    maintainer_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(maintainer_token),
+    )
+    assert maintainer_items.status_code == 200
+    assert {item["id"] for item in maintainer_items.json()["items"]} == {
+        assigned_item["id"],
+        owner_item["id"],
+        visitor_item["id"],
+    }
+
+    owner_snapshot = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/board-snapshot",
+        headers=_auth(test_token),
+    )
+    assert owner_snapshot.status_code == 200
+    assert {item["id"] for item in owner_snapshot.json()["items"]} == {
+        assigned_item["id"],
+        owner_item["id"],
+        visitor_item["id"],
+    }
+
+    my_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work",
+        headers=_auth(visitor_token),
+    )
+    assert my_work.status_code == 200
+    assert {item["id"] for item in my_work.json()["items"]} == {
+        owner_item["id"],
+        visitor_item["id"],
+    }
+
+
+def test_external_project_rejects_related_task_visibility_update(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "EXTVIS",
+            "name": "External visibility",
+            "task_provider": "github",
+            "provider_config": {"repository": "owner/repository"},
+        },
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "visibility": "public_restricted",
+        },
+    )
+
+    assert updated.status_code == 422
+    assert "only available for built-in tasks" in updated.json()["detail"]
+
+
 def test_cloud_project_persists_external_task_provider_and_encrypted_token(
     test_client: TestClient,
     test_db: Session,

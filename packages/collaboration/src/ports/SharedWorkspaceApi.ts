@@ -18,6 +18,7 @@ import type {
   CollaborationPlatformResources,
   CollaborationPriority,
   CollaborationProject,
+  CollaborationProjectVisibility,
   CollaborationRole,
   CollaborationUser,
   CollaborationWorkspace,
@@ -35,7 +36,7 @@ export interface WorkspaceProjectCreateInput {
   name: string
   description?: string
   taskProvider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
-  visibility?: 'private' | 'public'
+  visibility?: CollaborationProjectVisibility
   providerConfig?: Record<string, unknown>
 }
 
@@ -44,7 +45,7 @@ export interface WorkspaceProjectUpdateInput {
   name?: string
   description?: string
   tags?: string[]
-  visibility?: 'private' | 'public'
+  visibility?: CollaborationProjectVisibility
   providerConfig?: Record<string, unknown>
   boardConfig?: CollaborationProject['board_config']
   cardDisplay?: CollaborationProject['card_display']

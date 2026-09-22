@@ -271,6 +271,13 @@ async function issue(page: Page, issueId: string): Promise<CloudIssue> {
   )
 }
 
+async function webApiStatus(page: Page, path: string): Promise<number> {
+  return page.evaluate(async requestPath => {
+    const response = await fetch(requestPath, { cache: 'no-store' })
+    return response.status
+  }, path)
+}
+
 async function selectGroupBy(
   page: Page,
   projectId: string,
@@ -323,12 +330,12 @@ async function dragIssueTo(page: Page, issueId: string, columnKey: string): Prom
   expect(response.ok(), `Board mutation failed: ${await response.text()}`).toBe(true)
 }
 
-async function openRestrictedProject(
+async function openRegularUserProject(
   browser: Browser,
   ownerPage: Page,
   workspaceId: string,
   projectId: string,
-  view: 'files' | 'automation' | 'manage'
+  view?: 'files' | 'automation' | 'manage'
 ) {
   const login = await createApiClient(ownerPage.request).login(
     REGULAR_USER.username,
@@ -342,7 +349,7 @@ async function openRestrictedProject(
     storageState: buildStorageState(appBaseUrl, token, getJwtExpiryMs(token)),
   })
   const page = await context.newPage()
-  await page.goto(collaborationProjectPath(workspaceId, projectId, { view }))
+  await page.goto(collaborationProjectPath(workspaceId, projectId, view ? { view } : {}))
   return { context, page }
 }
 
@@ -1070,7 +1077,7 @@ test.describe('Collaboration cloud capabilities', () => {
       )
 
       for (const view of ['files', 'automation', 'manage'] as const) {
-        const restricted = await openRestrictedProject(
+        const restricted = await openRegularUserProject(
           browser,
           page,
           workspace.id,
@@ -1098,6 +1105,80 @@ test.describe('Collaboration cloud capabilities', () => {
         } finally {
           await restricted.context.close()
         }
+      }
+    } finally {
+      if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
+    }
+  })
+
+  test('shows related tasks only while keeping the project available to every signed-in user', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(120_000)
+    const suffix = Date.now()
+    let projectId = ''
+    let workspaceId = ''
+
+    try {
+      await page.goto('/collaboration')
+      const workspace = await createWorkspaceByApi(page, `Related Tasks Workspace ${suffix}`)
+      workspaceId = workspace.id
+      const project = await createProjectByApi(page, workspace.id, `Related Tasks ${suffix}`)
+      projectId = project.id
+      const ownerIssue = await createIssueByApi(page, project.id, `Owner only ${suffix}`)
+
+      await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
+      await page.getByTestId('collaboration-project-settings-project').click()
+      await page.getByTestId('cloud-project-manage-visibility-public-restricted').click()
+      await expect
+        .poll(async () => {
+          const updated = await webApi<CloudProject & { visibility: string }>(
+            page,
+            `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
+          )
+          return updated.visibility
+        })
+        .toBe('public_restricted')
+
+      const regular = await openRegularUserProject(browser, page, workspace.id, project.id)
+      try {
+        const discovered = await webApi<{ items: Array<{ id: string }> }>(
+          regular.page,
+          '/api/v1/cloud-projects'
+        )
+        expect(discovered.items.some(candidate => candidate.id === project.id)).toBe(true)
+
+        await expect(regular.page.getByTestId('collaboration-board')).toBeVisible()
+        await expect(regular.page.getByTestId(`collaboration-issue-${ownerIssue.id}`)).toHaveCount(
+          0
+        )
+        expect(
+          await webApiStatus(
+            regular.page,
+            `/api/v1/loop-items/${encodeURIComponent(ownerIssue.id)}`
+          )
+        ).toBe(404)
+
+        const regularIssue = await createIssueByApi(
+          regular.page,
+          project.id,
+          `Regular user issue ${suffix}`
+        )
+        await regular.page.reload()
+        await expect(
+          regular.page.getByTestId(`collaboration-issue-${regularIssue.id}`)
+        ).toBeVisible()
+        await expect(regular.page.getByTestId(`collaboration-issue-${ownerIssue.id}`)).toHaveCount(
+          0
+        )
+
+        await page.goto(collaborationProjectPath(workspace.id, project.id))
+        await expect(page.getByTestId(`collaboration-issue-${ownerIssue.id}`)).toBeVisible()
+        await expect(page.getByTestId(`collaboration-issue-${regularIssue.id}`)).toBeVisible()
+      } finally {
+        await regular.context.close()
       }
     } finally {
       if (projectId) await archiveProject(page, projectId)

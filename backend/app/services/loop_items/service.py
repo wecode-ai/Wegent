@@ -85,6 +85,7 @@ from app.services.loop_item_unread import (
     is_unread,
     mark_loop_item_read,
 )
+from app.services.loop_items.access import can_view_item, related_item_filter
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
@@ -172,18 +173,19 @@ class LoopItemService:
             )
         return access
 
-    @staticmethod
     def _item_permissions(
-        access: CloudProjectAccess, item: LoopItem, user_id: int
+        self,
+        db: Session,
+        access: CloudProjectAccess,
+        item: LoopItem,
+        user_id: int,
     ) -> tuple[bool, bool]:
         permissions = issue_permissions(
             access,
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
-        can_view_detail = not access.is_public_visitor or (
-            item.created_by_user_id == user_id
-        )
+        can_view_detail = can_view_item(db, access, item, user_id)
         return can_view_detail, permissions.edit_content
 
     def response_values(
@@ -196,7 +198,7 @@ class LoopItemService:
         access = access or require_cloud_project_role(
             db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
         )
-        can_view_detail, can_edit = self._item_permissions(access, item, user_id)
+        can_view_detail, can_edit = self._item_permissions(db, access, item, user_id)
         permissions = issue_permissions(
             access,
             issue_creator_user_id=item.created_by_user_id,
@@ -391,7 +393,7 @@ class LoopItemService:
         access = require_cloud_project_role(
             db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
         )
-        can_view_detail, _ = self._item_permissions(access, item, user_id)
+        can_view_detail, _ = self._item_permissions(db, access, item, user_id)
         if not can_view_detail:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         if action is not None:
@@ -771,13 +773,15 @@ class LoopItemService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> list[LoopItem]:
-        self._require_internal_task_project(
+        access = self._require_internal_task_project(
             db, cloud_project_id, user_id, allow_public_visitor=True
         )
         query = db.query(LoopItem).filter(
             LoopItem.cloud_project_id == cloud_project_id,
             loop_datetime_is_unset(LoopItem.deleted_at),
         )
+        if access.restricts_unrelated_issues:
+            query = query.filter(related_item_filter(user_id))
         if assignee_type == "user" and assignee_id:
             try:
                 assignee_user_id = int(assignee_id)
@@ -2620,36 +2624,21 @@ class LoopItemService:
             .filter(
                 CloudProject.status == "active",
                 (CloudProject.created_by_user_id == user_id)
-                | CloudProject.id.in_(memberships),
+                | CloudProject.id.in_(memberships)
+                | (
+                    CloudProject.metadata_json["visibility"].as_string()
+                    == "public_restricted"
+                ),
             )
             .all()
         )
         if not projects:
             return []
         project_by_id = {project.id: project for project in projects}
-        active_task_item_ids = select(LoopItemTaskBinding.loop_item_id).where(
-            LoopItemTaskBinding.task_user_id == user_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        collaborator_item_ids = select(LoopItemCollaborator.loop_item_id).where(
-            LoopItemCollaborator.user_id == user_id
-        )
-        my_agent_ids = select(ProjectChatAgent.id).where(
-            ProjectChatAgent.created_by_user_id == user_id,
-            ProjectChatAgent.status == "active",
-            loop_datetime_is_unset(ProjectChatAgent.deleted_at),
-        )
-        my_work_membership = or_(
-            LoopItem.created_by_user_id == user_id,
-            LoopItem.assignee_user_id == user_id,
-            LoopItem.id.in_(active_task_item_ids),
-            LoopItem.id.in_(collaborator_item_ids),
-            LoopItem.assignee_agent_id.in_(my_agent_ids),
-        )
         my_work_filters = [
             LoopItem.cloud_project_id.in_(project_by_id),
             loop_datetime_is_unset(LoopItem.deleted_at),
-            my_work_membership,
+            related_item_filter(user_id),
         ]
         items = (
             db.query(LoopItem)

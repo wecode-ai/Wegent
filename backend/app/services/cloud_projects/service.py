@@ -353,6 +353,14 @@ class CloudProjectService:
                 "visibility" in values.model_fields_set
                 and values.visibility is not None
             ):
+                if (
+                    values.visibility == "public_restricted"
+                    and project.task_provider != "local"
+                ):
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Related-task visibility is only available for built-in tasks",
+                    )
                 metadata["visibility"] = values.visibility
                 updates.pop("visibility", None)
             updates["metadata_json"] = metadata
