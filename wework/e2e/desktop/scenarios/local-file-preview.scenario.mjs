@@ -187,8 +187,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       await waitForMissing(control, '[data-testid="workspace-file-directory-menu"]', uiTimeoutMs)
       const fileTabsSelector = '[role="tab"][data-testid^="right-workspace-file-tab"]'
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
-        text: 'auth.ts',
+      await control.command('waitFor', `${fileTabsSelector}[title$="auth.ts"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', `${fileTabsSelector}[aria-selected="true"]`, {
@@ -207,7 +206,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       assert.equal(
         Number(await control.command('getElementCount', fileTabsSelector)),
-        2,
+        3,
         'Selecting a dropdown file must retain the previous file tab'
       )
       await control.command('click', '[data-testid="workspace-file-name-button"]')
@@ -218,7 +217,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       assert.equal(
         Number(await control.command('getElementCount', fileTabsSelector)),
-        3,
+        4,
         'Selecting another file must open another file tab'
       )
       await control.command('click', rootBreadcrumb)
@@ -229,7 +228,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       })
       assert.equal(
         Number(await control.command('getElementCount', fileTabsSelector)),
-        3,
+        4,
         'Selecting an already-open file must reuse its existing tab'
       )
       if (
@@ -264,7 +263,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         `${fileTabsSelector}[title$="second.ts"] [data-testid$="-close-button"]`
       )
       await waitForMissing(control, `${fileTabsSelector}[title$="second.ts"]`, uiTimeoutMs)
-      assert.equal(Number(await control.command('getElementCount', fileTabsSelector)), 2)
+      assert.equal(Number(await control.command('getElementCount', fileTabsSelector)), 3)
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
       await control.command('clickWhenEnabled', '[data-testid="right-workspace-review-option"]', {
         timeoutMs: uiTimeoutMs,
