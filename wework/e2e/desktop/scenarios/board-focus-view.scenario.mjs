@@ -204,10 +204,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const cardSelector = `${ACTIVE_BOARD} [data-testid="${itemTestId}"]`
       const cardSurfaceSelector = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-drop-${itemId}"]`
 
-      await control.command('waitFor', progressTrigger, {
-        visible: false,
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_BOARD} [data-testid="cloud-todo-card-${itemId}"][aria-haspopup="dialog"]`,
+        {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
 
       await control.command('click', cardSelector)
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
