@@ -45,6 +45,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { CollaborationContextSidebar } from '@/features/collaboration/CollaborationContextSidebar'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webProjectAgentConfigurationHost } from '@/features/collaboration/ProjectAgentConfigurationHost'
+import { useUser } from '@/features/common/UserContext'
 import {
   collaborationLocationPath,
   collaborationRootViewForPath,
@@ -123,6 +124,7 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
 
 export function CollaborationPage() {
   const theme = useDocumentTheme()
+  const { user } = useUser()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -296,6 +298,14 @@ export function CollaborationPage() {
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
+      ...(user
+        ? {
+            currentUser: {
+              id: user.id,
+              name: user.user_name,
+            },
+          }
+        : {}),
       capabilities: {
         automation: true,
         dingtalkAitable: false,
@@ -353,6 +363,7 @@ export function CollaborationPage() {
       projectView,
       rootView,
       router,
+      user,
       workspaceId,
       workspaceOwnerOptions,
     ]

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
@@ -52,6 +52,15 @@ jest.mock(
 
 jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
   UserFloatingMenu: () => <div data-testid="user-floating-menu" />,
+}))
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: {
+      id: 7,
+      user_name: 'current-user',
+    },
+  }),
 }))
 
 jest.mock('@/apis/groups', () => ({
@@ -113,6 +122,10 @@ describe('CollaborationPage platform routing', () => {
       workspaceLocations: ['cloud'],
       sidebarPresentation: 'context',
     })
+    expect(capturedHost?.currentUser).toEqual({
+      id: 7,
+      name: 'current-user',
+    })
     expect(capturedHost?.projectAgentConfiguration).toEqual(
       expect.objectContaining({
         renderDialog: expect.any(Function),
@@ -138,6 +151,18 @@ describe('CollaborationPage platform routing', () => {
     capturedHost?.manageResource?.('environments', 'device/21')
 
     expect(mockPush).toHaveBeenCalledWith('/devices?deviceId=device%2F21')
+  })
+
+  it.each([
+    ['agents', '/collaboration/agents'],
+    ['teams', '/collaboration/teams'],
+    ['devices', '/collaboration/devices'],
+  ])('opens the cloud %s resource center from the Web collaboration sidebar', (kind, path) => {
+    render(<CollaborationPage />)
+
+    fireEvent.click(screen.getByTestId(`collaboration-nav-${kind}`))
+
+    expect(mockPush).toHaveBeenCalledWith(path)
   })
 
   it('opens device registration from execution environment management', () => {
