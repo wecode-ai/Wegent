@@ -125,7 +125,7 @@ function deferred<T>() {
 
 function project(
   id: string,
-  visibility: "private" | "public",
+  visibility: "private" | "public_restricted" | "public",
   version = 1,
 ): ProjectManageProject {
   return {
@@ -399,5 +399,50 @@ describe("ProjectManageView project scope", () => {
       findByTestId(tree, "cloud-project-manage-visibility-public").props
         .className,
     ).not.toContain("bg-background");
+  });
+
+  it("offers related-task visibility for built-in projects", async () => {
+    const api = createApi();
+    const host = createHost();
+    vi.mocked(api.updateProject).mockResolvedValue(
+      project("project-a", "public_restricted", 2),
+    );
+
+    let tree = renderView(api, host, project("project-a", "private"), vi.fn());
+    findByTestId(
+      tree,
+      "cloud-project-manage-visibility-public-restricted",
+    ).props.onClick();
+    await flushPromises();
+    tree = renderView(
+      api,
+      host,
+      project("project-a", "public_restricted", 2),
+      vi.fn(),
+    );
+
+    expect(api.updateProject).toHaveBeenCalledWith("project-a", {
+      version: 1,
+      visibility: "public_restricted",
+    });
+    expect(
+      findByTestId(tree, "cloud-project-manage-visibility-public-restricted")
+        .props.className,
+    ).toContain("bg-background");
+  });
+
+  it("does not offer related-task visibility for external projects", () => {
+    const api = createApi();
+    const host = createHost();
+    const externalProject = {
+      ...project("project-a", "private"),
+      task_provider: "github",
+    };
+
+    const tree = renderView(api, host, externalProject, vi.fn());
+
+    expect(
+      findByTestId(tree, "cloud-project-manage-visibility-public-restricted"),
+    ).toBeNull();
   });
 });

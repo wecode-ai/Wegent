@@ -3399,6 +3399,99 @@ def test_reply_target_missing_raises_404(test_db: Session, test_user: User) -> N
     assert exc.value.status_code == 404
 
 
+def test_related_task_visitor_can_use_visible_task_chat_only(
+    test_db: Session, test_user: User
+) -> None:
+    visitor = User(
+        user_name=f"related-chat-{uuid.uuid4().hex[:8]}",
+        password_hash="unused",
+        email=f"related-chat-{uuid.uuid4().hex[:8]}@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    test_db.refresh(visitor)
+    project = create_project(test_db, test_user)
+    project.metadata_json = {"visibility": "public_restricted"}
+    visible_task = LoopItem(
+        id=f"CHAT-RELATED-{uuid.uuid4().hex[:8]}",
+        cloud_project_id=project.id,
+        title="Visible task",
+        description="",
+        status="open",
+        assignee_user_id=visitor.id,
+        created_by_user_id=test_user.id,
+    )
+    hidden_task = LoopItem(
+        id=f"CHAT-HIDDEN-{uuid.uuid4().hex[:8]}",
+        cloud_project_id=project.id,
+        title="Hidden task",
+        description="",
+        status="open",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add_all([visible_task, hidden_task])
+    test_db.commit()
+
+    owner_message = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=visible_task.id,
+            content="Owner context",
+        ),
+    )
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=visitor.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=visible_task.id),
+    )
+    visitor_message = project_chat_service.send(
+        test_db,
+        user_id=visitor.id,
+        user_name=visitor.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=visible_task.id,
+            content="Visitor reply",
+        ),
+    )
+
+    assert [message.message_id for message in messages] == [
+        owner_message.message.message_id
+    ]
+    assert visitor_message.message.content == "Visitor reply"
+    with pytest.raises(HTTPException) as privileged:
+        project_chat_service.start_agent_response(
+            test_db,
+            user_id=visitor.id,
+            request=ProjectChatAgentStart(
+                projectId=project.id,
+                taskId=visible_task.id,
+                agentId="12",
+                runtimeDeviceId="related-visitor-device",
+                runtimeTaskId="related-visitor-runtime-task",
+            ),
+        )
+    assert privileged.value.status_code == 403
+    with pytest.raises(HTTPException) as hidden:
+        project_chat_service.subscribe(
+            test_db,
+            user_id=visitor.id,
+            request=ProjectChatSubscribe(
+                projectId=project.id,
+                taskId=hidden_task.id,
+            ),
+        )
+    assert hidden.value.status_code == 404
+
+
 def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     test_db: Session, test_user: User
 ) -> None:
