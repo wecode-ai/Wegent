@@ -720,8 +720,8 @@ class TestDeleteDocument:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
         )
-        # One client reads the collection snapshot, one deletes the parent nodes.
-        assert mock_client.close.call_count == 2
+        # Every client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
@@ -789,7 +789,8 @@ class TestDeleteKnowledge:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1"',
         )
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestDropKnowledgeIndex:
@@ -831,7 +832,8 @@ class TestDropKnowledgeIndex:
         mock_client.drop_collection.assert_any_call(
             collection_name="test_kb_kb_1__parents"
         )
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestSaveParentNodes:
@@ -874,7 +876,8 @@ class TestSaveParentNodes:
             collection_name="test_kb_kb_1__parents",
             filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
         )
-        assert mock_client.close.call_count == 2
+        # Every client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestGetDocument:
@@ -995,7 +998,8 @@ class TestListDocuments:
         assert result["documents"][0]["chunk_count"] == 1
         assert result["documents"][1]["doc_ref"] == "doc_1"
         assert result["documents"][1]["chunk_count"] == 2
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_list_documents_empty_collection(self, mock_client_class):
@@ -1014,7 +1018,32 @@ class TestListDocuments:
 
         assert result["total"] == 0
         assert result["documents"] == []
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_list_documents_returns_empty_page_when_connection_fails(
+        self, mock_client_class
+    ):
+        """A connection failure is reported as an empty page, not an exception."""
+        mock_client_class.side_effect = Exception("Connection refused")
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.list_documents(knowledge_id="kb_1", page=1, page_size=10)
+
+        assert result == {
+            "documents": [],
+            "total": 0,
+            "page": 1,
+            "page_size": 10,
+            "knowledge_id": "kb_1",
+        }
 
 
 class TestTestConnection:
@@ -1034,7 +1063,8 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is True
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_connection_failure(self, mock_client_class):
@@ -1050,7 +1080,8 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is False
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestGetAllChunks:
@@ -1089,7 +1120,8 @@ class TestGetAllChunks:
         assert len(result) == 2
         assert result[0]["chunk_id"] == 0
         assert result[1]["chunk_id"] == 1
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_collection_not_exists(self, mock_client_class):
@@ -1107,7 +1139,24 @@ class TestGetAllChunks:
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
         assert result == []
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
+
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_all_chunks_returns_empty_list_when_connection_fails(
+        self, mock_client_class
+    ):
+        """A connection failure is reported as no chunks, not an exception."""
+        mock_client_class.side_effect = Exception("Connection refused")
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        assert backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100) == []
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_applies_metadata_condition(self, mock_client_class):
@@ -1147,7 +1196,8 @@ class TestGetAllChunks:
         )
 
         assert [chunk["doc_ref"] for chunk in result] == ["doc_1"]
-        mock_client.close.assert_called_once()
+        # The client shares the process-global Milvus alias; keep it open.
+        mock_client.close.assert_not_called()
 
 
 class TestIndexWithMetadata:
