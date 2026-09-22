@@ -169,6 +169,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Autosaving the edited file displayed an unexpected save error'
       )
       await captureScreenshot(control, 'local-file-preview-02-dark-autosaved.png', 'body')
+      await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
       const rootBreadcrumb = `[data-testid=${JSON.stringify(
         `workspace-file-breadcrumb-${workspacePath.replace(/\\/g, '/')}`
       )}]`
