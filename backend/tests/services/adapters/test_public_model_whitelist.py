@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.adapters.bot_kinds import bot_kinds_service
 from app.services.adapters.public_model import (
     get_public_model_allowed_users,
     is_public_model_allowed_for_user,
@@ -75,7 +76,11 @@ def test_allowed_users_default_to_empty() -> None:
 
 
 def test_allowed_users_membership() -> None:
-    model = _public_model("restricted-model", allowed_users=["alice", " bob ", 7])
+    model = _public_model(
+        "restricted-model",
+        allowed_users=["alice", " bob ", 7],
+        allowed_users_enabled=True,
+    )
 
     assert get_public_model_allowed_users(model.json) == ["alice", "bob"]
     assert is_public_model_allowed_for_user(model.json, "alice") is True
@@ -83,12 +88,24 @@ def test_allowed_users_membership() -> None:
     assert is_public_model_allowed_for_user(model.json, None) is False
 
 
+def test_whitelist_without_switch_is_a_normal_public_model() -> None:
+    model = _public_model("off-switch-model", allowed_users=["alice", "bob"])
+
+    assert is_public_model_allowed_for_user(model.json, "alice") is True
+    assert is_public_model_allowed_for_user(model.json, "carol") is True
+    assert is_public_model_allowed_for_user(model.json, None) is True
+
+
 def test_whitelisted_public_model_is_hidden_from_other_users(
     test_db: Session,
     test_user: User,
 ) -> None:
     open_model = _public_model("open-public-model")
-    restricted_model = _public_model("restricted-public-model", allowed_users=["alice"])
+    restricted_model = _public_model(
+        "restricted-public-model",
+        allowed_users=["alice"],
+        allowed_users_enabled=True,
+    )
     test_db.add_all([open_model, restricted_model])
     test_db.commit()
 
@@ -126,7 +143,9 @@ def test_whitelisted_public_model_is_not_runtime_resolvable_for_other_users(
     test_user: User,
 ) -> None:
     restricted_model = _public_model(
-        "restricted-runtime-model", allowed_users=["alice"]
+        "restricted-runtime-model",
+        allowed_users=["alice"],
+        allowed_users_enabled=True,
     )
     test_db.add(restricted_model)
     test_db.commit()
@@ -157,7 +176,9 @@ def test_whitelisted_public_model_aggregate_resolve_forbidden_for_other_users(
     test_user: User,
 ) -> None:
     restricted_model = _public_model(
-        "restricted-aggregate-model", allowed_users=["alice"]
+        "restricted-aggregate-model",
+        allowed_users=["alice"],
+        allowed_users_enabled=True,
     )
     test_db.add(restricted_model)
     test_db.commit()
@@ -247,7 +268,11 @@ async def test_clearing_whitelist_reopens_model_to_everyone(
     from app.api.endpoints.admin.public_models import update_public_model
     from app.schemas.admin import PublicModelUpdate
 
-    restricted_model = _public_model("cleared-whitelist-model", allowed_users=["alice"])
+    restricted_model = _public_model(
+        "cleared-whitelist-model",
+        allowed_users=["alice"],
+        allowed_users_enabled=True,
+    )
     test_db.add(restricted_model)
     test_db.commit()
     test_db.refresh(restricted_model)
@@ -256,7 +281,7 @@ async def test_clearing_whitelist_reopens_model_to_everyone(
     cleared_json["spec"] = {
         key: value
         for key, value in restricted_model.json["spec"].items()
-        if key != "allowedUsers"
+        if key not in ("allowedUsers", "allowedUsersEnabled")
     }
 
     await update_public_model(
@@ -269,6 +294,7 @@ async def test_clearing_whitelist_reopens_model_to_everyone(
     test_db.expire_all()
     reloaded = test_db.get(Kind, restricted_model.id)
     assert "allowedUsers" not in reloaded.json["spec"]
+    assert "allowedUsersEnabled" not in reloaded.json["spec"]
 
     resolved_model, _ = _find_model_with_namespace(
         test_db,
@@ -276,3 +302,35 @@ async def test_clearing_whitelist_reopens_model_to_everyone(
         test_user.id,
     )
     assert resolved_model is not None
+
+
+def test_bot_lookup_treats_restricted_public_model_as_unselected(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    restricted_model = _public_model(
+        "bot-restricted-model",
+        allowed_users=["alice"],
+        allowed_users_enabled=True,
+    )
+    test_db.add(restricted_model)
+    test_db.commit()
+
+    resolved = bot_kinds_service._get_model_by_name_and_type(
+        test_db,
+        "bot-restricted-model",
+        "default",
+        test_user.id,
+        model_type="public",
+    )
+    assert resolved is None
+
+    alice = _make_user(test_db, "alice")
+    resolved_for_alice = bot_kinds_service._get_model_by_name_and_type(
+        test_db,
+        "bot-restricted-model",
+        "default",
+        alice.id,
+        model_type="public",
+    )
+    assert resolved_for_alice is not None

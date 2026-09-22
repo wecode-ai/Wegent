@@ -551,7 +551,7 @@
       "is_wework_available": "在wework中可用",
       "allowed_users": "用户白名单",
       "allowed_users_placeholder": "输入用户名，多个用逗号分隔",
-      "allowed_users_hint": "多个用户名用逗号或空格分隔；未开启白名单开关时，非空名单同样生效",
+      "allowed_users_hint": "多个用户名用逗号或空格分隔；仅在开启白名单开关时生效",
       "allowed_users_enabled": "仅白名单用户可用",
       "allowed_users_enabled_hint": "开启后仅白名单中的用户可见并使用该模型；名单为空时所有用户均不可用"
     },

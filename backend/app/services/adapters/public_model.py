@@ -47,17 +47,16 @@ def get_public_model_allowed_users(
 def is_public_model_whitelist_enabled(json_data: Optional[Dict[str, Any]]) -> bool:
     """Return whether whitelist-only mode is active for a public model.
 
-    Active when ``spec.allowedUsersEnabled`` is True, or when a non-empty
-    ``spec.allowedUsers`` list exists (backward compatible).
+    Active only when ``spec.allowedUsersEnabled`` is True. A non-empty
+    ``spec.allowedUsers`` list without the switch is preserved for later use
+    but does not restrict access.
     """
     if not isinstance(json_data, dict):
         return False
     spec = json_data.get("spec")
     if not isinstance(spec, dict):
         return False
-    if spec.get("allowedUsersEnabled") is True:
-        return True
-    return bool(get_public_model_allowed_users(json_data))
+    return spec.get("allowedUsersEnabled") is True
 
 
 def is_public_model_allowed_for_user(
@@ -73,6 +72,16 @@ def is_public_model_allowed_for_user(
         return True
     allowed_users = get_public_model_allowed_users(json_data)
     return bool(user_name) and user_name in allowed_users
+
+
+def is_public_model_allowed_for_user_id(
+    db: Session, json_data: Optional[Dict[str, Any]], user_id: Optional[int]
+) -> bool:
+    """Return whether the given user id may see and use the public model."""
+    if user_id is None:
+        return is_public_model_allowed_for_user(json_data, None)
+    user = db.query(User).filter(User.id == user_id).first()
+    return is_public_model_allowed_for_user(json_data, user.user_name if user else None)
 
 
 def with_public_model_visibility(

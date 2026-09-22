@@ -26,6 +26,7 @@ from app.schemas.kind import (
     SkillRefMeta,
     Team,
 )
+from app.services.adapters.public_model import is_public_model_allowed_for_user_id
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -311,6 +312,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
 
             if public_model:
+                if not is_public_model_allowed_for_user_id(
+                    db, public_model.json, user_id
+                ):
+                    logger.info(
+                        "[DEBUG] _get_model_by_name_and_type: public model %s "
+                        "restricted, treating as unselected",
+                        model_name,
+                    )
+                    return None
                 logger.info(
                     f"[DEBUG] _get_model_by_name_and_type: Found public model {model_name}"
                 )
@@ -351,6 +361,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
 
             if public_model:
+                if not is_public_model_allowed_for_user_id(
+                    db, public_model.json, user_id
+                ):
+                    logger.info(
+                        "[DEBUG] _get_model_by_name_and_type: public model %s "
+                        "restricted, treating as unselected (auto-detect)",
+                        model_name,
+                    )
+                    return None
                 logger.info(
                     f"[DEBUG] _get_model_by_name_and_type: Found public model {model_name} (auto-detect)"
                 )
@@ -1708,7 +1727,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
 
                 for pm in public_models:
-                    model_map[(pm.name, pm.namespace)] = pm
+                    if is_public_model_allowed_for_user_id(db, pm.json, user_id):
+                        model_map[(pm.name, pm.namespace)] = pm
 
         return bot_crds, ghost_map, shell_map, model_map
 

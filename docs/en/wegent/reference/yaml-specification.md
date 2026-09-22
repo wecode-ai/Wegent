@@ -210,8 +210,8 @@ spec:
 | `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
 | `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
 | `spec.isVisible`       | boolean | No      | Whether a public model appears in regular users' model selectors. Defaults to `true`; `false` preserves existing references and runtime resolution. |
-| `spec.allowedUsers`    | array   | No      | User-name whitelist of a public model; when non-empty, only listed users can see and use the model. Omit or leave empty to allow everyone. |
-| `spec.allowedUsersEnabled` | boolean | No | Explicit switch for whitelist-only mode; when `true`, access is governed strictly by `allowedUsers`, and an empty list denies everyone. |
+| `spec.allowedUsers`    | array   | No      | User-name whitelist of a public model; only enforced when `allowedUsersEnabled` is `true`. When the switch is off, the list is retained but does not restrict access. |
+| `spec.allowedUsersEnabled` | boolean | No | Explicit switch for whitelist-only mode; when `true`, access is governed strictly by `allowedUsers`, and an empty list denies everyone. When `false`/absent, the model is a normal public model and `allowedUsers` is ignored. |
 | `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
 | `spec.modelCapabilities` | object | No | Multimodal understanding capabilities declared by an LLM chat model |

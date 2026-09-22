@@ -267,16 +267,18 @@ const PublicModelList: React.FC = () => {
     }
     spec.isVisible = formData.is_visible
 
-    const allowedUsers = parseAllowedUsersInput(formData.allowed_users)
-    if (allowedUsers.length > 0) {
-      spec.allowedUsers = allowedUsers
-    } else {
-      delete spec.allowedUsers
-    }
     if (formData.allowed_users_enabled) {
       spec.allowedUsersEnabled = true
+      const allowedUsers = parseAllowedUsersInput(formData.allowed_users)
+      if (allowedUsers.length > 0) {
+        spec.allowedUsers = allowedUsers
+      } else {
+        delete spec.allowedUsers
+      }
     } else {
       delete spec.allowedUsersEnabled
+      // Keep spec.allowedUsers as-is so the list is retained (but not enforced)
+      // when the switch is off.
     }
 
     nextConfig.spec = spec
@@ -726,6 +728,7 @@ const PublicModelList: React.FC = () => {
                 value={formData.allowed_users}
                 onChange={e => handleAllowedUsersChange(e.target.value)}
                 placeholder={t('admin:public_models.form.allowed_users_placeholder')}
+                disabled={!formData.allowed_users_enabled}
               />
               <p className="text-xs text-text-muted">
                 {t('admin:public_models.form.allowed_users_hint')}
@@ -868,6 +871,7 @@ const PublicModelList: React.FC = () => {
                 value={formData.allowed_users}
                 onChange={e => handleAllowedUsersChange(e.target.value)}
                 placeholder={t('admin:public_models.form.allowed_users_placeholder')}
+                disabled={!formData.allowed_users_enabled}
               />
               <p className="text-xs text-text-muted">
                 {t('admin:public_models.form.allowed_users_hint')}
