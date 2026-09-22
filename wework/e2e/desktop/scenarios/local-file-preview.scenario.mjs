@@ -54,10 +54,15 @@ async function clickTreeItem(control, name, timeoutMs, rootSelector = '') {
 async function showFileTree(control) {
   if (
     Number(
-      await control.command('getElementCount', '[data-testid="workspace-file-tree-pierre"]')
+      await control.command('getElementCount', '[data-testid="workspace-file-tree-pierre"]', {
+        visible: true,
+      })
     ) === 0
   ) {
     await control.command('click', '[data-testid="workspace-file-toggle-tree-button"]')
+    await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]', {
+      visible: true,
+    })
   }
 }
 
