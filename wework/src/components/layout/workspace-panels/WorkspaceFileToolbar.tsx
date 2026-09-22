@@ -367,7 +367,7 @@ export function WorkspaceFileToolbar({
                 type="button"
                 data-testid="workspace-file-open-file-button"
                 disabled={opening || openers === null}
-                onClick={() => void open(path, isDirectory ? undefined : activeOpener?.id)}
+                onClick={() => void open(path, activeOpener?.id)}
                 className="flex h-7 items-center gap-1.5 rounded-l-lg px-2 text-sm text-text-primary hover:bg-muted disabled:opacity-60"
               >
                 {opening || openers === null ? (

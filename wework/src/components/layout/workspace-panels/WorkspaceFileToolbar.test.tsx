@@ -182,6 +182,21 @@ test('right click exposes folder actions without file-only commands', async () =
   )
 })
 
+test('the toolbar open button opens folders with the selected editor', async () => {
+  setupPath(directory.path, true)
+  await waitFor(() => expect(mocks.applications).toHaveBeenCalled())
+
+  fireEvent.click(screen.getByTestId('workspace-file-open-file-button'))
+
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('workspace.openFile', {
+      path: directory.path,
+      opener: 'vscode',
+    })
+  )
+  expect(mocks.invoke).not.toHaveBeenCalledWith('shell.openPath', expect.anything())
+})
+
 test('right click on a breadcrumb folder opens the folder context menu', async () => {
   setupPath('/fixture/repo/src/a.ts')
   await waitFor(() => expect(mocks.applications).toHaveBeenCalled())
