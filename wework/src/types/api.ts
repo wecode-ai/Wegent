@@ -74,6 +74,7 @@ export type {
   RuntimeProjectWork,
   RuntimeWorkListResponse,
   RuntimeGoalExecutionStatus,
+  RuntimeTaskInteractionStatus,
   RuntimeGoalCreateInput,
   RuntimeSendRequest,
   RuntimeSendResponse,

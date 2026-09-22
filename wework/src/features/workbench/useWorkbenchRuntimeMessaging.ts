@@ -451,6 +451,9 @@ export function useWorkbenchRuntimeMessaging({
       if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
 
       let sendRequested = false
+      const isRequestUserInputResponse = Boolean(
+        request.requestUserInputResponse ?? request.request_user_input_response
+      )
       const optimisticUserMessage = options?.optimisticUserMessage
       const outboundRequestWithClientId = optimisticUserMessage
         ? {
@@ -466,7 +469,7 @@ export function useWorkbenchRuntimeMessaging({
       }
       try {
         const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
-        if (!options?.silentBusyRetry) {
+        if (!options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
@@ -474,10 +477,12 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
-        if (options?.silentBusyRetry) {
+        if (options?.silentBusyRetry && !isRequestUserInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
-        if (response.status === 'queued') {
+        if (isRequestUserInputResponse) {
+          lifecycleStore.userInputResponded(outboundRequest.address)
+        } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)
           options?.onQueued?.(response)
         } else {
