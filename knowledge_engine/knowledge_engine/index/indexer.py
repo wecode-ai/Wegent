@@ -302,6 +302,13 @@ class DocumentIndexer:
                 parent_nodes=parent_nodes,
                 **kwargs,
             )
+        else:
+            # The document no longer stores parents, so its old ones must go.
+            self.storage_backend.delete_parent_nodes(
+                knowledge_id=chunk_metadata.knowledge_id,
+                doc_ref=chunk_metadata.doc_ref,
+                **kwargs,
+            )
 
         result.update(
             {

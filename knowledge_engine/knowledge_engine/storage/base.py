@@ -157,6 +157,30 @@ class BaseStorageBackend(ABC):
             prepared_nodes.append(node.model_copy(update={"text": embedding_text}))
         return prepared_nodes
 
+    def replace_stale_chunks(
+        self,
+        vector_store,
+        chunk_metadata: ChunkMetadata,
+        keep_node_ids: set,
+    ) -> int:
+        """Drop chunks of a document that the accepted write did not rewrite.
+
+        Indexing a document replaces its previous chunks. This runs only after
+        the write succeeded, so a rejected write never loses the old index.
+        """
+        filters = self._build_doc_ref_filters(
+            chunk_metadata.knowledge_id,
+            chunk_metadata.doc_ref,
+        )
+        stale_ids = [
+            node.node_id
+            for node in vector_store.get_nodes(filters=filters)
+            if node.node_id not in keep_node_ids
+        ]
+        if stale_ids:
+            vector_store.delete_nodes(node_ids=stale_ids)
+        return len(stale_ids)
+
     def _validate_prefix(self, mode: str) -> str:
         """
         Validate and return prefix for index naming.

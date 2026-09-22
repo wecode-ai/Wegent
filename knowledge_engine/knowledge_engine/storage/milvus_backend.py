@@ -419,15 +419,6 @@ class MilvusBackend(BaseStorageBackend):
         # Create vector store with the resolved dimension
         vector_store = self.create_vector_store(collection_name, dim=embed_dim)
 
-        # Indexing a document replaces the chunks its previous index left behind.
-        # This runs after the evidence above, so a rejected write keeps them.
-        vector_store.delete_nodes(
-            filters=self._build_doc_ref_filters(
-                chunk_metadata.knowledge_id,
-                chunk_metadata.doc_ref,
-            )
-        )
-
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
@@ -436,6 +427,13 @@ class MilvusBackend(BaseStorageBackend):
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
+        )
+
+        # Only an accepted write may replace the document's previous chunks.
+        self.replace_stale_chunks(
+            vector_store,
+            chunk_metadata,
+            keep_node_ids={node.node_id for node in nodes_for_embedding},
         )
 
         return {

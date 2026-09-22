@@ -879,6 +879,43 @@ def test_document_indexer_writes_chunks_before_parent_nodes() -> None:
     )
 
 
+def test_document_indexer_clears_parent_nodes_when_the_split_has_none() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.return_value = {"indexed_count": 1}
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config={"chunk_strategy": "flat"},
+        file_extension=".md",
+    )
+    ingestion_result = SimpleNamespace(
+        parent_nodes=None,
+        index_nodes=[TextNode(text="child-a", metadata={})],
+        parser_subtype="markdown_sentence",
+    )
+
+    with patch(
+        "knowledge_engine.index.indexer.build_ingestion_result",
+        return_value=ingestion_result,
+    ):
+        indexer._index_documents(
+            documents=[Document(text="Flat content.")],
+            file_extension=".md",
+            chunk_metadata=ChunkMetadata(
+                knowledge_id="1",
+                doc_ref="doc_1",
+                source_file="notes.md",
+                created_at="2026-04-12T00:00:00+00:00",
+            ),
+        )
+
+    storage_backend.delete_parent_nodes.assert_called_once_with(
+        knowledge_id="1",
+        doc_ref="doc_1",
+    )
+    storage_backend.save_parent_nodes.assert_not_called()
+
+
 def test_document_indexer_leaves_parent_nodes_untouched_when_indexing_fails() -> None:
     storage_backend = MagicMock()
     storage_backend.index_with_metadata.side_effect = ValueError("dimension mismatch")
