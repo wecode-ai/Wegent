@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { cp } from 'node:fs/promises'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const INTERNAL_CORE_PLUGIN_MANIFEST = resolve(
@@ -72,4 +73,18 @@ export function corePluginSource(weworkRoot, directory) {
   return internal
     ? join(weworkRoot, 'wecode', 'dsh', internal.source)
     : join(weworkRoot, 'dsh', directory)
+}
+
+export async function copyCorePlugin(weworkRoot, directory, destination, options = {}) {
+  const source = corePluginSource(weworkRoot, directory)
+  const excludedRoots = [join(source, 'node_modules')]
+  if (options.excludeAppWeb && directory === 'app-wework') {
+    excludedRoots.push(join(source, 'web'))
+  }
+  await cp(source, destination, {
+    recursive: true,
+    filter: path =>
+      !path.endsWith('.test.mjs') &&
+      !excludedRoots.some(root => path === root || path.startsWith(`${root}${sep}`)),
+  })
 }

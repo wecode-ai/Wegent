@@ -17,7 +17,7 @@ import {
   CORE_PLUGIN_DIRECTORIES,
   INTERNAL_CORE_PLUGIN_MANIFEST,
   INTERNAL_CORE_PLUGINS,
-  corePluginSource,
+  copyCorePlugin,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
 import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plugin-resources.mjs'
@@ -90,10 +90,7 @@ await cp(join(sharedResourcesRoot, 'bundled-hooks'), join(resourcesRoot, 'bundle
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {
-  await cp(corePluginSource(weworkRoot, directory), join(corePluginsRoot, corePluginTarget(directory)), {
-    recursive: true,
-    filter: source => !source.endsWith('.test.mjs'),
-  })
+  await copyCorePlugin(weworkRoot, directory, join(corePluginsRoot, corePluginTarget(directory)))
 }
 if (INTERNAL_CORE_PLUGINS.length > 0) {
   await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))

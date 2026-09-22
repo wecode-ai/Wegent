@@ -222,6 +222,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))"
     )
+    expect(source).toContain('await copyCorePlugin(')
     expect(source).not.toContain(
       "cp(join(sharedResourcesRoot, 'bundled-plugins'), join(resourcesRoot, 'bundled-plugins')"
     )
