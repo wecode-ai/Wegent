@@ -250,8 +250,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     ) -> None:
         """Enforce the public model user whitelist (allowedUsers).
 
-        Raises HTTP 403 when the model declares a non-empty whitelist and the
-        user's user_name is not listed.
+        Raises HTTP 403 when whitelist-only mode is active (a non-empty
+        allowedUsers list, or allowedUsersEnabled=true) and the user's
+        user_name is not listed.
         """
         user = db.query(User).filter(User.id == user_id).first()
         if not is_public_model_allowed_for_user(

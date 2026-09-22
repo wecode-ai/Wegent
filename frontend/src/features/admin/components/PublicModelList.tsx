@@ -580,8 +580,11 @@ const PublicModelList: React.FC = () => {
                         {model.is_advanced && (
                           <Tag variant="warning">{t('admin:public_models.status.advanced')}</Tag>
                         )}
-                        {getPublicModelAllowedUsersFromConfig(JSON.stringify(model.json)).length >
-                          0 && (
+                        {(getPublicModelAllowedUsersFromConfig(JSON.stringify(model.json)).length >
+                          0 ||
+                          getPublicModelAllowedUsersEnabledFromConfig(
+                            JSON.stringify(model.json)
+                          )) && (
                           <Tag variant="warning">{t('admin:public_models.status.whitelisted')}</Tag>
                         )}
                       </div>
