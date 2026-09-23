@@ -45,6 +45,7 @@ import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import {
+  WorkspaceTabActivityContext,
   WorkspaceTabsContext,
   type WorkspaceTabsContextValue,
 } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -258,6 +259,60 @@ function createRuntimeWork(
     totalTasks: 3,
     ...overrides,
   }
+}
+
+function createRemoteProjectRuntimeWork(name: string): RuntimeWorkListResponse {
+  return createRuntimeWork({
+    projects: [
+      {
+        project: {
+          id: 7,
+          key: '/srv/project-alpha',
+          sidebarStateKey: 'remote-project-id',
+          name,
+          kind: 'remote',
+          source: 'remote_project',
+          stateDeviceId: 'local-device',
+        },
+        deviceWorkspaces: [
+          {
+            id: 22,
+            projectId: 7,
+            deviceId: 'remote-device',
+            remoteHostId: 'remote-device',
+            workspacePath: '/srv/project-alpha',
+            workspaceSource: 'remote',
+            mapped: true,
+            available: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      },
+    ],
+    totalTasks: 0,
+  })
+}
+
+function createRemoteProjectSyncServices(
+  runtimeWorkApi: ReturnType<typeof createRuntimeWorkApiMock>,
+  readWork: () => RuntimeWorkListResponse
+): WorkbenchServices {
+  const devices = [
+    createDevice({ device_id: 'local-device', device_type: 'local' }),
+    createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+  ]
+  return createWorkbenchServices({
+    deviceApi: {
+      listDevices: vi.fn().mockResolvedValue(devices),
+    } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+    runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    cloudBackgroundApi: {
+      listTeams: vi.fn().mockResolvedValue([]),
+      listDevices: vi.fn().mockResolvedValue([devices[1]]),
+      listRuntimeWork: vi.fn().mockImplementation(async () => readWork()),
+    },
+  })
 }
 
 function createTurnFileChanges(): TurnFileChangesSummary {
@@ -2743,6 +2798,41 @@ describe('WorkbenchProvider runtime tasks', () => {
       return {}
     })
     localExecutorMocks.subscribeLocalExecutorEvents.mockResolvedValue(vi.fn())
+  })
+
+  test('keeps the workbench context value stable across activation-only flags', async () => {
+    const services = createWorkbenchServices()
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    let observedValue: ReturnType<typeof useWorkbench> | null = null
+    function ContextValueProbe() {
+      const value = useWorkbench()
+      useEffect(() => {
+        observedValue = value
+      }, [value])
+      return null
+    }
+    const provider = (publishDebugSnapshots: boolean) => (
+      <WorkbenchProvider
+        user={user}
+        services={services}
+        workspaceTabId="task-tab"
+        debugSnapshotEnabled={false}
+        publishDebugSnapshots={publishDebugSnapshots}
+        consumePluginTrials={false}
+        loadTaskComposerCatalogs={false}
+        syncRemoteProjects={false}
+        syncRuntimeTaskLifecycle={false}
+      >
+        <ContextValueProbe />
+      </WorkbenchProvider>
+    )
+
+    const view = render(provider(false))
+    await waitFor(() => expect(observedValue?.state.isBootstrapping).toBe(false))
+    const initialValue = observedValue
+
+    view.rerender(provider(true))
+    expect(observedValue).toBe(initialValue)
   })
 
   test('bootstraps with local app services in local-first runtime mode', async () => {
@@ -7220,17 +7310,19 @@ describe('WorkbenchProvider runtime tasks', () => {
       updateActiveTab: vi.fn(),
     }
     const view = render(
-      <WorkspaceTabsContext.Provider value={workspaceTabs}>
-        <WorkbenchProvider
-          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
-          services={services}
-          workspaceTabId={taskTab.id}
-        >
-          <WorkbenchProbeSessionProvider>
-            <ProjectSendProbe />
-          </WorkbenchProbeSessionProvider>
-        </WorkbenchProvider>
-      </WorkspaceTabsContext.Provider>
+      <WorkspaceTabActivityContext.Provider value={tabId => workspaceTabs.activeTabId === tabId}>
+        <WorkspaceTabsContext.Provider value={workspaceTabs}>
+          <WorkbenchProvider
+            user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+            services={services}
+            workspaceTabId={taskTab.id}
+          >
+            <WorkbenchProbeSessionProvider>
+              <ProjectSendProbe />
+            </WorkbenchProbeSessionProvider>
+          </WorkbenchProvider>
+        </WorkspaceTabsContext.Provider>
+      </WorkspaceTabActivityContext.Provider>
     )
 
     await userEvent.click(await screen.findByText('select project'))
@@ -7247,17 +7339,19 @@ describe('WorkbenchProvider runtime tasks', () => {
     window.history.pushState({}, '', '/todo')
     window.dispatchEvent(new PopStateEvent('popstate'))
     view.rerender(
-      <WorkspaceTabsContext.Provider value={workspaceTabs}>
-        <WorkbenchProvider
-          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
-          services={services}
-          workspaceTabId={taskTab.id}
-        >
-          <WorkbenchProbeSessionProvider>
-            <ProjectSendProbe />
-          </WorkbenchProbeSessionProvider>
-        </WorkbenchProvider>
-      </WorkspaceTabsContext.Provider>
+      <WorkspaceTabActivityContext.Provider value={tabId => workspaceTabs.activeTabId === tabId}>
+        <WorkspaceTabsContext.Provider value={workspaceTabs}>
+          <WorkbenchProvider
+            user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+            services={services}
+            workspaceTabId={taskTab.id}
+          >
+            <WorkbenchProbeSessionProvider>
+              <ProjectSendProbe />
+            </WorkbenchProbeSessionProvider>
+          </WorkbenchProvider>
+        </WorkspaceTabsContext.Provider>
+      </WorkspaceTabActivityContext.Provider>
     )
 
     await act(async () => {
@@ -10759,6 +10853,254 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalled())
     expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
+  })
+
+  test('keeps completed remote project sync across tab activation and syncs changed data', async () => {
+    let currentWork = createRemoteProjectRuntimeWork('Alpha')
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'local-device', device_type: 'local' }),
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+        listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
+      },
+    })
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const provider = (active: boolean) => (
+      <WorkbenchProvider user={user} services={services} syncRemoteProjects={active}>
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    const view = render(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    view.rerender(provider(false))
+    view.rerender(provider(true))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
+
+    view.rerender(provider(false))
+    currentWork = createRemoteProjectRuntimeWork('Beta')
+    await userEvent.click(screen.getByText('refresh runtime projects'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Beta')
+    )
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
+
+    view.rerender(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith({
+      deviceId: 'local-device',
+      projects: [
+        {
+          id: 'remote-project-id',
+          hostId: 'remote-device',
+          remotePath: '/srv/project-alpha',
+          label: 'Beta',
+        },
+      ],
+    })
+  })
+
+  test('retries a queued remote project sync canceled while the tab is inactive', async () => {
+    const initialSync = deferred<{ accepted: boolean; deviceId: string }>()
+    let currentWork = createRemoteProjectRuntimeWork('Alpha')
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
+      syncRuntimeRemoteProjects: vi
+        .fn()
+        .mockImplementationOnce(() => initialSync.promise)
+        .mockResolvedValue({ accepted: true, deviceId: 'local-device' }),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'local-device', device_type: 'local' }),
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+        listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
+      },
+    })
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const provider = (active: boolean) => (
+      <WorkbenchProvider user={user} services={services} syncRemoteProjects={active}>
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    const view = render(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+
+    currentWork = createRemoteProjectRuntimeWork('Beta')
+    await userEvent.click(screen.getByText('refresh runtime projects'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Beta')
+    )
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
+
+    view.rerender(provider(false))
+    await act(async () => {
+      initialSync.resolve({ accepted: true, deviceId: 'local-device' })
+    })
+    view.rerender(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith({
+      deviceId: 'local-device',
+      projects: [
+        {
+          id: 'remote-project-id',
+          hostId: 'remote-device',
+          remotePath: '/srv/project-alpha',
+          label: 'Beta',
+        },
+      ],
+    })
+  })
+
+  test('does not cache a rejected remote project sync response as completed', async () => {
+    const currentWork = createRemoteProjectRuntimeWork('Alpha')
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(currentWork),
+      syncRuntimeRemoteProjects: vi
+        .fn()
+        .mockResolvedValueOnce({
+          accepted: false,
+          deviceId: 'local-device',
+          error: 'Remote project sync rejected',
+        })
+        .mockResolvedValue({ accepted: true, deviceId: 'local-device' }),
+    })
+    const services = createRemoteProjectSyncServices(runtimeWorkApi, () => currentWork)
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const provider = (active: boolean) => (
+      <WorkbenchProvider user={user} services={services} syncRemoteProjects={active}>
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    const view = render(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    view.rerender(provider(false))
+    view.rerender(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
+  })
+
+  test('retries a failed in-flight sync once after tab reactivation', async () => {
+    const initialSync = deferred<{ accepted: boolean; deviceId: string }>()
+    const currentWork = createRemoteProjectRuntimeWork('Alpha')
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(currentWork),
+      syncRuntimeRemoteProjects: vi
+        .fn()
+        .mockImplementationOnce(() => initialSync.promise)
+        .mockResolvedValue({ accepted: false, deviceId: 'local-device' }),
+    })
+    const services = createRemoteProjectSyncServices(runtimeWorkApi, () => currentWork)
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const provider = (active: boolean) => (
+      <WorkbenchProvider user={user} services={services} syncRemoteProjects={active}>
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    const view = render(provider(true))
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+    view.rerender(provider(false))
+    view.rerender(provider(true))
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      initialSync.reject(new Error('Remote project sync failed'))
+    })
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not let an older failed sync cancel a newer sync of the same signature', async () => {
+    const initialSync = deferred<{ accepted: boolean; deviceId: string }>()
+    let currentWork = createRemoteProjectRuntimeWork('Alpha')
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockImplementation(async () => currentWork),
+      syncRuntimeRemoteProjects: vi
+        .fn()
+        .mockImplementationOnce(() => initialSync.promise)
+        .mockResolvedValue({ accepted: true, deviceId: 'local-device' }),
+    })
+    const services = createRemoteProjectSyncServices(runtimeWorkApi, () => currentWork)
+
+    render(
+      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+
+    currentWork = createRemoteProjectRuntimeWork('Beta')
+    await userEvent.click(screen.getByText('refresh runtime projects'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Beta')
+    )
+    currentWork = createRemoteProjectRuntimeWork('Alpha')
+    await userEvent.click(screen.getByText('refresh runtime projects'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Alpha')
+    )
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      initialSync.reject(new Error('Older remote project sync failed'))
+    })
+    await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(2))
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenLastCalledWith({
+      deviceId: 'local-device',
+      projects: [
+        {
+          id: 'remote-project-id',
+          hostId: 'remote-device',
+          remotePath: '/srv/project-alpha',
+          label: 'Alpha',
+        },
+      ],
+    })
   })
 
   test('archives a worktree task without prompting and preserves a snapshot', async () => {
