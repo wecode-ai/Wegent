@@ -11,10 +11,11 @@ CardField = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)
 ]
 
-# DingTalk ships this AI markdown card template with its streaming SDK. It
-# renders a title, a markdown body and buttons, so a bot can push a card without
-# first drawing one on the card platform.
-BUILTIN_AI_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+# DingTalk ships this markdown card template — a markdown body plus buttons —
+# with its streaming SDK, so a bot can push a card without first drawing one on
+# the card platform. It is not the AI card template: that one adds the
+# assistant's own feedback row, which a task notification does not want.
+BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID = "1366a1eb-bc54-4859-ac88-517c56a9acb1.schema"
 
 
 class DingTalkChatCardConfig(BaseModel):
@@ -55,7 +56,7 @@ class DingTalkNotificationCardConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    template_id: CardField = BUILTIN_AI_CARD_TEMPLATE_ID
+    template_id: CardField = BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
 
 
 def validate_card_config(config: dict[str, Any]) -> dict[str, Any]:

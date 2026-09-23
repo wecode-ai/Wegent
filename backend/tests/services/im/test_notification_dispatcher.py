@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
-from app.schemas.dingtalk_card import BUILTIN_AI_CARD_TEMPLATE_ID
+from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
 from app.services.notification_copy import NotificationLink, PushNotification
@@ -618,12 +618,11 @@ async def test_dingtalk_notification_card_uses_the_builtin_template(
     assert result["success"] is True
     assert result["outTrackId"] == "track-1"
     assert calls[1]["user_id"] == "staff-1"
-    assert calls[1]["card_template_id"] == BUILTIN_AI_CARD_TEMPLATE_ID
+    assert calls[1]["card_template_id"] == BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
     assert calls[1]["preview"] == "🔔 hajimi 在评论中提到了你"
     card_param_map = calls[1]["card_param_map"]
-    assert card_param_map["msgTitle"] == "🔔 hajimi 在评论中提到了你"
-    assert card_param_map["staticMsgContent"] == "**任务编号**：WORK-582"
-    assert card_param_map["flowStatus"] == "3"
+    assert card_param_map["title"] == "🔔 hajimi 在评论中提到了你"
+    assert card_param_map["markdown"] == "**任务编号**：WORK-582"
     assert json.loads(card_param_map["sys_full_json_obj"])["msgButtons"] == [
         {
             "text": "在 Wework 打开",

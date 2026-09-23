@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
-from app.schemas.dingtalk_card import BUILTIN_AI_CARD_TEMPLATE_ID
+from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
 from app.services.im.session_service import im_session_service
 from app.services.notification_copy import (
     RUNTIME_REPLY_HINT,
@@ -558,7 +558,7 @@ def _notification_card_template(config: dict[str, Any]) -> str | None:
     if not isinstance(card, dict):
         return None
     template_id = str(card.get("template_id") or "").strip()
-    return template_id or BUILTIN_AI_CARD_TEMPLATE_ID
+    return template_id or BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
 
 
 def _dedupe_sessions(

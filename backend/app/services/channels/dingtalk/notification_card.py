@@ -2,13 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Render a task notification as a finished DingTalk AI card.
+"""Render a task notification as a DingTalk markdown card with buttons.
 
-A proactively pushed AI card only surfaces in the chat once it reaches a
-terminal ``flowStatus``: nobody replies to it, so there is no later frame that
-could move it on. The body therefore goes out with the card itself, and the
-built-in markdown card renders exactly the fields its ``sys_full_json_obj.order``
-lists — a field left out of that order is hidden, body included.
+The card is built from DingTalk's built-in markdown template rather than the AI
+one: an AI card carries the assistant's own feedback row (thumbs up and down),
+which a task notification does not want, and it only surfaces once it reaches a
+terminal ``flowStatus``. The markdown template lands as soon as it is delivered
+and paints the headline in a header slot of its own, which is the only way it
+draws text larger than the body — a markdown heading is no bigger, and the
+template drops markdown's ``---`` and ``***`` instead of drawing a rule.
 """
 
 import json
@@ -17,14 +19,10 @@ from collections.abc import Sequence
 from app.services.channels.dingtalk.markdown import escape_markdown
 from app.services.notification_copy import NotificationLink, PushNotification
 
-TITLE_KEY = "msgTitle"
-CONTENT_KEY = "msgContent"
-STATIC_CONTENT_KEY = "staticMsgContent"
+TITLE_KEY = "title"
+MARKDOWN_KEY = "markdown"
+TIPS_KEY = "tips"
 BUTTONS_KEY = "msgButtons"
-CARD_ORDER = [TITLE_KEY, CONTENT_KEY, STATIC_CONTENT_KEY, BUTTONS_KEY]
-
-# The status DingTalk defines for a card whose work is done.
-FINISHED_FLOW_STATUS = "3"
 
 # One colour per destination: the first button is the primary way in.
 BUTTON_COLORS = ("blue", "gray")
@@ -37,21 +35,18 @@ def card_param_map(
 ) -> dict[str, str]:
     """The ``cardParamMap`` of one finished notification card."""
 
-    body = _body(push)
     card_data = {
+        # The header slot is plain text, so the headline goes in unescaped: an
+        # escaped name would show its backslashes there.
         TITLE_KEY: push.card_headline,
-        # Both content fields carry the finished body: the streaming field is
-        # what a phone renders while a card is still being written, and the
-        # static one is what it keeps once the card stops.
-        CONTENT_KEY: body,
-        STATIC_CONTENT_KEY: body,
-        "flowStatus": FINISHED_FLOW_STATUS,
+        MARKDOWN_KEY: _body(push),
+        TIPS_KEY: "",
     }
-    full_json: dict[str, object] = {"order": CARD_ORDER}
     buttons = _buttons(links)
     if buttons:
-        full_json[BUTTONS_KEY] = buttons
-    card_data["sys_full_json_obj"] = json.dumps(full_json, ensure_ascii=False)
+        card_data["sys_full_json_obj"] = json.dumps(
+            {BUTTONS_KEY: buttons}, ensure_ascii=False
+        )
     return card_data
 
 

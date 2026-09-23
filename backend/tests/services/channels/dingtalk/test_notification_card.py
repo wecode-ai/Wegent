@@ -6,9 +6,8 @@ import json
 
 from app.services.channels.dingtalk.notification_card import (
     BUTTONS_KEY,
-    CONTENT_KEY,
-    FINISHED_FLOW_STATUS,
-    STATIC_CONTENT_KEY,
+    MARKDOWN_KEY,
+    TIPS_KEY,
     TITLE_KEY,
     card_param_map,
 )
@@ -39,16 +38,14 @@ LINKS = [
 ]
 
 
-def test_card_carries_its_finished_body_and_both_destinations() -> None:
-    """A pushed card has no later frame, so the body ships with the card."""
-
+def _mention_params() -> dict[str, str]:
     message = mention_message(
         actor_name="hajimi",
         preview="麻烦看下这个改动",
         comment_id="comment-1",
         target=TARGET,
     )
-    params = card_param_map(
+    return card_param_map(
         push=push_copy(
             kind=message.kind,
             title=message.title,
@@ -58,17 +55,19 @@ def test_card_carries_its_finished_body_and_both_destinations() -> None:
         links=LINKS,
     )
 
+
+def test_card_paints_the_headline_in_the_template_header() -> None:
+    """The header slot is the only text the template draws larger than the body."""
+
+    params = _mention_params()
+
     assert params[TITLE_KEY] == "🔔 hajimi 在评论中提到了你"
-    assert params[STATIC_CONTENT_KEY] == params[CONTENT_KEY]
-    assert params["flowStatus"] == FINISHED_FLOW_STATUS
-    full_json = json.loads(params["sys_full_json_obj"])
-    assert full_json["order"] == [
-        TITLE_KEY,
-        CONTENT_KEY,
-        STATIC_CONTENT_KEY,
-        BUTTONS_KEY,
-    ]
-    assert full_json[BUTTONS_KEY] == [
+    assert params[MARKDOWN_KEY].startswith(
+        "**任务标题**：修复登录\n**任务编号**：WEG-12"
+    )
+    assert params[MARKDOWN_KEY].endswith("**评论内容**\n> 麻烦看下这个改动")
+    assert params[TIPS_KEY] == ""
+    assert json.loads(params["sys_full_json_obj"])[BUTTONS_KEY] == [
         {
             "text": "在 Wework 打开",
             "url": "wework://boards/12/issues/ISSUE-1",
@@ -82,12 +81,12 @@ def test_card_carries_its_finished_body_and_both_destinations() -> None:
     ]
 
 
-def test_card_without_destinations_leaves_the_button_row_out() -> None:
+def test_card_without_destinations_has_no_button_row() -> None:
     params = card_param_map(
         push=push_copy(kind="message", title="提到了你", body="看板：test-pro")
     )
 
-    assert BUTTONS_KEY not in json.loads(params["sys_full_json_obj"])
+    assert "sys_full_json_obj" not in params
 
 
 def test_card_bolds_every_label_so_a_key_never_reads_as_its_value() -> None:
@@ -104,7 +103,8 @@ def test_card_bolds_every_label_so_a_key_never_reads_as_its_value() -> None:
         )
     )
 
-    assert params[STATIC_CONTENT_KEY] == (
+    assert params[TITLE_KEY] == "✅ 你的任务已完成"
+    assert params[MARKDOWN_KEY] == (
         "**任务标题**：修复登录\n"
         "**任务编号**：WEG-12\n"
         "**任务状态**：已完成\n"
@@ -137,7 +137,31 @@ def test_card_escapes_a_comment_but_not_its_own_labels() -> None:
 
     assert (
         "**评论内容**\n> \\[点这里\\](https://tracker.example/login)"
-        in params[STATIC_CONTENT_KEY]
+        in params[MARKDOWN_KEY]
+    )
+
+
+def test_card_keeps_a_members_name_verbatim_in_the_plain_header() -> None:
+    """The header slot is plain text, so a member's name is left as typed."""
+
+    message = mention_message(
+        actor_name="[x](https://tracker.example/login)",
+        preview="hi",
+        comment_id="comment-1",
+        target=TARGET,
+    )
+
+    params = card_param_map(
+        push=push_copy(
+            kind=message.kind,
+            title=message.title,
+            body=message.body,
+            payload=message.payload,
+        )
+    )
+
+    assert params[TITLE_KEY] == (
+        "🔔 [x](https://tracker.example/login) 在评论中提到了你"
     )
 
 
@@ -155,6 +179,6 @@ def test_card_quotes_every_line_of_a_multiline_result() -> None:
         )
     )
 
-    assert params[STATIC_CONTENT_KEY].endswith(
+    assert params[MARKDOWN_KEY].endswith(
         "**失败原因**\n> 第 1 步失败\n> no space left on device"
     )
