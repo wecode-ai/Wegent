@@ -150,6 +150,8 @@ import {
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
@@ -831,6 +833,7 @@ class DesktopE2EServer {
         'reconnect',
         'model_proxy_restart',
         'checkpoint_task',
+        'late_bound_project_space',
         ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
@@ -3928,6 +3931,84 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'late_bound_project_space') {
+      this.recordScenarioRequest('late_bound_project_space', modelRequest)
+      const requestNumber = this.scenarioRequests.get('late_bound_project_space').length
+      const requestText = JSON.stringify(body)
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(LATE_BOUND_PROJECT_SPACE_PROMPT),
+          'The late-bound project-space prompt was lost'
+        )
+        const search = selectToolSearch(
+          body,
+          'wework_space get_current_context list_item_attachments'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents('late-bound-project-space-search', search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestNumber === 2) {
+        const tool = selectMcpTool(body, 'wework_space', 'get_current_context', {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'late-bound-project-space-context',
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestNumber === 3) {
+        const currentContextOutput = toolOutputText(body, 'late-bound-project-space-context') ?? ''
+        assert.equal(
+          requestContainsToolOutput(body, 'late-bound-project-space-context'),
+          true,
+          'The late-bound Issue context did not return through the real MCP tool loop'
+        )
+        assert.ok(
+          currentContextOutput.includes('space_id') &&
+            !/"bound"\s*:\s*false/u.test(currentContextOutput),
+          `The late-bound MCP context was not scoped to the selected Issue: ${currentContextOutput}`
+        )
+        const tool = selectMcpTool(body, 'wework_space', 'list_item_attachments', {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'late-bound-project-space-attachments',
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(requestNumber, 4, `Unexpected late-bound project-space request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, 'late-bound-project-space-attachments'),
+        true,
+        'The bound Issue attachment list did not return through the real MCP tool loop'
+      )
+      const attachmentOutput = toolOutputText(body, 'late-bound-project-space-attachments') ?? ''
+      assert.ok(
+        !attachmentOutput.includes('is required') && !attachmentOutput.includes('"error"'),
+        `The bound Issue attachment list failed: ${attachmentOutput}`
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

@@ -189,6 +189,8 @@ import {
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
   LOCAL_VISION_SIDECAR_CASE,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
   MESSAGE_EDIT_ONLY,
@@ -2747,6 +2749,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
+        })
+        phase = 'late-bound-project-space-attachment-tools'
+        control.setScenario('late_bound_project_space')
+        const lateBoundRequestCount =
+          control.scenarioRequests.get('late_bound_project_space')?.length ?? 0
+        await sendPrompt(control, composerSelector, LATE_BOUND_PROJECT_SPACE_PROMPT)
+        await control.awaitScenarioRequestCount(
+          'late_bound_project_space',
+          lateBoundRequestCount + 4
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
         await writeFile(
           join(resultDir, 'model-requests.json'),

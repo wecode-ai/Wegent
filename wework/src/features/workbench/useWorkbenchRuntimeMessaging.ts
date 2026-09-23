@@ -1749,6 +1749,7 @@ export function useWorkbenchRuntimeMessaging({
           optimisticUserMessage: options?.optimisticUserMessage,
           additionalContext: options?.additionalContext,
           cloudProjectId: options?.cloudProjectId,
+          origin: options?.origin,
           ...(options?.runtime ? { runtime: options.runtime } : {}),
           ...(options?.runtimeExecutablePath
             ? { runtimeExecutablePath: options.runtimeExecutablePath }

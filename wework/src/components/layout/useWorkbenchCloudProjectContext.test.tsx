@@ -732,13 +732,9 @@ describe('useWorkbenchCloudProjectContext', () => {
   })
 
   test('refreshes task context before send while the rendered binding is still loading', async () => {
-    const defaultBoard = {
-      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
-      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
-      name: '我的任务',
-    }
+    const targetProject = project('space-target', 'local')
     const enrichedItem = {
-      ...loopItem(defaultBoard.id),
+      ...loopItem(targetProject.id),
       title: 'Updated acceptance criteria',
       has_additional_context: true,
     }
@@ -758,11 +754,11 @@ describe('useWorkbenchCloudProjectContext', () => {
           })
       )
       .mockResolvedValue({
-        project: defaultBoard,
+        project: targetProject,
         loop_item: enrichedItem,
       })
     const localApi = {
-      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
       listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
@@ -797,8 +793,14 @@ describe('useWorkbenchCloudProjectContext', () => {
 
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
     expect(submission?.additionalContext?.cloudCollaboration.value).toContain(enrichedItem.title)
+    expect(submission?.origin).toEqual({
+      type: 'board_task',
+      projectStore: targetProject.project_store,
+      cloudProjectId: targetProject.id,
+      loopItemId: enrichedItem.id,
+    })
     resolveInitialLookup?.({
-      project: defaultBoard,
+      project: targetProject,
       loop_item: enrichedItem,
     })
   })
