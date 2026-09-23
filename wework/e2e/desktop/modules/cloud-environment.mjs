@@ -967,6 +967,7 @@ class RealCloudEnvironment {
   }
 
   async devices() {
+    // Exercise the public hybrid endpoint so Cloud E2E covers Rust routing and shared MySQL state.
     const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })

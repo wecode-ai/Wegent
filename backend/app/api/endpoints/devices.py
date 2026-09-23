@@ -328,6 +328,8 @@ async def _device_command_env(
     return env
 
 
+# Hybrid mode deliberately leaves this handler disabled so backend-rs owns
+# GET /api/devices.
 # MIGRATION-CANDIDATE(api="GET /api/devices"): remove after final confirmation.
 # @router.get("", response_model=DeviceListResponse)
 # async def get_all_devices(
