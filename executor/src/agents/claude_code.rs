@@ -638,6 +638,13 @@ fn apply_claude_header_environment(
         custom_headers = merge_missing_header_map(custom_headers, default_headers);
     }
 
+    // The merge above preserves any wecode-session-id already present in
+    // ANTHROPIC_CUSTOM_HEADERS; replace it with the request's task id.
+    if !task_id.is_empty() {
+        custom_headers.retain(|(key, _)| !headers_match(key, "wecode-session-id"));
+        custom_headers.push(("wecode-session-id".to_owned(), task_id.to_owned()));
+    }
+
     if !custom_headers.is_empty() {
         spec = spec.env(
             "ANTHROPIC_CUSTOM_HEADERS",
