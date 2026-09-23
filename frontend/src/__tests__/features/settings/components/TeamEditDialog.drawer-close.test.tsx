@@ -3,11 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
-import type { Bot } from '@/types/api'
 
 const dialogContentProps: Array<{ preventOutsideClick?: boolean }> = []
 
@@ -17,8 +16,6 @@ jest.mock('@/hooks/useTranslation', () => ({
       ({
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
-        'settings:team.simple.advanced_toggle': 'Advanced mode',
-        'settings:team.simple.advanced_toggle_description': 'Use full configuration.',
         'settings:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
         'team_model.solo': 'Solo',
       })[key] || key,
@@ -146,31 +143,12 @@ jest.mock('@/features/settings/components/TeamEditDrawer', () => ({
   default: () => null,
 }))
 
-function makeBot(overrides: Partial<Bot> = {}): Bot {
-  return {
-    id: 42,
-    name: 'new-bot',
-    namespace: 'default',
-    shell_name: 'Chat',
-    shell_type: 'Chat',
-    agent_config: {},
-    system_prompt: '',
-    mcp_servers: {},
-    default_knowledge_base_refs: [],
-    skills: [],
-    is_active: true,
-    created_at: '2026-07-02T00:00:00Z',
-    updated_at: '2026-07-02T00:00:00Z',
-    ...overrides,
-  }
-}
-
 describe('TeamEditDialog nested bot drawer dismissal', () => {
   beforeEach(() => {
     dialogContentProps.length = 0
   })
 
-  it('prevents outside-click close while the bot drawer is open', async () => {
+  it('keeps new agent creation on the simplified path', () => {
     render(
       <TeamEditDialog
         open
@@ -187,49 +165,7 @@ describe('TeamEditDialog nested bot drawer dismissal', () => {
 
     expect(dialogContentProps.at(-1)?.preventOutsideClick).toBeFalsy()
 
-    fireEvent.click(screen.getByTestId('advanced-mode-switch'))
-    fireEvent.click(screen.getByRole('button', { name: 'Create bot' }))
-
-    await waitFor(() => {
-      expect(dialogContentProps.at(-1)?.preventOutsideClick).toBe(true)
-    })
-  })
-
-  it('keeps advanced mode enabled when the bot list changes during new team creation', async () => {
-    const { rerender } = render(
-      <TeamEditDialog
-        open
-        onClose={jest.fn()}
-        teams={[]}
-        setTeams={jest.fn()}
-        editingTeamId={0}
-        initialTeam={null}
-        bots={[]}
-        setBots={jest.fn()}
-        toast={jest.fn()}
-      />
-    )
-
-    const advancedSwitch = screen.getByTestId('advanced-mode-switch')
-    fireEvent.click(advancedSwitch)
-    expect(advancedSwitch).toBeChecked()
-
-    rerender(
-      <TeamEditDialog
-        open
-        onClose={jest.fn()}
-        teams={[]}
-        setTeams={jest.fn()}
-        editingTeamId={0}
-        initialTeam={null}
-        bots={[makeBot()]}
-        setBots={jest.fn()}
-        toast={jest.fn()}
-      />
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('advanced-mode-switch')).toBeChecked()
-    })
+    expect(screen.queryByTestId('advanced-mode-switch')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Create bot' })).not.toBeInTheDocument()
   })
 })
