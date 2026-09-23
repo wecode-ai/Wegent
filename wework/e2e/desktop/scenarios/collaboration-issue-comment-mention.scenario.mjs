@@ -8,6 +8,8 @@ const ISSUE_NAME = '评论 @ 成员必须弹出成员列表'
 const ACTIVE_CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVE_BOARD = `${ACTIVE_CONTENT} [data-testid="wework-collaboration-platform"]`
 const MENTION_CANDIDATE_PREFIX = 'collaboration-issue-mention-member-'
+const MENTION_MENU = '[data-testid="local-skill-autocomplete"]'
+const MENTION_CHIP = '[data-composer-reference-kind="member"]'
 const CARD_COMPOSER_PREFIX = 'cloud-task-activity-card-composer-'
 const CARD_SEND_PREFIX = 'cloud-task-activity-card-send-'
 
@@ -18,8 +20,9 @@ function board(selector) {
 /**
  * The Issue detail page renders through the Wework collaboration platform, so
  * its comment composers only offer project members when that host wiring passes
- * the member list down. Both composers must offer the popup and must send the
- * mention that the popup inserted.
+ * the member list down. Both composers must offer the same picker the
+ * collaboration home uses, keep the pick as its chip, and submit it as the
+ * plain "@name" the home submits.
  */
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   async function mentionCandidate(control, scope) {
@@ -34,24 +37,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     return `[data-testid="${candidate}"]`
   }
 
-  async function chooseMention(control, { captureName, composer, popup, scope }) {
+  async function chooseMention(control, { captureName, composer, scope }) {
+    const menu = board(MENTION_MENU)
     assert.equal(
-      Number(await control.command('getElementCount', popup)),
+      Number(await control.command('getElementCount', menu)),
       0,
-      'The mention popup was already open before the draft contained an @ query'
+      'The mention picker was already open before the draft contained an @ query'
     )
     await control.command('fill', composer, { value: '@' })
-    await control.command('waitFor', popup, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', menu, { visible: true, timeoutMs: uiTimeoutMs })
     const candidate = await mentionCandidate(control, scope)
-    const candidateText = (await control.command('getText', candidate)).trim()
     if (captureName) await captureScreenshot(control, captureName)
     await control.command('click', candidate, { visible: true })
-    await control.command('waitFor', popup, {
+    await control.command('waitFor', menu, {
       visible: false,
       timeoutMs: uiTimeoutMs,
     })
-    // The popup renders an avatar letter before the member name.
-    const memberName = candidateText.slice(1) || candidateText
+    // The composer keeps the pick as the chip the home composer renders.
+    const chip = `${composer} ${MENTION_CHIP}`
+    await control.command('waitFor', chip, { timeoutMs: uiTimeoutMs })
+    const memberName = (await control.command('getText', chip)).trim().replace(/^[@$]/, '')
     assert.ok(memberName.length > 0, 'The mention candidate did not expose a member name')
     return memberName
   }
@@ -120,7 +125,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const commentName = await chooseMention(control, {
         captureName: 'collaboration-issue-comment-mention-01-popup.png',
         composer: commentComposer,
-        popup: board('[data-testid="task-comment-mention-popup"]'),
         scope: ACTIVE_BOARD,
       })
       await control.command('clickWhenEnabled', commentSend, { timeoutMs: uiTimeoutMs })
@@ -141,7 +145,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const replyName = await chooseMention(control, {
         captureName: 'collaboration-issue-comment-mention-02-card-reply.png',
         composer: board(`[data-testid="${cardComposerTestId}"]`),
-        popup: board(`[data-testid="collaboration-chat-reply-mentions-${rootId}"]`),
         scope: ACTIVE_BOARD,
       })
       await control.command(

@@ -1,13 +1,12 @@
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
-import { IssueCommentMentionPopup } from "./IssueCommentMentionPopup";
+import { useRef, useState, type Ref } from "react";
+import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
+import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
+import type { ComposerInputHandle } from "../composer/composerInputTypes";
+import type { CollaborationTranslate } from "../i18n";
 import { IssueInlineCommentComposer } from "./IssueInlineCommentComposer";
-import type {
-  IssueMentionGroup,
-  IssueMentionOption,
-} from "./issueCommentMentions";
-import { insertIssueMention } from "./issueCommentMentions";
-import { useIssueMentionPicker } from "./useIssueMentionPicker";
+import type { IssueMentionOption } from "./issueCommentMentions";
+import { issueCommentSubmission } from "./issueCommentMentions";
 
 export interface IssueReplyAttachment {
   id: string | number;
@@ -63,7 +62,9 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   attachments,
   aiError,
   onSend,
-  mentionGroups,
+  mentionCandidates = [],
+  translate,
+  inputRef,
   testIds = issueReplyTestIds(rootId),
 }: {
   rootId: string;
@@ -75,41 +76,23 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     text: string,
     mentions: IssueMentionOption[],
   ): Promise<{ ok: boolean; error?: string }>;
-  mentionGroups?: IssueMentionGroup[];
+  mentionCandidates?: ComposerExternalMentionCandidate[];
+  translate: CollaborationTranslate;
+  /** Lets a host (or a test) drive the editor the draft is written in. */
+  inputRef?: Ref<ComposerInputHandle>;
   testIds?: IssueReplyTestIds;
 }) {
-  const composerInput = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
   const submittingRef = useRef(false);
-  const caretRef = useRef<number | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const attachmentReady = attachments?.isAttachmentReadyToSend ?? true;
-  const mention = useIssueMentionPicker(mentionGroups);
 
-  // Restore the caret after inserting a mention so typing continues after it.
-  useLayoutEffect(() => {
-    const caret = caretRef.current;
-    if (caret === null) return;
-    caretRef.current = null;
-    composerInput.current?.focus();
-    composerInput.current?.setSelectionRange(caret, caret);
-  }, [draft]);
-
-  function insertMention(item: IssueMentionGroup["items"][number]) {
-    const start = composerInput.current?.selectionStart ?? draft.length;
-    const end = composerInput.current?.selectionEnd ?? start;
-    const inserted = insertIssueMention(draft, start, end, item.name);
-    caretRef.current = inserted.caret;
-    setDraft(inserted.value);
-    mention.remember(item.mention);
-    mention.closeMenu();
-  }
-
-  async function submit() {
-    const text = draft.trim();
-    if (!text || disabled || submittingRef.current) return;
+  async function submit(nextDraft = draft) {
+    const { body, mentions } = issueCommentSubmission(nextDraft);
+    if (!body || disabled || submittingRef.current) return;
     if (!attachmentReady) {
       setError(labels.uploading);
       return;
@@ -117,9 +100,8 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
-    const mentions = mention.mentionsFor(text);
     try {
-      const result = await onSend(text, mentions);
+      const result = await onSend(body, mentions);
       if (result.ok) {
         setDraft("");
         attachments?.resetAttachments();
@@ -212,74 +194,29 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
             />
           </>
         ) : null}
-        <textarea
-          ref={composerInput}
-          rows={1}
-          data-testid={testIds.input}
+        <ComposerAutocompleteInput
+          ref={inputRef}
           value={draft}
+          onChange={setDraft}
+          onSubmit={(nextValue) => void submit(nextValue ?? draft)}
+          canSend={
+            !disabled && !submitting && Boolean(draft.trim()) && attachmentReady
+          }
           disabled={disabled || submitting}
-          aria-expanded={mention.open}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            if (
-              event.target.value
-                .slice(0, event.target.selectionStart)
-                .endsWith("@")
-            ) {
-              mention.openMenu();
-            } else {
-              mention.closeMenu();
-            }
-          }}
-          onBlur={() => mention.closeMenu()}
-          onPaste={(event) => {
-            const files = Array.from(event.clipboardData.files);
-            if (attachments && files.length) {
-              event.preventDefault();
-              void attachments.handleFileSelect(files);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (mention.open) {
-              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                event.preventDefault();
-                mention.move(event.key === "ArrowDown" ? 1 : -1);
-                return;
-              }
-              if (event.key === "Enter" || event.key === "Tab") {
-                event.preventDefault();
-                const row = mention.active();
-                if (row) insertMention(row);
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                mention.closeMenu();
-                return;
-              }
-            }
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
+          testId={testIds.input}
+          translate={translate}
+          className=""
+          rows={1}
+          textareaRef={editorRef}
+          mentionScope="external"
+          externalMentionCandidates={mentionCandidates}
+          onPasteFiles={
+            attachments
+              ? (files) => void attachments.handleFileSelect(files)
+              : undefined
+          }
           placeholder={labels.placeholder}
-          aria-label={labels.placeholder}
         />
-        {mention.open && mention.items.length > 0 ? (
-          <IssueCommentMentionPopup
-            groups={mention.groups}
-            items={mention.items}
-            activeIndex={mention.activeIndex}
-            testId={`collaboration-chat-reply-mentions-${rootId}`}
-            onHover={mention.highlight}
-            onPick={insertMention}
-          />
-        ) : null}
       </IssueInlineCommentComposer>
       {attachments && attachments.errors.size > 0 ? (
         <p role="alert" className="task-detail-comment-inline-error">

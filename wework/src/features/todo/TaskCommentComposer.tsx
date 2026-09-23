@@ -1,4 +1,5 @@
-import { type IssueMentionGroup, IssueMainCommentComposer } from '@wegent/collaboration'
+import { IssueMainCommentComposer } from '@wegent/collaboration'
+import type { ComposerExternalMentionCandidate } from '@wegent/collaboration/composer/composerAutocompleteInputTypes'
 import { useContext } from 'react'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { ProjectChatMention } from '@/api/backend/projectChatSocket'
@@ -10,6 +11,7 @@ import {
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
+import type { CollaborationTranslate } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 
@@ -20,18 +22,20 @@ export function TaskCommentComposer({
   disabled,
   sending,
   error,
-  mentionGroups,
+  mentionCandidates = [],
+  translate,
   controls,
   projectWork,
   serverExecution = false,
 }: {
   value: string
   onChange: (value: string) => void
-  onSubmit: (mentions: ProjectChatMention[]) => void
+  onSubmit: (body: string, mentions: ProjectChatMention[]) => void
   disabled: boolean
   sending: boolean
   error: string | null
-  mentionGroups?: IssueMentionGroup[]
+  mentionCandidates?: ComposerExternalMentionCandidate[]
+  translate: CollaborationTranslate
   controls: ProjectChatControls
   projectWork: ProjectWorkControls
   serverExecution?: boolean
@@ -49,7 +53,8 @@ export function TaskCommentComposer({
       uploading={controls.uploadingFiles.size > 0}
       error={error}
       sendKey={sendKey}
-      mentionGroups={mentionGroups}
+      mentionCandidates={mentionCandidates}
+      translate={translate}
       labels={{
         placeholder: t('workbench.task_activity_placeholder'),
         send: t('workbench.send_message'),

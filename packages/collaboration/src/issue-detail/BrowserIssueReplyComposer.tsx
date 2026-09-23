@@ -3,20 +3,20 @@ import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { useBrowserIssueReplies } from './browserIssueRepliesContext'
-import type { IssueMentionGroup } from './issueCommentMentions'
+import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
 
 export function BrowserIssueReplyComposer({
   rootId,
   disabled,
   canAttach,
   translate: t,
-  mentionGroups,
+  mentionCandidates = [],
 }: {
   rootId: string
   disabled: boolean
   canAttach: boolean
   translate: CollaborationTranslate
-  mentionGroups?: IssueMentionGroup[]
+  mentionCandidates?: ComposerExternalMentionCandidate[]
 }) {
   const reply = useBrowserIssueReplies()
   const draft = useBrowserTaskDraft(`issue-reply:${rootId}`)
@@ -49,7 +49,8 @@ export function BrowserIssueReplyComposer({
         disabled={disabled}
         attachments={canAttach ? draft.attachments : undefined}
         aiError={reply.queue.error(rootId)}
-        mentionGroups={mentionGroups}
+        mentionCandidates={mentionCandidates}
+        translate={t}
         onSend={async (text, mentions) =>
           reply.queue.enqueue(rootId, text, draft.attachments.attachments, mentions)
         }

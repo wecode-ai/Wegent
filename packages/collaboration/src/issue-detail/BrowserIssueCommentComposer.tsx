@@ -1,4 +1,4 @@
-import { useIssueMentionGroups } from './useIssueMentionGroups'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
 import { useEffect, useMemo, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
@@ -65,7 +65,7 @@ export function BrowserIssueCommentComposer({
   onCommentPersisted?(message: ProjectChatMessage): void
   onTaskUpdated?(issue: CollaborationIssue): void
 }) {
-  const mentionGroups = useIssueMentionGroups(members, agents, t)
+  const mentionCandidates = useIssueMentionCandidates(members, agents, t)
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const serverExecution = project.project_store === 'backend' && client.executeTaskComment
@@ -106,8 +106,7 @@ export function BrowserIssueCommentComposer({
       model: selectedModel,
       options: { ...options, [id]: value },
     })
-  async function submit(mentions: IssueMentionOption[]) {
-    const text = draft.draft.trim()
+  async function submit(text: string, mentions: IssueMentionOption[]) {
     if (
       !canComment ||
       loading ||
@@ -217,10 +216,11 @@ export function BrowserIssueCommentComposer({
         </div>
       )}
       <IssueMainCommentComposer
-        mentionGroups={mentionGroups}
+        mentionCandidates={mentionCandidates}
+        translate={t}
         value={draft.draft}
         onChange={draft.setDraft}
-        onSubmit={mentions => void submit(mentions)}
+        onSubmit={(body, mentions) => void submit(body, mentions)}
         disabled={!canComment || loading}
         sending={draft.busy}
         uploading={!draft.attachments.isAttachmentReadyToSend}
@@ -238,7 +238,6 @@ export function BrowserIssueCommentComposer({
           settings: 'collaboration-comment-settings-toggle',
           file: 'collaboration-comment-attach-input',
           attach: 'collaboration-comment-attach',
-          mentions: 'collaboration-issue-mention-popup',
         }}
         onSelectFiles={canAttach ? files => draft.attachments.handleFileSelect(files) : undefined}
         attachments={

@@ -17,7 +17,7 @@ import {
 import { useTaskReplyQueue } from '@wegent/collaboration/execution/useTaskReplyQueue'
 import { taskReplyQueueStore } from './taskReplyQueue'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
-import { issueTaskSummaryForMessage, useIssueMentionGroups } from '@wegent/collaboration'
+import { issueTaskSummaryForMessage, useIssueMentionCandidates } from '@wegent/collaboration'
 import {
   IssueActivityFeed,
   IssueActivityThread,
@@ -137,7 +137,7 @@ export function TaskActivityView({
   const activityTranslate = createCollaborationTranslator(
     i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
   )
-  const mentionGroups = useIssueMentionGroups(members, agents, activityTranslate)
+  const mentionCandidates = useIssueMentionCandidates(members, agents, activityTranslate)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
     useWorkbenchPaneContext()
@@ -663,8 +663,7 @@ export function TaskActivityView({
     return replyQueue.enqueue(card.root.messageId, text, attachments, mentions)
   }
 
-  async function sendNewComment(mentions: ProjectChatMention[]): Promise<boolean> {
-    const text = newCommentDraft.trim()
+  async function sendNewComment(text: string, mentions: ProjectChatMention[]): Promise<boolean> {
     const attachments = attachmentSelection.attachments
     if (!client || !text || sending) return false
     if (!attachmentSelection.isAttachmentReadyToSend) {
@@ -823,11 +822,12 @@ export function TaskActivityView({
                 key={task.id}
                 value={newCommentDraft}
                 onChange={setNewCommentDraft}
-                onSubmit={mentions => void sendNewComment(mentions)}
+                onSubmit={(body, mentions) => void sendNewComment(body, mentions)}
                 disabled={!client}
                 sending={sending}
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
-                mentionGroups={mentionGroups}
+                mentionCandidates={mentionCandidates}
+                translate={activityTranslate}
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
                 serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
@@ -838,7 +838,7 @@ export function TaskActivityView({
                   value={newCommentDraft}
                   disabled={!client}
                   onChange={setNewCommentDraft}
-                  onSubmit={() => void sendNewComment([])}
+                  onSubmit={() => void sendNewComment(newCommentDraft.trim(), [])}
                   submitDisabled={!newCommentDraft.trim() || sending}
                   error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
                   placeholder={
@@ -896,7 +896,8 @@ export function TaskActivityView({
                         disabled={!client}
                         placeholder={t('workbench.task_activity_inline_placeholder')}
                         aiError={replyQueue.error(rootId)}
-                        mentionGroups={mentionGroups}
+                        mentionCandidates={mentionCandidates}
+                        translate={activityTranslate}
                         onSend={(text, mentions, attachments) =>
                           sendCardReply(card, text, mentions, attachments)
                         }

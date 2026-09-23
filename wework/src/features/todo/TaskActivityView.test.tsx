@@ -395,16 +395,16 @@ describe('TaskActivityView', () => {
     )
 
     const input = screen.getByTestId('cloud-task-activity-composer')
-    await user.type(input, '@')
-    expect(await screen.findByTestId('task-comment-mention-popup')).toBeInTheDocument()
+    await user.type(input, '请确认 @')
+    expect(await screen.findByTestId('local-skill-autocomplete')).toBeInTheDocument()
     await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
-    expect(input).toHaveValue('@hajimi ')
-    await user.type(input, '请确认{Enter}')
+    expect(input).toHaveValue('请确认 [$@hajimi](wework-member://4) ')
+    await user.click(screen.getByTestId('send-message-button'))
 
     await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
     expect(client.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: '@hajimi 请确认',
+        text: '请确认 @hajimi',
         mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
       })
     )
@@ -2967,9 +2967,7 @@ describe('TaskActivityView', () => {
       `cloud-task-activity-card-composer-${rootMessage.messageId}`
     )
     await user.type(input, '@')
-    expect(
-      await screen.findByTestId(`collaboration-chat-reply-mentions-${rootMessage.messageId}`)
-    ).toBeInTheDocument()
+    expect(await screen.findByTestId('local-skill-autocomplete')).toBeInTheDocument()
     await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
     await user.type(input, '看一下{Enter}')
 
@@ -3254,7 +3252,9 @@ describe('TaskActivityView', () => {
 
     fireEvent(composer, pasteEvent)
 
-    expect(attachmentSelectionMock.handleFileSelect).toHaveBeenCalledWith([file])
+    await waitFor(() =>
+      expect(attachmentSelectionMock.handleFileSelect).toHaveBeenCalledWith([file])
+    )
   })
 
   it('uploads files selected through the card composer attach button', async () => {

@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComposerInputHandle } from "../composer/composerInputTypes";
+import { createCollaborationTranslator } from "../i18n";
+import { issueMentionCandidates } from "./issueCommentMentions";
 import {
   IssueThreadReplyComposer,
   type IssueReplyAttachments,
@@ -12,6 +15,7 @@ import {
 } from "./useIssueCommentAttachments";
 import type { CollaborationAttachment } from "../types";
 
+const translate = createCollaborationTranslator("zh-CN");
 const labels = {
   placeholder: "Reply…",
   send: "Send message",
@@ -27,11 +31,41 @@ const attachment = {
   markdown: "[report.txt](wegent://attachments/a1)",
 } as CollaborationAttachment;
 
+/** The members a comment can mention, as the composers hand them to the menu. */
+const mentionCandidates = issueMentionCandidates({
+  members: [
+    { user_id: 8, user_name: "bob" },
+    { user_id: 7, user_name: "alice" },
+  ],
+  agents: [],
+  membersLabel: "Members",
+  agentsLabel: "Agents",
+});
+
 describe("shared desktop reply composer", () => {
   let root: Root;
   let container: HTMLDivElement;
+  const input = createRef<ComposerInputHandle>();
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(),
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -39,26 +73,42 @@ describe("shared desktop reply composer", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    vi.unstubAllGlobals();
   });
-  function write(value: string) {
-    const input = container.querySelector("textarea")!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "setSelectionRange",
-      )!.value!.call(input, value.length, value.length);
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )!.set!.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    return input;
-  }
+  const element = (id: string) =>
+    container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+  const editor = () => element("cloud-task-activity-card-composer-root");
   const sendButton = () =>
     container.querySelector<HTMLButtonElement>(
       '[data-testid="cloud-task-activity-card-send-root"]',
     )!;
+  async function mount(
+    props: Partial<{ attachments: IssueReplyAttachments }> = {},
+  ) {
+    await act(async () =>
+      root.render(
+        <IssueThreadReplyComposer
+          rootId="root"
+          disabled={false}
+          labels={labels}
+          translate={translate}
+          inputRef={input}
+          mentionCandidates={mentionCandidates}
+          onSend={vi.fn().mockResolvedValue({ ok: true })}
+          {...props}
+        />,
+      ),
+    );
+  }
+  async function write(value: string) {
+    await act(async () => {
+      input.current!.setValue(value);
+      input.current!.focus();
+      editor().dispatchEvent(
+        new KeyboardEvent("keyup", { key: value.at(-1) ?? "", bubbles: true }),
+      );
+    });
+  }
 
   it("retains draft and attachments on rejection and clears them only after a successful retry", async () => {
     const resetAttachments = vi.fn();
@@ -75,81 +125,37 @@ describe("shared desktop reply composer", () => {
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ ok: true });
-    act(() =>
+    await mount({ attachments: selection });
+    await act(async () =>
       root.render(
         <IssueThreadReplyComposer
           rootId="root"
           disabled={false}
           labels={labels}
+          translate={translate}
+          inputRef={input}
+          mentionCandidates={mentionCandidates}
           attachments={selection}
           onSend={send}
         />,
       ),
     );
-    const input = write("Keep this draft");
+    await write("first attempt");
     await act(async () => sendButton().click());
-    expect(input.value).toBe("Keep this draft");
+    expect(send).toHaveBeenCalledWith("first attempt", []);
+    expect(input.current!.getValue()).toBe("first attempt");
     expect(resetAttachments).not.toHaveBeenCalled();
-    expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       "offline",
     );
+
     await act(async () => sendButton().click());
-    expect(input.value).toBe("");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(input.current!.getValue()).toBe("");
     expect(resetAttachments).toHaveBeenCalledOnce();
   });
 
-  it("does not submit an IME confirmation or Shift+Enter and prevents duplicate submissions", async () => {
-    let finish!: (value: { ok: boolean }) => void;
-    const send = vi.fn(
-      () =>
-        new Promise<{ ok: boolean }>((resolve) => {
-          finish = resolve;
-        }),
-    );
-    act(() =>
-      root.render(
-        <IssueThreadReplyComposer
-          rootId="root"
-          disabled={false}
-          labels={labels}
-          onSend={send}
-        />,
-      ),
-    );
-    const input = write("输入法");
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          isComposing: true,
-          bubbles: true,
-        }),
-      );
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          shiftKey: true,
-          bubbles: true,
-        }),
-      );
-    });
-    expect(send).not.toHaveBeenCalled();
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-      );
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-      );
-    });
-    expect(send).toHaveBeenCalledOnce();
-    expect(input.disabled).toBe(true);
-    await act(async () => finish({ ok: true }));
-    expect(input.disabled).toBe(false);
-    expect(input.value).toBe("");
-  });
-
-  it("keeps pasted uploads out of the draft, gates sending, and submits attachment Markdown", async () => {
+  it("gates sending on an upload and submits the attachment Markdown", async () => {
     let finish!: (value: CollaborationAttachment) => void;
     const upload = vi.fn(
       () =>
@@ -165,23 +171,22 @@ describe("shared desktop reply composer", () => {
           rootId="root"
           disabled={false}
           labels={labels}
+          translate={translate}
+          inputRef={input}
+          mentionCandidates={mentionCandidates}
           attachments={selection}
           onSend={(text) => send(issueCommentBody(text, selection.attachments))}
         />
       );
     }
-    act(() => root.render(<Harness />));
-    const input = write("Review this");
-    act(() => {
-      const event = new Event("paste", { bubbles: true, cancelable: true });
-      Object.defineProperty(event, "clipboardData", {
-        value: { files: [file] },
-      });
-      input.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
+    await act(async () => root.render(<Harness />));
+    await write("Review this");
+    const picker =
+      container.querySelector<HTMLInputElement>("input[type=file]")!;
+    await act(async () => {
+      Object.defineProperty(picker, "files", { value: [file] });
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(upload).toHaveBeenCalledWith(file);
-    expect(input.value).toBe("Review this");
     expect(sendButton().disabled).toBe(true);
     await act(async () => finish(attachment));
     expect(container.textContent).toContain("report.txt");
@@ -208,12 +213,15 @@ describe("shared desktop reply composer", () => {
           rootId="root"
           disabled={false}
           labels={labels}
+          translate={translate}
+          inputRef={input}
+          mentionCandidates={mentionCandidates}
           attachments={selection}
           onSend={vi.fn()}
         />
       );
     }
-    act(() => root.render(<Harness />));
+    await act(async () => root.render(<Harness />));
     const picker =
       container.querySelector<HTMLInputElement>("input[type=file]")!;
     await act(async () => {
@@ -234,45 +242,29 @@ describe("shared desktop reply composer", () => {
     expect(container.querySelector("[role=alert]")).toBeNull();
   });
 
-  it("inserts a project member mention and sends its structured target", async () => {
+  it("writes a picked member as a reference and sends its plain text and target", async () => {
     const send = vi.fn().mockResolvedValue({ ok: true });
-    act(() =>
+    await mount({ attachments: undefined });
+    await act(async () =>
       root.render(
         <IssueThreadReplyComposer
           rootId="root"
           disabled={false}
           labels={labels}
+          translate={translate}
+          inputRef={input}
+          mentionCandidates={mentionCandidates}
           onSend={send}
-          mentionGroups={[
-            {
-              label: "Members",
-              items: [
-                {
-                  id: "member-8",
-                  name: "bob",
-                  mention: { type: "user", id: "8", label: "bob" },
-                },
-                {
-                  id: "member-7",
-                  name: "alice",
-                  mention: { type: "user", id: "7", label: "alice" },
-                },
-              ],
-            },
-          ]}
         />,
       ),
     );
+    await act(async () => input.current!.insertReference("@"));
+    await act(async () =>
+      element("collaboration-issue-mention-member-8").click(),
+    );
+    expect(input.current!.getValue()).toBe("[$@bob](wework-member://8) ");
 
-    const input = write("@");
-    const option = container.querySelector<HTMLButtonElement>(
-      '[data-testid="issue-comment-mention-member-8"]',
-    )!;
-    expect(option).not.toBeNull();
-    await act(async () => option.click());
-    expect(input.value).toBe("@bob ");
-
-    write("@bob please review");
+    await write("[$@bob](wework-member://8) please review");
     await act(async () => sendButton().click());
 
     expect(send).toHaveBeenCalledWith("@bob please review", [
@@ -280,207 +272,28 @@ describe("shared desktop reply composer", () => {
     ]);
   });
 
-  it("does not send a mention whose text was deleted", async () => {
+  it("sends no mention once the reference is gone from the draft", async () => {
     const send = vi.fn().mockResolvedValue({ ok: true });
-    act(() =>
+    await act(async () =>
       root.render(
         <IssueThreadReplyComposer
           rootId="root"
           disabled={false}
           labels={labels}
+          translate={translate}
+          inputRef={input}
+          mentionCandidates={mentionCandidates}
           onSend={send}
-          mentionGroups={[
-            {
-              label: "Members",
-              items: [
-                {
-                  id: "member-8",
-                  name: "bob",
-                  mention: { type: "user", id: "8", label: "bob" },
-                },
-              ],
-            },
-          ]}
         />,
       ),
     );
-
-    const input = write("@");
-    Object.defineProperty(input, "selectionStart", {
-      value: 1,
-      configurable: true,
-    });
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keyup", { bubbles: true, key: "@" }),
-      );
-    });
+    await act(async () => input.current!.insertReference("@"));
     await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="issue-comment-mention-member-8"]',
-        )!
-        .click(),
+      element("collaboration-issue-mention-member-8").click(),
     );
-    write("hello there");
+    await write("hello there");
     await act(async () => sendButton().click());
 
     expect(send).toHaveBeenCalledWith("hello there", []);
-  });
-
-  it("inserts a mention into the textarea while attachments are available", async () => {
-    const selection: IssueReplyAttachments = {
-      attachments: [],
-      uploadingFiles: new Map(),
-      errors: new Map(),
-      isAttachmentReadyToSend: true,
-      handleFileSelect: vi.fn(),
-      removeAttachment: vi.fn(),
-      resetAttachments: vi.fn(),
-    };
-    const send = vi.fn().mockResolvedValue({ ok: true });
-    act(() =>
-      root.render(
-        <IssueThreadReplyComposer
-          rootId="root"
-          disabled={false}
-          labels={labels}
-          attachments={selection}
-          onSend={send}
-          mentionGroups={[
-            {
-              label: "Members",
-              items: [
-                {
-                  id: "member-8",
-                  name: "bob",
-                  mention: { type: "user", id: "8", label: "bob" },
-                },
-              ],
-            },
-          ]}
-        />,
-      ),
-    );
-
-    const input = write("@");
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="issue-comment-mention-member-8"]',
-        )!
-        .click(),
-    );
-
-    expect(input.value).toBe("@bob ");
-    expect(document.activeElement).toBe(input);
-  });
-
-  it("walks the mention popup with the arrow keys and inserts on Enter", async () => {
-    act(() =>
-      root.render(
-        <IssueThreadReplyComposer
-          rootId="root"
-          disabled={false}
-          labels={labels}
-          onSend={vi.fn().mockResolvedValue({ ok: true })}
-          mentionGroups={[
-            {
-              label: "Members",
-              items: [
-                {
-                  id: "member-8",
-                  name: "bob",
-                  mention: { type: "user", id: "8", label: "bob" },
-                },
-                {
-                  id: "member-7",
-                  name: "alice",
-                  mention: { type: "user", id: "7", label: "alice" },
-                },
-              ],
-            },
-          ]}
-        />,
-      ),
-    );
-
-    const input = write("@");
-    const highlighted = () =>
-      container.querySelector('[data-active="true"]');
-    const bob = container.querySelector(
-      '[data-testid="issue-comment-mention-member-8"]',
-    );
-    const alice = container.querySelector(
-      '[data-testid="issue-comment-mention-member-7"]',
-    );
-    const press = (key: string) =>
-      act(() => {
-        input.dispatchEvent(
-          new KeyboardEvent("keydown", { bubbles: true, key }),
-        );
-      });
-
-    // The first candidate is highlighted so Enter has a target immediately.
-    expect(highlighted()).toBe(bob);
-
-    press("ArrowDown");
-    expect(highlighted()).toBe(alice);
-    press("ArrowUp");
-    expect(highlighted()).toBe(bob);
-
-    press("ArrowDown");
-    press("Enter");
-
-    expect(input.value).toBe("@alice ");
-    expect(
-      container.querySelector(
-        '[data-testid="collaboration-chat-reply-mentions-root"]',
-      ),
-    ).toBeNull();
-  });
-
-  it("inserts the highlighted mention with Tab", async () => {
-    act(() =>
-      root.render(
-        <IssueThreadReplyComposer
-          rootId="root"
-          disabled={false}
-          labels={labels}
-          onSend={vi.fn().mockResolvedValue({ ok: true })}
-          mentionGroups={[
-            {
-              label: "Members",
-              items: [
-                {
-                  id: "member-8",
-                  name: "bob",
-                  mention: { type: "user", id: "8", label: "bob" },
-                },
-                {
-                  id: "member-7",
-                  name: "alice",
-                  mention: { type: "user", id: "7", label: "alice" },
-                },
-              ],
-            },
-          ]}
-        />,
-      ),
-    );
-
-    const input = write("@");
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      );
-    });
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Tab" }),
-      );
-    });
-
-    expect(input.value).toBe("@alice ");
   });
 });

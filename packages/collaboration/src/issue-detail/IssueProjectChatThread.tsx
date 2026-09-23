@@ -10,7 +10,7 @@ import type { ComponentProps } from 'react'
 import { useIssueActivityExecutionStatus } from './useIssueActivityExecutionStatus'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useIssueCommentAttachments, issueCommentBody } from './useIssueCommentAttachments'
-import { useIssueMentionGroups } from './useIssueMentionGroups'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
 import type { ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 import type { CollaborationAttachment, CollaborationExecution } from '../types'
@@ -62,7 +62,7 @@ export function IssueProjectChatThread({
 }) {
   const runtimeReplies = useBrowserIssueReplies()
   const attachments = useIssueCommentAttachments(upload, remove)
-  const mentionGroups = useIssueMentionGroups(
+  const mentionCandidates = useIssueMentionCandidates(
     members ?? [],
     agents ?? [],
     translate
@@ -117,14 +117,15 @@ export function IssueProjectChatThread({
             disabled={!canComment}
             canAttach={Boolean(upload)}
             translate={translate}
-            mentionGroups={mentionGroups}
+            mentionCandidates={mentionCandidates}
           />
         ) : canComment ? (
           <IssueThreadReplyComposer
             rootId={rootId}
             disabled={!canComment}
             attachments={upload ? attachments : undefined}
-            mentionGroups={mentionGroups}
+            mentionCandidates={mentionCandidates}
+            translate={translate}
             onSend={async (text, mentions) => {
               await send(
                 issueCommentBody(text, attachments.attachments),
