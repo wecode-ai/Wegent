@@ -151,9 +151,8 @@ class ModelAdapter:
         max_output_tokens = None
         cost_index = None
         model_capabilities = None
-        allowed_users: List[str] = []
+        allowed_users = get_public_model_allowed_users(kind.json)
         if isinstance(kind.json, dict):
-            allowed_users = get_public_model_allowed_users(kind.json)
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
                 try:

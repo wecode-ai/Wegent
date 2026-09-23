@@ -2322,7 +2322,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get model using kindReader (handles public fallback)
         model = kindReader.get_by_name_and_namespace(
-            db, user_id, KindType.MODEL, model_ref.namespace, model_ref.name
+            db, team_owner_id, KindType.MODEL, model_ref.namespace, model_ref.name
         )
 
         if not model:
