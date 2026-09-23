@@ -449,16 +449,29 @@ async def create_board_item(
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         manager_run = _project_manager_run(db, token_info, project)
         project_manager_service.require_write(manager_run)
-        if manager_run is not None and any(
-            key in item
-            for key in ("assignee_user_id", "assignee_agent_id", "assignee_team_id")
-        ):
-            raise ValueError(
-                "Create the Issue first, then assign it with assign_board_item"
-            )
+        if manager_run is not None:
+            allowed = {
+                "title",
+                "description",
+                "priority",
+                "due_at",
+                "tags",
+                "parent_id",
+            }
+            if set(item) - allowed:
+                raise ValueError(
+                    "Project manager may only create an unassigned Issue with ordinary fields"
+                )
+            manager_run = project_manager_service.lock_run(db, manager_run)
         user = _user(db, token_info.user_id)
         created = loop_item_provider_router.create(
-            db, project, user, LoopItemCreate.model_validate(item)
+            db,
+            project,
+            user,
+            LoopItemCreate.model_validate(item),
+            assign_creator_if_unassigned=manager_run is None,
+            apply_project_workflow=manager_run is None,
+            commit=manager_run is None,
         )
         from app.services.project_automation_domain import ProjectAutomationEvent
         from app.services.project_incoming_hooks import project_incoming_hook_service
@@ -474,6 +487,18 @@ async def create_board_item(
                 db,
                 issue=created.internal_item,
                 user_id=user.id,
+            )
+        if manager_run is not None:
+            result = _read_item(
+                db, project, str(created.values["id"]), token_info.user_id
+            )
+            project_manager_service.record_action(
+                db,
+                manager_run,
+                kind="create",
+                item_id=str(created.values["id"]),
+                before=None,
+                after=result,
             )
         try:
             await project_incoming_hook_service.ingest_internal(
@@ -523,15 +548,6 @@ async def create_board_item(
 
             await dispatch_board_team_assignment(db, item=internal, user=user)
         result = _read_item(db, project, str(created.values["id"]), token_info.user_id)
-        if manager_run is not None:
-            project_manager_service.record_action(
-                db,
-                manager_run,
-                kind="create",
-                item_id=str(created.values["id"]),
-                before=None,
-                after=result,
-            )
         return result
 
 
@@ -793,6 +809,7 @@ async def assign_board_item(
                 notify_assignee=notify_assignee,
                 trigger="automation",
             )
+            manager_run = project_manager_service.lock_run(db, manager_run)
             assigned = (
                 loop_item_service.assign(
                     db,
@@ -800,20 +817,13 @@ async def assign_board_item(
                     item_id=resolved_item_id,
                     user_id=token_info.user_id,
                     values=assignment,
+                    commit=False,
                 )
                 if internal is not None
                 else external_loop_item_provider.assign(
                     db, resolved_item_id, token_info.user_id, assignment
                 )
             )
-            if assignee_type == "agent" and internal is not None:
-                from app.services.board_team_execution import (
-                    dispatch_board_team_assignment,
-                )
-
-                await dispatch_board_team_assignment(
-                    db, item=assigned, user=_user(db, token_info.user_id)
-                )
             result = _read_item(db, project, resolved_item_id, token_info.user_id)
             project_manager_service.record_action(
                 db,
@@ -823,6 +833,14 @@ async def assign_board_item(
                 before=current,
                 after=result,
             )
+            if assignee_type == "agent" and internal is not None:
+                from app.services.board_team_execution import (
+                    dispatch_board_team_assignment,
+                )
+
+                await dispatch_board_team_assignment(
+                    db, item=assigned, user=_user(db, token_info.user_id)
+                )
             return result
         values = LoopItemAssign(
             version=int(current["version"]),
@@ -937,6 +955,8 @@ async def update_board_item(
                         mode="json", exclude={"version"}, exclude_unset=True
                     ),
                 )
+        if manager_run is not None:
+            manager_run = project_manager_service.lock_run(db, manager_run)
         if project.task_provider in {"github", "gitlab"}:
             external_loop_item_provider.update(
                 db, resolved_item_id, token_info.user_id, values
@@ -944,13 +964,11 @@ async def update_board_item(
             updated = db.get(LoopItem, resolved_item_id)
         else:
             updated = loop_item_service.update(
-                db, resolved_item_id, token_info.user_id, values
-            )
-        if values.assignee_agent_id and updated is not None:
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            await dispatch_board_team_assignment(
-                db, item=updated, user=_user(db, token_info.user_id)
+                db,
+                resolved_item_id,
+                token_info.user_id,
+                values,
+                commit=manager_run is None,
             )
         result = _read_item(db, project, resolved_item_id, token_info.user_id)
         if manager_run is not None:
@@ -961,6 +979,12 @@ async def update_board_item(
                 item_id=resolved_item_id,
                 before=current,
                 after=result,
+            )
+        if values.assignee_agent_id and updated is not None:
+            from app.services.board_team_execution import dispatch_board_team_assignment
+
+            await dispatch_board_team_assignment(
+                db, item=updated, user=_user(db, token_info.user_id)
             )
         return result
 
@@ -980,6 +1004,8 @@ def add_board_item_comment(
         _read_item(db, project, resolved_item_id, token_info.user_id)
         manager_run = _project_manager_run(db, token_info, project)
         project_manager_service.require_write(manager_run)
+        if manager_run is not None:
+            manager_run = project_manager_service.lock_run(db, manager_run)
         if project.task_provider in {"github", "gitlab"}:
             result = dict(
                 external_loop_item_provider.add_comment(

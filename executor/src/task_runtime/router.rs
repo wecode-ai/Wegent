@@ -481,6 +481,30 @@ impl TaskRuntime {
         }
     }
 
+    pub async fn create_project_manager_task(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        input: TaskCreate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? == TaskProviderKind::Local {
+            return self
+                .local_store
+                .create_project_manager_task(project_id, run_id, input);
+        }
+        let item = self.create_task(project_id, input).await?;
+        self.record_project_manager_action(
+            project_id,
+            run_id,
+            "create",
+            &item.id,
+            Value::Null,
+            false,
+        )?;
+        Ok(item)
+    }
+
     pub async fn update_task(
         &self,
         project_id: &str,
@@ -504,6 +528,26 @@ impl TaskRuntime {
                 "{provider:?}"
             ))),
         }
+    }
+
+    pub async fn update_project_manager_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        run_id: &str,
+        kind: &str,
+        payload: Value,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? == TaskProviderKind::Local {
+            return self
+                .local_store
+                .update_project_manager_task(project_id, task_id, input, run_id, kind, payload);
+        }
+        let item = self.update_task(project_id, task_id, input).await?;
+        self.record_project_manager_action(project_id, run_id, kind, task_id, payload, false)?;
+        Ok(item)
     }
 
     pub async fn mark_task_read(

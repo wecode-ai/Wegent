@@ -120,8 +120,11 @@ async def call_project_manager_tool(
     arguments["space_id"] = project_id
     if tool_name == "get_current_context":
         return context
-    result = tool(token_info, **arguments)
-    return await result if isawaitable(result) else result
+    try:
+        result = tool(token_info, **arguments)
+        return await result if isawaitable(result) else result
+    except ValueError as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
 
 
 @router.get("/{project_id}/project-manager", response_model=ProjectManagerConfigView)

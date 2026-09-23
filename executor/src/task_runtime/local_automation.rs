@@ -163,17 +163,18 @@ fn next_schedule(
     .ok_or_else(|| TaskRuntimeError::Invalid("invalid automation schedule or timezone".into()))
 }
 
-pub(super) fn on_event(
+pub(super) fn on_event_with_origin(
     connection: &Connection,
     project_id: &str,
     task_id: &str,
     event: &str,
     added_tags: &[String],
+    created_by_manager: bool,
 ) -> Result<(), TaskRuntimeError> {
     let project = get_item_from(connection, project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
     let manager_config = manager(&project);
-    if manager_config["enabled"] == true {
+    if manager_config["enabled"] == true && !created_by_manager {
         for trigger in manager_config["triggers"].as_array().into_iter().flatten() {
             if trigger["enabled"] == false
                 || text(trigger, "kind") != "event"
@@ -954,38 +955,60 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut run = get_item_from(&transaction, run_id, "automation_run")?
-            .ok_or_else(|| TaskRuntimeError::Invalid("manager run was not found".into()))?;
-        if run.cloud_project_id.as_deref() != Some(project_id)
-            || run.metadata["projectManager"] != true
-        {
-            return Err(TaskRuntimeError::Invalid(
-                "manager run does not belong to this project".into(),
-            ));
-        }
-        let item = get_item_from(&transaction, item_id, "task")?;
-        if item
-            .as_ref()
-            .is_some_and(|item| item.cloud_project_id.as_deref() != Some(project_id))
-        {
-            return Err(TaskRuntimeError::TaskNotFound);
-        }
-        let action = json!({"id":Uuid::new_v4().to_string(),"kind":kind,"itemId":item_id,"itemVersion":item.as_ref().map(|item| item.version),"status":if pending {"pending_confirmation"} else {"executed"},"payload":payload,"createdAt":now()});
-        if !run.metadata["actions"].is_array() {
-            run.metadata["actions"] = json!([]);
-        }
-        run.metadata["actions"]
-            .as_array_mut()
-            .unwrap()
-            .push(action.clone());
-        transaction.execute(
-            "UPDATE loop_items SET metadata=?1, updated_at=?2 WHERE id=?3",
-            params![run.metadata.to_string(), now(), run_id],
+        let action = record_project_manager_action_in(
+            &transaction,
+            project_id,
+            run_id,
+            kind,
+            item_id,
+            payload,
+            pending,
         )?;
         transaction.commit()?;
         Ok(action)
     }
+}
 
+pub(super) fn record_project_manager_action_in(
+    connection: &Connection,
+    project_id: &str,
+    run_id: &str,
+    kind: &str,
+    item_id: &str,
+    payload: Value,
+    pending: bool,
+) -> Result<Value, TaskRuntimeError> {
+    let mut run = get_item_from(connection, run_id, "automation_run")?
+        .ok_or_else(|| TaskRuntimeError::Invalid("manager run was not found".into()))?;
+    if run.cloud_project_id.as_deref() != Some(project_id) || run.metadata["projectManager"] != true
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "manager run does not belong to this project".into(),
+        ));
+    }
+    let item = get_item_from(connection, item_id, "task")?;
+    if item
+        .as_ref()
+        .is_some_and(|item| item.cloud_project_id.as_deref() != Some(project_id))
+    {
+        return Err(TaskRuntimeError::TaskNotFound);
+    }
+    let action = json!({"id":Uuid::new_v4().to_string(),"kind":kind,"itemId":item_id,"itemVersion":item.as_ref().map(|item| item.version),"status":if pending {"pending_confirmation"} else {"executed"},"payload":payload,"createdAt":now()});
+    if !run.metadata["actions"].is_array() {
+        run.metadata["actions"] = json!([]);
+    }
+    run.metadata["actions"]
+        .as_array_mut()
+        .unwrap()
+        .push(action.clone());
+    connection.execute(
+        "UPDATE loop_items SET metadata=?1, updated_at=?2 WHERE id=?3",
+        params![run.metadata.to_string(), now(), run_id],
+    )?;
+    Ok(action)
+}
+
+impl LocalTaskStore {
     pub fn decide_project_manager_action(
         &self,
         project_id: &str,

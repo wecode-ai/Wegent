@@ -47,6 +47,16 @@ def _tags_overlap(left: list[str], right: list[str]) -> bool:
 
 
 class ProjectManagerService:
+    @staticmethod
+    def lock_run(db: Session, run: ProjectAutomationRun) -> ProjectAutomationRun:
+        return (
+            db.query(ProjectAutomationRun)
+            .filter(ProjectAutomationRun.id == run.id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
+
     def check_automation_conflict(
         self,
         db: Session,
@@ -113,13 +123,7 @@ class ProjectManagerService:
         before: dict | None,
         after: dict | None,
     ) -> dict:
-        run = (
-            db.query(ProjectAutomationRun)
-            .filter(ProjectAutomationRun.id == run.id)
-            .populate_existing()
-            .with_for_update()
-            .one()
-        )
+        run = ProjectManagerService.lock_run(db, run)
         action = {
             "id": str(uuid.uuid4()),
             "kind": kind,
@@ -147,13 +151,7 @@ class ProjectManagerService:
         approver_user_id: int | None,
         payload: dict,
     ) -> dict:
-        run = (
-            db.query(ProjectAutomationRun)
-            .filter(ProjectAutomationRun.id == run.id)
-            .populate_existing()
-            .with_for_update()
-            .one()
-        )
+        run = ProjectManagerService.lock_run(db, run)
         action = {
             "id": str(uuid.uuid4()),
             "kind": kind,
@@ -274,6 +272,7 @@ class ProjectManagerService:
                         item_id=action["item_id"],
                         user_id=user_id,
                         values=assignment,
+                        commit=False,
                     )
             else:
                 update = LoopItemUpdate.model_validate(
@@ -286,7 +285,11 @@ class ProjectManagerService:
                     )
                 else:
                     loop_item_service.update(
-                        db, action["item_id"], operator_user_id, update
+                        db,
+                        action["item_id"],
+                        operator_user_id,
+                        update,
+                        commit=False,
                     )
         action["status"] = "executed" if approve else "rejected"
         action["decided_by_user_id"] = user_id

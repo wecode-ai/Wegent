@@ -504,6 +504,7 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
         assign_creator_if_unassigned: bool = True,
+        apply_project_workflow: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
@@ -535,7 +536,7 @@ class LoopItemService:
         task_metadata: dict = {}
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
-        elif values.parent_id is None:
+        elif values.parent_id is None and apply_project_workflow:
             project_metadata = (
                 project.metadata_json if isinstance(project.metadata_json, dict) else {}
             )
@@ -1321,6 +1322,8 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         values: LoopItemUpdate,
+        *,
+        commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         if "status" in values.model_fields_set and values.status != item.status:
@@ -1637,7 +1640,10 @@ class LoopItemService:
                 next_version=values.version + 1,
                 completed_at=updates.get("completed_at"),
             )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(item)
         if cancelled_runs:
             from app.services.board_team_execution import (

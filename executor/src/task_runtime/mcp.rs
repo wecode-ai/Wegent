@@ -1180,21 +1180,15 @@ async fn call_tool_with_runtime_context(
                                             )),
                                         };
                                         match update {
-                                            Ok(update) => match runtime
-                                                .update_task(project_id, task_id, update)
+                                            Ok(update) => runtime
+                                                .update_project_manager_task(
+                                                    project_id, task_id, update, run_id, "assign",
+                                                    payload,
+                                                )
                                                 .await
-                                            {
-                                                Ok(item) => runtime
-                                                    .record_project_manager_action(
-                                                        project_id, run_id, "assign", task_id,
-                                                        payload, false,
-                                                    )
-                                                    .and_then(|_| {
-                                                        serde_json::to_value(item)
-                                                            .map_err(invalid_json)
-                                                    }),
-                                                Err(error) => Err(error),
-                                            },
+                                                .and_then(|item| {
+                                                    serde_json::to_value(item).map_err(invalid_json)
+                                                }),
                                             Err(error) => Err(error),
                                         }
                                     }
@@ -1216,41 +1210,38 @@ async fn call_tool_with_runtime_context(
                 .get("item")
                 .cloned()
                 .unwrap_or_else(|| arguments.clone());
+            let allowed = ["title", "description", "priority", "tags", "parent_id"];
             let input = if is_project_manager(grant.as_ref())
                 && raw
-                    .get("assignee_user_id")
-                    .is_some_and(|value| !value.is_null())
+                    .as_object()
+                    .is_some_and(|fields| fields.keys().any(|key| !allowed.contains(&key.as_str())))
             {
                 Err(super::TaskRuntimeError::Invalid(
-                    "Create the Issue first, then assign it".into(),
+                    "Project AI may only create an unassigned Issue with ordinary fields".into(),
                 ))
             } else {
                 parse(raw)
             };
             match (project_id, input) {
                 (Ok(project_id), Ok(input)) => {
-                    let created = runtime.create_task(project_id, input).await;
-                    match created {
-                        Ok(item) if is_project_manager(grant.as_ref()) => grant
+                    let created = if is_project_manager(grant.as_ref()) {
+                        match grant
                             .as_ref()
                             .and_then(|value| value.automation_run_id.as_deref())
-                            .ok_or_else(|| {
-                                super::TaskRuntimeError::Invalid("manager run is missing".into())
-                            })
-                            .and_then(|run_id| {
-                                runtime.record_project_manager_action(
-                                    project_id,
-                                    run_id,
-                                    "create",
-                                    &item.id,
-                                    Value::Null,
-                                    false,
-                                )
-                            })
-                            .and_then(|_| serde_json::to_value(item).map_err(invalid_json)),
-                        Ok(item) => serde_json::to_value(item).map_err(invalid_json),
-                        Err(error) => Err(error),
-                    }
+                        {
+                            Some(run_id) => {
+                                runtime
+                                    .create_project_manager_task(project_id, run_id, input)
+                                    .await
+                            }
+                            None => Err(super::TaskRuntimeError::Invalid(
+                                "manager run is missing".into(),
+                            )),
+                        }
+                    } else {
+                        runtime.create_task(project_id, input).await
+                    };
+                    created.and_then(|item| serde_json::to_value(item).map_err(invalid_json))
                 }
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
@@ -1306,16 +1297,14 @@ async fn call_tool_with_runtime_context(
                                         project_id, run_id, "update", task_id, raw, true,
                                     )
                                 } else {
-                                    match runtime.update_task(project_id, task_id, input).await {
-                                        Ok(item) => runtime
-                                            .record_project_manager_action(
-                                                project_id, run_id, "update", task_id, raw, false,
-                                            )
-                                            .and_then(|_| {
-                                                serde_json::to_value(item).map_err(invalid_json)
-                                            }),
-                                        Err(error) => Err(error),
-                                    }
+                                    runtime
+                                        .update_project_manager_task(
+                                            project_id, task_id, input, run_id, "update", raw,
+                                        )
+                                        .await
+                                        .and_then(|item| {
+                                            serde_json::to_value(item).map_err(invalid_json)
+                                        })
                                 }
                             }
                         }
@@ -4098,6 +4087,43 @@ mod tests {
 
         assert_eq!(result["arguments"]["item"]["title"], "Investigate");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn local_project_manager_cannot_create_an_executable_workflow() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Managed local project".to_owned(),
+                project_key: Some("MANAGED".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let grant = SpaceContextGrant {
+            space_id: Some(project.id.clone()),
+            item_id: Some(project.id.clone()),
+            automation_run_id: Some("run-1".to_owned()),
+            automation_manager: true,
+            ..SpaceContextGrant::default()
+        };
+
+        let denied = call_tool_with_grant(
+            &runtime,
+            "create_board_item",
+            json!({"space_id":project.id,"item":{"title":"Unsafe","workflow":{}}}),
+            Some(grant),
+        )
+        .await;
+
+        assert_eq!(denied["isError"], true);
+        assert!(denied["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("ordinary fields"));
     }
 
     #[tokio::test]

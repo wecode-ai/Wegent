@@ -484,6 +484,24 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_internal(project_id, input, None)
+    }
+
+    pub fn create_project_manager_task(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        input: TaskCreate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_internal(project_id, input, Some(run_id))
+    }
+
+    fn create_task_internal(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        manager_run_id: Option<&str>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
@@ -509,8 +527,10 @@ impl LocalTaskStore {
         let mut metadata = json!({"tags": input.tags});
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow;
-        } else if let Some(definition) = project.metadata.get("workflow_definition") {
-            metadata["workflow"] = instantiate_local_workflow(definition)?;
+        } else if manager_run_id.is_none() {
+            if let Some(definition) = project.metadata.get("workflow_definition") {
+                metadata["workflow"] = instantiate_local_workflow(definition)?;
+            }
         }
         transaction.execute(
             "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
@@ -573,7 +593,25 @@ impl LocalTaskStore {
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
-        local_automation::on_event(&transaction, project_id, &id, "task.created", &[])?;
+        if let Some(run_id) = manager_run_id {
+            local_automation::record_project_manager_action_in(
+                &transaction,
+                project_id,
+                run_id,
+                "create",
+                &id,
+                Value::Null,
+                false,
+            )?;
+        }
+        local_automation::on_event_with_origin(
+            &transaction,
+            project_id,
+            &id,
+            "task.created",
+            &[],
+            manager_run_id.is_some(),
+        )?;
         transaction.commit()?;
         drop(connection);
         self.get_item(&id, "task")
@@ -584,6 +622,28 @@ impl LocalTaskStore {
         project_id: &str,
         task_id: &str,
         input: TaskUpdate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_internal(project_id, task_id, input, None)
+    }
+
+    pub fn update_project_manager_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        run_id: &str,
+        kind: &str,
+        payload: Value,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_internal(project_id, task_id, input, Some((run_id, kind, payload)))
+    }
+
+    fn update_task_internal(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        manager_action: Option<(&str, &str, Value)>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -777,21 +837,34 @@ impl LocalTaskStore {
             }
         }
         if !added_tags.is_empty() {
-            local_automation::on_event(
+            local_automation::on_event_with_origin(
                 &transaction,
                 project_id,
                 task_id,
                 "task.tag_added",
                 &added_tags,
+                manager_action.is_some(),
             )?;
         }
         if status_changed {
-            local_automation::on_event(
+            local_automation::on_event_with_origin(
                 &transaction,
                 project_id,
                 task_id,
                 "task.status_changed",
                 &[],
+                manager_action.is_some(),
+            )?;
+        }
+        if let Some((run_id, kind, payload)) = manager_action {
+            local_automation::record_project_manager_action_in(
+                &transaction,
+                project_id,
+                run_id,
+                kind,
+                task_id,
+                payload,
+                false,
             )?;
         }
         transaction.commit()?;
@@ -4990,6 +5063,75 @@ mod tests {
         assert_eq!(run["taskTitle"], project.name.as_deref().unwrap());
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0].task_title, project.name.as_deref().unwrap());
+    }
+
+    #[test]
+    fn manager_created_issue_is_audited_without_triggering_the_manager_again() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [
+                            {"id":"on-create","kind":"event","eventType":"task.created","enabled":true},
+                            {"id":"on-tag","kind":"event","eventType":"task.tag_added","enabled":true},
+                            {"id":"on-status","kind":"event","eventType":"task.status_changed","enabled":true}
+                        ],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let run = store.run_project_manager(&project.id, "Plan work").unwrap();
+        let input = serde_json::from_value(json!({"title":"New work"})).unwrap();
+
+        let issue = store
+            .create_project_manager_task(&project.id, run["id"].as_str().unwrap(), input)
+            .unwrap();
+        let updated = store
+            .update_project_manager_task(
+                &project.id,
+                &issue.id,
+                TaskUpdate {
+                    version: issue.version,
+                    tags: Some(vec!["planned".into()]),
+                    status: Some("pending".into()),
+                    ..TaskUpdate::default()
+                },
+                run["id"].as_str().unwrap(),
+                "update",
+                json!({"tags":["planned"],"status":"pending"}),
+            )
+            .unwrap();
+        let runs = store.list_project_manager_runs(&project.id).unwrap();
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["actions"][0]["kind"], "create");
+        assert_eq!(runs[0]["actions"][0]["itemId"], issue.id);
+        assert_eq!(runs[0]["actions"][1]["kind"], "update");
+        assert_eq!(updated.status.as_deref(), Some("pending"));
+        assert_eq!(issue.assignee_user_id, None);
+        assert_eq!(issue.assignee_agent_id, None);
+        assert!(issue.metadata.get("workflow").is_none());
+    }
+
+    #[test]
+    fn manager_issue_creation_rolls_back_when_run_is_invalid() {
+        let (_directory, store, project) = chat_agent_store();
+        let input = serde_json::from_value(json!({"title":"New work"})).unwrap();
+
+        let error = store
+            .create_project_manager_task(&project.id, "missing-run", input)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("manager run was not found"));
+        assert!(store.list_tasks(&project.id).unwrap().is_empty());
     }
 
     #[test]
