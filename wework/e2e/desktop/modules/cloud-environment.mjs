@@ -82,6 +82,10 @@ async function waitForMysqlReady(connectionOptions, mysqlProcess, logPath) {
 async function startMysqlServer(logPath) {
   const mysqlBinary = process.env.WEWORK_E2E_MYSQLD_BIN?.trim() || 'mysqld'
   const dataDirectory = join(resultDir, `cloud-mysql-${process.pid}`)
+  const socketPath =
+    process.platform === 'win32'
+      ? null
+      : join('/tmp', `wework-mysql-${process.pid}-${randomBytes(4).toString('hex')}.sock`)
   await rm(dataDirectory, { recursive: true, force: true })
   await mkdir(dataDirectory, { recursive: true })
 
@@ -100,8 +104,8 @@ async function startMysqlServer(logPath) {
     '--max-connections=64',
     '--innodb-buffer-pool-size=64M',
   ]
-  if (process.platform !== 'win32') {
-    serverArgs.push('--user=root', `--socket=${join(dataDirectory, 'mysql.sock')}`)
+  if (socketPath) {
+    serverArgs.push('--user=root', `--socket=${socketPath}`)
   } else {
     serverArgs.push('--console')
   }
@@ -121,6 +125,7 @@ async function startMysqlServer(logPath) {
     await waitForMysqlReady(connectionOptions, server, logPath)
   } catch (error) {
     await stopProcessGroup(server)
+    if (socketPath) await rm(socketPath, { force: true })
     throw error
   }
 
@@ -133,6 +138,7 @@ async function startMysqlServer(logPath) {
     })
   } catch (error) {
     await stopProcessGroup(server)
+    if (socketPath) await rm(socketPath, { force: true })
     throw error
   }
   return {
@@ -140,13 +146,17 @@ async function startMysqlServer(logPath) {
     databaseUrl: `mysql+pymysql://root@127.0.0.1:${port}/${databaseName}`,
     connectionOptions,
     server,
+    socketPath,
   }
 }
 
 async function resolveBackendRsBinary() {
   const configured = process.env.WEWORK_E2E_BACKEND_RS_BIN?.trim()
   if (configured) {
-    assert.ok(await pathExists(configured), `Configured backend-rs binary does not exist: ${configured}`)
+    assert.ok(
+      await pathExists(configured),
+      `Configured backend-rs binary does not exist: ${configured}`
+    )
     return configured
   }
   const binary = join(
@@ -340,6 +350,7 @@ class RealCloudEnvironment {
     this.redis = redisServer.redis
     const mysqlServer = await startMysqlServer(this.mysqlLogPath)
     this.mysql = mysqlServer.server
+    this.mysqlSocketPath = mysqlServer.socketPath
     this.mysqlConnectionOptions = mysqlServer.connectionOptions
     this.databaseName = mysqlServer.databaseName
     this.databaseUrl = mysqlServer.databaseUrl
@@ -371,6 +382,7 @@ class RealCloudEnvironment {
       CHAT_SHELL_URL: this.modelServerUrl,
       CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
+      EXECUTOR_MANAGER_URL: 'http://localhost:8001',
       WEGENT_SOCKET_URL: this.socketUrl,
       FLOW_SCHEDULER_INTERVAL_SECONDS: '5',
       ...remoteDeviceE2EExtension.backendEnv,
@@ -1555,6 +1567,7 @@ class RealCloudEnvironment {
     await this.nevisSandboxService?.stop()
     await stopProcess(this.redis)
     await stopProcessGroup(this.mysql)
+    if (this.mysqlSocketPath) await rm(this.mysqlSocketPath, { force: true })
   }
 }
 
