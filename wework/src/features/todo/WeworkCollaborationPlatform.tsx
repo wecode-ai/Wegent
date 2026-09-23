@@ -808,18 +808,7 @@ export function WeworkSharedProject({
                   archiveLabel={t('todo.delete_issue', '删除任务')}
                   onMarkRead={onMarkRead}
                   previewDisabled={previewDisabled}
-                  onOpenRuntimeTask={
-                    runtimePort
-                      ? address => {
-                          setTaskComposer({
-                            issue,
-                            address,
-                            conversationKey: `${issue.id}:${address.deviceId}:${address.taskId}`,
-                          })
-                          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
-                        }
-                      : onOpenRuntimeTask
-                  }
+                  issueDetailOnly
                   display={display}
                   processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
                   archiveDisabled={!onDelete}

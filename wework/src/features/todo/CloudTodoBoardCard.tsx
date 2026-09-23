@@ -121,6 +121,7 @@ interface CloudTodoBoardCardProps {
   agentNames?: Record<string, string>
   dragDisabled?: boolean
   previewDisabled?: boolean
+  issueDetailOnly?: boolean
   archiveDisabled?: boolean
   /** Menu label for the archive action; defaults to the archive wording. */
   archiveLabel?: string
@@ -155,6 +156,7 @@ export function CloudTodoBoardCard({
   agentNames,
   dragDisabled = false,
   previewDisabled = false,
+  issueDetailOnly = false,
   archiveDisabled = false,
   archiveLabel,
   cardAction,
@@ -204,7 +206,8 @@ export function CloudTodoBoardCard({
       onArchive={editable && !archiveDisabled ? onArchive : undefined}
       previewPinned={previewPinned}
       onPreviewPinnedChange={onPreviewPinnedChange}
-      previewDisabled={previewDisabled}
+      previewDisabled={previewDisabled || issueDetailOnly}
+      showOpenTaskAction={!issueDetailOnly}
       onMarkRead={onMarkRead ? () => onMarkRead(item) : undefined}
       progressTaskBindings={progressTaskBindings}
       goal={
