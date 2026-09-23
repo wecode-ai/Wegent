@@ -622,6 +622,11 @@ fn apply_claude_header_environment(
         default_headers.retain(|(key, _)| !headers_match(key, "wecode-session-id"));
         default_headers.push(("wecode-session-id".to_owned(), task_id.to_owned()));
     }
+    // Cloud model routes carry the gateway identity header; only then should the
+    // gateway-forwarded session header be forced into custom headers below.
+    let targets_gateway = default_headers
+        .iter()
+        .any(|(key, _)| headers_match(key, "X-Wegent-Model-Type"));
     if let Some(project_id) = project_id(request) {
         default_headers = merge_header_map(
             default_headers,
@@ -643,6 +648,17 @@ fn apply_claude_header_environment(
     if !task_id.is_empty() {
         custom_headers.retain(|(key, _)| !headers_match(key, "wecode-session-id"));
         custom_headers.push(("wecode-session-id".to_owned(), task_id.to_owned()));
+        if targets_gateway {
+            // Cloud routes additionally carry the gateway-forwarded variant;
+            // it must also win over any configured custom value.
+            custom_headers.retain(|(key, _)| {
+                !headers_match(key, "X-Wegent-Upstream-Header-wecode-session-id")
+            });
+            custom_headers.push((
+                "X-Wegent-Upstream-Header-wecode-session-id".to_owned(),
+                task_id.to_owned(),
+            ));
+        }
     }
 
     if !custom_headers.is_empty() {
