@@ -95,6 +95,7 @@ import {
 
 const platformMessages = {
   "zh-CN": {
+    loading: "正在加载…",
     archiveProject: "归档项目",
     projectActions: "项目操作",
     allSpaces: "所有空间",
@@ -312,6 +313,7 @@ const platformMessages = {
     collapseWorkspace: "收起空间项目",
   },
   en: {
+    loading: "Loading…",
     archiveProject: "Archive project",
     projectActions: "Project actions",
     allSpaces: "All spaces",

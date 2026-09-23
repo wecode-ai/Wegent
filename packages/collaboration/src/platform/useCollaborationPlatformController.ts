@@ -287,7 +287,7 @@ export function useCollaborationPlatformController({
       if (!workspaceId && location.projectId) {
         try {
           workspaceId = (await api.projects.get(location.projectId))
-            .workspace_id;
+            .workspace_id ?? null;
         } catch {
           workspaceId = null;
         }
