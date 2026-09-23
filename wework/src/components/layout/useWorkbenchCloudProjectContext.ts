@@ -271,7 +271,7 @@ function cloudProjectAdditionalContext(
       value: [
         ...scope.filter((line): line is string => Boolean(line)),
         'When the user refers to “this project” or “this task”, use this current cloud context.',
-        'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+        'Use the wework_space tools to inspect the current Issue and its attachments when needed. Do not ask for an id that is already provided here.',
       ].join('\n'),
     },
   }
@@ -1102,6 +1102,8 @@ export function useWorkbenchCloudProjectContext({
   const prepareSubmission = useCallback(
     async (description: string): Promise<CloudSubmissionContext> => {
       let refreshedCloudAdditionalContext = cloudAdditionalContext
+      let refreshedCloudProject = boundCloudProject
+      let refreshedCloudItem = boundCloudItem
       if (contextRuntimeTask && todoBindingApis.length > 0) {
         const refreshTaskKey = runtimeTaskKey(contextRuntimeTask)
         const refreshGeneration = contextLookupGenerationRef.current + 1
@@ -1121,6 +1123,8 @@ export function useWorkbenchCloudProjectContext({
                 : null
             )
           }
+          refreshedCloudProject = context.project
+          refreshedCloudItem = context.loop_item
           refreshedCloudAdditionalContext = cloudProjectAdditionalContext(
             context.project,
             context.loop_item
@@ -1133,7 +1137,7 @@ export function useWorkbenchCloudProjectContext({
           refreshedCloudAdditionalContext = cloudAdditionalContext
         }
       }
-      let submissionProject = contextRuntimeTask ? null : pendingCloudProject
+      let submissionProject = contextRuntimeTask ? refreshedCloudProject : pendingCloudProject
       if (
         !contextRuntimeTask &&
         !submissionProject &&
@@ -1142,7 +1146,11 @@ export function useWorkbenchCloudProjectContext({
         submissionProject = defaultProject
       }
       if (!contextRuntimeTask && !submissionProject) submissionProject = defaultWorkItemProject
-      const submissionItem = submissionProject ? pendingTodoItem : null
+      const submissionItem = contextRuntimeTask
+        ? refreshedCloudItem
+        : submissionProject
+          ? pendingTodoItem
+          : null
       const submissionHasModelContext = projectHasModelContext(submissionProject, submissionItem)
       if (!contextRuntimeTask) {
         setPendingCloudContext(submissionProject, submissionItem)
@@ -1165,7 +1173,10 @@ export function useWorkbenchCloudProjectContext({
           ? runtimeCloudProjectId(submissionProject)
           : undefined,
         origin:
-          submissionHasModelContext && submissionProject && submissionItem
+          submissionHasModelContext &&
+          submissionProject &&
+          submissionItem &&
+          !isDefaultWorkItemProject(submissionProject)
             ? {
                 type: 'board_task',
                 projectStore: submissionProject.project_store,
@@ -1188,6 +1199,8 @@ export function useWorkbenchCloudProjectContext({
       }
     },
     [
+      boundCloudItem,
+      boundCloudProject,
       cloudAdditionalContext,
       contextRuntimeTask,
       defaultCloudProjectSelectionKey,

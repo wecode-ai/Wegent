@@ -34,6 +34,8 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   runtimeGoalRequest?: boolean
   initialGoal?: RuntimeGoalCreateInput
   additionalContext?: RuntimeAdditionalContext
+  cloudProjectId?: RuntimeSendRequest['cloudProjectId']
+  origin?: RuntimeSendRequest['origin']
 }
 
 export interface GuidanceWorkbenchMessage {
