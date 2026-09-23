@@ -113,6 +113,13 @@ class ProjectManagerService:
         before: dict | None,
         after: dict | None,
     ) -> dict:
+        run = (
+            db.query(ProjectAutomationRun)
+            .filter(ProjectAutomationRun.id == run.id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
         action = {
             "id": str(uuid.uuid4()),
             "kind": kind,
@@ -140,6 +147,13 @@ class ProjectManagerService:
         approver_user_id: int | None,
         payload: dict,
     ) -> dict:
+        run = (
+            db.query(ProjectAutomationRun)
+            .filter(ProjectAutomationRun.id == run.id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
         action = {
             "id": str(uuid.uuid4()),
             "kind": kind,
@@ -196,6 +210,24 @@ class ProjectManagerService:
                 status.HTTP_409_CONFLICT, "Manager action is not pending"
             )
         action = dict(actions[index])
+        if not approve:
+            approver_id = action.get("approver_user_id")
+            if action["kind"] == "assign" or approver_id is None:
+                require_cloud_project_role(
+                    db, int(project_id), user_id, BaseRole.Maintainer
+                )
+            elif int(approver_id) != user_id:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Issue owner must confirm"
+                )
+            action["status"] = "rejected"
+            action["decided_by_user_id"] = user_id
+            action["decided_at"] = utcnow().isoformat()
+            actions[index] = action
+            run.metadata_json = {**metadata(run), "manager_actions": actions}
+            run.version += 1
+            db.commit()
+            return action
         project = db.get(CloudProject, int(project_id))
         external = project is not None and project.task_provider in {"github", "gitlab"}
         item = None if external else db.get(LoopItem, action["item_id"])

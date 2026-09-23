@@ -237,15 +237,17 @@ fn run_for_manager(
         ));
     }
     let agent_id = text(config, "agentId");
-    let agent = get_item_from(connection, agent_id, "chat_agent")?
-        .ok_or_else(|| TaskRuntimeError::Invalid("project manager Agent was not found".into()))?;
-    if agent.cloud_project_id.as_deref() != Some(&project.id)
-        || agent.status.as_deref() != Some("active")
-    {
-        return Err(TaskRuntimeError::Invalid(
-            "project manager Agent is unavailable".into(),
-        ));
-    }
+    let agent = get_item_from(connection, agent_id, "chat_agent")?.filter(|agent| {
+        agent.cloud_project_id.as_deref() == Some(&project.id)
+            && agent.status.as_deref() == Some("active")
+    });
+    let Some(agent) = agent else {
+        let run_id = format!("local-manager-run-{}", Uuid::new_v4());
+        let stamp = now();
+        let run = json!({"id":run_id,"automationId":"project-manager","projectId":project.id,"projectManager":true,"trigger":trigger,"issueId":issue_id,"taskId":project.id,"taskTitle":project.name,"status":"failed","error":"project manager Agent is unavailable","createdAt":stamp,"updatedAt":stamp,"completedAt":stamp,"actions":[]});
+        connection.execute("INSERT INTO loop_items (id, resource_type, cloud_project_id, metadata, created_at, updated_at) VALUES (?1, 'automation_run', ?2, ?3, ?4, ?4)", params![run_id, project.id, run.to_string(), stamp])?;
+        return Ok(run);
+    };
     let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE loop_item_id=?1 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))", [&project.id], |row| row.get(0))?;
     let run_id = format!("local-manager-run-{}", Uuid::new_v4());
     let stamp = now();
@@ -1012,13 +1014,15 @@ impl LocalTaskStore {
             .cloned()
             .ok_or_else(|| TaskRuntimeError::Invalid("manager action is not pending".into()))?;
         let item_id = text(&action, "itemId");
-        let item =
-            get_item_from(&connection, item_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
-        if item.cloud_project_id.as_deref() != Some(project_id)
-            || item.version != version
-            || action["itemVersion"] != version
-        {
-            return Err(TaskRuntimeError::VersionConflict);
+        if approve {
+            let item = get_item_from(&connection, item_id, "task")?
+                .ok_or(TaskRuntimeError::TaskNotFound)?;
+            if item.cloud_project_id.as_deref() != Some(project_id)
+                || item.version != version
+                || action["itemVersion"] != version
+            {
+                return Err(TaskRuntimeError::VersionConflict);
+            }
         }
         drop(connection);
         if approve {
@@ -1061,6 +1065,11 @@ impl LocalTaskStore {
             .iter_mut()
             .find(|candidate| text(candidate, "id") == action_id)
             .ok_or_else(|| TaskRuntimeError::Invalid("manager action was not found".into()))?;
+        if text(selected, "status") != "pending_confirmation" {
+            return Err(TaskRuntimeError::Invalid(
+                "manager action is not pending".into(),
+            ));
+        }
         selected["status"] = json!(if approve { "executed" } else { "rejected" });
         selected["decidedAt"] = json!(now());
         let result = selected.clone();

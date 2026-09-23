@@ -26,7 +26,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         return false
       }
       const body = await readRequestBody(request)
-      if (!JSON.stringify(body).includes(MARKER)) return false
+      if (!JSON.stringify(body).includes(MARKER)) {
+        response.writeHead(400, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: 'Unexpected model request in project AI scenario' }))
+        return true
+      }
       modelCalled = true
       const id = `project-space-manager-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
@@ -70,6 +74,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         await new Promise(resolve => setTimeout(resolve, 100))
       }
       assert.equal(modelCalled, true, 'Project AI did not reach the configured model')
+      const runSelector = scoped('[data-testid^="project-ai-run-local-manager-run-"]')
+      let runStatus = ''
+      const completionDeadline = Date.now() + workbenchReadyTimeoutMs
+      while (Date.now() < completionDeadline) {
+        runStatus = await control.command('getText', runSelector)
+        if (runStatus.includes('succeeded') || runStatus.includes('failed')) break
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      assert.ok(runStatus.includes('succeeded'), `Project AI run did not succeed: ${runStatus}`)
     },
   }
 }

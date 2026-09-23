@@ -1,5 +1,7 @@
 """Project manager boundaries shared by manual and event runs."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -113,3 +115,24 @@ def test_manager_query_completes_without_issue_assignment(
 
     assert changed is True
     assert test_db.get(ProjectAutomationRun, run.id).status == "succeeded"
+
+
+@pytest.mark.parametrize("status_value", ["cancelled", "failed"])
+def test_terminal_manager_run_is_not_rewritten_as_success(
+    test_db, monkeypatch, status_value: str
+) -> None:
+    run = ProjectAutomationRun(status=status_value)
+    activity = SimpleNamespace(status=status_value)
+    monkeypatch.setattr(project_automation_execution, "_activity", lambda *_: activity)
+
+    changed = project_automation_execution._finalize_project_manager_result(
+        test_db,
+        run=run,
+        content="Late model response",
+        backend_task_id=None,
+        push_activity=False,
+    )
+
+    assert changed is False
+    assert run.status == status_value
+    assert activity.status == status_value

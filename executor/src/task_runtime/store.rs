@@ -337,6 +337,7 @@ impl LocalTaskStore {
             local_automation::validate_rules(&automatic_processing_rules)?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
+        let manager_changed = input.project_manager.is_some();
         if let Some(project_manager) = input.project_manager {
             local_automation::validate_manager(
                 &project_manager,
@@ -352,7 +353,7 @@ impl LocalTaskStore {
             metadata["execution_environment"] = execution_environment;
         }
         let connection = self.connection()?;
-        if metadata["project_manager"]["enabled"] == true {
+        if manager_changed && metadata["project_manager"]["enabled"] == true {
             let agent_id = metadata["project_manager"]["agentId"]
                 .as_str()
                 .unwrap_or_default();
@@ -4989,6 +4990,88 @@ mod tests {
         assert_eq!(run["taskTitle"], project.name.as_deref().unwrap());
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0].task_title, project.name.as_deref().unwrap());
+    }
+
+    #[test]
+    fn unavailable_project_manager_records_failed_run() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        store
+            .archive_chat_agent(&project.id, &agent.id, agent.version)
+            .unwrap();
+
+        let run = store
+            .run_project_manager(&project.id, "Summarize open Issues")
+            .unwrap();
+
+        assert_eq!(run["status"], "failed");
+        assert!(run["error"].as_str().unwrap().contains("unavailable"));
+        assert!(store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn missing_issue_does_not_block_manager_action_rejection() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let run = store
+            .run_project_manager(&project.id, "Summarize open Issues")
+            .unwrap();
+        let run_id = run["id"].as_str().unwrap();
+        let proposal = store
+            .record_project_manager_action(
+                &project.id,
+                run_id,
+                "update",
+                "missing-issue",
+                json!({"title":"New title"}),
+                true,
+            )
+            .unwrap();
+
+        let decision = store
+            .decide_project_manager_action(
+                &project.id,
+                run_id,
+                proposal["id"].as_str().unwrap(),
+                false,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(decision["status"], "rejected");
     }
 
     fn default_chat_agent_input() -> ChatAgentCreate {

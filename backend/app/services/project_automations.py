@@ -447,6 +447,9 @@ class ProjectAutomationService:
         values: ProjectAutomationUpdate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        db.query(CloudProject).filter(
+            CloudProject.id == project_id
+        ).with_for_update().one()
         row = self._rule(db, project_id, automation_id, for_update=True)
         if _metadata(row).get("project_manager") is True:
             raise HTTPException(

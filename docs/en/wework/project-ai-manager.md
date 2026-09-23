@@ -6,7 +6,7 @@ sidebar_position: 9
 
 A project space can enable one AI manager. It inspects the project board, creates Issues, assigns owners, tracks progress, and proposes adjustments. Issue assignees own execution, status progress, and delivery. The manager cannot delete Issues or change project settings or membership.
 
-Open **Project settings → Project AI manager** to choose an Agent, write instructions, and enable it. Cloud spaces require a project Agent backed by a Wegent Team. Local spaces use a local project Agent and continue to work offline.
+Open **Project settings → Project manager** to choose an Agent, write instructions, and enable it. Cloud spaces require a project Agent backed by a Wegent Team. Local spaces use a local project Agent and continue to work offline.
 
 ## Triggers and conversation
 

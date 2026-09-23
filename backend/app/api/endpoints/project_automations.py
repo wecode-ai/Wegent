@@ -4,18 +4,24 @@
 """Wework project automation endpoints."""
 
 import logging
+from inspect import isawaitable
+from typing import Any
 
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    Header,
     HTTPException,
     status,
 )
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
+from app.mcp_server.auth import authenticate_mcp_token
+from app.mcp_server.tools import wework_space
 from app.models.delivery import (
     ProjectAutomationRun,
 )
@@ -57,6 +63,65 @@ from app.services.workspaces import workspace_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class ProjectManagerToolRequest(BaseModel):
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+PROJECT_MANAGER_TOOLS = {
+    name: getattr(wework_space, name)
+    for name in (
+        "get_current_context",
+        "list_board_items",
+        "search_board_items",
+        "get_board_item",
+        "get_assignment_candidates",
+        "list_item_attachments",
+        "read_item_attachment",
+        "create_board_item",
+        "update_board_item",
+        "assign_board_item",
+        "add_board_item_comment",
+    )
+}
+
+
+@router.post("/{project_id}/project-manager/runs/{run_id}/tools/{tool_name}")
+async def call_project_manager_tool(
+    project_id: str,
+    run_id: str,
+    tool_name: str,
+    values: ProjectManagerToolRequest,
+    authorization: str | None = Header(default=None),
+) -> Any:
+    token = (authorization or "").removeprefix("Bearer ")
+    token_info = authenticate_mcp_token(token)
+    if token_info is None or token_info.auth_type != "task":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Task token required")
+    tool = PROJECT_MANAGER_TOOLS.get(tool_name)
+    if tool is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Manager tool not found")
+    try:
+        context = wework_space.get_current_context(token_info)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    if (
+        context.get("scope") != "project"
+        or str(context.get("space_id")) != project_id
+        or str(context.get("manager_run_id")) != run_id
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Manager run does not match task"
+        )
+    arguments = dict(values.arguments)
+    if arguments.get("space_id") not in (None, "", project_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Space does not match task")
+    arguments["space_id"] = project_id
+    if tool_name == "get_current_context":
+        return context
+    result = tool(token_info, **arguments)
+    return await result if isawaitable(result) else result
 
 
 @router.get("/{project_id}/project-manager", response_model=ProjectManagerConfigView)

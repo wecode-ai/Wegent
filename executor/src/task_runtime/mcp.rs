@@ -23,7 +23,8 @@ use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 use super::{
-    BinaryInput, DeliveryCreate, ProjectCreate, RuntimeTaskAddress, TaskRuntime, TaskSearch,
+    BinaryInput, DeliveryCreate, LocalCommentCreate, ProjectCreate, RuntimeTaskAddress,
+    TaskRuntime, TaskSearch,
 };
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
@@ -1334,7 +1335,61 @@ async fn call_tool_with_runtime_context(
             let body = string_argument(&arguments, "body");
             match (project_id, task_id, body) {
                 (Ok(project_id), Ok(task_id), Ok(body)) => {
-                    let result = runtime.add_comment(project_id, task_id, body).await;
+                    let result = if is_project_manager(grant.as_ref()) {
+                        runtime
+                            .list_projects()
+                            .and_then(|projects| {
+                                projects
+                                    .into_iter()
+                                    .find(|project| project.id == project_id)
+                                    .ok_or(super::TaskRuntimeError::ProjectNotFound)
+                            })
+                            .and_then(|project| {
+                                if project.metadata["task_provider"].as_str() != Some("local") {
+                                    return Ok(None);
+                                }
+                                let agent_id = project.metadata["project_manager"]["agentId"]
+                                    .as_str()
+                                    .unwrap_or_default();
+                                let agent = runtime
+                                    .list_chat_agents(project_id)?
+                                    .into_iter()
+                                    .find(|agent| agent.id == agent_id)
+                                    .ok_or_else(|| {
+                                        super::TaskRuntimeError::Invalid(
+                                            "project manager Agent is unavailable".into(),
+                                        )
+                                    })?;
+                                runtime
+                                    .create_comment(LocalCommentCreate {
+                                        project_id: project_id.to_owned(),
+                                        task_id: task_id.to_owned(),
+                                        client_message_id: None,
+                                        sender_type: "agent".to_owned(),
+                                        sender_id: agent.id,
+                                        sender_name: agent.display_name,
+                                        content: body.to_owned(),
+                                        metadata: json!({}),
+                                        reply_to_message_id: None,
+                                    })
+                                    .and_then(|comment| {
+                                        serde_json::to_value(comment).map_err(invalid_json)
+                                    })
+                                    .map(Some)
+                            })
+                    } else {
+                        Ok(None)
+                    };
+                    let result = match result {
+                        Ok(Some(comment)) => Ok(comment),
+                        Ok(None) => runtime
+                            .add_comment(project_id, task_id, body)
+                            .await
+                            .and_then(|comment| {
+                                serde_json::to_value(comment).map_err(invalid_json)
+                            }),
+                        Err(error) => Err(error),
+                    };
                     match result {
                         Ok(comment) if is_project_manager(grant.as_ref()) => grant
                             .as_ref()
@@ -1352,8 +1407,8 @@ async fn call_tool_with_runtime_context(
                                     false,
                                 )
                             })
-                            .and_then(|_| serde_json::to_value(comment).map_err(invalid_json)),
-                        Ok(comment) => serde_json::to_value(comment).map_err(invalid_json),
+                            .map(|_| comment),
+                        Ok(comment) => Ok(comment),
                         Err(error) => Err(error),
                     }
                 }
@@ -1861,6 +1916,22 @@ async fn call_backend_tool(
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
+    if is_project_manager(grant) {
+        let run_id = grant
+            .and_then(|value| value.automation_run_id.as_deref())
+            .ok_or_else(|| "Project manager run is missing".to_owned())?;
+        let response = client
+            .post(format!(
+                "{base}/cloud-projects/{project_id}/project-manager/runs/{}/tools/{name}",
+                encode_segment(run_id)
+            ))
+            .bearer_auth(auth_token)
+            .json(&json!({"arguments": arguments}))
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        return backend_json(response).await;
+    }
     let task_id = || {
         arguments
             .get("item_id")
@@ -3990,6 +4061,42 @@ mod tests {
         assert_eq!(result["item_id"], "ISSUE-1");
         assert_eq!(result["recipient_user_id"], Value::Null);
         assert_eq!(result["body"], "Review failed");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn backend_project_manager_tools_use_the_scoped_tool_endpoint() {
+        use axum::{extract::Json, http::HeaderMap, routing::post, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/api/v1/cloud-projects/12/project-manager/runs/run-1/tools/create_board_item",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                Json(body)
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let grant = SpaceContextGrant {
+            space_id: Some("12".to_owned()),
+            item_id: Some("12".to_owned()),
+            automation_run_id: Some("run-1".to_owned()),
+            automation_manager: true,
+            ..SpaceContextGrant::default()
+        };
+
+        let result = call_backend_tool(
+            &format!("http://{address}"),
+            "task-token",
+            "12",
+            "create_board_item",
+            &json!({"item":{"title":"Investigate"}}),
+            Some(&grant),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["arguments"]["item"]["title"], "Investigate");
         server.abort();
     }
 

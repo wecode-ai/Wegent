@@ -1644,9 +1644,7 @@ class ProjectAutomationExecution:
         push_activity: bool,
     ) -> bool:
         activity = self._activity(db, run)
-        if run.status in TERMINAL_RUN_STATUSES and (
-            activity is None or activity.status == "completed"
-        ):
+        if run.status in TERMINAL_RUN_STATUSES:
             return False
         run.status = "succeeded"
         run.completed_at = utcnow()
@@ -2002,8 +2000,7 @@ class ProjectAutomationProcessor:
 
         if not supported_event_type(event.event_type):
             return []
-        if event.payload.get("project_manager_run_id"):
-            return []
+        created_by_manager = bool(event.payload.get("project_manager_run_id"))
         query = db.query(ProjectAutomationRule).filter(
             ProjectAutomationRule.cloud_project_id == event.project_id,
             ProjectAutomationRule.status == "enabled",
@@ -2045,6 +2042,8 @@ class ProjectAutomationProcessor:
         )
         matches: list[ProjectAutomationRule] = []
         for rule in candidate_rules:
+            if created_by_manager and metadata(rule).get("project_manager") is True:
+                continue
             if (
                 isinstance(event.payload.get("human_work"), dict)
                 and metadata(rule).get("project_manager") is not True

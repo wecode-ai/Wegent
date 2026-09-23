@@ -933,7 +933,9 @@ async def update_board_item(
                         if current.get("assignee_user_id")
                         else None
                     ),
-                    payload=values.model_dump(exclude={"version"}, exclude_unset=True),
+                    payload=values.model_dump(
+                        mode="json", exclude={"version"}, exclude_unset=True
+                    ),
                 )
         if project.task_provider in {"github", "gitlab"}:
             external_loop_item_provider.update(
@@ -978,11 +980,22 @@ def add_board_item_comment(
         _read_item(db, project, resolved_item_id, token_info.user_id)
         manager_run = _project_manager_run(db, token_info, project)
         project_manager_service.require_write(manager_run)
-        result = dict(
-            external_loop_item_provider.add_comment(
-                db, resolved_item_id, token_info.user_id, body
+        if project.task_provider in {"github", "gitlab"}:
+            result = dict(
+                external_loop_item_provider.add_comment(
+                    db, resolved_item_id, token_info.user_id, body
+                )
             )
-        )
+        else:
+            result = dict(
+                loop_item_service.add_comment(
+                    db,
+                    resolved_item_id,
+                    token_info.user_id,
+                    body,
+                    commit=manager_run is None,
+                )
+            )
         if manager_run is not None:
             project_manager_service.record_action(
                 db,

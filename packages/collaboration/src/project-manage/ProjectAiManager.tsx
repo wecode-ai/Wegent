@@ -144,7 +144,8 @@ export function ProjectAiManager({
       await work()
       await refresh()
     } catch (cause) {
-      setError(String(cause).includes('409') ? labels.conflict : String(cause))
+      const errorMessage = String(cause)
+      setError(/\boverlap(?:s|ping)?\b/i.test(errorMessage) ? labels.conflict : errorMessage)
     } finally {
       setBusy(false)
     }
@@ -288,12 +289,13 @@ export function ProjectAiManager({
                       ))}
                     </select>
                     <input
+                      key={`${trigger.id}-${trigger.tags.join(',')}`}
                       data-testid={`project-ai-trigger-tags-${trigger.id}`}
                       aria-label={labels.tag}
                       placeholder={labels.tag}
-                      value={trigger.tags.join(', ')}
+                      defaultValue={trigger.tags.join(', ')}
                       disabled={!canManage || busy}
-                      onChange={event =>
+                      onBlur={event =>
                         patchTrigger(trigger.id, {
                           tags: event.target.value
                             .split(',')
