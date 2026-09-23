@@ -249,29 +249,50 @@ class ProjectAutomationManagedExecutionService:
         task_store.update_json(db, task=result.task, payload=task_json)
         execution.backend_task_id = result.task.id
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-        activity = ProjectChatMessage(
-            message_id=message_id,
-            client_message_id=message_id,
-            project_id=project_id,
-            task_id=loop_item_id,
-            sender_type="agent",
-            sender_id=agent.id,
-            sender_name=agent.title or agent.name or "AI",
-            message_type="agent_status",
-            content="",
-            metadata_json={
-                "execution_id": execution.id,
-                "executor_type": "wegent_team",
-                "executor_ref": str(team.id),
-                "backend_task_id": result.task.id,
-                "run_status": "queued",
-            },
-            agent_id=agent.id,
-            runtime_device_id="",
-            runtime_task_id="",
-            status="pending",
+        from app.services.loop_item_executions.service import (
+            loop_item_execution_service,
         )
-        db.add(activity)
+
+        activity = loop_item_execution_service._linked_activity(db, execution)
+        if activity is None:
+            activity = ProjectChatMessage(
+                message_id=message_id,
+                client_message_id=message_id,
+                project_id=project_id,
+                task_id=loop_item_id,
+                sender_type="agent",
+                sender_id=agent.id,
+                sender_name=agent.title or agent.name or "AI",
+                message_type="agent_status",
+                content="",
+                metadata_json={},
+                agent_id=agent.id,
+                runtime_device_id="",
+                runtime_task_id="",
+                status="pending",
+            )
+            db.add(activity)
+        activity.metadata_json = {
+            **(activity.metadata_json or {}),
+            "execution_id": execution.id,
+            "executor_type": "wegent_team",
+            "executor_ref": str(team.id),
+            "backend_task_id": result.task.id,
+            "run_status": "queued",
+        }
+        activity.runtime_device_id = ""
+        activity.runtime_task_id = ""
+        comment_context = execution.runtime_origin_context
+        if comment_context.get("comment_attachment_ids"):
+            from app.services.chat.preprocessing import link_contexts_to_subtask
+
+            link_contexts_to_subtask(
+                db=db,
+                subtask_id=result.user_subtask.id,
+                user_id=int(comment_context["comment_user_id"]),
+                attachment_ids=comment_context["comment_attachment_ids"],
+                task=result.task,
+            )
         db.commit()
 
         handle = ManagedTeamExecutionHandle(

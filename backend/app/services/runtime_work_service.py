@@ -118,6 +118,7 @@ from app.stores.tasks.transient import (
     build_transient_task,
 )
 from shared.models.execution import ExecutionRequest
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,7 @@ async def list_runtime_work(
     )
 
 
+@trace_async(span_name="runtime_work.transcript", tracer_name="backend.runtime_work")
 async def get_runtime_transcript(
     *,
     db: Session,
@@ -444,9 +446,14 @@ async def get_runtime_transcript(
 ) -> RuntimeTranscriptResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
-    _touch_workspace_mapping(db, user_id, normalized_address)
+    if getattr(address, "project_session", None) is not None:
+        from app.services.project_chat.session_access import resolve_project_transcript
+
+        user_id, normalized_address = resolve_project_transcript(db, user_id, address)
+    else:
+        normalized_address = _normalized_address(address)
+        _ensure_owned_device(db, user_id, normalized_address.device_id)
+        _touch_workspace_mapping(db, user_id, normalized_address)
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
@@ -466,6 +473,11 @@ async def get_runtime_transcript(
             method="runtime.tasks.transcript",
             payload=payload,
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+            **(
+                {"allow_app_device_task_reading": True}
+                if getattr(address, "project_session", None) is not None
+                else {}
+            ),
         )
     except RuntimeRpcError as exc:
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -499,6 +511,10 @@ async def get_runtime_transcript(
         result.get("hasMoreBefore"),
         result.get("beforeCursor"),
     )
+    if not isinstance(result.get("turns"), list):
+        raise HTTPException(
+            502, "Runtime transcript response is missing canonical turns"
+        )
     return RuntimeTranscriptResponse.model_validate(result)
 
 
@@ -4334,11 +4350,19 @@ def _apply_runtime_create_request(
     execution_request.runtime_project_key = request.runtime_project_key
     execution_request.runtime_project_name = request.runtime_project_name
     execution_request.runtime_workspace_roots = list(request.runtime_workspace_roots)
-    execution_request.project_plugin_ids = [
-        str(plugin["id"])
+    requested_plugin_ids = [
+        str(plugin["id"]).strip()
         for plugin in request.project_plugins
-        if plugin.get("id") is not None
+        if plugin.get("id") is not None and str(plugin["id"]).strip()
     ]
+    execution_request.project_plugin_ids = list(
+        dict.fromkeys(
+            [
+                *getattr(execution_request, "project_plugin_ids", []),
+                *requested_plugin_ids,
+            ]
+        )
+    )
     execution_request.runtime_executable_path = request.runtime_executable_path
     execution_request.claude_permission_mode = request.runtime_permission_mode
     execution_request.client_user_message_id = request.client_user_message_id

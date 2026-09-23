@@ -29,7 +29,7 @@ use brz_http_server::{Binary, HttpResponse};
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use serde_json::json;
 
-use crate::auth::{AuthFailure, get_current_user};
+use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::teams::group_membership::{ErpContext, effective_roles, user_group_memberships};
@@ -264,23 +264,16 @@ mod tests;
 #[brz_http_server::get("/api/tables")]
 async fn list_tables_route(
     #[inject(state)] state: &Arc<AppState>,
-    #[header] authorization: Option<&str>,
+    #[auth] user: SessionUser,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    tables_list(state, authorization).await
+    tables_list(state, user.0).await
 }
 
 /// Handler body for `GET /api/tables`.
 async fn tables_list(
     state: &Arc<AppState>,
-    authorization: Option<&str>,
+    user: UserRow,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    // `security.get_current_user`: the OAuth2 bearer scheme yields the
-    // user row by name; missing/invalid credentials map to the source's
-    // 401 bodies. The recorded user lookup runs on the handler session.
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
-
     let result = list_table_documents(
         &state.mysql,
         state.erp.as_ref(),
@@ -308,15 +301,6 @@ async fn tables_list(
     Ok(HttpResponse::new(Binary::new(
         serde_json::to_vec(&response).unwrap_or_default(),
     )))
-}
-
-fn auth_error(error: AuthFailure) -> FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
-    }
 }
 
 /// `KnowledgeService.list_table_documents`: personal KBs, then

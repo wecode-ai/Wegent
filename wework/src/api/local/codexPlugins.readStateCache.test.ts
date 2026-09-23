@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
+import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
@@ -404,10 +405,19 @@ describe('local codex plugin readState cache', () => {
       }
     )
     const api = createLocalCodexPluginApi()
+    const operationResults: OperationResult[] = []
+    const unsubscribe = subscribeOperationResults(result => operationResults.push(result))
 
-    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
-      'Plugin package installation failed: install rejected'
-    )
+    try {
+      await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+        'Plugin package installation failed: install rejected'
+      )
+    } finally {
+      unsubscribe()
+    }
+    expect(operationResults).toEqual([
+      { failureStage: 'request', key: 'plugin.zip_import', outcome: 'failed' },
+    ])
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'executor.plugins.import_package.rollback',
       {
@@ -466,9 +476,18 @@ describe('local codex plugin readState cache', () => {
     )
 
     const api = createLocalCodexPluginApi()
-    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
-      'local_plugin_commit_timeout'
-    )
+    const operationResults: OperationResult[] = []
+    const unsubscribe = subscribeOperationResults(result => operationResults.push(result))
+    try {
+      await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+        'local_plugin_commit_timeout'
+      )
+    } finally {
+      unsubscribe()
+    }
+    expect(operationResults).toEqual([
+      { failureStage: 'confirm', key: 'plugin.zip_import', outcome: 'failed' },
+    ])
     expect(mocks.requestLocalExecutor).not.toHaveBeenCalledWith(
       'executor.plugins.import_package.rollback',
       expect.anything()
@@ -1052,7 +1071,7 @@ describe('local codex plugin readState cache', () => {
       'executor.plugins.personal.ensure',
       expect.any(Object)
     )
-    const durable = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const durable = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(durable).toBeTruthy()
     expect(durable).toContain('gmail')
   })
@@ -1064,10 +1083,10 @@ describe('local codex plugin readState cache', () => {
     expect(warmed?.deviceId).toBe('local-device')
 
     // Simulate an app restart that loses module memory but keeps localStorage.
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(raw).toBeTruthy()
     clearLocalCodexPluginsReadStateCache()
-    window.localStorage.setItem('wework.plugins.codexReadState.v2', raw!)
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', raw!)
 
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
       'local-device'
@@ -1076,10 +1095,10 @@ describe('local codex plugin readState cache', () => {
 
   test('does not hydrate a plugin snapshot from another executor home', async () => {
     await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(raw).toBeTruthy()
     clearLocalCodexPluginsReadStateCache()
-    window.localStorage.setItem('wework.plugins.codexReadState.v2', raw!)
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', raw!)
 
     mocks.knownDeviceId = 'other-executor-device'
 
@@ -1099,17 +1118,17 @@ describe('local codex plugin readState cache', () => {
 
   test('does not expose a durable plugin snapshot before the executor scope is known', async () => {
     await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(raw).toBeTruthy()
     clearLocalCodexPluginsReadStateCache()
-    window.localStorage.setItem('wework.plugins.codexReadState.v2', raw!)
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', raw!)
 
     mocks.knownDeviceId = null
 
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
   })
 
-  test('migrates yesterday durable v1 peek into v2 without forcing a cold plugin/list', async () => {
+  test('drops legacy durable plugin snapshots without migration', async () => {
     clearLocalCodexPluginsReadStateCache()
     const legacy = {
       version: 1,
@@ -1154,14 +1173,13 @@ describe('local codex plugin readState cache', () => {
     window.localStorage.setItem('wework.plugins.codexReadState.v1', JSON.stringify(legacy))
 
     const peeked = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
-    expect(peeked?.marketplaceItems.map(item => item.name)).toEqual(['gmail'])
-    expect(peeked?.deviceId).toBe('local-device')
-    expect(window.localStorage.getItem('wework.plugins.codexReadState.v2')).toBeTruthy()
+    expect(peeked).toBeNull()
+    expect(window.localStorage.getItem('wework.plugins.codexCatalog.v1')).toBeNull()
     expect(window.localStorage.getItem('wework.plugins.codexReadState.v1')).toBeNull()
     expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
   })
 
-  test('plugin detail writes connector stubs into durable peek for later send preflight', async () => {
+  test('keeps plugin detail out of the durable installed-membership cache', async () => {
     mocks.requestLocalExecutor.mockImplementation(
       async (
         method: string,
@@ -1248,33 +1266,35 @@ describe('local codex plugin readState cache', () => {
     await api.readState({ mergeAllMarketplaces: true })
     await api.readInstalledPluginForTrial('dingtalk')
 
-    const durable = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const durable = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(durable).toBeTruthy()
     // Simulate app restart: drop memory, keep durable localStorage.
     clearLocalCodexPluginsReadStateCache()
-    window.localStorage.setItem('wework.plugins.codexReadState.v2', durable!)
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', durable!)
 
     const peeked = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
-    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.localAuth).toEqual(
+    expect(peeked?.installedPlugins).toEqual([])
+    expect(peeked?.marketplaceItems[0]?.components.connectors?.[0]?.localAuth).toEqual(
       expect.objectContaining({
         kind: 'browser_oauth',
         health: ['auth', 'health'],
         start: ['auth', 'login'],
       })
     )
-    expect(
-      peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.authorizationGroup
-    ).toEqual({ id: 'sites', displayName: 'Sites' })
-    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.displayName).toBe(
+    expect(peeked?.marketplaceItems[0]?.components.connectors?.[0]?.authorizationGroup).toEqual({
+      id: 'sites',
+      displayName: 'Sites',
+    })
+    expect(peeked?.marketplaceItems[0]?.components.connectors?.[0]?.displayName).toBe(
       'example.test'
     )
-    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.accountAuth).toEqual({
+    expect(peeked?.marketplaceItems[0]?.components.connectors?.[0]?.accountAuth).toEqual({
       protocolVersion: 1,
       credentialType: 'oauth2',
       adapter: 'scripts/account-auth.py',
       exportMode: 'exclusive',
     })
-    expect(peeked?.installedPlugins[0]?.spec.components.skills).toEqual([
+    expect(peeked?.marketplaceItems[0]?.components.skills).toEqual([
       { name: 'dingtalk', description: 'skill', path: 'dingtalk' },
     ])
   })
@@ -1388,7 +1408,7 @@ describe('local codex plugin readState cache', () => {
 
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(raw).toBeTruthy()
     const persisted = JSON.parse(raw!) as {
       entries: Record<string, { state: { marketplaceItems: Array<Record<string, unknown>> } }>
@@ -1414,7 +1434,7 @@ describe('local codex plugin readState cache', () => {
 
   test('readMarketplacePluginDetail uses plugin/read without waiting on plugin/list', async () => {
     window.localStorage.setItem(
-      'wework.plugins.codexReadState.v2',
+      'wework.plugins.codexCatalog.v1',
       JSON.stringify({
         version: 2,
         entries: {
@@ -1543,7 +1563,7 @@ describe('local codex plugin readState cache', () => {
 
     await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
 
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     const persisted = JSON.parse(raw!) as {
       entries: Record<
         string,
@@ -1587,7 +1607,7 @@ describe('local codex plugin readState cache', () => {
     )
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    const storageKey = 'wework.plugins.codexReadState.v2'
+    const storageKey = 'wework.plugins.codexCatalog.v1'
     const raw = window.localStorage.getItem(storageKey)
     expect(raw).toBeTruthy()
     const heavy = JSON.parse(raw!) as {
@@ -1629,7 +1649,7 @@ describe('local codex plugin readState cache', () => {
   test('quota fallback preserves the merged catalog used by first paint', async () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    const storageKey = 'wework.plugins.codexReadState.v2'
+    const storageKey = 'wework.plugins.codexCatalog.v1'
     const nativeSetItem = Storage.prototype.setItem
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
       if (key === storageKey) {
@@ -1653,17 +1673,17 @@ describe('local codex plugin readState cache', () => {
   test('migrates a legacy sessionStorage snapshot into localStorage', async () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const raw = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(raw).toBeTruthy()
 
     clearLocalCodexPluginsReadStateCache()
-    window.sessionStorage.setItem('wework.plugins.codexReadState.v2', raw!)
+    window.sessionStorage.setItem('wework.plugins.codexCatalog.v1', raw!)
 
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
       'local-device'
     )
-    expect(window.localStorage.getItem('wework.plugins.codexReadState.v2')).toBeTruthy()
-    expect(window.sessionStorage.getItem('wework.plugins.codexReadState.v2')).toBeNull()
+    expect(window.localStorage.getItem('wework.plugins.codexCatalog.v1')).toBeTruthy()
+    expect(window.sessionStorage.getItem('wework.plugins.codexCatalog.v1')).toBeNull()
   })
 
   test('warmLocalCodexPluginsReadState shares the same plugin/list inflight as readState', async () => {
@@ -2449,7 +2469,7 @@ describe('local codex plugin readState cache', () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
 
-    const durableKey = 'wework.plugins.codexReadState.v2'
+    const durableKey = 'wework.plugins.codexCatalog.v1'
     const durableBefore = window.localStorage.getItem(durableKey)
     expect(durableBefore).toBeTruthy()
 
@@ -2793,6 +2813,9 @@ describe('local codex plugin readState cache', () => {
           params?: Record<string, unknown>
         }
       ) => {
+        if (method === 'executor.plugins.store.list') {
+          return { storePath: '/tmp/store', plugins: [] }
+        }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -2948,6 +2971,9 @@ describe('local codex plugin readState cache', () => {
           params?: Record<string, unknown>
         }
       ) => {
+        if (method === 'executor.plugins.store.list') {
+          return { storePath: '/tmp/store', plugins: [] }
+        }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }

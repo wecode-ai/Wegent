@@ -36,6 +36,11 @@ from app.services.execution.skill_generation import (
     apply_skill_generation_to_skills,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
+from app.services.ghost_capabilities import (
+    MergedGhostCapabilities,
+    load_ghost_chain,
+    merge_ghost_capabilities,
+)
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
     list_mcp_providers,
@@ -133,6 +138,57 @@ class TaskRequestBuilder:
         # Cache shell info by (user_id, namespace, shell_name)
         # to avoid repeated database queries while keeping per-shell isolation.
         self._cached_shell_info: dict[tuple[int, str, str], dict] = {}
+        self._cached_ghost_chains: dict[
+            tuple[int, str, str], list[tuple[Kind, Ghost]]
+        ] = {}
+        self._cached_ghost_capabilities: dict[
+            tuple[int, str, str], MergedGhostCapabilities
+        ] = {}
+
+    def _get_bot_ghost_chain(
+        self,
+        bot: Kind,
+        team: Kind,
+    ) -> list[tuple[Kind, Ghost]]:
+        """Return base Ghost first and the bot's own Ghost last."""
+        bot_crd = Bot.model_validate(bot.json)
+        ghost_ref = bot_crd.spec.ghostRef
+        cache_key = (team.user_id, ghost_ref.namespace, ghost_ref.name)
+        ghost_cache = getattr(self, "_cached_ghost_chains", None)
+        if ghost_cache is None:
+            ghost_cache = {}
+            self._cached_ghost_chains = ghost_cache
+        cached = ghost_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        chain = load_ghost_chain(
+            self.db,
+            owner_user_id=team.user_id,
+            ghost_ref=ghost_ref,
+        )
+        ghost_cache[cache_key] = chain
+        return chain
+
+    def _get_bot_ghost_capabilities(
+        self,
+        bot: Kind,
+        team: Kind,
+    ) -> MergedGhostCapabilities:
+        bot_crd = Bot.model_validate(bot.json)
+        ghost_ref = bot_crd.spec.ghostRef
+        cache_key = (team.user_id, ghost_ref.namespace, ghost_ref.name)
+        capability_cache = getattr(self, "_cached_ghost_capabilities", None)
+        if capability_cache is None:
+            capability_cache = {}
+            self._cached_ghost_capabilities = capability_cache
+        cached = capability_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        merged = merge_ghost_capabilities(self._get_bot_ghost_chain(bot, team))
+        capability_cache[cache_key] = merged
+        return merged
 
     def build(
         self,
@@ -544,6 +600,7 @@ class TaskRequestBuilder:
             workspace_source=project_workspace.get("workspace_source"),
             project_workspace_path=project_workspace.get("project_workspace_path"),
             execution_target_type=project_workspace.get("execution_target_type"),
+            project_plugin_ids=self._project_plugin_ids(bot_config),
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
             git_domain=git_domain,
@@ -585,6 +642,21 @@ class TaskRequestBuilder:
             bool(execution_request.backend_url),
         )
         return execution_request
+
+    @staticmethod
+    def _project_plugin_ids(bot_configs: list[dict]) -> list[str]:
+        plugin_ids: set[str] = set()
+        for bot_config in bot_configs:
+            plugins = bot_config.get("plugins")
+            if not isinstance(plugins, list):
+                continue
+            for plugin in plugins:
+                if not isinstance(plugin, dict):
+                    continue
+                plugin_id = plugin.get("id")
+                if isinstance(plugin_id, str) and plugin_id.strip():
+                    plugin_ids.add(plugin_id.strip())
+        return sorted(plugin_ids)
 
     @staticmethod
     def _is_board_wegent_task(task: TaskResource) -> bool:
@@ -1282,8 +1354,6 @@ class TaskRequestBuilder:
         Returns:
             Base system prompt (Ghost prompt + team member prompt)
         """
-        from app.services.chat.config.model_resolver import get_bot_system_prompt
-
         if team_member_prompt is None:
             team_member = self._find_team_member_for_bot(team_crd, bot)
             if team_member:
@@ -1300,7 +1370,13 @@ class TaskRequestBuilder:
                     team.name,
                 )
 
-        return get_bot_system_prompt(self.db, bot, team.user_id, team_member_prompt)
+        ghost_chain = self._get_bot_ghost_chain(bot, team)
+        own_prompt = ghost_chain[-1][1].spec.systemPrompt.strip() if ghost_chain else ""
+        prompts = [own_prompt] if own_prompt else []
+        if team_member_prompt:
+            prompts.append(team_member_prompt)
+        combined = "\n\n".join(prompts)
+        return f"<base_prompt>\n{combined}\n</base_prompt>" if combined else ""
 
     @staticmethod
     def _team_member_matches_bot(member: TeamMember, bot: Kind) -> bool:
@@ -1470,16 +1546,8 @@ class TaskRequestBuilder:
             )
             return [], [], [], {}
 
-        # Query Ghost
-        ghost = kindReader.get_by_name_and_namespace(
-            self.db,
-            team.user_id,
-            KindType.GHOST,
-            bot_crd.spec.ghostRef.namespace,
-            bot_crd.spec.ghostRef.name,
-        )
-
-        if not ghost or not ghost.json:
+        ghost_chain = self._get_bot_ghost_chain(bot, team)
+        if not ghost_chain:
             logger.warning(
                 "[_get_bot_skills] Ghost not found: name=%s, namespace=%s",
                 bot_crd.spec.ghostRef.name,
@@ -1487,12 +1555,12 @@ class TaskRequestBuilder:
             )
             return [], [], [], {}
 
-        ghost_crd = Ghost.model_validate(ghost.json)
-        logger.info(
-            "[_get_bot_skills] Ghost: name=%s, skills=%s, preload_skills=%s",
-            ghost.name,
-            ghost_crd.spec.skills,
-            ghost_crd.spec.preload_skills,
+        include_ghost_capabilities = bot_crd.spec.capability_mode != "follow_device"
+        merged = self._get_bot_ghost_capabilities(bot, team)
+        logger.debug(
+            "[_get_bot_skills] Merged Ghost capabilities: skills=%s, preload_skills=%s",
+            merged.skills,
+            merged.preload_skills,
         )
 
         # Initialize result containers
@@ -1503,13 +1571,15 @@ class TaskRequestBuilder:
         skill_refs: dict[str, dict] = {}
 
         # Build preload set from Ghost CRD
-        ghost_preload_set = set(ghost_crd.spec.preload_skills or [])
+        ghost_preload_set = (
+            set(merged.preload_skills) if include_ghost_capabilities else set()
+        )
 
         # Process Ghost skills
-        ghost_skill_refs = ghost_crd.spec.skill_refs or {}
-        ghost_preload_skill_refs = ghost_crd.spec.preload_skill_refs or {}
-        if ghost_crd.spec.skills:
-            for skill_name in ghost_crd.spec.skills:
+        ghost_skill_refs = merged.skill_refs
+        ghost_preload_skill_refs = merged.preload_skill_refs
+        if include_ghost_capabilities and merged.skills:
+            for skill_name in merged.skills:
                 ghost_skill_ref = ghost_skill_refs.get(skill_name)
                 if ghost_skill_ref:
                     skill = self._find_attached_skill_by_ref(
@@ -1999,28 +2069,24 @@ Response template:
             ghost_mcp_servers = []
             ghost_skills = []
             ghost_skill_refs = {}
+            ghost_plugins = []
 
-            if bot_spec and bot_spec.ghostRef:
-                ghost = kindReader.get_by_name_and_namespace(
-                    self.db,
-                    team.user_id,
-                    KindType.GHOST,
-                    bot_spec.ghostRef.namespace,
-                    bot_spec.ghostRef.name,
-                )
-                if ghost and ghost.json:
-                    ghost_crd = Ghost.model_validate(ghost.json)
-                    # Convert dict format to list format with name field
-                    mcp_servers_dict = ghost_crd.spec.mcpServers or {}
-                    ghost_mcp_servers = [
-                        {"name": name, **config}
-                        for name, config in mcp_servers_dict.items()
-                    ]
-                    ghost_skills = ghost_crd.spec.skills or []
-                    ghost_skill_refs = {
-                        name: ref.model_dump()
-                        for name, ref in (ghost_crd.spec.skill_refs or {}).items()
-                    }
+            if (
+                bot_spec
+                and bot_spec.ghostRef
+                and bot_spec.capability_mode != "follow_device"
+            ):
+                merged = self._get_bot_ghost_capabilities(bot, team)
+                ghost_skill_refs = {
+                    name: ref.model_dump() for name, ref in merged.skill_refs.items()
+                }
+
+                ghost_mcp_servers = [
+                    {"name": name, **config}
+                    for name, config in merged.mcp_servers.items()
+                ]
+                ghost_skills = list(merged.skills)
+                ghost_plugins = list(merged.plugins)
 
             # Resolve agent_config from model binding
             if runtime_model_config:
@@ -2066,8 +2132,10 @@ Response template:
                     member.prompt if member else None,
                 ),
                 "mcp_servers": ghost_mcp_servers,
+                "plugins": ghost_plugins,
                 "skills": ghost_skills,
                 "skill_refs": ghost_skill_refs,
+                "capability_mode": bot_spec.capability_mode,
                 "role": member.role if member and member.role else "worker",
                 "base_image": base_image,
             }
@@ -2083,6 +2151,7 @@ Response template:
                     "agent_config": {},
                     "system_prompt": "",
                     "mcp_servers": [],
+                    "plugins": [],
                     "skills": [],
                     "skill_refs": {},
                     "role": "worker",
@@ -2249,48 +2318,39 @@ Response template:
         bot_mcp_servers = []
         bot_crd = Bot.model_validate(bot.json)
 
-        if bot_crd.spec and bot_crd.spec.ghostRef:
-            ghost = kindReader.get_by_name_and_namespace(
-                self.db,
-                team.user_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
+        if (
+            bot_crd.spec
+            and bot_crd.spec.ghostRef
+            and bot_crd.spec.capability_mode != "follow_device"
+        ):
+            merged_mcp_servers = self._get_bot_ghost_capabilities(bot, team).mcp_servers
 
-            if ghost and ghost.json:
-                ghost_crd = Ghost.model_validate(ghost.json)
-                mcp_servers_dict = ghost_crd.spec.mcpServers
-
-                if mcp_servers_dict:
-                    # Convert dict format to list format for chat_shell compatibility
-                    for server_name, server_config in mcp_servers_dict.items():
-                        if isinstance(server_config, dict):
-                            server_entry = {
-                                "name": server_name,
-                                "url": server_config.get("url", ""),
-                                "type": server_config.get("type", "streamable-http"),
-                            }
-                            # Convert "headers" to "auth" for chat_shell compatibility
-                            if "headers" in server_config:
-                                server_entry["auth"] = server_config["headers"]
-                            # Include stdio-specific fields (command, args, env)
-                            if "command" in server_config:
-                                server_entry["command"] = server_config["command"]
-                            if "args" in server_config:
-                                server_entry["args"] = server_config["args"]
-                            if "env" in server_config:
-                                server_entry["env"] = server_config["env"]
-                            for timeout_key in (
-                                "timeout",
-                                "timeoutSeconds",
-                                "timeout_seconds",
-                            ):
-                                if timeout_key in server_config:
-                                    server_entry[timeout_key] = server_config[
-                                        timeout_key
-                                    ]
-                            bot_mcp_servers.append(server_entry)
+            # Convert dict format to list format for chat_shell compatibility
+            for server_name, server_config in merged_mcp_servers.items():
+                if isinstance(server_config, dict):
+                    server_entry = {
+                        "name": server_name,
+                        "url": server_config.get("url", ""),
+                        "type": server_config.get("type", "streamable-http"),
+                    }
+                    # Convert "headers" to "auth" for chat_shell compatibility
+                    if "headers" in server_config:
+                        server_entry["auth"] = server_config["headers"]
+                    # Include stdio-specific fields (command, args, env)
+                    if "command" in server_config:
+                        server_entry["command"] = server_config["command"]
+                    if "args" in server_config:
+                        server_entry["args"] = server_config["args"]
+                    if "env" in server_config:
+                        server_entry["env"] = server_config["env"]
+                    for timeout_key in (
+                        "timeout",
+                        "timeoutSeconds",
+                        "timeout_seconds",
+                    ):
+                        if timeout_key in server_config:
+                            server_entry[timeout_key] = server_config[timeout_key]
+                    bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
         # Build a dict to deduplicate by server name
@@ -2586,14 +2646,15 @@ Response template:
         Each skill may declare mcpServers in dict format. This converts them
         to list format. When the skill name already matches the server name,
         keep the bare server name so tool calls can reference the natural MCP
-        server identifier without an extra prefix.
+        server identifier without an extra prefix. Otherwise use a stable
+        seven-character Skill code and a server name capped at 24 characters.
 
         Args:
             skill_configs: List of resolved skill config dicts
 
         Returns:
             List of MCP server dicts in list format:
-            [{"name": "skillName_serverName", "type": "...", "url": "...", ...}]
+            [{"name": "skillCode_serverName", "type": "...", "url": "...", ...}]
         """
         result = extract_skill_mcp_servers(skill_configs)
         for entry in result:

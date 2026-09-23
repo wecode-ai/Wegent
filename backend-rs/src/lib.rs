@@ -38,6 +38,7 @@ pub use config::{init_env, init_env_file};
 pub use hybrid::{HybridConfig, run_hybrid, serve_hybrid, serve_hybrid_application};
 pub use startup::app::build as build_app_state;
 pub use startup::mysql::connect as connect_mysql;
+pub use startup::redis::cache_client as build_cache_client;
 pub use state::AppState;
 
 mod application;
@@ -57,9 +58,12 @@ mod cloud_projects_members;
 pub mod config;
 mod connector_runtime;
 mod crd;
-mod devices;
+mod device_running_tasks;
+pub mod devices;
 pub mod erp_provider;
 pub mod erp_types;
+pub mod executor_version;
+mod filters;
 mod groups;
 mod headers;
 pub mod http_compat;
@@ -122,22 +126,29 @@ mod work_queues;
 
 // Shared route registrations stay at crate scope for the HTTP macros.
 // Public routes are composed by startup::routes.
-brz_http_server::registry!(dependencies(state: Arc<AppState>));
+brz_http_server::registry!(
+    dependencies(state: Arc<AppState>),
+    auth = auth::AppAuthenticator
+);
 brz_http_server::registry!(
     group = runtime_check,
-    dependencies(rc: startup::RuntimeCheckState)
+    dependencies(rc: startup::RuntimeCheckState),
+    auth = auth::AppAuthenticator
 );
 brz_http_server::registry!(
     group = models_unified,
-    dependencies(mu: startup::ModelsState)
+    dependencies(mu: startup::ModelsState),
+    auth = auth::AppAuthenticator
 );
 brz_http_server::registry!(
     group = remote_workspace_status,
-    dependencies(rws: startup::StatusState)
+    dependencies(rws: startup::StatusState),
+    auth = auth::AppAuthenticator
 );
 brz_http_server::registry!(
     group = remote_workspace_tree,
-    dependencies(rwt: startup::TreeState)
+    dependencies(rwt: startup::TreeState),
+    auth = auth::AppAuthenticator
 );
 
 #[cfg(test)]

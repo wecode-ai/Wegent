@@ -93,6 +93,20 @@ let initializeBundledPluginMarketplacePromise: Promise<BundledPluginMarketplace>
 let reconciledBundledPluginMarketplaceKey = ''
 let reconcilingBundledPluginMarketplaceKey = ''
 let reconcileBundledPluginMarketplacePromise: Promise<void> | null = null
+let nextLocalExecutorRequestFailure: {
+  method: string
+  message: string
+  resolve: () => void
+} | null = null
+
+export function failNextLocalExecutorRequestForE2E(method: string, message: string): Promise<void> {
+  if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
+    throw new Error('Local executor request failure injection is only available in E2E mode')
+  }
+  return new Promise(resolve => {
+    nextLocalExecutorRequestFailure = { method, message, resolve }
+  })
+}
 
 function isExecutorHealthy(status: LocalExecutorStatus): boolean {
   return status.running && status.ready !== false && !status.error
@@ -373,6 +387,12 @@ export function requestLocalExecutor<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
+  if (nextLocalExecutorRequestFailure?.method === method) {
+    const failure = nextLocalExecutorRequestFailure
+    nextLocalExecutorRequestFailure = null
+    failure.resolve()
+    return Promise.reject(new Error(failure.message))
+  }
   return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
     if (isExecutorTransportFailure(cause)) {
       availableLocalExecutorStatus = null

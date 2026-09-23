@@ -5,6 +5,7 @@ import { createBoardReplyModelRegression } from '../modules/board-reply-model.mj
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
+import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
 const PROJECT_NAME = '协作共享核心验收'
@@ -141,6 +142,7 @@ export function createDesktopScenario({
         await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'cloud')
         assert.equal(
           await control.command(
             'getAttribute',
@@ -208,6 +210,10 @@ export function createDesktopScenario({
           scoped('[data-testid="collaboration-workspace-project-create"]')
         )
         await control.command(
+          'click',
+          '[data-testid="collaboration-workspace-project-create-blank"]'
+        )
+        await control.command(
           'waitFor',
           scoped('[data-testid="collaboration-project-name-input"]'),
           { timeoutMs: uiTimeoutMs }
@@ -215,6 +221,10 @@ export function createDesktopScenario({
         await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
           value: projectName,
         })
+        await control.command(
+          'click',
+          scoped('[data-testid="collaboration-project-create-advanced"]')
+        )
         await control.command(
           'fill',
           scoped('[data-testid="collaboration-project-description-input"]'),
@@ -246,6 +256,37 @@ export function createDesktopScenario({
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
 
+        agent = await request(`/api/v1/cloud-projects/${project.id}/chat-agents`, {
+          method: 'POST',
+          body: JSON.stringify({
+            name: AGENT_NAME,
+            runtime: 'codex',
+            systemPrompt: 'Complete the assigned project work.',
+            capabilityDescription: 'Desktop E2E project implementation agent',
+            visibility: 'creator_admin',
+            executionEnvironment: 'local',
+            executionMode: 'manual_approval',
+            workspaceBinding: { type: 'standalone' },
+            maxConcurrentExecutions: 1,
+            workspacePolicy: 'project',
+            plugins: [],
+          }),
+        })
+        await control.command(
+          'click',
+          scoped(
+            `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+          )
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
           timeoutMs: uiTimeoutMs,
@@ -271,23 +312,6 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-04-issue-created.png')
-
-        agent = await request(`/api/v1/cloud-projects/${project.id}/chat-agents`, {
-          method: 'POST',
-          body: JSON.stringify({
-            name: AGENT_NAME,
-            runtime: 'codex',
-            systemPrompt: 'Complete the assigned project work.',
-            capabilityDescription: 'Desktop E2E project implementation agent',
-            visibility: 'creator_admin',
-            executionEnvironment: 'local',
-            executionMode: 'manual_approval',
-            workspaceBinding: { type: 'standalone' },
-            maxConcurrentExecutions: 1,
-            workspacePolicy: 'project',
-            plugins: [],
-          }),
-        })
 
         await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
           timeoutMs: uiTimeoutMs,
@@ -381,6 +405,7 @@ export function createDesktopScenario({
           backendUrl,
           authToken,
           projectId: project.id,
+          agentId: agent.id,
         })
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')

@@ -216,13 +216,6 @@ fn str_field(map: &JsonMap<String, Json>, key: &str) -> Option<String> {
     map.get(key).and_then(Json::as_str).map(ToOwned::to_owned)
 }
 
-fn int_field(map: &JsonMap<String, Json>, key: &str) -> Option<i64> {
-    match map.get(key) {
-        Some(Json::Number(number)) => number.as_i64(),
-        _ => None,
-    }
-}
-
 fn bool_field(map: &JsonMap<String, Json>, key: &str) -> Option<bool> {
     map.get(key).and_then(Json::as_bool)
 }
@@ -277,18 +270,22 @@ pub fn extract_model_info(model_data: &Json) -> ModelInfo {
     };
 
     if model_category_type == "video" {
-        if let Some(video_config) = spec.get("videoConfig")
-            && let Some(dumped) = dump_exclude_none(video_config)
-        {
+        if let Some(video_config) = spec.get("videoConfig").filter(|value| !value.is_null()) {
+            // A rejected nested config makes `Model.model_validate` raise, so
+            // the whole entry falls back to the error projection.
+            let Ok(dumped) = super::generation_config::video_config_dump(video_config) else {
+                return default_info();
+            };
             config.insert("videoConfig".into(), dumped);
         }
         if let Some(protocol) = str_field(spec, "protocol") {
             config.insert("protocol".into(), Json::String(protocol));
         }
     } else if model_category_type == "image" {
-        if let Some(image_config) = spec.get("imageConfig")
-            && let Some(dumped) = dump_exclude_none(image_config)
-        {
+        if let Some(image_config) = spec.get("imageConfig").filter(|value| !value.is_null()) {
+            let Ok(dumped) = super::generation_config::image_config_dump(image_config) else {
+                return default_info();
+            };
             config.insert("imageConfig".into(), dumped);
         }
         if let Some(protocol) = str_field(spec, "protocol") {
@@ -309,10 +306,30 @@ pub fn extract_model_info(model_data: &Json) -> ModelInfo {
         is_wework_available: bool_field(spec, "isWeworkAvailable").unwrap_or(false),
         model_group: str_field(spec, "modelGroup"),
         model_sub_group: str_field(spec, "modelSubGroup"),
-        context_window: int_field(&model_config, "context_window"),
-        max_output_tokens: int_field(&model_config, "max_output_tokens"),
+        context_window: token_limit(&model_config, "context_window", spec.get("contextWindow")),
+        max_output_tokens: token_limit(
+            &model_config,
+            "max_output_tokens",
+            spec.get("maxOutputTokens"),
+        ),
         cost_index: str_field(spec, "costIndex"),
         model_capabilities,
+    }
+}
+
+/// `ModelSpec.context_window` / `max_output_tokens`: the runtime `modelConfig`
+/// value wins whenever the key is present, otherwise the legacy top-level
+/// `spec.contextWindow` / `maxOutputTokens` is used. Only a JSON integer
+/// counts; every other type yields `None`, mirroring
+/// `_model_config_token_limit`.
+fn token_limit(
+    model_config: &JsonMap<String, Json>,
+    key: &str,
+    legacy: Option<&Json>,
+) -> Option<i64> {
+    match model_config.get(key).or(legacy)? {
+        Json::Number(number) => number.as_i64(),
+        _ => None,
     }
 }
 
@@ -350,34 +367,6 @@ impl From<ModelCapabilities> for crate::json_compat::OpaqueJson {
         serde_json::to_value(value)
             .expect("capabilities serialize")
             .into()
-    }
-}
-
-/// Recursively remove null fields, mirroring pydantic `exclude_none=True`.
-fn dump_exclude_none(value: &Json) -> Option<Json> {
-    match value {
-        Json::Object(map) => {
-            let mut out = JsonMap::new();
-            for (key, item) in map {
-                if matches!(item, Json::Null) {
-                    continue;
-                }
-                out.insert(key.clone(), dump_exclude_none(item)?);
-            }
-            Some(Json::Object(out))
-        }
-        Json::Array(items) => {
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                if matches!(item, Json::Null) {
-                    out.push(Json::Null);
-                    continue;
-                }
-                out.push(dump_exclude_none(item)?);
-            }
-            Some(Json::Array(out))
-        }
-        other => Some(other.clone()),
     }
 }
 
@@ -513,5 +502,110 @@ mod round_two_contracts {
             );
         }
         crate::json_contract_tests::assert_fixture("round_two_capabilities", outputs);
+    }
+}
+
+#[cfg(test)]
+mod model_spec_contracts {
+    use super::*;
+    use serde_json::json;
+
+    fn spec(model_config: Json, extra: Json) -> Json {
+        let mut spec = match extra {
+            Json::Object(map) => map,
+            _ => JsonMap::new(),
+        };
+        spec.insert("modelConfig".into(), model_config);
+        json!({"metadata": {"name": "model"}, "spec": Json::Object(spec)})
+    }
+
+    #[test]
+    fn legacy_token_limits_are_used_when_model_config_omits_them() {
+        // `ModelSpec.context_window` falls back to the legacy top-level
+        // `spec.contextWindow` only when `modelConfig` has no such key.
+        let info = extract_model_info(&spec(
+            json!({"env": {"model": "claude"}}),
+            json!({"contextWindow": 1024000, "maxOutputTokens": 383985}),
+        ));
+        assert_eq!(info.context_window, Some(1024000));
+        assert_eq!(info.max_output_tokens, Some(383985));
+    }
+
+    #[test]
+    fn runtime_token_limits_win_over_legacy_fields() {
+        let info = extract_model_info(&spec(
+            json!({"env": {}, "context_window": 8192, "max_output_tokens": 512}),
+            json!({"contextWindow": 1024000, "maxOutputTokens": 383985}),
+        ));
+        assert_eq!(info.context_window, Some(8192));
+        assert_eq!(info.max_output_tokens, Some(512));
+    }
+
+    #[test]
+    fn a_present_null_token_limit_suppresses_the_legacy_fallback() {
+        let info = extract_model_info(&spec(
+            json!({"env": {}, "context_window": null}),
+            json!({"contextWindow": 1024000}),
+        ));
+        assert_eq!(info.context_window, None);
+    }
+
+    #[test]
+    fn non_integer_token_limits_are_ignored() {
+        let info = extract_model_info(&spec(
+            json!({"env": {}}),
+            json!({"contextWindow": "1024000", "maxOutputTokens": 1024.5}),
+        ));
+        assert_eq!(info.context_window, None);
+        assert_eq!(info.max_output_tokens, None);
+    }
+
+    #[test]
+    fn video_config_entries_mirror_the_pydantic_projection() {
+        let info = extract_model_info(&spec(
+            json!({"env": {"model": "seedance"}}),
+            json!({
+                "modelType": "video",
+                "videoConfig": {
+                    "resolution": "720p",
+                    "capabilities": {
+                        "video_min_duration_sec": 2,
+                        "video_max_fps": 60,
+                        "generation_modes": [
+                            {"id": "first_last_frame", "label": "first", "first_frame_required": "true"},
+                        ],
+                    },
+                },
+            }),
+        ));
+        assert_eq!(info.model_category_type, "video");
+        assert_eq!(
+            info.config.get("videoConfig"),
+            Some(&json!({
+                "resolution": "720p",
+                "fps": 24,
+                "capabilities": {
+                    "video_min_duration_sec": 2.0,
+                    "video_max_fps": 60.0,
+                    "generation_modes": [
+                        {"id": "first_last_frame", "label": "first", "first_frame_required": true},
+                    ],
+                },
+            }))
+        );
+    }
+
+    #[test]
+    fn a_rejected_video_config_falls_back_to_the_error_projection() {
+        // `Model.model_validate` raises on an out-of-range capability, so the
+        // whole entry collapses to the source error projection.
+        let info = extract_model_info(&spec(
+            json!({"env": {}}),
+            json!({"modelType": "video", "videoConfig": {"capabilities": {"video_max_fps": 0}}}),
+        ));
+        assert_eq!(info.model_category_type, "llm");
+        assert!(info.config.is_empty());
+        assert_eq!(info.provider, None);
+        assert_eq!(info.context_window, None);
     }
 }

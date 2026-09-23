@@ -175,7 +175,10 @@ export interface ExecutorRuntimeClient {
   reorderQueuedRuntimeTask: (
     data: RuntimeTaskQueueReorderRequest
   ) => Promise<RuntimeTaskQueueReorderResponse>
-  createRuntimeTask: (data: RuntimeTaskCreateRequest) => Promise<RuntimeTaskCreateResponse>
+  createRuntimeTask: (
+    data: RuntimeTaskCreateRequest,
+    beforeDispatch?: () => Promise<void>
+  ) => Promise<RuntimeTaskCreateResponse>
   forkRuntimeTask: (data: RuntimeTaskForkRequest) => Promise<RuntimeTaskForkResponse>
 }
 

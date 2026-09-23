@@ -20,13 +20,17 @@ import {
   Plus,
   Search,
   Settings,
+  Trash2,
   UserRound,
   UsersRound,
   X,
 } from "lucide-react";
 
 import { CollaborationApp } from "../CollaborationApp";
+import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
+import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueExecutionEnvironmentNotice";
+import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
 import { Tooltip } from "../issue-detail/Tooltip";
@@ -48,7 +52,7 @@ import type {
   WorkspaceProjectAgent,
 } from "../ports/SharedWorkspaceApi";
 import {
-  createWegentProjectAgentInput,
+  createResourceAgentBindingInput,
   ProjectAgentConfiguration,
 } from "../project-agent-config";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
@@ -69,10 +73,12 @@ import type {
   CollaborationWorkspaceNavigationContext,
 } from "../types";
 import type {
+  CollaborationDomain,
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
   CollaborationWorkspaceView,
 } from "./types";
+import { buildWorkspaceNavigation } from "./workspaceNavigation";
 import { useCollaborationPlatformController } from "./useCollaborationPlatformController";
 import {
   createWorkspaceOperationsSnapshot,
@@ -81,6 +87,7 @@ import {
   type WorkspaceProjectIssuesSnapshot,
 } from "./workspaceOperations";
 import {
+  isCurrentDeviceCollaborationAgent,
   WorkspaceCollaborationGroupsConfiguration,
   WorkspaceMembersConfiguration,
   type WorkspaceResourceCommands,
@@ -91,6 +98,9 @@ const platformMessages = {
     archiveProject: "归档项目",
     projectActions: "项目操作",
     allSpaces: "所有空间",
+    localCollaboration: "本地协作",
+    cloudCollaboration: "云端协作",
+    localProjects: "本地项目",
     home: "新建 Issue",
     newConversation: "新建对话",
     teams: "协作小组",
@@ -104,37 +114,50 @@ const platformMessages = {
     storageLocation: "存储位置",
     resourceSource: "资源来源",
     usedBySpaces: "使用空间",
+    ownership: "归属",
+    projectOwnership: "项目 · {{name}}",
+    workspaceOwnership: "空间 · {{name}}",
     notAddedToSpace: "尚未加入空间",
     addedToSpaceCount: "已加入 {{count}} 个空间",
     addToSpace: "添加到空间",
     chooseSpace: "选择使用空间",
     chooseSpaceHint: "空间只引用资源，不会改变资源的归属或存储位置。",
-    createResourceAt: "新建资源",
-    createResourceAtHint: "选择存储位置；云端资源还需要选择个人或团队归属。",
+    chooseResourceOwner: "选择归属",
+    chooseResourceOwnerHint: "选择由个人还是云端空间管理这个资源。",
     localWorkspaceResource: "本地空间",
     localWorkspaceResourceHint: "保存在当前设备的唯一本地空间中，可离线使用。",
     cloudPersonal: "云端个人资源",
     cloudPersonalHint: "保存在云端，仅你可见和管理，可跨设备使用。",
+    cloudGroups: "云端组资源",
+    cloudGroupsHint: "选择一个组，资源由组成员按权限共同管理。",
     cloudTeamHint: "保存在云端，由团队成员按权限共同管理。",
     noAvailableSpaces: "暂无可用空间",
     teamSpaceRequired: "请先创建此归属下的云端空间，再创建协作小组。",
-    createDeviceAtHint:
-      "选择云端设备的个人或团队归属。本地设备自动发现，无需添加。",
     loginForCloud: "登录后使用云端资源",
     loginForCloudHint: "登录 Wegent 账户后，可创建个人或团队的云端资源。",
     resourceSaved: "资源已保存",
     bindingsSaved: "空间引用已更新",
-    localResources: "本地资源",
     cloudResources: "云端资源",
-    localResourcesHint: "保存在当前设备，可离线使用。",
     cloudResourcesHint: "保存在云端，可跨设备和空间复用。",
     resourceSettings: "设置",
+    deleteAgent: "删除智能体",
+    deleteAgentConfirm: "删除后无法恢复，也会从引用它的空间中移除。",
+    deleteTeam: "删除协作小组",
+    deleteTeamConfirm: "删除后无法恢复，也将无法再把任务分配给该小组。",
+    deleting: "删除中…",
+    deleteFailed: "删除失败，请稍后重试。",
     createAgent: "新建智能体",
     createTeam: "新建协作小组",
     addDevice: "添加设备",
     agentsPageHint: "管理可复用的智能体，按需添加到空间参与协作。",
-    teamsPageHint: "由 Leader 协调智能体和成员，把工作交给最合适的人。",
+    teamsPageHint: "把成员和智能体组成可分配、可复用的协作单元。",
     devicesPageHint: "管理运行智能体的本地和云端设备，查看在线状态与运行能力。",
+    localAgentsPageHint: "管理当前设备上的智能体，供本地项目和协作小组复用。",
+    cloudAgentsPageHint: "管理云端智能体，并按需添加到云端空间参与协作。",
+    localTeamsPageHint: "管理当前设备上的协作小组，供本地项目直接分配。",
+    cloudTeamsPageHint: "管理云端协作小组，供所属空间和项目直接分配。",
+    localDevicesPageHint: "查看当前设备的在线状态与运行能力。",
+    cloudDevicesPageHint: "管理云端执行设备，查看在线状态与运行能力。",
     searchAgents: "搜索智能体",
     searchTeams: "搜索协作小组",
     searchDevices: "搜索设备",
@@ -147,7 +170,7 @@ const platformMessages = {
     provisioning: "准备中",
     errorStatus: "异常",
     access: "访问范围",
-    leader: "Leader",
+    leader: "负责人",
     memberCount: "成员",
     environmentCount: "执行设备",
     toolCount: "运行能力",
@@ -216,23 +239,24 @@ const platformMessages = {
     agents: "智能体",
     collaborationParticipants: "协作成员",
     collaborationParticipantsHint:
-      "统一管理空间中的智能体、成员和协作小组，供空间内项目复用。",
+      "管理空间成员和协作小组；智能体在协作小组内创建和配置。",
     collaborationGroups: "协作小组",
     environments: "执行环境",
     settings: "空间设置",
     basicInformation: "基本信息",
     projects: "项目",
     workspaceManagement: "空间管理",
+    addProject: "新建项目",
+    blankProject: "空白项目",
+    addFolder: "从本地文件夹创建",
+    importExistingProject: "导入已有项目",
     createProject: "创建项目",
-    createCollaborationProject: "新建协作项目",
-    firstProjectHomeTitle: "创建第一个协作项目",
-    firstProjectHomeHint:
-      "用项目组织 Issue、成员和智能体。创建后即可开始分配和自动处理工作。",
-    firstProjectHomeLocationHint:
-      "先选择本地空间或云端空间，再创建项目。云端空间支持跨设备协作。",
-    chooseProjectLocation: "选择创建位置",
-    createLocalProject: "创建本地项目",
-    createCloudProject: "创建云端项目",
+    createCollaborationProject: "创建项目",
+    firstProjectHomeTitle: "开始第一个协作项目",
+    firstProjectHomeHint: "把一个目标交给成员和智能体，并持续看到推进过程。",
+    firstProjectGuideCapture: "记录目标",
+    firstProjectGuideAssign: "分配协作",
+    firstProjectGuideTrack: "跟踪结果",
     chooseProjectWorkspace: "选择项目所属空间",
     chooseProjectWorkspaceHint: "项目创建后不可移动到其他协作空间。",
     loginForCloudProject: "登录后创建云端项目",
@@ -252,12 +276,18 @@ const platformMessages = {
     ownerHint: "决定空间内新建智能体和其他资源的默认归属。",
     workspaceSettingsHint: "管理空间基本信息、成员和协作资源。",
     loadFailed: "加载协作空间失败",
+    navigationLoadFailed: "部分空间或项目加载失败，列表可能不完整。",
+    retryNavigation: "重试",
     searchSpaces: "搜索空间",
     firstUseProgress: "开始协作",
     firstProjectTitle: "创建第一个项目",
     firstProjectHint:
       "项目负责组织 Issue、成员和分配方式；智能体与执行环境可以稍后配置。",
+    firstLocalProjectTitle: "导入第一个本地项目",
+    firstLocalProjectHint:
+      "选择当前设备上的项目文件夹，在本地空间中组织 Issue 和智能体协作。",
     configureAgents: "配置智能体",
+    createCollaborationGroup: "创建协作小组",
     inviteMembers: "邀请成员",
     workspaceResources: "空间资源",
     operationsOverview: "运行总览",
@@ -285,6 +315,9 @@ const platformMessages = {
     archiveProject: "Archive project",
     projectActions: "Project actions",
     allSpaces: "All spaces",
+    localCollaboration: "Local collaboration",
+    cloudCollaboration: "Cloud collaboration",
+    localProjects: "Local projects",
     home: "New Issue",
     newConversation: "New conversation",
     teams: "Teams",
@@ -298,39 +331,49 @@ const platformMessages = {
     storageLocation: "Storage",
     resourceSource: "Source",
     usedBySpaces: "Used by spaces",
+    ownership: "Owner",
+    projectOwnership: "Project · {{name}}",
+    workspaceOwnership: "Space · {{name}}",
     notAddedToSpace: "Not added to a space",
     addedToSpaceCount: "Used by {{count}} spaces",
     addToSpace: "Add to space",
     chooseSpace: "Choose a space",
     chooseSpaceHint:
       "A space references the resource without changing its owner or storage location.",
-    createResourceAt: "Create resource",
-    createResourceAtHint:
-      "Choose where it is stored. Cloud resources also need a personal or team owner.",
+    chooseResourceOwner: "Choose owner",
+    chooseResourceOwnerHint:
+      "Choose whether this resource is managed personally or by a cloud space.",
     localWorkspaceResource: "Local space",
     localWorkspaceResourceHint:
       "Stored in this device's single local space and available offline.",
     cloudPersonal: "Cloud personal resource",
     cloudPersonalHint:
       "Stored in the cloud, visible only to you, and available across devices.",
+    cloudGroups: "Cloud group resource",
+    cloudGroupsHint:
+      "Choose a group. Members manage the resource according to their permissions.",
     cloudTeamHint:
       "Stored in the cloud and managed by team members according to permissions.",
     noAvailableSpaces: "No spaces available",
     teamSpaceRequired:
       "Create a cloud space under this owner before creating a team.",
-    createDeviceAtHint:
-      "Choose a personal or team owner for the cloud device. Local devices are discovered automatically.",
     loginForCloud: "Sign in to use cloud resources",
     loginForCloudHint:
       "Sign in to Wegent to create personal or team cloud resources.",
     resourceSaved: "Resource saved",
     bindingsSaved: "Space references updated",
-    localResources: "Local resources",
     cloudResources: "Cloud resources",
-    localResourcesHint: "Stored on this device and available offline.",
     cloudResourcesHint:
       "Stored in the cloud for reuse across devices and spaces.",
     resourceSettings: "Settings",
+    deleteAgent: "Delete agent",
+    deleteAgentConfirm:
+      "This cannot be undone. The agent will also be removed from spaces that reference it.",
+    deleteTeam: "Delete team",
+    deleteTeamConfirm:
+      "This cannot be undone. Tasks can no longer be assigned to this team.",
+    deleting: "Deleting…",
+    deleteFailed: "Could not delete the agent. Please try again.",
     createAgent: "New agent",
     createTeam: "New team",
     addDevice: "Add device",
@@ -340,6 +383,18 @@ const platformMessages = {
       "A leader coordinates agents and members, handing work to the right collaborator.",
     devicesPageHint:
       "Manage local and cloud devices that run agents, and view their online status and runtimes.",
+    localAgentsPageHint:
+      "Manage agents on this device for reuse by local projects and teams.",
+    cloudAgentsPageHint:
+      "Manage cloud agents and add them to cloud spaces when needed.",
+    localTeamsPageHint:
+      "Manage teams on this device for direct assignment in local projects.",
+    cloudTeamsPageHint:
+      "Manage cloud teams for direct assignment in their spaces and projects.",
+    localDevicesPageHint:
+      "Inspect the status and runtime capabilities of this device.",
+    cloudDevicesPageHint:
+      "Manage cloud execution devices and inspect their runtime capabilities.",
     searchAgents: "Search agents",
     searchTeams: "Search teams",
     searchDevices: "Search devices",
@@ -438,16 +493,18 @@ const platformMessages = {
     basicInformation: "Basic information",
     projects: "Projects",
     workspaceManagement: "Space management",
+    addProject: "New project",
+    blankProject: "Blank project",
+    addFolder: "Create from local folder",
+    importExistingProject: "Import existing project",
     createProject: "Create project",
-    createCollaborationProject: "New collaboration project",
-    firstProjectHomeTitle: "Create your first collaboration project",
+    createCollaborationProject: "Create project",
+    firstProjectHomeTitle: "Start your first collaboration project",
     firstProjectHomeHint:
-      "Use projects to organize issues, members, and agents. Once created, you can start assigning and automating work.",
-    firstProjectHomeLocationHint:
-      "Choose a local or cloud workspace before creating the project. Cloud workspaces support cross-device collaboration.",
-    chooseProjectLocation: "Choose where to create",
-    createLocalProject: "Create local project",
-    createCloudProject: "Create cloud project",
+      "Give a goal to members and agents, then follow its progress through delivery.",
+    firstProjectGuideCapture: "Capture the goal",
+    firstProjectGuideAssign: "Assign collaborators",
+    firstProjectGuideTrack: "Track the result",
     chooseProjectWorkspace: "Choose a workspace",
     chooseProjectWorkspaceHint:
       "The project cannot be moved to another collaboration workspace after creation.",
@@ -471,12 +528,19 @@ const platformMessages = {
     workspaceSettingsHint:
       "Manage the workspace profile, members, and collaboration resources.",
     loadFailed: "Failed to load collaboration spaces",
+    navigationLoadFailed:
+      "Some spaces or projects could not load. The list may be incomplete.",
+    retryNavigation: "Retry",
     searchSpaces: "Search spaces",
     firstUseProgress: "Getting started",
     firstProjectTitle: "Create your first project",
     firstProjectHint:
       "Projects organize issues, members, and assignments. Agents and execution environments can be configured later.",
+    firstLocalProjectTitle: "Import your first local project",
+    firstLocalProjectHint:
+      "Choose a project folder on this device to organize issues and agent collaboration in the local space.",
     configureAgents: "Configure agents",
+    createCollaborationGroup: "Create collaboration group",
     inviteMembers: "Invite members",
     workspaceResources: "Workspace resources",
     operationsOverview: "Operations overview",
@@ -519,7 +583,11 @@ function navigateWithin(
   host: CollaborationPlatformHostAdapter,
   patch: Partial<CollaborationPlatformLocation>,
 ) {
-  host.navigate({ ...host.location, ...patch });
+  const location = { ...host.location, ...patch };
+  if (patch.projectView && patch.projectView !== "manage") {
+    location.projectSettingsSection = null;
+  }
+  host.navigate(location);
 }
 
 function workspaceAgentRecord(
@@ -582,83 +650,95 @@ function createWorkspaceAgentConfigurationApi(
 }
 
 function CollaborationPlatformNavigation({
+  domain,
   host,
   messages,
   workspaces,
   workspaceNavigationContext,
   projects,
+  navigationIncomplete,
+  onRetryNavigation,
   onCreateWorkspace,
+  onCreateProject,
   onNewConversation,
   onArchiveProject,
   footer,
 }: {
+  domain: CollaborationDomain;
   host: CollaborationPlatformHostAdapter;
   messages: PlatformMessages;
   workspaces: CollaborationWorkspace[];
   workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
   projects: CollaborationProject[];
+  navigationIncomplete: boolean;
+  onRetryNavigation(): Promise<void>;
   onCreateWorkspace(): void;
+  onCreateProject(
+    workspaceId: string,
+    mode: "blank" | "folder" | "existing",
+  ): void;
   onNewConversation(projectId: string): void;
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
-  const navigationWorkspaces = useMemo(
-    () =>
-      workspaceNavigationContext
-        ? [
-            ...workspaces.map((workspace) => ({ workspace, canOpen: true })),
-            ...(workspaces.some(
-              (workspace) => workspace.id === workspaceNavigationContext.id,
-            )
-              ? []
-              : [{ workspace: workspaceNavigationContext, canOpen: false }]),
-          ]
-        : workspaces.map((workspace) => ({ workspace, canOpen: true })),
-    [workspaceNavigationContext, workspaces],
+  const domainWorkspaces = useMemo(
+    () => workspaces.filter((workspace) => workspace.location === domain),
+    [domain, workspaces],
   );
+  const domainWorkspaceIds = useMemo(
+    () => new Set(domainWorkspaces.map((workspace) => workspace.id)),
+    [domainWorkspaces],
+  );
+  const domainProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          (Boolean(project.workspace_id) &&
+            domainWorkspaceIds.has(project.workspace_id!)) ||
+          (project.project_store === "local" ? "local" : "cloud") === domain,
+      ),
+    [domain, domainWorkspaceIds, projects],
+  );
+  const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
+    () =>
+      buildWorkspaceNavigation(
+        domainWorkspaces,
+        domainProjects,
+        workspaceNavigationContext,
+      ),
+    [domainProjects, domainWorkspaces, workspaceNavigationContext],
+  );
+  const selectedProjectWorkspaceId = domainProjects.find(
+    (project) => project.id === host.location.projectId,
+  )?.workspace_id;
+  const selectedWorkspaceId =
+    host.location.workspaceId ?? selectedProjectWorkspaceId ?? null;
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () =>
       new Set(
-        host.location.workspaceId
-          ? [host.location.workspaceId]
+        selectedWorkspaceId
+          ? [selectedWorkspaceId]
           : navigationWorkspaces
               .slice(0, 1)
               .map(({ workspace }) => workspace.id),
       ),
   );
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
-  const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
+  const [retryingNavigation, setRetryingNavigation] = useState(false);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
-  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const workspaceId =
-      host.location.workspaceId ?? navigationWorkspaces[0]?.workspace.id;
+      selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id;
     if (!workspaceId) return;
     setExpandedWorkspaceIds((current) => {
       if (current.has(workspaceId)) return current;
       return new Set([...current, workspaceId]);
     });
-  }, [host.location.workspaceId, navigationWorkspaces]);
-  useEffect(() => {
-    if (!workspaceMenuId) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!workspaceMenuRef.current?.contains(event.target as Node)) {
-        setWorkspaceMenuId(null);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setWorkspaceMenuId(null);
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [workspaceMenuId]);
+  }, [navigationWorkspaces, selectedWorkspaceId]);
   const openWorkspaceHome = (workspaceId: string) =>
     host.navigate({
       platformView: "spaces",
+      collaborationDomain: domain,
       workspaceId,
       workspaceView: "home",
       projectId: null,
@@ -681,7 +761,45 @@ function CollaborationPlatformNavigation({
       {fullSidebar ? (
         <>
           <div className="collaboration-platform-brand">
-            {messages.collaborationSpaces}
+            {messages.collaborationHome}
+          </div>
+          <div
+            className="collaboration-domain-switch"
+            role="group"
+            aria-label={messages.collaborationHome}
+          >
+            {(["local", "cloud"] as const).map((candidate) => (
+              <button
+                type="button"
+                className={domain === candidate ? "active" : undefined}
+                aria-pressed={domain === candidate}
+                data-testid={`collaboration-domain-${candidate}`}
+                key={candidate}
+                onClick={() =>
+                  host.navigate({
+                    platformView: "spaces",
+                    collaborationDomain: candidate,
+                    rootView: "home",
+                    workspaceId: null,
+                    workspaceView: "home",
+                    projectId: null,
+                    projectView: "board",
+                    issueId: null,
+                  })
+                }
+              >
+                {candidate === "local" ? (
+                  <Laptop aria-hidden="true" />
+                ) : (
+                  <Cloud aria-hidden="true" />
+                )}
+                <span>
+                  {candidate === "local"
+                    ? messages.localCollaboration
+                    : messages.cloudCollaboration}
+                </span>
+              </button>
+            ))}
           </div>
           <nav
             className="collaboration-primary-navigation"
@@ -705,6 +823,7 @@ function CollaborationPlatformNavigation({
               onClick={() =>
                 host.navigate({
                   platformView: "spaces",
+                  collaborationDomain: domain,
                   rootView: "home",
                   workspaceId: null,
                   workspaceView: "home",
@@ -735,6 +854,7 @@ function CollaborationPlatformNavigation({
               onClick={() =>
                 host.navigate({
                   platformView: "spaces",
+                  collaborationDomain: domain,
                   rootView: "agents",
                   workspaceId: null,
                   workspaceView: "home",
@@ -763,6 +883,7 @@ function CollaborationPlatformNavigation({
               onClick={() =>
                 host.navigate({
                   platformView: "spaces",
+                  collaborationDomain: domain,
                   rootView: "teams",
                   workspaceId: null,
                   workspaceView: "home",
@@ -793,6 +914,7 @@ function CollaborationPlatformNavigation({
               onClick={() =>
                 host.navigate({
                   platformView: "spaces",
+                  collaborationDomain: domain,
                   rootView: "devices",
                   workspaceId: null,
                   workspaceView: "home",
@@ -814,7 +936,7 @@ function CollaborationPlatformNavigation({
             className="collaboration-workspace-section-title"
             data-testid="collaboration-workspaces-section-title"
           >
-            {messages.spaces}
+            {domain === "local" ? messages.localProjects : messages.cloudSpaces}
           </span>
         ) : (
           <button
@@ -828,34 +950,56 @@ function CollaborationPlatformNavigation({
             <ChevronRight aria-hidden="true" />
           </button>
         )}
-        <div className="collaboration-workspace-section-actions">
+        {domain === "cloud" ? (
+          <div className="collaboration-workspace-section-actions">
+            <button
+              type="button"
+              className="collaboration-workspace-section-create"
+              aria-label={messages.createWorkspace}
+              title={messages.createWorkspace}
+              data-testid="collaboration-workspace-create"
+              onClick={onCreateWorkspace}
+            >
+              <span data-testid="collaboration-workspace-sidebar-create">
+                <FolderPlus aria-hidden="true" />
+              </span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {navigationIncomplete ? (
+        <div
+          className="collaboration-navigation-error"
+          role="alert"
+          data-testid="collaboration-navigation-error"
+        >
+          <span>{messages.navigationLoadFailed}</span>
           <button
             type="button"
-            className="collaboration-workspace-section-create"
-            aria-label={messages.createWorkspace}
-            title={messages.createWorkspace}
-            data-testid="collaboration-workspace-create"
-            onClick={onCreateWorkspace}
+            className="collaboration-link-button"
+            data-testid="collaboration-navigation-retry"
+            disabled={retryingNavigation}
+            onClick={async () => {
+              setRetryingNavigation(true);
+              try {
+                await onRetryNavigation();
+              } finally {
+                setRetryingNavigation(false);
+              }
+            }}
           >
-            <span data-testid="collaboration-workspace-sidebar-create">
-              <FolderPlus aria-hidden="true" />
-            </span>
+            {messages.retryNavigation}
           </button>
         </div>
-      </div>
+      ) : null}
       {fullSidebar || workspacesExpanded ? (
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
             const expanded = expandedWorkspaceIds.has(candidate.id);
             const WorkspaceLocationIcon =
               candidate.location === "local" ? Laptop : Cloud;
-            const workspaceLocationLabel =
-              candidate.location === "local"
-                ? messages.localSource
-                : messages.cloudSource;
-            const candidateProjects = projects.filter(
-              (project) => project.workspace_id === candidate.id,
-            );
+            const candidateProjects =
+              projectsByWorkspace.get(candidate.id) ?? [];
             const workspaceActive =
               host.location.workspaceId === candidate.id &&
               !host.location.projectId;
@@ -864,7 +1008,6 @@ function CollaborationPlatformNavigation({
               "access_role" in candidate &&
               (candidate.access_role === "Owner" ||
                 candidate.access_role === "Maintainer");
-            const menuOpen = workspaceMenuId === candidate.id;
             return (
               <section
                 className="collaboration-workspace-group"
@@ -904,7 +1047,6 @@ function CollaborationPlatformNavigation({
                         <span className="collaboration-workspace-title">
                           {candidate.name}
                         </span>
-                        <small>{workspaceLocationLabel}</small>
                       </span>
                     </button>
                   ) : (
@@ -928,41 +1070,66 @@ function CollaborationPlatformNavigation({
                         <span className="collaboration-workspace-title">
                           {candidate.name}
                         </span>
-                        <small>{workspaceLocationLabel}</small>
                       </span>
                     </div>
                   )}
                   {canManageWorkspace ? (
-                    <div
-                      className="collaboration-workspace-actions"
-                      ref={menuOpen ? workspaceMenuRef : undefined}
-                    >
-                      <button
-                        type="button"
-                        aria-label={messages.settings}
-                        aria-expanded={menuOpen}
-                        aria-haspopup="menu"
-                        data-testid={
-                          host.location.workspaceId === candidate.id
-                            ? "collaboration-workspace-actions"
-                            : `collaboration-workspace-actions-${candidate.id}`
-                        }
-                        onClick={() =>
-                          setWorkspaceMenuId((current) =>
-                            current === candidate.id ? null : candidate.id,
-                          )
-                        }
-                      >
-                        <Ellipsis aria-hidden="true" />
-                      </button>
-                      {menuOpen ? (
-                        <div role="menu">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            data-testid="collaboration-workspace-nav-settings"
-                            onClick={() => {
-                              setWorkspaceMenuId(null);
+                    <div className="collaboration-workspace-actions">
+                      <ActionMenu
+                        ariaLabel={messages.settings}
+                        icon={Ellipsis}
+                        items={[
+                          {
+                            label: messages.addProject,
+                            icon: Plus,
+                            testId:
+                              "collaboration-workspace-nav-create-project",
+                            children: [
+                              {
+                                label: messages.blankProject,
+                                icon: SquarePen,
+                                testId:
+                                  "collaboration-workspace-nav-create-blank-project",
+                                onSelect: () =>
+                                  onCreateProject(candidate.id, "blank"),
+                              },
+                              ...(candidate.location === "local" &&
+                              host.renderProjectImporter
+                                ? [
+                                    {
+                                      label: messages.addFolder,
+                                      icon: FolderPlus,
+                                      testId:
+                                        "collaboration-workspace-nav-add-folder",
+                                      onSelect: () =>
+                                        onCreateProject(candidate.id, "folder"),
+                                    },
+                                    {
+                                      label: messages.importExistingProject,
+                                      icon: FolderOpen,
+                                      testId:
+                                        "collaboration-workspace-nav-import-existing-project",
+                                      onSelect: () =>
+                                        onCreateProject(
+                                          candidate.id,
+                                          "existing",
+                                        ),
+                                    },
+                                  ]
+                                : []),
+                            ],
+                          },
+                          {
+                            separator: true,
+                            label: "",
+                            testId:
+                              "collaboration-workspace-nav-project-separator",
+                          },
+                          {
+                            label: messages.settings,
+                            icon: Settings,
+                            testId: "collaboration-workspace-nav-settings",
+                            onSelect: () => {
                               host.navigate({
                                 platformView: "spaces",
                                 workspaceId: candidate.id,
@@ -971,13 +1138,18 @@ function CollaborationPlatformNavigation({
                                 projectView: "board",
                                 issueId: null,
                               });
-                            }}
-                          >
-                            <Settings aria-hidden="true" />
-                            {messages.settings}
-                          </button>
-                        </div>
-                      ) : null}
+                            },
+                          },
+                        ]}
+                        placement="bottom-end"
+                        showTriggerTooltip={false}
+                        testId={
+                          host.location.workspaceId === candidate.id
+                            ? "collaboration-workspace-actions"
+                            : `collaboration-workspace-actions-${candidate.id}`
+                        }
+                        triggerClassName="collaboration-workspace-action-trigger"
+                      />
                     </div>
                   ) : null}
                   <button
@@ -1123,11 +1295,6 @@ type ResourceSource = "local" | "cloud";
 type ResourceScope = "all" | "mine" | "shared";
 type ResourceCatalogKind = "agents" | "teams" | "devices";
 
-function ResourceSourceIcon({ source }: { source: ResourceSource }) {
-  const Icon = source === "local" ? Laptop : Cloud;
-  return <Icon aria-hidden="true" />;
-}
-
 function runtimeLabel(runtime: string) {
   const labels: Record<string, string> = {
     claude_code: "Claude Code",
@@ -1146,6 +1313,7 @@ function runtimeLabel(runtime: string) {
 
 function ResourceCatalogPage({
   api,
+  domain,
   cloudAccess,
   kind,
   agents,
@@ -1153,6 +1321,7 @@ function ResourceCatalogPage({
   environments,
   canCreateDevice,
   workspaces,
+  projects,
   ownerOptions,
   messages,
   onAddToWorkspace,
@@ -1160,9 +1329,12 @@ function ResourceCatalogPage({
   onCreateDevice,
   onCreateLocalAgent,
   onCreateTeam,
+  onDeleteAgent,
+  onDeleteTeam,
   onManageResource,
 }: {
   api: SharedWorkspaceApi;
+  domain: CollaborationDomain;
   kind: ResourceCatalogKind;
   cloudAccess: CollaborationPlatformHostAdapter["cloudAccess"];
   agents: CollaborationOwnedAgent[];
@@ -1170,6 +1342,7 @@ function ResourceCatalogPage({
   environments: CollaborationExecutionEnvironment[];
   canCreateDevice: boolean;
   workspaces: CollaborationWorkspace[];
+  projects: CollaborationProject[];
   ownerOptions: CollaborationPlatformHostAdapter["workspaceOwnerOptions"];
   messages: PlatformMessages;
   onAddToWorkspace(
@@ -1177,10 +1350,14 @@ function ResourceCatalogPage({
     kind: ResourceCatalogKind,
     resourceId: string,
   ): Promise<void>;
-  onCreateAgent(namespace: string, ownerLabel: string): void;
+  onCreateAgent(
+    ownerOptions: Array<{ namespace: string; label: string }>,
+  ): void;
   onCreateDevice(source: ResourceSource, workspaceId?: string): void;
   onCreateLocalAgent(): void;
   onCreateTeam(workspaceId: string): void;
+  onDeleteAgent(agent: CollaborationOwnedAgent): Promise<void>;
+  onDeleteTeam(group: CollaborationGroup): Promise<void>;
   onManageResource(
     kind: ResourceCatalogKind,
     resourceId?: string,
@@ -1194,13 +1371,15 @@ function ResourceCatalogPage({
     let active = true;
     if (kind !== "teams" || !api.workspaces) return;
     void Promise.all(
-      workspaces.map(
-        async (workspace) =>
-          [
-            workspace.id,
-            await api.workspaces!.listMembers(workspace.id),
-          ] as const,
-      ),
+      workspaces
+        .filter((workspace) => workspace.location === domain)
+        .map(
+          async (workspace) =>
+            [
+              workspace.id,
+              await api.workspaces!.listMembers(workspace.id),
+            ] as const,
+        ),
     )
       .then((entries) => {
         if (active) setWorkspaceMembers(Object.fromEntries(entries));
@@ -1211,30 +1390,26 @@ function ResourceCatalogPage({
     return () => {
       active = false;
     };
-  }, [api, kind, workspaces]);
+  }, [api, domain, kind, workspaces]);
   const participantName = (
     member: CollaborationGroup["leader"],
     workspaceId: string,
-  ) =>
-    (member.kind === "agent"
-      ? agents.find((agent) => agent.id === member.id)?.name
-      : workspaceMembers[workspaceId]?.find(
-          (person) => String(person.user_id) === member.id,
-        )?.user_name) ?? member.id;
-  const defaultSource: ResourceSource =
-    (kind === "agents" &&
-      agents.some((agent) => (agent.location ?? "cloud") === "cloud")) ||
-    (kind === "teams" &&
-      groups.some(
-        (group) =>
-          workspaces.find((workspace) => workspace.id === group.workspace_id)
-            ?.location === "cloud",
-      )) ||
-    (kind === "devices" &&
-      environments.some((environment) => environment.kind === "cloud_host"))
-      ? "cloud"
-      : "local";
-  const [source, setSource] = useState<ResourceSource>(defaultSource);
+  ) => {
+    if (member.kind === "agent") {
+      const agent = agents.find(
+        (candidate) =>
+          candidate.id === member.id ||
+          String(candidate.team_id ?? "") === member.id ||
+          candidate.agent_id === member.id,
+      );
+      return agent?.name ?? messages.agent;
+    }
+    return (
+      workspaceMembers[workspaceId]?.find(
+        (person) => String(person.user_id) === member.id,
+      )?.user_name ?? messages.human
+    );
+  };
   const [scope, setScope] = useState<ResourceScope>("all");
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -1244,6 +1419,13 @@ function ResourceCatalogPage({
   const [bindingWorkspaceId, setBindingWorkspaceId] = useState<string | null>(
     null,
   );
+  const [deletingAgent, setDeletingAgent] =
+    useState<CollaborationOwnedAgent | null>(null);
+  const [deletingTeam, setDeletingTeam] = useState<CollaborationGroup | null>(
+    null,
+  );
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const workspaceLocations = useMemo(
     () =>
       new Map(
@@ -1276,20 +1458,7 @@ function ResourceCatalogPage({
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const createOptions: ResourceDestinationOption[] = [];
-  if (localWorkspace && kind !== "devices") {
-    createOptions.push({
-      id: "local",
-      testId: `collaboration-${kind}-create-local`,
-      label: messages.localWorkspaceResource,
-      description: messages.localWorkspaceResourceHint,
-      icon: <Laptop aria-hidden="true" />,
-      onSelect: () =>
-        kind === "agents"
-          ? onCreateLocalAgent()
-          : onCreateTeam(localWorkspace.id),
-    });
-  }
-  if (cloudAccess && !cloudAccess.authenticated) {
+  if (domain === "cloud" && cloudAccess && !cloudAccess.authenticated) {
     createOptions.push({
       id: "cloud-login",
       testId: `collaboration-${kind}-create-cloud-login`,
@@ -1298,90 +1467,127 @@ function ResourceCatalogPage({
       icon: <Cloud aria-hidden="true" />,
       onSelect: cloudAccess.requestLogin,
     });
-  } else if (kind === "devices") {
-    createOptions.push(
-      {
-        id: "default",
-        testId: "collaboration-devices-create-cloud-personal",
-        label: messages.cloudPersonal,
-        description: messages.cloudPersonalHint,
-        icon: <UserRound aria-hidden="true" />,
-        onSelect: () => onCreateDevice("cloud"),
-      },
-      ...cloudGroupWorkspaces.map((workspace) => ({
-        id: workspace.id,
-        testId: `collaboration-devices-create-workspace-${workspace.id}`,
-        label: workspace.name,
-        description: messages.cloudTeamHint,
+  } else if (domain === "cloud" && kind === "devices") {
+    createOptions.push({
+      id: "default",
+      testId: "collaboration-devices-create-cloud-personal",
+      label: messages.cloudPersonal,
+      description: messages.cloudPersonalHint,
+      icon: <UserRound aria-hidden="true" />,
+      onSelect: () => onCreateDevice("cloud"),
+    });
+    if (cloudGroupWorkspaces.length) {
+      createOptions.push({
+        id: "cloud-groups",
+        testId: "collaboration-devices-create-cloud-groups",
+        label: messages.cloudGroups,
+        description: messages.cloudGroupsHint,
         icon: <UsersRound aria-hidden="true" />,
-        onSelect: () => onCreateDevice("cloud", workspace.id),
-      })),
+        children: cloudGroupWorkspaces.map((workspace) => ({
+          id: workspace.id,
+          testId: `collaboration-devices-create-workspace-${workspace.id}`,
+          label: workspace.name,
+          description: messages.cloudTeamHint,
+          icon: <UsersRound aria-hidden="true" />,
+          onSelect: () => onCreateDevice("cloud", workspace.id),
+        })),
+      });
+    }
+  } else if (domain === "cloud" && kind === "agents") {
+    createOptions.push({
+      id: "cloud",
+      testId: "collaboration-agents-create-cloud",
+      label: messages.cloudResources,
+      description: messages.cloudResourcesHint,
+      icon: <Cloud aria-hidden="true" />,
+      onSelect: () => onCreateAgent(resourceOwners),
+    });
+  } else if (domain === "cloud") {
+    const ownerDestinationOptions = resourceOwners.map((owner) => {
+      const personal = owner.namespace === "default";
+      const workspace = cloudWorkspaces.find(
+        (candidate) => candidate.namespace === owner.namespace,
+      );
+      const disabled = kind === "teams" && !workspace;
+      return {
+        id: owner.namespace,
+        testId: personal
+          ? `collaboration-${kind}-create-cloud-personal`
+          : kind === "teams" && workspace
+            ? `collaboration-teams-create-workspace-${workspace.id}`
+            : `collaboration-${kind}-create-owner-${owner.namespace}`,
+        label: owner.label,
+        description: disabled
+          ? messages.teamSpaceRequired
+          : personal
+            ? messages.cloudPersonalHint
+            : messages.cloudTeamHint,
+        icon: personal ? (
+          <UserRound aria-hidden="true" />
+        ) : (
+          <UsersRound aria-hidden="true" />
+        ),
+        disabled,
+        onSelect: () => {
+          if (kind === "teams" && workspace) onCreateTeam(workspace.id);
+        },
+      };
+    });
+    const personalOwner = ownerDestinationOptions.find(
+      (option) => option.id === "default",
     );
-  } else {
-    createOptions.push(
-      ...resourceOwners.map((owner) => {
-        const personal = owner.namespace === "default";
-        const workspace = cloudWorkspaces.find(
-          (candidate) => candidate.namespace === owner.namespace,
-        );
-        const disabled = kind === "teams" && !workspace;
-        return {
-          id: owner.namespace,
-          testId: personal
-            ? `collaboration-${kind}-create-cloud-personal`
-            : kind === "teams" && workspace
-              ? `collaboration-teams-create-workspace-${workspace.id}`
-              : `collaboration-${kind}-create-owner-${owner.namespace}`,
-          label: owner.label,
-          description: disabled
-            ? messages.teamSpaceRequired
-            : personal
-              ? messages.cloudPersonalHint
-              : messages.cloudTeamHint,
-          icon: personal ? (
-            <UserRound aria-hidden="true" />
-          ) : (
-            <UsersRound aria-hidden="true" />
-          ),
-          disabled,
-          onSelect: () => {
-            if (kind === "teams" && workspace) onCreateTeam(workspace.id);
-            else if (kind === "agents")
-              onCreateAgent(
-                owner.namespace,
-                personal ? messages.personalOwner : owner.label,
-              );
-          },
-        };
-      }),
+    if (personalOwner) createOptions.push(personalOwner);
+    const groupOwners = ownerDestinationOptions.filter(
+      (option) => option.id !== "default",
     );
+    if (groupOwners.length) {
+      createOptions.push({
+        id: "cloud-groups",
+        testId: `collaboration-${kind}-create-cloud-groups`,
+        label: messages.cloudGroups,
+        description: messages.cloudGroupsHint,
+        icon: <UsersRound aria-hidden="true" />,
+        children: groupOwners,
+      });
+    }
   }
   useEffect(() => {
-    setSource(defaultSource);
     setScope("all");
     setQuery("");
     setCreateOpen(false);
     setBindingResourceId(null);
     setBindingWorkspaceId(null);
-  }, [defaultSource, kind]);
+    setDeletingAgent(null);
+    setDeletingTeam(null);
+    setDeleteError(null);
+  }, [domain, kind]);
   const pageCopy = {
     agents: {
       title: messages.agents,
-      hint: messages.agentsPageHint,
+      hint:
+        domain === "local"
+          ? messages.localAgentsPageHint
+          : messages.cloudAgentsPageHint,
       search: messages.searchAgents,
       create: messages.createAgent,
       icon: Bot,
     },
     teams: {
       title: messages.teams,
-      hint: messages.teamsPageHint,
+      hint:
+        domain === "local"
+          ? messages.localTeamsPageHint
+          : messages.cloudTeamsPageHint,
       search: messages.searchTeams,
       create: messages.createTeam,
       icon: UsersRound,
     },
     devices: {
       title: messages.devices,
-      hint: messages.devicesPageHint,
+      hint:
+        domain === "local"
+          ? messages.localDevicesPageHint
+          : messages.cloudDevicesPageHint,
       search: messages.searchDevices,
       create: messages.addDevice,
       icon: Monitor,
@@ -1396,6 +1602,7 @@ function ResourceCatalogPage({
       scope:
         agent.owner_type === "user" ? ("mine" as const) : ("shared" as const),
       owner: agent.owner_name,
+      ownership: "",
       detail: "",
       access:
         agent.owner_type === "workspace"
@@ -1420,6 +1627,21 @@ function ResourceCatalogPage({
     };
   });
   const teamRows = groups.map((group) => {
+    const owningProject =
+      group.owner_type === "project"
+        ? projects.find((project) => project.id === group.owner_id)
+        : null;
+    const owningWorkspace =
+      workspaces.find(
+        (workspace) =>
+          workspace.id === group.workspace_id ||
+          (group.owner_type === "workspace" && workspace.id === group.owner_id),
+      ) ??
+      (owningProject?.workspace_id
+        ? workspaces.find(
+            (workspace) => workspace.id === owningProject.workspace_id,
+          )
+        : null);
     const participants = Array.from(
       new Map(
         [group.leader, ...group.members].map((member) => [
@@ -1431,11 +1653,22 @@ function ResourceCatalogPage({
     return {
       id: group.id,
       name: group.name,
-      source: workspaceLocations.get(group.workspace_id) ?? ("cloud" as const),
+      source:
+        owningWorkspace?.location ??
+        workspaceLocations.get(group.workspace_id) ??
+        ("cloud" as const),
       scope: "shared" as const,
-      owner:
-        workspaces.find((workspace) => workspace.id === group.workspace_id)
-          ?.name ?? group.owner_id,
+      owner: owningProject?.name ?? owningWorkspace?.name ?? group.owner_id,
+      ownership:
+        group.owner_type === "project"
+          ? messages.projectOwnership.replace(
+              "{{name}}",
+              owningProject?.name ?? group.owner_id,
+            )
+          : messages.workspaceOwnership.replace(
+              "{{name}}",
+              owningWorkspace?.name ?? group.owner_id,
+            ),
       detail: `${participants.length} ${messages.memberCount}`,
       access: messages.currentWorkspace,
       leader: participantName(group.leader, group.workspace_id),
@@ -1445,9 +1678,7 @@ function ResourceCatalogPage({
       updatedAt: group.updated_at,
       status: messages.available,
       statusTone: "available",
-      workspaceNames: workspaces
-        .filter((workspace) => workspace.id === group.workspace_id)
-        .map((workspace) => workspace.name),
+      workspaceNames: owningWorkspace ? [owningWorkspace.name] : [],
     };
   });
   const deviceRows = environments.map((environment) => ({
@@ -1462,6 +1693,7 @@ function ResourceCatalogPage({
         ? ("mine" as const)
         : ("shared" as const),
     owner: environment.owner_name,
+    ownership: "",
     detail: `${environment.coding_tools.length} ${messages.toolCount}`,
     access:
       environment.owner_type === "workspace"
@@ -1492,19 +1724,15 @@ function ResourceCatalogPage({
     kind === "agents" ? agentRows : kind === "teams" ? teamRows : deviceRows;
   const visibleRows = rows.filter(
     (row) =>
-      row.source === source &&
-      (source === "local" || scope === "all" || row.scope === scope) &&
+      row.source === domain &&
+      (domain === "local" || scope === "all" || row.scope === scope) &&
       (!normalizedQuery ||
         `${row.name} ${row.owner} ${row.workspaceNames.join(" ")}`
           .toLocaleLowerCase()
           .includes(normalizedQuery)),
   );
   const PageIcon = pageCopy.icon;
-  const sourceCounts = {
-    local: rows.filter((row) => row.source === "local").length,
-    cloud: rows.filter((row) => row.source === "cloud").length,
-  };
-  const rowsInSource = rows.filter((row) => row.source === source);
+  const rowsInSource = rows.filter((row) => row.source === domain);
   const scopeCounts = {
     all: rowsInSource.length,
     mine: rowsInSource.filter((row) => row.scope === "mine").length,
@@ -1519,15 +1747,22 @@ function ResourceCatalogPage({
       : row.workspaceNames.length
         ? formatCount(messages.addedToSpaceCount, row.workspaceNames.length)
         : messages.notAddedToSpace;
-  const scopeLabel = (rowScope: Exclude<ResourceScope, "all">) =>
-    rowScope === "mine" ? messages.createdByMe : messages.teamShared;
-  const ScopeIcon = ({ value }: { value: Exclude<ResourceScope, "all"> }) => {
-    const Icon = value === "mine" ? UserRound : UsersRound;
-    return <Icon aria-hidden="true" />;
-  };
   const startCreate = () => {
+    if (domain === "local") {
+      if (kind === "agents") onCreateLocalAgent();
+      if (kind === "teams" && localWorkspace) onCreateTeam(localWorkspace.id);
+      return;
+    }
+    if (kind === "agents" && (!cloudAccess || cloudAccess.authenticated)) {
+      onCreateAgent(resourceOwners);
+      return;
+    }
     setCreateOpen(true);
   };
+  const canCreate =
+    domain === "local"
+      ? kind !== "devices" && Boolean(localWorkspace)
+      : kind !== "devices" || canCreateDevice;
 
   return (
     <div
@@ -1541,11 +1776,11 @@ function ResourceCatalogPage({
         <span className="collaboration-resource-collection-copy">
           <span>
             <h1>{pageCopy.title}</h1>
-            <em>{rows.length}</em>
+            <em>{rowsInSource.length}</em>
           </span>
           <p>{pageCopy.hint}</p>
         </span>
-        {kind !== "devices" || canCreateDevice ? (
+        {canCreate ? (
           <button
             type="button"
             className="collaboration-primary-button"
@@ -1560,61 +1795,30 @@ function ResourceCatalogPage({
 
       <div className="collaboration-resource-catalog-toolbar">
         <div className="collaboration-resource-filter-stack">
-          <span>{messages.storageLocation}</span>
-          <div
-            className="collaboration-resource-source-filter"
-            role="group"
-            aria-label={messages.storageLocation}
-          >
-            {(["local", "cloud"] as const).map((candidate) => (
-              <button
-                type="button"
-                className={source === candidate ? "active" : undefined}
-                aria-pressed={source === candidate}
-                data-testid={`collaboration-${kind}-filter-${candidate}`}
-                key={candidate}
-                onClick={() => {
-                  setSource(candidate);
-                  setScope("all");
-                }}
-              >
-                <ResourceSourceIcon source={candidate} />
-                <span>
-                  {candidate === "local"
-                    ? messages.localSource
-                    : messages.cloudSource}
-                </span>
-                <em>{sourceCounts[candidate]}</em>
-              </button>
-            ))}
-          </div>
-          {source === "cloud" ? (
-            <>
-              <span>{messages.resourceSource}</span>
-              <div
-                className="collaboration-resource-scope-filter"
-                role="group"
-                aria-label={messages.resourceSource}
-              >
-                {(["all", "mine", "shared"] as const).map((candidate) => (
-                  <button
-                    type="button"
-                    className={scope === candidate ? "active" : undefined}
-                    aria-pressed={scope === candidate}
-                    data-testid={`collaboration-${kind}-scope-${candidate}`}
-                    key={candidate}
-                    onClick={() => setScope(candidate)}
-                  >
-                    {candidate === "all"
-                      ? messages.allSources
-                      : candidate === "mine"
-                        ? messages.createdByMe
-                        : messages.teamShared}
-                    <em>{scopeCounts[candidate]}</em>
-                  </button>
-                ))}
-              </div>
-            </>
+          {domain === "cloud" ? (
+            <div
+              className="collaboration-resource-scope-filter"
+              role="group"
+              aria-label={messages.resourceSource}
+            >
+              {(["all", "mine", "shared"] as const).map((candidate) => (
+                <button
+                  type="button"
+                  className={scope === candidate ? "active" : undefined}
+                  aria-pressed={scope === candidate}
+                  data-testid={`collaboration-${kind}-scope-${candidate}`}
+                  key={candidate}
+                  onClick={() => setScope(candidate)}
+                >
+                  {candidate === "all"
+                    ? messages.allSources
+                    : candidate === "mine"
+                      ? messages.createdByMe
+                      : messages.teamShared}
+                  <em>{scopeCounts[candidate]}</em>
+                </button>
+              ))}
+            </div>
           ) : null}
         </div>
         <label className="collaboration-resource-catalog-search">
@@ -1635,20 +1839,18 @@ function ResourceCatalogPage({
             {kind === "agents" ? (
               <>
                 <span>{messages.runStatus}</span>
-                <span>{messages.resourceSource}</span>
                 <span>{messages.usedBySpaces}</span>
               </>
             ) : kind === "teams" ? (
               <>
                 <span>{messages.leader}</span>
                 <span>{messages.memberCount}</span>
-                <span>{messages.resourceSource}</span>
+                <span>{messages.ownership}</span>
                 <span>{messages.usedBySpaces}</span>
               </>
             ) : (
               <>
                 <span>{messages.runStatus}</span>
-                <span>{messages.resourceSource}</span>
                 <span>{messages.toolCount}</span>
                 <span>{messages.usedBySpaces}</span>
               </>
@@ -1689,16 +1891,6 @@ function ResourceCatalogPage({
                   >
                     {row.status}
                   </span>
-                  <span className="collaboration-resource-row-scope">
-                    {row.source === "local" ? (
-                      <ResourceSourceIcon source="local" />
-                    ) : (
-                      <ScopeIcon value={row.scope} />
-                    )}
-                    {row.source === "local"
-                      ? messages.localSpaces
-                      : scopeLabel(row.scope)}
-                  </span>
                   <span className="collaboration-resource-row-detail">
                     {workspaceUsage(row)}
                   </span>
@@ -1711,7 +1903,7 @@ function ResourceCatalogPage({
                     ) : (
                       <Bot aria-hidden="true" />
                     )}
-                    {row.leader}
+                    <span title={row.leader}>{row.leader}</span>
                   </span>
                   <span className="collaboration-resource-row-members">
                     {row.participants.slice(0, 3).map((member) => {
@@ -1738,15 +1930,12 @@ function ResourceCatalogPage({
                       <em>+{row.participants.length - 3}</em>
                     ) : null}
                   </span>
-                  <span className="collaboration-resource-row-scope">
-                    {row.source === "local" ? (
-                      <ResourceSourceIcon source="local" />
-                    ) : (
-                      <ScopeIcon value={row.scope} />
-                    )}
-                    {row.source === "local"
-                      ? messages.localSpaces
-                      : scopeLabel(row.scope)}
+                  <span
+                    className="collaboration-resource-row-ownership"
+                    data-testid={`collaboration-team-owner-${row.id}`}
+                    title={row.ownership}
+                  >
+                    {row.ownership}
                   </span>
                   <span className="collaboration-resource-row-detail">
                     {workspaceUsage(row)}
@@ -1759,16 +1948,6 @@ function ResourceCatalogPage({
                     data-tone={row.statusTone}
                   >
                     {row.status}
-                  </span>
-                  <span className="collaboration-resource-row-scope">
-                    {row.source === "local" ? (
-                      <ResourceSourceIcon source="local" />
-                    ) : (
-                      <ScopeIcon value={row.scope} />
-                    )}
-                    {row.source === "local"
-                      ? messages.localSpaces
-                      : scopeLabel(row.scope)}
                   </span>
                   <span className="collaboration-resource-row-tools">
                     {row.tools.slice(0, 3).map((tool) => (
@@ -1808,6 +1987,39 @@ function ResourceCatalogPage({
                     <Settings aria-hidden="true" />
                   </button>
                 }
+                {kind === "agents" ? (
+                  <button
+                    type="button"
+                    className="collaboration-resource-settings-button"
+                    aria-label={messages.deleteAgent}
+                    title={messages.deleteAgent}
+                    data-testid={`collaboration-agents-delete-${row.id}`}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeletingAgent(
+                        agents.find((agent) => agent.id === row.id) ?? null,
+                      );
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                ) : kind === "teams" ? (
+                  <button
+                    type="button"
+                    className="collaboration-resource-settings-button collaboration-resource-delete-button"
+                    aria-label={messages.deleteTeam}
+                    title={messages.deleteTeam}
+                    data-testid={`collaboration-teams-delete-${row.id}`}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeletingTeam(
+                        groups.find((group) => group.id === row.id) ?? null,
+                      );
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                ) : null}
               </span>
             </article>
           ))
@@ -1815,7 +2027,7 @@ function ResourceCatalogPage({
           <div className="collaboration-resource-catalog-empty">
             <PageIcon aria-hidden="true" />
             <strong>
-              {source === "local"
+              {domain === "local"
                 ? kind === "agents"
                   ? messages.noLocalAgents
                   : kind === "teams"
@@ -1833,12 +2045,8 @@ function ResourceCatalogPage({
       </section>
       {createOpen ? (
         <ResourceDestinationDialog
-          title={messages.createResourceAt}
-          description={
-            kind === "devices"
-              ? messages.createDeviceAtHint
-              : messages.createResourceAtHint
-          }
+          title={messages.chooseResourceOwner}
+          description={messages.chooseResourceOwnerHint}
           closeLabel={messages.cancel}
           options={createOptions}
           onClose={() => setCreateOpen(false)}
@@ -1871,8 +2079,8 @@ function ResourceCatalogPage({
               </button>
             </header>
             <div className="collaboration-resource-space-options">
-              {workspaces.length ? (
-                workspaces.map((workspace) => (
+              {cloudWorkspaces.length ? (
+                cloudWorkspaces.map((workspace) => (
                   <button
                     type="button"
                     key={workspace.id}
@@ -1888,11 +2096,6 @@ function ResourceCatalogPage({
                     <FolderOpen aria-hidden="true" />
                     <span>
                       <strong>{workspace.name}</strong>
-                      <small>
-                        {workspace.location === "local"
-                          ? messages.localStorage
-                          : messages.cloudStorage}
-                      </small>
                     </span>
                     <ChevronRight aria-hidden="true" />
                   </button>
@@ -1900,6 +2103,148 @@ function ResourceCatalogPage({
               ) : (
                 <p>{messages.noAvailableSpaces}</p>
               )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {deletingAgent ? (
+        <div
+          className="collaboration-resource-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deleteBusy) {
+              setDeletingAgent(null);
+              setDeleteError(null);
+            }
+          }}
+        >
+          <section
+            className="collaboration-resource-dialog collaboration-delete-agent-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="collaboration-delete-agent-title"
+            data-testid="collaboration-delete-agent-dialog"
+          >
+            <header>
+              <div>
+                <h2 id="collaboration-delete-agent-title">
+                  {messages.deleteAgent}
+                </h2>
+                <p>
+                  <strong>{deletingAgent.name}</strong>
+                  <br />
+                  {messages.deleteAgentConfirm}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="collaboration-resource-dialog-close"
+                aria-label={messages.cancel}
+                disabled={deleteBusy}
+                onClick={() => setDeletingAgent(null)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </header>
+            {deleteError ? (
+              <p className="collaboration-resource-form-error">{deleteError}</p>
+            ) : null}
+            <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
+              <button
+                type="button"
+                className="collaboration-secondary-button"
+                disabled={deleteBusy}
+                onClick={() => setDeletingAgent(null)}
+              >
+                {messages.cancel}
+              </button>
+              <button
+                type="button"
+                className="collaboration-primary-button"
+                data-testid="collaboration-delete-agent-confirm"
+                disabled={deleteBusy}
+                onClick={() => {
+                  setDeleteBusy(true);
+                  setDeleteError(null);
+                  void onDeleteAgent(deletingAgent)
+                    .then(() => setDeletingAgent(null))
+                    .catch(() => setDeleteError(messages.deleteFailed))
+                    .finally(() => setDeleteBusy(false));
+                }}
+              >
+                {deleteBusy ? messages.deleting : messages.deleteAgent}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {deletingTeam ? (
+        <div
+          className="collaboration-resource-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deleteBusy) {
+              setDeletingTeam(null);
+              setDeleteError(null);
+            }
+          }}
+        >
+          <section
+            className="collaboration-resource-dialog collaboration-delete-agent-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="collaboration-delete-team-title"
+            data-testid="collaboration-delete-team-dialog"
+          >
+            <header>
+              <div>
+                <h2 id="collaboration-delete-team-title">
+                  {messages.deleteTeam}
+                </h2>
+                <p>
+                  <strong>{deletingTeam.name}</strong>
+                  <br />
+                  {messages.deleteTeamConfirm}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="collaboration-resource-dialog-close"
+                aria-label={messages.cancel}
+                disabled={deleteBusy}
+                onClick={() => setDeletingTeam(null)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </header>
+            {deleteError ? (
+              <p className="collaboration-resource-form-error">{deleteError}</p>
+            ) : null}
+            <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
+              <button
+                type="button"
+                className="collaboration-secondary-button"
+                disabled={deleteBusy}
+                onClick={() => setDeletingTeam(null)}
+              >
+                {messages.cancel}
+              </button>
+              <button
+                type="button"
+                className="collaboration-primary-button"
+                data-testid="collaboration-delete-team-confirm"
+                disabled={deleteBusy}
+                onClick={() => {
+                  setDeleteBusy(true);
+                  setDeleteError(null);
+                  void onDeleteTeam(deletingTeam)
+                    .then(() => setDeletingTeam(null))
+                    .catch(() => setDeleteError(messages.deleteFailed))
+                    .finally(() => setDeleteBusy(false));
+                }}
+              >
+                {deleteBusy ? messages.deleting : messages.deleteTeam}
+              </button>
             </div>
           </section>
         </div>
@@ -2332,65 +2677,115 @@ function WorkItemRow({
 
 function FirstProjectStarter({
   messages,
-  chooseLocation,
-  cloudLoginRequired,
+  supportsLocalImport,
   onCreate,
-  onCreateCloud,
-  onCreateLocal,
 }: {
   messages: PlatformMessages;
-  chooseLocation: boolean;
-  cloudLoginRequired: boolean;
-  onCreate(): void;
-  onCreateCloud(): void;
-  onCreateLocal(): void;
+  supportsLocalImport: boolean;
+  onCreate(mode: "blank" | "folder" | "existing"): void;
 }) {
   return (
     <section
       className="collaboration-first-project-starter"
       data-testid="collaboration-first-project-starter"
     >
-      <span className="collaboration-project-card-mark">01</span>
-      <div>
+      <span className="collaboration-first-project-icon">
+        <FolderPlus aria-hidden="true" />
+      </span>
+      <div className="collaboration-first-project-copy">
         <h2>{messages.firstProjectHomeTitle}</h2>
-        <p>
-          {chooseLocation
-            ? messages.firstProjectHomeLocationHint
-            : messages.firstProjectHomeHint}
-        </p>
+        <p>{messages.firstProjectHomeHint}</p>
       </div>
-      {chooseLocation ? (
-        <div className="collaboration-first-project-actions">
-          <button
-            type="button"
-            data-testid="collaboration-first-project-create-local"
-            onClick={onCreateLocal}
-          >
-            <Laptop aria-hidden="true" />
-            {messages.createLocalProject}
-          </button>
-          <button
-            type="button"
-            data-testid="collaboration-first-project-create-cloud"
-            onClick={onCreateCloud}
-          >
-            <Cloud aria-hidden="true" />
-            {cloudLoginRequired
-              ? messages.loginForCloudProject
-              : messages.createCloudProject}
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="collaboration-primary-button"
-          data-testid="collaboration-first-project-create"
-          onClick={onCreate}
-        >
-          {messages.createCollaborationProject}
-        </button>
-      )}
+      <div
+        className="collaboration-first-project-guide"
+        aria-label={messages.firstProjectHomeTitle}
+      >
+        <span>
+          <SquarePen aria-hidden="true" />
+          {messages.firstProjectGuideCapture}
+        </span>
+        <ChevronRight aria-hidden="true" />
+        <span>
+          <UsersRound aria-hidden="true" />
+          {messages.firstProjectGuideAssign}
+        </span>
+        <ChevronRight aria-hidden="true" />
+        <span>
+          <CircleCheck aria-hidden="true" />
+          {messages.firstProjectGuideTrack}
+        </span>
+      </div>
+      <ProjectCreationAction
+        className="collaboration-primary-button collaboration-first-project-create"
+        messages={messages}
+        onSelect={onCreate}
+        supportsLocalImport={supportsLocalImport}
+        testId="collaboration-first-project-create"
+      />
     </section>
+  );
+}
+
+function ProjectCreationAction({
+  className,
+  messages,
+  onSelect,
+  supportsLocalImport,
+  testId,
+}: {
+  className: string;
+  messages: PlatformMessages;
+  onSelect(mode: "blank" | "folder" | "existing"): void;
+  supportsLocalImport: boolean;
+  testId: string;
+}) {
+  const optionTestIds =
+    testId === "collaboration-workspace-project-create"
+      ? {
+          blank: "collaboration-workspace-project-create-blank",
+          folder: "collaboration-workspace-project-import-folder",
+          existing: "collaboration-workspace-project-open-existing",
+        }
+      : {
+          blank: `${testId}-blank`,
+          folder: `${testId}-folder`,
+          existing: `${testId}-existing`,
+        };
+  return (
+    <ActionMenu
+      ariaLabel={messages.addProject}
+      icon={Plus}
+      items={[
+        {
+          label: messages.blankProject,
+          icon: SquarePen,
+          testId: optionTestIds.blank,
+          onSelect: () => onSelect("blank"),
+        },
+        ...(supportsLocalImport
+          ? [
+              {
+                label: messages.addFolder,
+                icon: FolderPlus,
+                testId: optionTestIds.folder,
+                onSelect: () => onSelect("folder"),
+              },
+              {
+                label: messages.importExistingProject,
+                icon: FolderOpen,
+                testId: optionTestIds.existing,
+                onSelect: () => onSelect("existing"),
+              },
+            ]
+          : []),
+      ]}
+      menuTestId={`${testId}-menu`}
+      placement="bottom-end"
+      showTriggerTooltip={false}
+      testId={testId}
+      triggerClassName={`${className} collaboration-project-create-trigger`}
+      triggerLabel={messages.addProject}
+    />
   );
 }
 
@@ -2401,6 +2796,7 @@ function IssueHomeLauncher({
   selectedProjectId,
   onSelectProject,
   onCreateIssue,
+  onOpenExecutionEnvironments,
   pending,
   api,
   locale,
@@ -2416,6 +2812,7 @@ function IssueHomeLauncher({
     owner: IssueHomeOwner | null,
     files: File[],
   ): Promise<boolean>;
+  onOpenExecutionEnvironments(project: CollaborationProject): void;
   pending: boolean;
   api: SharedWorkspaceApi;
   locale: CollaborationLocale;
@@ -2423,33 +2820,42 @@ function IssueHomeLauncher({
 }) {
   const [content, setContent] = useState("");
   const [members, setMembers] = useState<CollaborationMember[]>([]);
+  const [agents, setAgents] = useState<WorkspaceProjectAgent[]>([]);
   const [mentionIssues, setMentionIssues] = useState<CollaborationIssue[]>([]);
-  const [mentionAgents, setMentionAgents] = useState<WorkspaceProjectAgent[]>(
-    [],
-  );
   const [mentionGroups, setMentionGroups] = useState<
     import("../types").CollaborationGroup[]
   >([]);
   const [memberError, setMemberError] = useState<string | null>(null);
   const composerRef = useRef<ComposerInputHandle>(null);
+  const selectedProject = projects.find(
+    (project) => project.id === selectedProjectId,
+  );
+  const translate = useMemo(
+    () => createCollaborationTranslator(locale),
+    [locale],
+  );
+  const environmentReadiness = useProjectExecutionEnvironmentReadiness({
+    api,
+    project: selectedProject,
+  });
   useEffect(() => {
     let active = true;
     setMembers([]);
+    setAgents([]);
     setMentionIssues([]);
-    setMentionAgents([]);
     setMentionGroups([]);
     setMemberError(null);
     void Promise.all([
       api.members.list(selectedProjectId),
-      api.issues.list(selectedProjectId),
       api.agents.list(selectedProjectId),
+      api.issues.list(selectedProjectId),
       api.projects.listCollaborationGroups?.(selectedProjectId) ?? [],
     ])
-      .then(([items, issues, agents, groups]) => {
+      .then(([items, projectAgents, issues, groups]) => {
         if (active) {
           setMembers(items);
+          setAgents(projectAgents);
           setMentionIssues(issues);
-          setMentionAgents(agents);
           setMentionGroups(groups);
         }
       })
@@ -2488,22 +2894,38 @@ function IssueHomeLauncher({
       onSubmit={onCreateIssue}
       pending={pending}
       members={members}
+      agents={agents}
       issues={mentionIssues}
-      agents={mentionAgents}
       groups={mentionGroups}
       projects={projects}
       workspaces={workspaces}
       projectId={selectedProjectId}
       onSelectProject={(id) => {
         setMembers([]);
+        setAgents([]);
         setMentionIssues([]);
         onSelectProject(id);
       }}
-      translate={createCollaborationTranslator(locale)}
+      translate={translate}
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
       memberLabel={messages.members}
       error={memberError}
+      environmentNotice={
+        selectedProject ? (
+          <IssueExecutionEnvironmentNotice
+            canManage={
+              selectedProject.access_role === "Owner" ||
+              selectedProject.access_role === "Maintainer"
+            }
+            onOpenEnvironmentSettings={() =>
+              onOpenExecutionEnvironments(selectedProject)
+            }
+            readiness={environmentReadiness}
+            translate={translate}
+          />
+        ) : null
+      }
     />
   );
   if (renderTaskComposer)
@@ -2566,19 +2988,55 @@ function WorkItemsPage({
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
 }) {
+  const toHandle = items.filter(
+    (item) => item.human_work?.can_start || item.human_work?.can_submit,
+  );
+  const toReview = items.filter((item) => item.human_work?.can_review);
+  const remaining = items.filter(
+    (item) => !toHandle.includes(item) && !toReview.includes(item),
+  );
+  const sections = [
+    {
+      id: "assigned",
+      title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
+      items: toHandle,
+    },
+    {
+      id: "review",
+      title: locale === "zh-CN" ? "待我验收" : "To review",
+      items: toReview,
+    },
+    {
+      id: "other",
+      title: locale === "zh-CN" ? "其他工作" : "Other work",
+      items: remaining,
+    },
+  ].filter((section) => section.items.length);
   return (
     <div className="collaboration-platform-page">
       <PageHeader title={title} subtitle={subtitle} />
       {items.length ? (
-        <div className="collaboration-home-work-list">
-          {items.map((item) => (
-            <WorkItemRow
-              item={item}
-              locale={locale}
-              messages={messages}
-              key={item.id}
-              onOpen={onOpenItem}
-            />
+        <div className="collaboration-home-work-groups">
+          {sections.map((section) => (
+            <section
+              key={section.id}
+              data-testid={`collaboration-work-group-${section.id}`}
+            >
+              <h2 className="collaboration-home-work-group-title">
+                {section.title}
+              </h2>
+              <div className="collaboration-home-work-list">
+                {section.items.map((item) => (
+                  <WorkItemRow
+                    item={item}
+                    locale={locale}
+                    messages={messages}
+                    key={item.id}
+                    onOpen={onOpenItem}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       ) : (
@@ -2696,6 +3154,7 @@ function WorkspaceSettings({
 
 function RootTeamEditor({
   api,
+  host,
   workspace,
   groups,
   locale,
@@ -2704,6 +3163,7 @@ function RootTeamEditor({
   groupId,
 }: {
   api: SharedWorkspaceApi;
+  host: CollaborationPlatformHostAdapter;
   workspace: CollaborationWorkspace;
   groups: CollaborationGroup[];
   locale: CollaborationLocale;
@@ -2784,8 +3244,10 @@ function RootTeamEditor({
         await onCreated();
         return updated;
       },
-      removeCollaborationGroup: (groupId) =>
-        api.workspaces!.removeCollaborationGroup(workspace.id, groupId),
+      async removeCollaborationGroup(groupId) {
+        await api.workspaces!.removeCollaborationGroup(workspace.id, groupId);
+        await onCreated();
+      },
     };
   }, [api.members, api.workspaces, onCreated, workspace.id]);
 
@@ -2827,11 +3289,63 @@ function RootTeamEditor({
       members={members}
       agents={agents}
       locale={locale}
+      currentUserId={host.currentUser?.id}
       commands={commands}
+      agentActions={{
+        ...(workspace.location === "local" &&
+        !agents.some(isCurrentDeviceCollaborationAgent) &&
+        host.projectAgentConfiguration?.createDefaultLocalAgent
+          ? {
+              createDefault: async () => {
+                const id =
+                  await host.projectAgentConfiguration!
+                    .createDefaultLocalAgent!();
+                const nextAgents = await api.workspaces!.listAgents(
+                  workspace.id,
+                );
+                setAgents(nextAgents);
+                const created = nextAgents.find(
+                  (agent) => String(agent.team_id ?? agent.id) === id,
+                );
+                if (!created) {
+                  throw new Error(
+                    "Created collaboration group agent was not found",
+                  );
+                }
+                return created;
+              },
+            }
+          : {}),
+        ...(workspace.location === "cloud" &&
+        host.projectAgentConfiguration?.renderAgentCreator
+          ? {
+              renderCreator: ({ onClose, onCreated }) =>
+                host.projectAgentConfiguration!.renderAgentCreator!({
+                  namespace: workspace.namespace,
+                  workspaceName: workspace.name,
+                  onClose,
+                  onCreated: async (resource) => {
+                    const created = await api.workspaces!.addAgent(
+                      workspace.id,
+                      {
+                        teamId: resource.teamId,
+                      },
+                    );
+                    const nextAgents = await api.workspaces!.listAgents(
+                      workspace.id,
+                    );
+                    setAgents(nextAgents);
+                    await onCreated(created);
+                  },
+                }),
+            }
+          : {}),
+      }}
       initialCreateOpen={!groupId}
       initialSelectedGroupId={groupId}
       onDetailClose={onClose}
       detailPresentation={groupId ? "dialog" : "page"}
+      showGroupCollection={Boolean(groupId)}
       onCreateOpenChange={(open) => {
         if (!groupId && !open) onClose();
       }}
@@ -2940,20 +3454,37 @@ export function CollaborationPlatformApp({
   const [archiveProject, setArchiveProject] =
     useState<CollaborationProject | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectImporter, setProjectImporter] = useState<{
+    workspaceId: string;
+    mode: "folder" | "existing";
+  } | null>(null);
   const [projectWorkspaceId, setProjectWorkspaceId] = useState<string | null>(
     null,
   );
+  const [projectWorkspaceMembers, setProjectWorkspaceMembers] = useState<
+    CollaborationMember[]
+  >([]);
+  const [projectWorkspaceAgents, setProjectWorkspaceAgents] = useState<
+    CollaborationOwnedAgent[]
+  >([]);
+  const [projectWorkspaceGroups, setProjectWorkspaceGroups] = useState<
+    CollaborationGroup[]
+  >([]);
+  const [projectResourceRefreshKey, setProjectResourceRefreshKey] = useState(0);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
-  const [workspacePickerLocation, setWorkspacePickerLocation] = useState<
-    "local" | "cloud" | null
-  >(null);
+  const [pendingProjectMode, setPendingProjectMode] = useState<
+    "blank" | "folder" | "existing"
+  >("blank");
   const [createProjectAfterWorkspace, setCreateProjectAfterWorkspace] =
+    useState(false);
+  const [workspaceGroupCreationRequested, setWorkspaceGroupCreationRequested] =
     useState(false);
   const [rootAgentForm, setRootAgentForm] = useState<{
     mode: "create" | "edit";
     source: ResourceSource;
     namespace: string;
     ownerLabel: string;
+    ownerOptions?: Array<{ namespace: string; label: string }>;
     resourceId?: string;
     teamId?: number;
   } | null>(null);
@@ -2976,6 +3507,15 @@ export function CollaborationPlatformApp({
           (workspace) => workspace.id === projectWorkspaceId,
         ) ??
         (state.workspace?.id === projectWorkspaceId ? state.workspace : null));
+  const projectImporterWorkspace =
+    projectImporter == null
+      ? null
+      : (state.workspaces.find(
+          (workspace) => workspace.id === projectImporter.workspaceId,
+        ) ??
+        (state.workspace?.id === projectImporter.workspaceId
+          ? state.workspace
+          : null));
   const projectWorkspaceOwnerLabel =
     projectWorkspace == null
       ? null
@@ -2985,13 +3525,76 @@ export function CollaborationPlatformApp({
         (projectWorkspace.namespace === "default"
           ? messages.personalOwner
           : projectWorkspace.namespace));
+  useEffect(() => {
+    if (!projectDialogOpen || !projectWorkspaceId || !api.workspaces) {
+      setProjectWorkspaceMembers([]);
+      setProjectWorkspaceAgents([]);
+      setProjectWorkspaceGroups([]);
+      return;
+    }
+    let active = true;
+    void Promise.all([
+      api.workspaces.listMembers(projectWorkspaceId),
+      api.workspaces.listAgents(projectWorkspaceId),
+      api.workspaces.listCollaborationGroups(projectWorkspaceId),
+      api.resources?.list() ?? {
+        agents: [],
+        execution_environments: [],
+      },
+    ])
+      .then(([members, agents, groups, resources]) => {
+        if (!active) return;
+        setProjectWorkspaceMembers(members);
+        setProjectWorkspaceAgents([...resources.agents, ...agents]);
+        setProjectWorkspaceGroups(groups);
+      })
+      .catch(() => {
+        if (!active) return;
+        setProjectWorkspaceMembers([]);
+        setProjectWorkspaceAgents([]);
+        setProjectWorkspaceGroups([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    api.resources,
+    api.workspaces,
+    projectDialogOpen,
+    projectResourceRefreshKey,
+    projectWorkspaceId,
+  ]);
   const projectCreateLocation =
     projectWorkspace?.location ?? host.capabilities.projectLocation ?? "cloud";
   const workspaceLocations = host.capabilities.workspaceLocations ?? ["cloud"];
   const canCreateCloudWorkspace = workspaceLocations.includes("cloud");
+  const collaborationDomain: CollaborationDomain =
+    host.location.collaborationDomain ??
+    state.workspace?.location ??
+    (host.capabilities.projectLocation === "local" ? "local" : "cloud");
+  const domainWorkspaces = useMemo(
+    () =>
+      state.workspaces.filter(
+        (workspace) => workspace.location === collaborationDomain,
+      ),
+    [collaborationDomain, state.workspaces],
+  );
+  const domainWorkspaceIds = useMemo(
+    () => new Set(domainWorkspaces.map((workspace) => workspace.id)),
+    [domainWorkspaces],
+  );
+  const domainProjects = useMemo(
+    () =>
+      state.projects.filter(
+        (project) =>
+          Boolean(project.workspace_id) &&
+          domainWorkspaceIds.has(project.workspace_id!),
+      ),
+    [domainWorkspaceIds, state.projects],
+  );
   const rootIssueProject =
-    state.projects.find((project) => project.id === rootIssueProjectId) ??
-    state.projects[0] ??
+    domainProjects.find((project) => project.id === rootIssueProjectId) ??
+    domainProjects[0] ??
     null;
   useEffect(() => {
     if (!state.loading && !state.error) onReady?.();
@@ -3036,80 +3639,81 @@ export function CollaborationPlatformApp({
     [api, host.location.workspaceId],
   );
   const projectResourceAgents = useMemo(() => {
-    const agents = new Map<number, CollaborationOwnedAgent>();
-    for (const agent of [...state.resources.agents, ...state.agents]) {
-      if (agent.team_id != null) agents.set(agent.team_id, agent);
+    const agents = new Map<string, CollaborationOwnedAgent>();
+    for (const agent of [
+      ...state.resources.agents,
+      ...state.agents,
+      ...projectWorkspaceAgents,
+    ]) {
+      agents.set(agent.id, agent);
     }
     return [...agents.values()];
-  }, [state.agents, state.resources.agents]);
-  const projectResourceEnvironments = useMemo(() => {
-    const environments = new Map<number, CollaborationExecutionEnvironment>();
-    for (const environment of [
-      ...state.resources.execution_environments,
-      ...state.executionEnvironments,
-    ]) {
-      if (environment.device_id != null) {
-        environments.set(environment.device_id, environment);
-      }
-    }
-    return [...environments.values()];
-  }, [state.executionEnvironments, state.resources.execution_environments]);
-
-  const openProject = (project: CollaborationProject) =>
+  }, [projectWorkspaceAgents, state.agents, state.resources.agents]);
+  const selectedProjectResourceAgents = useMemo(
+    () =>
+      projectResourceAgents.filter((agent) =>
+        projectWorkspace?.location === "local"
+          ? agent.location === "local"
+          : agent.location !== "local",
+      ),
+    [projectResourceAgents, projectWorkspace?.location],
+  );
+  const openProject = (project: CollaborationProject) => {
+    const workspace =
+      state.workspaces.find(
+        (candidate) => candidate.id === project.workspace_id,
+      ) ?? null;
     navigateWithin(host, {
+      collaborationDomain:
+        workspace?.location ??
+        (project.project_store === "local" ? "local" : "cloud"),
       workspaceId: project.workspace_id,
       workspaceView: "projects",
       projectId: project.id,
       projectView: "board",
       issueId: null,
     });
-  const openProjectCreationForLocation = (location: "local" | "cloud") => {
-    if (
-      location === "cloud" &&
-      host.cloudAccess &&
-      !host.cloudAccess.authenticated
-    ) {
-      host.cloudAccess.requestLogin();
-      return;
-    }
-    const workspaces = state.workspaces.filter(
-      (workspace) => workspace.location === location,
-    );
-    if (workspaces.length === 1) {
-      setProjectWorkspaceId(workspaces[0].id);
-      setProjectDialogOpen(true);
-      return;
-    }
-    if (
-      location === "cloud" &&
-      workspaces.length === 0 &&
-      canCreateCloudWorkspace
-    ) {
-      setCreateProjectAfterWorkspace(true);
-      setWorkspaceDialogOpen(true);
-      return;
-    }
-    setWorkspacePickerLocation(location);
-    setWorkspacePickerOpen(true);
   };
-  const startProjectCreation = () => {
-    if (host.location.workspaceId && state.workspace) {
-      setProjectWorkspaceId(state.workspace.id);
-      setProjectDialogOpen(true);
+  const openWorkspaceProjectCreator = (
+    workspaceId: string,
+    mode: "blank" | "folder" | "existing" = "blank",
+  ) => {
+    const targetWorkspace =
+      state.workspaces.find((workspace) => workspace.id === workspaceId) ??
+      (state.workspace?.id === workspaceId ? state.workspace : null);
+    if (
+      mode !== "blank" &&
+      targetWorkspace?.location === "local" &&
+      host.renderProjectImporter
+    ) {
+      setProjectImporter({ workspaceId, mode });
       return;
     }
-    const availableWorkspaceLocations = new Set(
-      state.workspaces.map((workspace) => workspace.location),
-    );
-    const allLocationsRepresented = workspaceLocations.every((location) =>
-      availableWorkspaceLocations.has(location),
-    );
-    if (state.workspaces.length === 1 && allLocationsRepresented) {
-      setProjectWorkspaceId(state.workspaces[0].id);
-      setProjectDialogOpen(true);
+    setProjectWorkspaceId(workspaceId);
+    setProjectDialogOpen(true);
+  };
+  const startProjectCreation = (
+    mode: "blank" | "folder" | "existing" = "blank",
+  ) => {
+    if (
+      host.location.workspaceId &&
+      state.workspace &&
+      (mode === "blank" || state.workspace.location === "local")
+    ) {
+      openWorkspaceProjectCreator(state.workspace.id, mode);
       return;
     }
-    setWorkspacePickerLocation(null);
+    const candidateWorkspaces =
+      mode === "blank"
+        ? domainWorkspaces
+        : domainWorkspaces.filter(
+            (workspace) => workspace.location === "local",
+          );
+    if (candidateWorkspaces.length === 1) {
+      openWorkspaceProjectCreator(candidateWorkspaces[0].id, mode);
+      return;
+    }
+    setPendingProjectMode(mode);
     setWorkspacePickerOpen(true);
   };
   const startRootIssueCreation = async (
@@ -3125,6 +3729,12 @@ export function CollaborationPlatformApp({
       const created = await api.issues.create(rootIssueProject.id, {
         title: truncateRuntimeTaskTitle(content.replace(/\s+/g, " "))!,
         description: content,
+        ...(owner?.kind === "user"
+          ? {
+              assigneeUserId: Number(owner.id),
+              notifyAssignee: true,
+            }
+          : {}),
       });
       let assignmentFailed = false;
       for (const file of files) {
@@ -3137,16 +3747,14 @@ export function CollaborationPlatformApp({
           );
         }
       }
-      if (owner) {
+      if (owner && owner.kind !== "user") {
         try {
           const current = await api.issues.get(created.id);
           await api.issues.update(created.id, {
             version: current.version,
-            ...(owner.kind === "user"
-              ? { assigneeUserId: Number(owner.id) }
-              : owner.kind === "agent"
-                ? { assigneeAgentId: owner.id }
-                : { assigneeGroupId: owner.id }),
+            ...(owner.kind === "agent"
+              ? { assigneeAgentId: owner.id }
+              : { assigneeGroupId: owner.id }),
           });
         } catch {
           assignmentFailed = true;
@@ -3271,6 +3879,23 @@ export function CollaborationPlatformApp({
         (candidate) => candidate.id === resourceId,
       );
       if (group) {
+        if (group.owner_type === "project") {
+          const project = state.navigationProjects.find(
+            (candidate) => candidate.id === group.owner_id,
+          );
+          if (project) {
+            host.navigate({
+              platformView: "spaces",
+              rootView: "home",
+              workspaceId: project.workspace_id ?? group.workspace_id,
+              workspaceView: "projects",
+              projectId: project.id,
+              projectView: "manage",
+              issueId: null,
+            });
+          }
+          return;
+        }
         setRootTeamEditingId(group.id);
         setRootTeamCreationWorkspaceId(group.workspace_id);
       }
@@ -3310,9 +3935,14 @@ export function CollaborationPlatformApp({
   let content: React.ReactNode;
   if (state.loading) {
     content = (
-      <div className="collaboration-loading">
-        {translate("common.loading", "正在加载…")}
-      </div>
+      <ProjectLoadingSkeleton
+        label={translate("common.loading", "正在加载…")}
+        layout={
+          host.location.projectId && host.location.projectView === "board"
+            ? "board"
+            : "list"
+        }
+      />
     );
   } else if (state.error) {
     content = (
@@ -3336,6 +3966,7 @@ export function CollaborationPlatformApp({
       ) : (
         <CollaborationApp
           api={scopedApi}
+          initialProject={selectedProject ?? undefined}
           locale={locale}
           showProjectBack={false}
           host={{
@@ -3348,12 +3979,14 @@ export function CollaborationPlatformApp({
               projectId: host.location.projectId,
               issueId: host.location.issueId,
               view: host.location.projectView,
+              projectSettingsSection: host.location.projectSettingsSection,
             },
             navigate: (location) =>
               navigateWithin(host, {
                 projectId: location.projectId,
                 issueId: location.issueId,
                 projectView: location.view,
+                projectSettingsSection: location.projectSettingsSection,
                 workspaceView: "projects",
               }),
             notify: host.notify,
@@ -3367,6 +4000,7 @@ export function CollaborationPlatformApp({
                   ? workspaceContext!.namespace
                   : "default",
             },
+            defaultAssistant: host.defaultAssistant,
           }}
           onCreateTask={onCreateTask}
         />
@@ -3375,7 +4009,14 @@ export function CollaborationPlatformApp({
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return item.is_unread || operation === "failed" || operation === "review";
+      return (
+        item.human_work?.can_start ||
+        item.human_work?.can_submit ||
+        item.human_work?.can_review ||
+        item.is_unread ||
+        operation === "failed" ||
+        operation === "review"
+      );
     });
     content =
       rootView === "agents" ||
@@ -3383,6 +4024,7 @@ export function CollaborationPlatformApp({
       rootView === "devices" ? (
         <ResourceCatalogPage
           api={api}
+          domain={collaborationDomain}
           cloudAccess={host.cloudAccess}
           kind={rootView}
           agents={state.resources.agents}
@@ -3390,15 +4032,19 @@ export function CollaborationPlatformApp({
           environments={state.resources.execution_environments}
           canCreateDevice={Boolean(host.renderDeviceCreator)}
           workspaces={state.workspaces}
+          projects={state.navigationProjects}
           ownerOptions={host.workspaceOwnerOptions}
           messages={messages}
           onAddToWorkspace={bindRootResource}
-          onCreateAgent={(namespace, ownerLabel) =>
+          onCreateAgent={(ownerOptions) =>
             setRootAgentForm({
               mode: "create",
               source: "cloud",
-              namespace,
-              ownerLabel,
+              namespace: "default",
+              ownerLabel:
+                ownerOptions.find((owner) => owner.namespace === "default")
+                  ?.label ?? messages.personalOwner,
+              ownerOptions,
             })
           }
           onCreateDevice={(source, workspaceId) =>
@@ -3415,6 +4061,33 @@ export function CollaborationPlatformApp({
           onCreateTeam={(workspaceId) => {
             setRootTeamEditingId(undefined);
             setRootTeamCreationWorkspaceId(workspaceId);
+          }}
+          onDeleteAgent={async (agent) => {
+            if (!api.resources?.removeAgent) {
+              throw new Error(messages.deleteFailed);
+            }
+            await api.resources.removeAgent(agent);
+            await commands.reload();
+          }}
+          onDeleteTeam={async (group) => {
+            if (group.owner_type === "project") {
+              if (!api.projects.removeCollaborationGroup) {
+                throw new Error(messages.deleteFailed);
+              }
+              await api.projects.removeCollaborationGroup(
+                group.owner_id,
+                group.id,
+              );
+            } else {
+              if (!api.workspaces) {
+                throw new Error(messages.deleteFailed);
+              }
+              await api.workspaces.removeCollaborationGroup(
+                group.workspace_id,
+                group.id,
+              );
+            }
+            await commands.reload();
           }}
           onManageResource={manageRootResource}
         />
@@ -3447,12 +4120,12 @@ export function CollaborationPlatformApp({
       ) : (
         <div
           className={
-            host.renderIssueComposer && state.projects.length
+            host.renderIssueComposer && domainProjects.length
               ? "collaboration-task-home-page"
               : "collaboration-platform-page collaboration-home-page"
           }
         >
-          {!state.workspaces.length ? (
+          {!domainWorkspaces.length ? (
             <>
               <PageHeader
                 title={messages.issueHomeTitle}
@@ -3462,7 +4135,7 @@ export function CollaborationPlatformApp({
                 title={messages.noSpaces}
                 description={messages.noSpacesHint}
                 action={
-                  canCreateCloudWorkspace ? (
+                  collaborationDomain === "cloud" && canCreateCloudWorkspace ? (
                     <button
                       type="button"
                       className="collaboration-primary-button"
@@ -3477,36 +4150,40 @@ export function CollaborationPlatformApp({
                 }
               />
             </>
-          ) : !state.projects.length ? (
-            <>
-              <PageHeader
-                title={messages.issueHomeTitle}
-                subtitle={messages.issueHomeHint}
-              />
-              <FirstProjectStarter
-                messages={messages}
-                chooseLocation={new Set(workspaceLocations).size > 1}
-                cloudLoginRequired={Boolean(
-                  host.cloudAccess && !host.cloudAccess.authenticated,
-                )}
-                onCreate={startProjectCreation}
-                onCreateCloud={() => openProjectCreationForLocation("cloud")}
-                onCreateLocal={() => openProjectCreationForLocation("local")}
-              />
-            </>
+          ) : !domainProjects.length ? (
+            <FirstProjectStarter
+              messages={messages}
+              supportsLocalImport={Boolean(
+                host.renderProjectImporter &&
+                domainWorkspaces.some(
+                  (workspace) => workspace.location === "local",
+                ),
+              )}
+              onCreate={startProjectCreation}
+            />
           ) : (
             <IssueHomeLauncher
               renderTaskComposer={host.renderIssueComposer}
               api={api}
               locale={locale}
               messages={messages}
-              projects={state.projects}
+              projects={domainProjects}
               selectedProjectId={rootIssueProject?.id ?? ""}
-              workspaces={state.workspaces}
+              workspaces={domainWorkspaces}
               onSelectProject={setRootIssueProjectId}
               pending={rootIssueLoading}
               onCreateIssue={(content, memberIds, files) =>
                 startRootIssueCreation(content, memberIds, files)
+              }
+              onOpenExecutionEnvironments={(project) =>
+                navigateWithin(host, {
+                  workspaceId: project.workspace_id ?? null,
+                  workspaceView: "projects",
+                  projectId: project.id,
+                  projectView: "manage",
+                  projectSettingsSection: "environments",
+                  issueId: null,
+                })
               }
             />
           )}
@@ -3533,20 +4210,22 @@ export function CollaborationPlatformApp({
         ? "collaboration-participants"
         : requestedWorkspaceSettingsView;
     const initialWorkspaceParticipantTab =
-      requestedWorkspaceSettingsView === "members"
+      requestedWorkspaceSettingsView === "members" &&
+      workspace.location !== "local"
         ? "members"
         : requestedWorkspaceSettingsView === "collaboration-groups"
           ? "groups"
           : "agents";
+    const usesProjectImporter =
+      workspace.location === "local" && Boolean(host.renderProjectImporter);
     const createProjectAction = (
-      <button
-        type="button"
-        className="collaboration-primary-button"
-        data-testid="collaboration-workspace-project-create"
-        onClick={startProjectCreation}
-      >
-        ＋ {messages.createProject}
-      </button>
+      <ProjectCreationAction
+        className="collaboration-primary-button inline-flex items-center gap-1.5"
+        messages={messages}
+        onSelect={(mode) => openWorkspaceProjectCreator(workspace.id, mode)}
+        supportsLocalImport={usesProjectImporter}
+        testId="collaboration-workspace-project-create"
+      />
     );
     if (workspaceSettingsView) {
       const workspaceSettingsSections = [
@@ -3617,20 +4296,29 @@ export function CollaborationPlatformApp({
                     members={state.members}
                     agents={state.agents}
                     locale={locale}
+                    currentUserId={host.currentUser?.id}
                     commands={commands}
+                    initialCreateOpen={workspaceGroupCreationRequested}
+                    onCreateOpenChange={(open) => {
+                      if (!open) setWorkspaceGroupCreationRequested(false);
+                    }}
                   />
                 }
                 groupsLabel={messages.collaborationGroups}
                 initialTab={initialWorkspaceParticipantTab}
                 membersContent={
-                  <WorkspaceMembersConfiguration
-                    workspace={workspace}
-                    members={state.members}
-                    locale={locale}
-                    commands={commands}
-                  />
+                  workspace.location === "cloud" ? (
+                    <WorkspaceMembersConfiguration
+                      workspace={workspace}
+                      members={state.members}
+                      locale={locale}
+                      commands={commands}
+                    />
+                  ) : undefined
                 }
-                membersLabel={messages.members}
+                membersLabel={
+                  workspace.location === "cloud" ? messages.members : undefined
+                }
                 testIdPrefix="collaboration-workspace-participants"
               />
             </div>
@@ -3709,17 +4397,26 @@ export function CollaborationPlatformApp({
                 data-testid="collaboration-workspace-starter"
               >
                 <small>{messages.firstUseProgress}</small>
-                <h2>{messages.firstProjectTitle}</h2>
-                <p>{messages.firstProjectHint}</p>
+                <h2>
+                  {usesProjectImporter
+                    ? messages.firstLocalProjectTitle
+                    : messages.firstProjectTitle}
+                </h2>
+                <p>
+                  {usesProjectImporter
+                    ? messages.firstLocalProjectHint
+                    : messages.firstProjectHint}
+                </p>
                 <div>
-                  <button
-                    type="button"
+                  <ProjectCreationAction
                     className="collaboration-primary-button"
-                    data-testid="collaboration-workspace-starter-create-project"
-                    onClick={startProjectCreation}
-                  >
-                    {messages.createProject}
-                  </button>
+                    messages={messages}
+                    onSelect={(mode) =>
+                      openWorkspaceProjectCreator(workspace.id, mode)
+                    }
+                    supportsLocalImport={usesProjectImporter}
+                    testId="collaboration-workspace-starter-create-project"
+                  />
                   <button
                     type="button"
                     data-testid="collaboration-workspace-starter-configure-agents"
@@ -3733,19 +4430,21 @@ export function CollaborationPlatformApp({
                   >
                     {messages.configureAgents}
                   </button>
-                  <button
-                    type="button"
-                    data-testid="collaboration-workspace-starter-invite-members"
-                    onClick={() =>
-                      navigateWithin(host, {
-                        workspaceView: "members",
-                        projectId: null,
-                        issueId: null,
-                      })
-                    }
-                  >
-                    {messages.inviteMembers}
-                  </button>
+                  {workspace.location === "cloud" ? (
+                    <button
+                      type="button"
+                      data-testid="collaboration-workspace-starter-invite-members"
+                      onClick={() =>
+                        navigateWithin(host, {
+                          workspaceView: "members",
+                          projectId: null,
+                          issueId: null,
+                        })
+                      }
+                    >
+                      {messages.inviteMembers}
+                    </button>
+                  ) : null}
                 </div>
               </section>
             ) : (
@@ -3790,20 +4489,29 @@ export function CollaborationPlatformApp({
 
   const sidebar = (
     <CollaborationPlatformNavigation
+      domain={collaborationDomain}
       host={host}
       messages={messages}
       workspaces={state.workspaces}
-      workspaceNavigationContext={state.workspaceNavigationContext}
+      workspaceNavigationContext={
+        collaborationDomain === "cloud"
+          ? state.workspaceNavigationContext
+          : null
+      }
       projects={state.navigationProjects}
+      navigationIncomplete={state.navigationIncomplete}
+      onRetryNavigation={commands.reload}
       onCreateWorkspace={() => {
         setCreateProjectAfterWorkspace(false);
         setWorkspaceDialogOpen(true);
       }}
+      onCreateProject={openWorkspaceProjectCreator}
       onArchiveProject={setArchiveProject}
       onNewConversation={(projectId) => {
         setRootIssueProjectId(projectId);
         host.navigate({
           platformView: "spaces",
+          collaborationDomain,
           rootView: "home",
           workspaceId: null,
           workspaceView: "home",
@@ -3883,47 +4591,45 @@ export function CollaborationPlatformApp({
       {workspacePickerOpen ? (
         <WorkspaceProjectPicker
           messages={messages}
-          workspaces={
-            workspacePickerLocation
-              ? state.workspaces.filter(
-                  (workspace) => workspace.location === workspacePickerLocation,
-                )
-              : state.workspaces
-          }
+          workspaces={domainWorkspaces}
           cloudAccess={host.cloudAccess}
           canCreateCloudWorkspace={
-            canCreateCloudWorkspace && workspacePickerLocation !== "local"
+            collaborationDomain === "cloud" && canCreateCloudWorkspace
           }
-          onClose={() => {
-            setWorkspacePickerOpen(false);
-            setWorkspacePickerLocation(null);
-          }}
+          onClose={() => setWorkspacePickerOpen(false)}
           onCreateCloudWorkspace={() => {
             setWorkspacePickerOpen(false);
-            setWorkspacePickerLocation(null);
             setCreateProjectAfterWorkspace(true);
             setWorkspaceDialogOpen(true);
           }}
           onSelect={(workspaceId) => {
             setWorkspacePickerOpen(false);
-            setWorkspacePickerLocation(null);
-            setProjectWorkspaceId(workspaceId);
-            setProjectDialogOpen(true);
+            openWorkspaceProjectCreator(workspaceId, pendingProjectMode);
           }}
         />
       ) : null}
+      {projectImporterWorkspace && host.renderProjectImporter
+        ? host.renderProjectImporter({
+            workspace: projectImporterWorkspace,
+            mode: projectImporter?.mode ?? "folder",
+            projects: state.navigationProjects.filter(
+              (project) => project.workspace_id === projectImporterWorkspace.id,
+            ),
+            onClose: () => setProjectImporter(null),
+            onImported: async (project) => {
+              setProjectImporter(null);
+              commands.registerProject(project);
+              openProject(project);
+            },
+          })
+        : null}
       {projectDialogOpen && projectWorkspaceId ? (
         <ProjectCreateDialog
           targets={[
             {
               location: projectCreateLocation,
               create: (input) =>
-                state.workspace?.id === projectWorkspaceId
-                  ? commands.createProject(input)
-                  : api.projects.create({
-                      ...input,
-                      workspaceId: projectWorkspaceId,
-                    }),
+                commands.createProject(input, projectWorkspaceId),
             },
           ]}
           defaultLocation={projectCreateLocation}
@@ -3940,21 +4646,36 @@ export function CollaborationPlatformApp({
               : undefined
           }
           resourceSetup={
-            state.workspace?.id === projectWorkspaceId
+            projectWorkspace
               ? {
-                  workspaceName: state.workspace.name,
-                  members: state.members,
-                  agents: projectResourceAgents,
-                  executionEnvironments: projectResourceEnvironments,
+                  location: projectWorkspace.location,
+                  currentUser: host.currentUser ?? {
+                    id: projectWorkspace.created_by_user_id,
+                    name: projectCreateLabels[locale].currentUser,
+                  },
+                  members: projectWorkspaceMembers,
+                  agents: selectedProjectResourceAgents,
+                  groups: projectWorkspaceGroups,
+                  executionEnvironments: state.resources.execution_environments,
+                  createDefaultAgent:
+                    projectWorkspace.location === "local" &&
+                    host.projectAgentConfiguration?.createDefaultLocalAgent
+                      ? async () => {
+                          const resourceId =
+                            await host.projectAgentConfiguration!
+                              .createDefaultLocalAgent!();
+                          await commands.reload();
+                          setProjectResourceRefreshKey((value) => value + 1);
+                          return resourceId;
+                        }
+                      : undefined,
                   configure: async (project, selection) => {
                     const existingMembers = await api.members.list(project.id);
                     const existingMemberIds = new Set(
                       existingMembers.map((member) => member.user_id),
                     );
-                    const selectedAgents = projectResourceAgents.filter(
-                      (agent) =>
-                        agent.team_id != null &&
-                        selection.agentTeamIds.includes(agent.team_id),
+                    const selectedAgents = selectedProjectResourceAgents.filter(
+                      (agent) => selection.agentResourceIds.includes(agent.id),
                     );
                     await Promise.all([
                       ...selection.memberUserIds
@@ -3970,14 +4691,78 @@ export function CollaborationPlatformApp({
                           ),
                       ),
                     ]);
-                    await Promise.all(
-                      selectedAgents.map((agent) =>
-                        api.agents.create(
+                    const createdAgents = await Promise.all(
+                      selectedAgents.map(async (agent) => ({
+                        resourceId: agent.id,
+                        projectAgent: await api.agents.create(
                           project.id,
-                          createWegentProjectAgentInput(agent),
+                          createResourceAgentBindingInput(agent),
                         ),
-                      ),
+                      })),
                     );
+                    if (!selection.leaderId) return;
+                    if (!api.projects.createCollaborationGroup) {
+                      throw new Error(
+                        locale === "zh-CN"
+                          ? "当前项目不支持设置负责人"
+                          : "This project does not support an owner",
+                      );
+                    }
+                    const currentUserId =
+                      project.current_user_id ??
+                      host.currentUser?.id ??
+                      project.created_by_user_id;
+                    const participants = [
+                      {
+                        kind: "human" as const,
+                        id: String(currentUserId),
+                      },
+                      ...selection.memberUserIds.map((userId) => ({
+                        kind: "human" as const,
+                        id: String(userId),
+                      })),
+                      ...createdAgents.map(({ projectAgent }) => ({
+                        kind: "agent" as const,
+                        id: String(projectAgent.id),
+                      })),
+                    ].filter(
+                      (participant, index, candidates) =>
+                        candidates.findIndex(
+                          (candidate) =>
+                            candidate.kind === participant.kind &&
+                            candidate.id === participant.id,
+                        ) === index,
+                    );
+                    const [leaderKind, leaderSourceId] =
+                      selection.leaderId.split(":", 2);
+                    const leader =
+                      leaderKind === "agent"
+                        ? {
+                            kind: "agent" as const,
+                            id: String(
+                              createdAgents.find(
+                                ({ resourceId }) =>
+                                  resourceId === leaderSourceId,
+                              )?.projectAgent.id ?? "",
+                            ),
+                          }
+                        : {
+                            kind: "human" as const,
+                            id: leaderSourceId,
+                          };
+                    if (!leader.id) {
+                      throw new Error(
+                        locale === "zh-CN"
+                          ? "负责人不在当前协作成员中"
+                          : "The owner is not a current collaborator",
+                      );
+                    }
+                    await api.projects.createCollaborationGroup(project.id, {
+                      name: projectCreateLabels[locale].defaultGroupName,
+                      leader,
+                      members: participants,
+                      coordinationMode: "manager",
+                    });
                   },
                 }
               : undefined
@@ -4006,6 +4791,7 @@ export function CollaborationPlatformApp({
             onCreated: async () => {
               setRootAgentForm(null);
               await commands.reload();
+              setProjectResourceRefreshKey((value) => value + 1);
               host.notify?.(messages.resourceSaved, "success");
             },
           })
@@ -4015,11 +4801,13 @@ export function CollaborationPlatformApp({
       host.projectAgentConfiguration?.renderAgentCreator
         ? host.projectAgentConfiguration.renderAgentCreator({
             namespace: rootAgentForm.namespace,
+            ownerOptions: rootAgentForm.ownerOptions,
             workspaceName: rootAgentForm.ownerLabel,
             onClose: () => setRootAgentForm(null),
             onCreated: async () => {
               setRootAgentForm(null);
               await commands.reload();
+              setProjectResourceRefreshKey((value) => value + 1);
               host.notify?.(messages.resourceSaved, "success");
             },
           })
@@ -4049,7 +4837,9 @@ export function CollaborationPlatformApp({
               if (deviceId && rootDeviceCreator.workspaceId && api.workspaces) {
                 await api.workspaces.addExecutionEnvironment(
                   rootDeviceCreator.workspaceId,
-                  { deviceId },
+                  {
+                    deviceId,
+                  },
                 );
               }
               setRootDeviceCreator(null);
@@ -4069,6 +4859,7 @@ export function CollaborationPlatformApp({
                 key={rootTeamEditingId ?? "create"}
                 groupId={rootTeamEditingId}
                 api={api}
+                host={host}
                 workspace={workspace}
                 groups={state.collaborationGroups.filter(
                   (group) => group.workspace_id === workspace.id,

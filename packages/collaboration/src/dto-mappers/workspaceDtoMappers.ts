@@ -414,6 +414,9 @@ export function mapCollaborationOwnedAgentDto(
       ? { agent_id: String(row.agent_id ?? row.agentId) }
       : {}),
     ...(teamId == null ? {} : { team_id: teamId }),
+    ...(Number.isFinite(Number(row.version))
+      ? { version: Number(row.version) }
+      : {}),
     owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),

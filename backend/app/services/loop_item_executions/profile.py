@@ -572,11 +572,17 @@ class WeworkExecutionProfile:
                 workflow_stage_input if isinstance(workflow_stage_input, dict) else None
             ),
         )
+        if origin_context.get("comment_trigger_message_id"):
+            prompt = str(origin_context["comment_prompt"])
         title = str(getattr(task, "title", "") or "")
         bot_id: int | str = self.agent_id or 0
         origin = {
             **origin_context,
-            "type": "project_automation" if self.manager_mode else "board_task",
+            "type": (
+                "board_comment"
+                if origin_context.get("comment_trigger_message_id")
+                else "project_automation" if self.manager_mode else "board_task"
+            ),
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
             "executionId": execution_id,

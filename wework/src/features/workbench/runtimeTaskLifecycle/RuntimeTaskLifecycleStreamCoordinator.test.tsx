@@ -47,6 +47,52 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(getRuntimeTranscript).not.toHaveBeenCalled()
   })
 
+  test('marks a running task as waiting when a request_user_input block is created', async () => {
+    const store = new RuntimeTaskLifecycleStore('request-user-input-stream-test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    let streamHandlers: ChatStreamHandlers = {}
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript: vi.fn(),
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onBlockCreated?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-1',
+        block: {
+          id: 'request-1',
+          type: 'tool',
+          tool_name: 'request_user_input',
+          status: 'pending',
+          render_payload: {
+            kind: 'request_user_input',
+            requestId: 'request-1',
+            questions: [],
+          },
+        },
+      })
+    })
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.derived.isBusy).toBe(true)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarWaiting).toBe(true)
+  })
+
   test('reconnects and reconciles running tasks after system resume', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
@@ -552,7 +598,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
-  test('does not apply a terminal transcript after a newer turn starts', async () => {
+  test('reconciles terminal messages without settling a newer turn', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
@@ -600,6 +646,10 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.turn.outcome).toBeNull()
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      '之前的请求',
+      '已恢复的 AI 输出',
+    ])
   })
 
   test('reconciles executor state when completion already carries content', async () => {

@@ -140,6 +140,7 @@ class LoopItemResponse(BaseModel):
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
+    human_work: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None

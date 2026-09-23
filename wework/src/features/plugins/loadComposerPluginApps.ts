@@ -5,6 +5,7 @@ import {
   pluginPresentation,
   overlayMarketplaceLogosOnComposerApps,
 } from '@/features/plugins/composerPluginMetadata'
+import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
 
 export interface ComposerPluginAppSources {
   deviceId: string
@@ -69,6 +70,7 @@ export async function loadComposerPluginApps(
     options.enrichRelativeLogos && sources.readLocalInstalledPluginDetail
       ? await enrichLocalPluginsWithDetails(local, sources.readLocalInstalledPluginDetail)
       : local
+  publishPluginInvocationCatalog(sources.deviceId, localInstalledPlugins, cloud)
   const marketplaceItems = options.marketplaceItems ?? []
   return overlayMarketplaceLogosOnComposerApps(
     buildComposerPluginInventory({

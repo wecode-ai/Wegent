@@ -3,7 +3,8 @@ export const activityMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
-    "activity.app_task_local_only": "此任务在 PC App 中运行，请在 PC App 查看进展。",
+    "activity.app_task_local_only":
+      "此任务在 PC App 中运行，请在 PC App 查看进展。",
     "activity.device_access_loading": "正在检查设备连接…",
     "activity.device_access_unavailable": "当前账号无法访问此任务所属的设备。",
     "workbench.task_activity_approve": "批准执行",
@@ -12,7 +13,8 @@ export const activityMessages: Record<
     "workbench.task_activity_rerun": "重新执行",
     "workbench.task_activity_run_now": "立即执行",
     "workbench.task_activity_awaiting_approval": "等待机器人创建者批准",
-    "workbench.task_activity_awaiting_approval_with_creator": "待 {{name}} 批准",
+    "workbench.task_activity_awaiting_approval_with_creator":
+      "待 {{name}} 批准",
     "workbench.task_activity_reject_reason_prompt": "拒绝原因（可选）：",
     "workbench.task_activity_approve_failed": "批准失败",
     "workbench.task_activity_reject_failed": "拒绝失败",
@@ -46,6 +48,8 @@ export const activityMessages: Record<
     "activity.task_activity_transcript_execution_continues":
       "任务仍在执行，可稍后重试或在任务页打开",
     "activity.task_activity_transcript_unavailable": "暂时无法加载会话",
+    "activity.task_activity_device_offline":
+      "执行设备已离线，请恢复设备连接后重试。",
     "activity.task_activity_transcript_execution_idle":
       "执行器确认当前未运行，但执行记录无法读取。请重试或打开任务页查看。",
     "activity.task_activity_transcript_execution_unknown":
@@ -58,7 +62,7 @@ export const activityMessages: Record<
       "{{name}} 已进入执行队列，将自动处理并提交结果供你验收。",
     "activity.task_activity_empty_without_ai":
       "评论会记录在这里。指派给机器人后任务会自动进入队列执行，无需评论。",
-    "activity.task_activity_latest": "最新",
+    "activity.task_activity_chronological": "从旧到新",
     "activity.project_chat_ai_received": "机器人已接收",
     "activity.project_chat_completed": "已完成",
     "activity.project_chat_processing": "正在处理",
@@ -95,17 +99,22 @@ export const activityMessages: Record<
     "activity.task_activity_view_execution": "查看执行细节",
   },
   en: {
-    "activity.app_task_local_only": "This task runs in the PC app. View its progress in the PC app.",
+    "activity.app_task_local_only":
+      "This task runs in the PC app. View its progress in the PC app.",
     "activity.device_access_loading": "Checking device access…",
-    "activity.device_access_unavailable": "This account cannot access the device that owns this task.",
+    "activity.device_access_unavailable":
+      "This account cannot access the device that owns this task.",
     "workbench.task_activity_approve": "Approve run",
     "workbench.task_activity_reject": "Reject",
     "workbench.task_activity_accept": "Accept and complete",
     "workbench.task_activity_rerun": "Rerun",
     "workbench.task_activity_run_now": "Run now",
-    "workbench.task_activity_awaiting_approval": "Waiting for the robot creator to approve",
-    "workbench.task_activity_awaiting_approval_with_creator": "Waiting for {{name}} to approve",
-    "workbench.task_activity_reject_reason_prompt": "Rejection reason (optional):",
+    "workbench.task_activity_awaiting_approval":
+      "Waiting for the robot creator to approve",
+    "workbench.task_activity_awaiting_approval_with_creator":
+      "Waiting for {{name}} to approve",
+    "workbench.task_activity_reject_reason_prompt":
+      "Rejection reason (optional):",
     "workbench.task_activity_approve_failed": "Approve failed",
     "workbench.task_activity_reject_failed": "Reject failed",
     "workbench.task_activity_accept_failed": "Accept failed",
@@ -142,6 +151,8 @@ export const activityMessages: Record<
       "The task is still running. Retry later or open its task page.",
     "activity.task_activity_transcript_unavailable":
       "Conversation is temporarily unavailable",
+    "activity.task_activity_device_offline":
+      "The execution device is offline. Reconnect the device and try again.",
     "activity.task_activity_transcript_execution_idle":
       "The executor is idle, but execution history is unavailable. Retry or open the task page.",
     "activity.task_activity_transcript_execution_unknown":
@@ -154,7 +165,7 @@ export const activityMessages: Record<
       "{{name}} is queued and will start automatically, then submit the result for your review.",
     "activity.task_activity_empty_without_ai":
       "Comments are recorded here. Assigning a robot queues the task automatically; no comment is needed.",
-    "activity.task_activity_latest": "Latest",
+    "activity.task_activity_chronological": "Oldest first",
     "activity.project_chat_ai_received": "Robot received",
     "activity.project_chat_completed": "Completed",
     "activity.project_chat_processing": "Working",

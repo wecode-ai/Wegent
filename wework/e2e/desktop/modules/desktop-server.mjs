@@ -152,6 +152,10 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+  MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_INITIAL_PROMPT,
   MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
   MCP_ELICITATION_ACCEPTED_MARKER,
@@ -225,6 +229,7 @@ import {
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
   SIDE_CHAT_GUIDANCE_COMPLETION,
+  SIDE_CHAT_QUEUE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
   SIDE_CHAT_PROMPT,
@@ -824,6 +829,7 @@ class DesktopE2EServer {
         'model_service_connection_error',
         'anthropic_empty_response',
         'reconnect',
+        'model_proxy_restart',
         'checkpoint_task',
         ...HELD_WORKTREE_SCENARIOS,
         'message_edit',
@@ -4292,6 +4298,28 @@ class DesktopE2EServer {
         ])
         return
       }
+      if (requestCount >= 3 && requestCount <= 5) {
+        const queueIndex = requestCount - 2
+        const expectedPrompt =
+          queueIndex === 1
+            ? SIDE_CHAT_QUEUE_FOLLOW_UP
+            : `${SIDE_CHAT_QUEUE_FOLLOW_UP}_${queueIndex}`
+        assert.ok(
+          requestText.includes(expectedPrompt),
+          `Side-chat queued reply ${queueIndex} was not sent after the preceding turn`
+        )
+        assert.equal(
+          requestText.includes(`${SIDE_CHAT_QUEUE_FOLLOW_UP}_${queueIndex + 1}`),
+          false,
+          'The side-chat queue sent replies out of order'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       assert.equal(requestCount, 2, 'Side-chat guidance started an unexpected extra turn')
       assert.equal(
         requestContainsToolOutput(body, 'wework-e2e-side-chat-guidance-tool'),
@@ -4510,6 +4538,41 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(RECONNECT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'model_proxy_restart') {
+      this.recordScenarioRequest('model_proxy_restart', modelRequest)
+      const requests = this.scenarioRequests.get('model_proxy_restart') ?? []
+      const requestText = JSON.stringify(body)
+      const threadId = body.client_metadata?.thread_id
+      assert.ok(threadId, 'The model-proxy restart request did not include its Codex thread ID')
+      if (requests.length === 1) {
+        assert.ok(
+          requestText.includes(MODEL_PROXY_RESTART_INITIAL_PROMPT),
+          'The initial model-proxy restart request lost its prompt'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        threadId,
+        requests[0].body.client_metadata?.thread_id,
+        'The executor restart created a different Codex conversation'
+      )
+      assert.ok(
+        requestText.includes(MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT),
+        'The post-restart request lost its follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

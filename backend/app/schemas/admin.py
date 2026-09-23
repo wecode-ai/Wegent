@@ -5,9 +5,9 @@
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.schemas.kind import SkillRefMeta
+from app.schemas.kind import Model, SkillRefMeta
 
 
 # User Management Schemas
@@ -77,28 +77,31 @@ class AdminUserListResponse(BaseModel):
 
 # Public Model Management Schemas
 def _validate_public_model_json(value: Optional[dict]) -> Optional[dict]:
-    """Require an object-valued spec when a public model JSON defines one."""
-    if value is not None and "spec" in value and not isinstance(value["spec"], dict):
+    """Validate public model payloads through the regular Model CRD schema."""
+    if value is None:
+        return None
+    if "spec" in value and not isinstance(value["spec"], dict):
         raise ValueError("Public model JSON spec must be an object")
-    return value
+    return Model.model_validate(value).model_dump(mode="json", exclude_unset=True)
 
 
 class PublicModelCreate(BaseModel):
     """Public model creation model"""
 
+    model_config = ConfigDict(populate_by_name=True, hide_input_in_errors=True)
+
     name: str = Field(..., min_length=1, max_length=100)
     namespace: str = Field(default="default", max_length=100)
     model_json: dict = Field(..., alias="json")
-    is_visible: bool = True
+    is_visible: Optional[bool] = None
 
     _validate_model_json = field_validator("model_json")(_validate_public_model_json)
-
-    class Config:
-        populate_by_name = True
 
 
 class PublicModelUpdate(BaseModel):
     """Public model update model"""
+
+    model_config = ConfigDict(populate_by_name=True, hide_input_in_errors=True)
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     namespace: Optional[str] = Field(None, max_length=100)
@@ -108,9 +111,6 @@ class PublicModelUpdate(BaseModel):
     is_advanced: Optional[bool] = None
 
     _validate_model_json = field_validator("model_json")(_validate_public_model_json)
-
-    class Config:
-        populate_by_name = True
 
 
 class PublicModelResponse(BaseModel):

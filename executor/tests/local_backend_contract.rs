@@ -781,6 +781,31 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
 }
 
 #[tokio::test]
+async fn registration_publishes_capacity_without_waiting_for_periodic_heartbeat() {
+    let transport = RecordingTransport::with_responses(vec![
+        json!({"success": true}),
+        json!({"success": true, "task": null}),
+    ]);
+    let capacity = json!({"limit": 4, "active": 0, "active_task_ids": [], "queued": 0});
+    let (_event_tx, event_rx) = broadcast::channel(8);
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(StaticRuntimeWorkHandler(capacity.clone())),
+        event_rx,
+    );
+
+    runner.connect_and_register().await.unwrap();
+
+    // No periodic heartbeat loop is running: capacity must be published by
+    // the initial work poll even when the backend has no work to deliver.
+    let heartbeats = transport.wait_for_emit_count("device:heartbeat", 2).await;
+    assert!(heartbeats[0].payload["runtime_capacity"].is_null());
+    assert_eq!(heartbeats[1].payload["runtime_capacity"], capacity);
+    assert_eq!(heartbeats[1].payload["runtime_instance_id"], "runtime-1");
+}
+
+#[tokio::test]
 async fn runtime_polling_does_not_block_initial_liveness_heartbeat() {
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let (event_tx, event_rx) = broadcast::channel(8);
@@ -838,14 +863,7 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
 
 #[tokio::test]
 async fn local_backend_replays_runtime_events_after_reconnecting() {
-    let transport = RecordingTransport::with_emit_results(vec![
-        Ok(()),
-        Err("Socket.IO client is not connected".to_owned()),
-        Err("heartbeat failed before reconnect".to_owned()),
-        Err("heartbeat failed before reconnect".to_owned()),
-        Ok(()),
-        Ok(()),
-    ]);
+    let transport = RecordingTransport::with_connection_failure_on("runtime:event");
     let (event_tx, _) = broadcast::channel(8);
     let handler = Arc::new(RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -881,6 +899,7 @@ async fn local_backend_replays_runtime_events_after_reconnecting() {
     assert_eq!(emits[1].event, "runtime:event");
     assert_eq!(emits[0].payload["event"], "runtime.task.completed");
     assert_eq!(emits[1].payload["event"], "runtime.task.completed");
+    assert!(transport.disconnects() >= 1);
 }
 
 #[test]
@@ -940,7 +959,8 @@ struct RecordedCall {
 struct RecordingTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     emits: Arc<Mutex<Vec<RecordedCall>>>,
-    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
+    emit_failure_event: Arc<Mutex<Option<String>>>,
+    connection_failed: Arc<Mutex<bool>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, wegent_executor::local::backend::EventHandler)>>>,
     disconnects: Arc<Mutex<usize>>,
@@ -955,9 +975,9 @@ impl RecordingTransport {
         }
     }
 
-    fn with_emit_results(results: Vec<Result<(), String>>) -> Self {
+    fn with_connection_failure_on(event: &str) -> Self {
         Self {
-            emit_results: Arc::new(Mutex::new(results.into())),
+            emit_failure_event: Arc::new(Mutex::new(Some(event.to_owned()))),
             ..Self::default()
         }
     }
@@ -1058,7 +1078,10 @@ impl LocalBackendTransport for RecordingTransport {
         &'a self,
         _config: &'a LocalBackendConfig,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            *self.connection_failed.lock().unwrap() = false;
+            Ok(())
+        })
     }
 
     fn disconnect<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
@@ -1099,11 +1122,16 @@ impl LocalBackendTransport for RecordingTransport {
                 payload,
             });
             self.notify.notify_waiters();
-            self.emit_results
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or(Ok(()))
+            let mut failure_event = self.emit_failure_event.lock().unwrap();
+            if failure_event.as_deref() == Some(event) {
+                failure_event.take();
+                *self.connection_failed.lock().unwrap() = true;
+            }
+            if *self.connection_failed.lock().unwrap() {
+                Err("Socket.IO client is not connected".to_owned())
+            } else {
+                Ok(())
+            }
         })
     }
 

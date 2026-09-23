@@ -4,7 +4,11 @@ sidebar_position: 35
 
 # Wework notifications and navigation
 
-The bell beside Feedback displays your inbox and unread count. Opening a notification marks it read. Entries with a source link open that destination; entries without a link keep the current page and notification content visible. Notifications are stored in Backend and remain available across devices and reconnects.
+The bell beside Feedback is the single notification inbox. Its badge and the macOS Dock badge show the total unread count from visible task completion reminders on this device, collaboration notifications (assignments and human work), and other cloud notifications. Whether the tray shows unread tasks does not change this total.
+
+The bell opens a category popover with Task updates, Collaboration, and Other notifications. Each category shows its latest preview, time, and unread count; unrelated sources are not mixed into one list. Opening an entry marks it read. Entries with a destination open it, while entries without one keep the current page and notification content visible. Opening the popover alone does not clear unread state. Mark all read acknowledges unread entries from every available source.
+
+Task reminder read state belongs to the local task lifecycle on this device. Cloud notifications are stored in Backend and remain available after sign-in or on another device. While offline, local task reminders remain available and cloud categories show that they cannot be loaded. Cloud entries return after reconnection; a failed refresh does not erase entries already loaded.
 
 Human assignments offer Notify or Do not notify before saving, including assignment through board lanes and Issue creation. Assigning the same person again does not duplicate the notification. Ordinary self-assignment stays quiet; AI handing an Issue back to its user sends a notification.
 
@@ -45,6 +49,8 @@ flowchart LR
 ```
 
 Inbox reads and read-state changes are scoped to the recipient. Version conflicts roll back both the assignment and its notification. WebSocket and IM delivery happen after commit; opening the inbox, reconnecting and periodic refreshes reload its persisted state.
+
+The inbox API accepts `category=collaboration` or `category=general`. Backend computes unread counts and pagination after filtering each category. Task updates come from the current device's local task state.
 
 ## Database storage
 

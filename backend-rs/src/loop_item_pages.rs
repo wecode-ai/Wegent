@@ -39,11 +39,10 @@ use base64::Engine as _;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::auth::get_current_user;
+use crate::auth::SessionUser;
 use crate::board_snapshot::external_provider::PROVIDER_REQUEST_FAILED_PREFIX;
 use crate::board_snapshot::handler::{BindingResponse, binding_response};
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectRow, has_permission};
-use crate::cloud_projects::auth_error;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -204,17 +203,17 @@ struct LoopItemPageResponse {
 async fn list_loop_item_page(
     #[inject(state)] state: &AppState,
     project_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: SessionUser,
     query: brz_http_server::Query<LoopItemPageQuery>,
 ) -> Result<LoopItemPageResponse, FastApiError> {
-    loop_item_page(state, project_id, authorization, &query).await
+    loop_item_page(state, project_id, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/v1/cloud-projects/{project_id}/loop-item-pages`.
 async fn loop_item_page(
     state: &AppState,
     project_id: &str,
-    authorization: Option<&str>,
+    current_user: &SessionUser,
     params: &LoopItemPageQuery,
 ) -> Result<LoopItemPageResponse, FastApiError> {
     let (item_status, parent_id, cursor, limit) = LoopItemPageQuery {
@@ -224,10 +223,6 @@ async fn loop_item_page(
         limit: params.limit.clone(),
     }
     .validated()?;
-
-    let current_user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
 
     let repository = BoardSnapshotRepository::new(&state.mysql);
 

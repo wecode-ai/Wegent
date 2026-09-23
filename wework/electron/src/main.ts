@@ -129,14 +129,7 @@ import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
-import {
-  createWeworkSyncDownloadTimeout,
-  createWeworkSyncFetchInit,
-  describeWeworkSyncRequestFailure,
-  normalizeWeworkSyncApiBaseUrl,
-  normalizeWeworkSyncPath,
-  readWeworkSyncResponse,
-} from './host/wework-sync-request.js'
+import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -1396,6 +1389,18 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  const codexSubscriptionPreferences = await preferences.read()
+  // The Electron PreferencesStore returns raw JSON without normalization, so an
+  // absent field (e.g. a fresh install or a user who never toggled it) must fall
+  // back to the default (enabled) rather than being treated as disabled.
+  const hasCodexSubscriptionField = Object.prototype.hasOwnProperty.call(
+    codexSubscriptionPreferences,
+    'localCodexSubscriptionEnabled'
+  )
+  const codexSubscriptionEnabled = hasCodexSubscriptionField
+    ? codexSubscriptionPreferences.localCodexSubscriptionEnabled === true
+    : true
+  environment.WEWORK_CODEX_SUBSCRIPTION_ENABLED = codexSubscriptionEnabled ? 'true' : 'false'
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
@@ -1513,6 +1518,10 @@ async function configureDesktopRuntime(): Promise<void> {
           events: desktopHostEvents,
           feedback,
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
+          relaunchApplication: () => {
+            app.relaunch()
+            requestApplicationShutdown(() => app.quit())
+          },
           openRuntimeTask: taskAddressId =>
             dispatchTrayAction({
               type: 'open-task',
@@ -1526,36 +1535,8 @@ async function configureDesktopRuntime(): Promise<void> {
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
-            const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
-            try {
-              let response: Response
-              try {
-                response = await fetch(
-                  `${apiBaseUrl}${path}`,
-                  await createWeworkSyncFetchInit(
-                    request,
-                    `${credential.tokenType} ${credential.accessToken}`,
-                    downloadTimeout?.signal
-                  )
-                )
-              } catch (error) {
-                throw new CloudCredentialError(
-                  'request_failed',
-                  describeWeworkSyncRequestFailure(error)
-                )
-              }
-              const body = await readWeworkSyncResponse(
-                response,
-                request.downloadPath,
-                request.downloadSizeBytes,
-                downloadTimeout?.refresh
-              )
-              return { status: response.status, body }
-            } finally {
-              downloadTimeout?.clear()
-            }
+            return requestWeworkSync(request, `${credential.tokenType} ${credential.accessToken}`)
           },
         },
         {

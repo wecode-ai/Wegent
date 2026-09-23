@@ -20,6 +20,7 @@ import type {
   ProjectSpaceApis,
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
+import type { LocalProjectChatAgentCreateInput } from '@/api/local/localDelivery'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
 export function createLocalWorkspaceApi(
@@ -56,6 +57,7 @@ export function createLocalWorkspaceApi(
         id: `device:${device.device_id}`,
         device_id: device.id,
         device_key: device.device_id,
+        is_current_device: true,
         name: device.name,
         kind: 'local_device' as const,
         coding_tools: ['codex'],
@@ -70,7 +72,11 @@ export function createLocalWorkspaceApi(
       }))
   }
   const workspace = async (): Promise<CollaborationWorkspace> => {
-    const [items, environments] = await Promise.all([projects(), executionEnvironments()])
+    const [items, environments, agents] = await Promise.all([
+      projects(),
+      executionEnvironments(),
+      localAgentResources(),
+    ])
     const now = new Date().toISOString()
     return {
       id: LOCAL_WORKSPACE_ID,
@@ -83,7 +89,7 @@ export function createLocalWorkspaceApi(
           : 'Projects, issues, and execution resources stored on this device.',
       access_role: 'Owner',
       member_count: 1,
-      agent_count: 0,
+      agent_count: agents.length,
       execution_environment_count: environments.length,
       project_count: items.length,
       created_by_user_id: userId,
@@ -108,17 +114,22 @@ export function createLocalWorkspaceApi(
       role: 'Owner',
     },
   ]
-  const projectAgentApi = detailServices?.projectChatAgentApi
+  const projectAgentApi = detailServices?.localProjectChatAgentApi
   const listProjectAgents = async (projectId: string) =>
-    (await projectAgentApi?.list(projectId))?.map(agent => ({ ...agent })) ?? []
+    (await projectAgentApi?.list(projectId))?.map(agent => ({
+      ...agent,
+      agent_id: agent.name,
+      name: agent.displayName || agent.name,
+    })) ?? []
   const projectChatClient = detailServices?.projectChatClient
   const localAgentResources = async () => {
-    const agents = await projectAgentApi?.list(DEFAULT_WORK_ITEM_PROJECT_ID)
+    const agents = (await projectAgentApi?.list(DEFAULT_WORK_ITEM_PROJECT_ID)) ?? []
     const ownerName = locale === 'zh-CN' ? '本地空间' : 'Local space'
-    return (agents ?? []).map(agent => ({
+    return agents.map(agent => ({
       id: agent.id,
-      name: agent.name,
+      name: agent.displayName || agent.name,
       location: 'local' as const,
+      version: agent.version,
       capability_description: agent.capabilityDescription,
       system_prompt: agent.systemPrompt,
       runtime: agent.runtime,
@@ -129,6 +140,28 @@ export function createLocalWorkspaceApi(
       execution_environment_ids: agent.executionDeviceId
         ? [`device:${agent.executionDeviceId}`]
         : [],
+      project_binding_input: {
+        name: agent.name,
+        displayName: agent.displayName,
+        namespace: agent.namespace,
+        runtime: agent.runtime,
+        model: agent.model,
+        modelType: agent.modelType,
+        modelNamespace: agent.modelNamespace,
+        capabilityDescription: agent.capabilityDescription,
+        capabilityMode: agent.capabilityMode,
+        systemPrompt: agent.systemPrompt,
+        additionalSkills: agent.additionalSkills,
+        mcpServers: agent.mcpServers,
+        visibility: agent.visibility,
+        executionEnvironment: agent.executionEnvironment,
+        executionMode: agent.executionMode,
+        executionDeviceId: agent.executionDeviceId,
+        localProjectId: agent.localProjectId,
+        maxConcurrentExecutions: agent.maxConcurrentExecutions,
+        workspacePolicy: agent.workspacePolicy,
+        plugins: agent.plugins,
+      },
     }))
   }
   const projectCollaborationGroups = async (projectId: string): Promise<CollaborationGroup[]> => {
@@ -273,7 +306,7 @@ export function createLocalWorkspaceApi(
       addMember: unavailable,
       updateMember: unavailable,
       removeMember: unavailable,
-      listAgents: async () => [],
+      listAgents: localAgentResources,
       addAgent: unavailable,
       removeAgent: unavailable,
       listCollaborationGroups: () => projectCollaborationGroups(DEFAULT_WORK_ITEM_PROJECT_ID),
@@ -293,6 +326,14 @@ export function createLocalWorkspaceApi(
         agents: await localAgentResources(),
         execution_environments: await executionEnvironments(),
       }),
+      async removeAgent(agent) {
+        if (!projectAgentApi || agent.version == null) {
+          throw new Error(
+            locale === 'zh-CN' ? '无法删除这个本地智能体' : 'This local agent cannot be deleted'
+          )
+        }
+        await projectAgentApi.archive(DEFAULT_WORK_ITEM_PROJECT_ID, agent.id, agent.version)
+      },
     },
     comments: projectChatClient
       ? {
@@ -338,10 +379,7 @@ export function createLocalWorkspaceApi(
       ? {
           list: listProjectAgents,
           create: async (projectId, input) => ({
-            ...(await projectAgentApi.create(
-              projectId,
-              input as Parameters<typeof projectAgentApi.create>[1]
-            )),
+            ...(await projectAgentApi.create(projectId, toLocalAgentCreateInput(input))),
           }),
           update: async (projectId, agentId, input) => ({
             ...(await projectAgentApi.update(
@@ -521,4 +559,18 @@ export function createLocalWorkspaceApi(
       groups.filter(group => group.id !== groupId)
     )
   }
+}
+
+function toLocalAgentCreateInput(input: Record<string, unknown>): LocalProjectChatAgentCreateInput {
+  if (typeof input.name !== 'string' || !input.name.trim()) {
+    throw new Error('Local Agent name is required')
+  }
+  if (input.runtime !== 'codex' && input.runtime !== 'claude_code') {
+    throw new Error('Local Agent runtime is invalid')
+  }
+  return {
+    ...input,
+    name: input.name,
+    runtime: input.runtime,
+  } as LocalProjectChatAgentCreateInput
 }

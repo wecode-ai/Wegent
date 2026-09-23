@@ -1,6 +1,5 @@
 .section {
-  border-top: 1px solid rgb(var(--color-border));
-  padding: 24px 0;
+  padding: 0;
 }
 
 .header {
@@ -19,16 +18,18 @@
 }
 
 .addButton {
-  min-height: 34px;
+  min-height: 32px;
+  border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   padding: 0 12px;
-  color: var(--collaboration-primary-foreground, rgb(var(--color-bg-base)));
-  background: var(
-    --collaboration-primary-background,
-    rgb(var(--color-text-primary))
-  );
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
   font-size: 13px;
   font-weight: 500;
+}
+
+.addButton:hover {
+  background: rgb(var(--color-bg-hover));
 }
 
 .addButton:disabled {
@@ -66,7 +67,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .sectionHeading h3,
@@ -92,19 +93,24 @@
 
 .list {
   display: grid;
-  gap: 8px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
   margin-top: 10px;
+  background: rgb(var(--color-bg-base));
 }
 
 .agent {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 68px;
-  padding: 12px 14px;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 12px;
-  background: rgb(var(--color-bg-surface));
+  min-height: 56px;
+  padding: 8px 12px;
+  background: rgb(var(--color-bg-base));
+}
+
+.agent + .agent {
+  border-top: 1px solid rgb(var(--color-border));
 }
 
 .agentAvatar {
@@ -114,10 +120,9 @@
   flex: 0 0 36px;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-base));
-  box-shadow: inset 0 0 0 1px rgb(var(--color-border));
+  border-radius: 8px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-subtle));
   font-size: 12px;
   font-weight: 650;
 }
@@ -153,7 +158,7 @@
   border-radius: 6px;
   padding: 0 7px;
   color: rgb(var(--color-text-secondary));
-  background: rgb(var(--color-bg-base));
+  background: rgb(var(--color-bg-subtle));
   box-shadow: inset 0 0 0 1px rgb(var(--color-border));
   font-size: 11px;
   font-weight: 500;

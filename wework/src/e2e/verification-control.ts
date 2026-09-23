@@ -69,6 +69,56 @@ async function seedLocalProject(command: DesktopControlCommand): Promise<string>
   return JSON.stringify(response)
 }
 
+async function readLocalProject(command: DesktopControlCommand): Promise<string> {
+  const projectId = command.value?.trim()
+  if (!projectId) {
+    throw new Error('readLocalProject requires a project ID')
+  }
+  const projects =
+    await requestLocalExecutor<Array<{ id?: string; metadata?: Record<string, unknown> }>>(
+      'projects.list'
+    )
+  return JSON.stringify(projects.find(project => project.id === projectId) ?? null)
+}
+
+async function preflightLocalWorktree(command: DesktopControlCommand): Promise<string> {
+  const input = JSON.parse(command.value ?? '{}') as {
+    sourcePath?: string
+    ref?: string
+  }
+  if (!input.sourcePath?.trim()) {
+    throw new Error('preflightLocalWorktree requires a source path')
+  }
+  return JSON.stringify(
+    await requestLocalExecutor('runtime.worktrees.preflight', {
+      sourcePath: input.sourcePath.trim(),
+      ...(input.ref?.trim() ? { ref: input.ref.trim() } : {}),
+    })
+  )
+}
+
+async function archiveLocalProject(command: DesktopControlCommand): Promise<string> {
+  const fixture = JSON.parse(command.value ?? '{}') as { projectKey?: string }
+  const projectKey = fixture.projectKey?.trim()
+  if (!projectKey) {
+    throw new Error('archiveLocalProject requires a project key')
+  }
+  const projects = (await requestLocalExecutor('projects.list', {})) as Array<{
+    id?: string
+    version?: number
+    metadata?: { code_project_key?: string }
+  }>
+  const project = projects.find(item => item.metadata?.code_project_key === projectKey)
+  if (!project?.id || typeof project.version !== 'number') {
+    throw new Error(`Local collaboration project was not found for ${projectKey}`)
+  }
+  await requestLocalExecutor('projects.archive', {
+    project_id: project.id,
+    version: project.version,
+  })
+  return JSON.stringify({ projectId: project.id })
+}
+
 async function readLocalTerminalSnapshot(command: DesktopControlCommand): Promise<string> {
   const sessionId = command.value?.trim()
   if (!sessionId) {
@@ -114,6 +164,12 @@ export async function executeVerificationControlCommand(
       return { handled: true, value: clickAt(command, dependencies) }
     case 'seedLocalProject':
       return { handled: true, value: await seedLocalProject(command) }
+    case 'readLocalProject':
+      return { handled: true, value: await readLocalProject(command) }
+    case 'preflightLocalWorktree':
+      return { handled: true, value: await preflightLocalWorktree(command) }
+    case 'archiveLocalProject':
+      return { handled: true, value: await archiveLocalProject(command) }
     case 'readLocalTerminalSnapshot':
       return { handled: true, value: await readLocalTerminalSnapshot(command) }
     case 'reloadApp':

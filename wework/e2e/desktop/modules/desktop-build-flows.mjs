@@ -84,6 +84,7 @@ import {
   selectE2EModel,
   sendPromptUntilScenarioRequest,
   toolDetailsMcpServerPath,
+  waitForLogPattern,
   weworkDir,
   withTimeout,
   writeFile,
@@ -436,9 +437,16 @@ async function resolveDesktopCodexBinary() {
   }
 
   const target = hostCodexTarget()
-  await runChecked('pnpm', ['run', 'prepare:codex', '--target', target], {
-    cwd: weworkDir,
-  })
+  // The desktop wire client must stay runnable without workspace tooling, so prepare the binary with
+  // the interpreter that already runs this check instead of a `pnpm` launcher, which Windows cannot
+  // spawn without a command interpreter.
+  await runChecked(
+    process.execPath,
+    [join(weworkDir, 'scripts', 'prepare-codex-binary.mjs'), '--target', target],
+    {
+      cwd: weworkDir,
+    }
+  )
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
   const entry = lock.targets?.[target]
   const binaryRelativePath = entry?.binaryPath
@@ -724,6 +732,39 @@ export async function verifyRemoteDockerCommandFlow(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  if (interactiveSessions?.codeServer !== false) {
+    const ideSelector = `[data-testid="connection-code-server-button-${generatedDeviceId}"]`
+    const backendLogOffset = (await readFile(cloudEnvironment.backendLogPath, 'utf8')).length
+    await control.command('clickWhenEnabled', ideSelector)
+    await waitForLogPattern(
+      cloudEnvironment.backendLogPath,
+      new RegExp(`/api/devices/${generatedDeviceId}/code-server`),
+      {
+        fromOffset: backendLogOffset,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      }
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `[data-testid="connection-ide-confirm-${generatedDeviceId}"]`
+        )
+      ),
+      0,
+      'The device IDE action still required a second confirmation'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `[data-testid="connection-session-error-${generatedDeviceId}"]`
+        )
+      ),
+      0,
+      'The device IDE action failed while opening the system browser'
+    )
+  }
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-device-online.png')
   await control.command('navigate', 'body', { value: '/' })
   return { deviceId: generatedDeviceId, ...generatedDevice }

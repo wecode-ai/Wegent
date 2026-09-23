@@ -172,7 +172,7 @@ function summary(transcriptId, transcript) {
     state: 'active',
     currentSequence: transcript.currentSequence,
     archivedThroughSequence: latestSnapshot?.toSequence ?? 0,
-    writerClientId: null,
+    writerClientId: transcript.writerClientId,
     writerLeaseExpiresAt: null,
     archives: transcript.archives,
     createdAt: '2026-09-08T00:00:00.000Z',
@@ -286,10 +286,12 @@ export function createDesktopScenario({
           title: body.title ?? transcriptId,
           parentTranscriptId: body.parentTranscriptId ?? null,
           forkedAtSequence: body.forkedAtSequence ?? null,
+          writerClientId: body.clientId,
           currentSequence: 0,
           archives: [],
           turns: [],
         }
+        transcript.writerClientId = body.clientId
         transcripts.set(transcriptId, transcript)
         fencingToken += 1
         leases.set(transcriptId, { clientId: body.clientId, fencingToken })
@@ -388,7 +390,12 @@ export function createDesktopScenario({
         }
         if (body.sequence === 1 && !firstCommitResponseDropped) {
           firstCommitResponseDropped = true
+          // The commit is durable, but its object is lost and the client must never observe the
+          // response. A Chromium network stack replays a request that dies before any response byte
+          // arrives, so flush the response head and then drop the connection with the body missing.
           objects.delete(objectId)
+          response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          response.flushHeaders()
           response.destroy()
           return true
         }
@@ -471,6 +478,69 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      const transcriptRequestCount = () =>
+        requestLog.filter(value => value.includes('/api/wework-transcripts')).length
+      const enableTranscriptSync = async ({ verifyExperimentalGate = false } = {}) => {
+        const requestsBeforeOptIn = transcriptRequestCount()
+        const experimentalToggle = '[data-testid="general-experimental-features-toggle"]'
+
+        await control.command('click', '[data-testid="settings-button"]')
+        await control.command('click', '[data-testid="settings-menu-button"]')
+        await control.command('waitFor', experimentalToggle, { timeoutMs: uiTimeoutMs })
+        const experimentalEnabled =
+          (await control.command('getAttribute', experimentalToggle, {
+            value: 'aria-checked',
+          })) === 'true'
+
+        if (verifyExperimentalGate) {
+          assert.equal(experimentalEnabled, false)
+          await control.command('click', '[data-testid="settings-nav-connections"]')
+          assert.equal(
+            Number(
+              await control.command(
+                'getElementCount',
+                '[data-testid="transcript-sync-settings-section"]',
+                { visible: true }
+              )
+            ),
+            0,
+            'Transcript sync must stay hidden until experimental features are enabled'
+          )
+          assert.equal(transcriptRequestCount(), requestsBeforeOptIn)
+          await control.command('click', '[data-testid="settings-nav-general"]')
+          await control.command('waitFor', experimentalToggle, { timeoutMs: uiTimeoutMs })
+        }
+
+        if (!experimentalEnabled) {
+          await control.command('click', experimentalToggle)
+          await waitFor(
+            async () =>
+              (await control.command('getAttribute', experimentalToggle, {
+                value: 'aria-checked',
+              })) === 'true',
+            uiTimeoutMs,
+            'Experimental features were not enabled'
+          )
+        }
+
+        await control.command('click', '[data-testid="settings-nav-connections"]')
+        await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+          text: '同步已关闭',
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          transcriptRequestCount(),
+          requestsBeforeOptIn,
+          'Transcript sync contacted the cloud before explicit opt-in'
+        )
+        await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
+        await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+          text: '同步正常',
+          timeoutMs: uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        })
+        await control.command('click', '[data-testid="settings-back-button"]')
+      }
+
       const deviceAStatePath = join(
         electronUserDataDirectory,
         'dsh-core',
@@ -481,6 +551,7 @@ export function createDesktopScenario({
         'dsh-core',
         'wework-transcript-sync-outbox.sqlite3'
       )
+      await enableTranscriptSync({ verifyExperimentalGate: true })
       await createSingleRootLocalProject(control, workspacePath, 'transcript-sync')
       await writeFile(join(workspacePath, 'transcript-sync-restore-marker.txt'), 'snapshot\n')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -594,6 +665,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await enableTranscriptSync({ verifyExperimentalGate: true })
       const restoredTask = await waitFor(
         async () => {
           try {
@@ -726,6 +798,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await enableTranscriptSync({ verifyExperimentalGate: true })
       await waitFor(
         async () => {
           try {
@@ -912,6 +985,8 @@ export function createDesktopScenario({
       assert.equal(newChatTranscript.currentSequence, 1)
 
       const persisted = JSON.parse(await readFile(deviceBStatePath, 'utf8'))
+      assert.equal(persisted.optInVersion, 1)
+      assert.equal(persisted.enabled, true)
       assert.equal(Object.hasOwn(persisted.transcripts[activeTranscriptId], 'turns'), false)
       assert.ok((await readFile(deviceAStatePath, 'utf8')).includes(activeTranscriptId))
       assert.equal(

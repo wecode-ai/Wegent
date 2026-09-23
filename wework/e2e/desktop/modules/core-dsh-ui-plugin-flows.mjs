@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, readdir } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -155,6 +155,7 @@ export async function verifyCoreDshUiPluginComposition({
   initialRendererLocation,
   pluginsRoot,
   restartDesktopApp,
+  resultDir,
   runtimeRoot,
 }) {
   const pluginSources = await resolveCoreUiPluginSources(runtimeRoot, pluginsRoot)
@@ -222,6 +223,9 @@ export async function verifyCoreDshUiPluginComposition({
       )
     )
     await assertInstalledFeatureVisible(control, plugin)
+    if (plugin.name === '@wegent/dsh-conversation-export') {
+      await verifyConversationExportOutsideWorkspace(control, resultDir)
+    }
   }
 
   for (const plugin of UI_PLUGINS.filter(
@@ -309,6 +313,155 @@ export async function verifyCoreDshUiPluginComposition({
   }
   await control.command('navigate', 'body', { value: '/' })
   await ensureExperimentalFeaturesDisabled(control)
+}
+
+async function verifyConversationExportOutsideWorkspace(control, resultDir) {
+  const sourceDirectory = join(resultDir, 'conversation-export-source')
+  const sourcePath = join(sourceDirectory, 'outside-workspace.txt')
+  const imagePath = join(sourceDirectory, 'outside-workspace.png')
+  const exportedPath = join(resultDir, 'conversation-export-e2e.zip')
+  const content = 'conversation-owned asset outside the workspace\n'
+  const imageBase64 = 'iVBORw0KGgoBAgME'
+  const imageBytes = Buffer.from(imageBase64, 'base64')
+  await mkdir(sourceDirectory, { recursive: true })
+  await writeFile(sourcePath, content, 'utf8')
+  await writeFile(imagePath, imageBytes)
+
+  const openFixture = () =>
+    control.command('openConversationExportFixture', 'body', {
+      value: JSON.stringify({
+        assetPath: sourcePath,
+        fileSize: Buffer.byteLength(content),
+        filename: 'outside-workspace.txt',
+        imagePath,
+        imageSize: imageBytes.byteLength,
+      }),
+    })
+
+  await openFixture()
+  await control.command('waitFor', '[data-testid="conversation-export-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-export-content-attachments"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      '[data-testid="conversation-export-content-attachments"]',
+      { value: 'disabled' }
+    ),
+    '',
+    'The outside-workspace conversation attachment was not available for export'
+  )
+  await control.command('click', '[data-testid="conversation-export-content-attachments"]')
+  await control.command('clickWhenEnabled', '[data-testid="conversation-export-confirm"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-export-completed-path"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getText', '[data-testid="conversation-export-completed-path"]'),
+    exportedPath,
+    'The conversation export completed at an unexpected path'
+  )
+
+  const archive = readStoredZipEntries(await readFile(exportedPath))
+  const attachment = archive.get('attachments/outside-workspace.txt')
+  assert.ok(attachment, 'The exported ZIP omitted the outside-workspace conversation attachment')
+  assert.equal(
+    attachment.toString('utf8'),
+    content,
+    'The exported outside-workspace attachment content changed'
+  )
+  await control.command('click', '[data-testid="conversation-export-confirm"]')
+  await control.command('waitFor', '[data-testid="conversation-export-dialog"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await openFixture()
+  await control.command('waitFor', '[data-testid="conversation-export-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="conversation-export-format-html"]')
+  await control.command('click', '[data-testid="conversation-export-content-attachments"]')
+  await control.command('clickWhenEnabled', '[data-testid="conversation-export-confirm"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-export-completed-path"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getText', '[data-testid="conversation-export-completed-path"]'),
+    exportedPath,
+    'The HTML conversation export completed at an unexpected path'
+  )
+
+  const htmlArchive = readStoredZipEntries(await readFile(exportedPath))
+  const htmlDocument = [...htmlArchive].find(([name]) => name.endsWith('.html'))?.[1]
+  assert.ok(htmlDocument, 'The exported ZIP omitted the HTML conversation document')
+  assert.match(
+    htmlDocument.toString('utf8'),
+    new RegExp(`data:image/png;base64,${imageBase64}`),
+    'The HTML export did not inline the outside-workspace conversation image'
+  )
+  const htmlAttachment = htmlArchive.get('attachments/outside-workspace.txt')
+  assert.ok(
+    htmlAttachment,
+    'The HTML export ZIP omitted the outside-workspace conversation attachment'
+  )
+  assert.equal(
+    htmlAttachment.toString('utf8'),
+    content,
+    'The HTML export changed the outside-workspace attachment content'
+  )
+}
+
+function readStoredZipEntries(archive) {
+  const endOffset = archive.byteLength - 22
+  assert.ok(endOffset >= 0, 'The exported ZIP is missing its end record')
+  assert.equal(
+    archive.readUInt32LE(endOffset),
+    0x06054b50,
+    'The exported ZIP end record is invalid'
+  )
+  const entryCount = archive.readUInt16LE(endOffset + 10)
+  let offset = archive.readUInt32LE(endOffset + 16)
+  const entries = new Map()
+
+  for (let index = 0; index < entryCount; index += 1) {
+    assert.equal(
+      archive.readUInt32LE(offset),
+      0x02014b50,
+      'The exported ZIP central directory is invalid'
+    )
+    assert.equal(
+      archive.readUInt16LE(offset + 10),
+      0,
+      'The exported ZIP unexpectedly compressed an entry'
+    )
+    const size = archive.readUInt32LE(offset + 24)
+    const nameLength = archive.readUInt16LE(offset + 28)
+    const extraLength = archive.readUInt16LE(offset + 30)
+    const commentLength = archive.readUInt16LE(offset + 32)
+    const localOffset = archive.readUInt32LE(offset + 42)
+    const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
+
+    assert.equal(
+      archive.readUInt32LE(localOffset),
+      0x04034b50,
+      `The exported ZIP local header is invalid: ${name}`
+    )
+    const localNameLength = archive.readUInt16LE(localOffset + 26)
+    const localExtraLength = archive.readUInt16LE(localOffset + 28)
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength
+    entries.set(name, archive.subarray(dataOffset, dataOffset + size))
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+
+  return entries
 }
 
 async function installDemoPlugin({ control, pluginSource, rendererOrigin, restartDesktopApp }) {

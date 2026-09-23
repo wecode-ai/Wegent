@@ -88,6 +88,10 @@ async def notify_group_members_task_updated(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task.id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                # Share recipients keep a record here too, but copying a
+                # shared task does not subscribe them to the original task's
+                # updates. Mirrors the member queries in task_member_service.
+                ResourceMember.copied_resource_id == 0,
             )
             .all()
         )

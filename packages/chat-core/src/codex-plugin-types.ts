@@ -108,6 +108,7 @@ export type WegentStorePluginSummary = {
   name: string
   packageId: string
   installedPluginId?: number | null
+  cloudPluginId?: number | null
   marketplace: string
   version?: string | null
   enabled: boolean

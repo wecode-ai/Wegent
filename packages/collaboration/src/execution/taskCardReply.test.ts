@@ -175,3 +175,47 @@ describe("shared PC card reply dispatch", () => {
     );
   });
 });
+
+describe("project-authorized comment dispatch", () => {
+  it("continues the server-owned thread without a visible assigned agent or personal runtime", async () => {
+    const { input, client, runtime } = setup();
+    client.executeTaskComment = vi.fn().mockResolvedValue([run]);
+    expect(await dispatchTaskCardReply({ ...input, agent: undefined })).toEqual(
+      { ok: true, persisted: true },
+    );
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: "project",
+      taskId: "issue",
+      triggerMessageId: "reply",
+      attachmentIds: [],
+    });
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({ mentions: [] }),
+    );
+    expect(client.startAgentResponse).not.toHaveBeenCalled();
+    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled();
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+  it("reports a saved reply whose server execution was rejected", async () => {
+    const { input, client, runtime } = setup();
+    client.executeTaskComment = vi
+      .fn()
+      .mockRejectedValue(new Error("Device offline"));
+    expect(await dispatchTaskCardReply({ ...input, agent: undefined })).toEqual(
+      { ok: false, persisted: true, error: "Device offline" },
+    );
+    expect(input.onError).toHaveBeenCalledWith("Device offline");
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled();
+  });
+  it("uses the thread agent after reassignment for a local project", async () => {
+    const { input, client } = setup();
+    await dispatchTaskCardReply({
+      ...input,
+      project: { ...input.project, project_store: "local" },
+      agent: { id: "new-agent", name: "New" },
+    });
+    expect(client.startAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "agent" }),
+    );
+  });
+});

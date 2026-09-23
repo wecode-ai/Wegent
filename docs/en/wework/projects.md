@@ -57,12 +57,47 @@ After enabling **Settings → General → Experimental features**, open **Edit p
 
 ### Create a local or cloud project space
 
-When the Collaboration page has no project space yet, its first-project guide shows separate **Create local project** and **Create cloud project** actions. The creation dialog also identifies the actual storage location:
+The Collaboration page always shows the current device's **Local space** in
+the sidebar. When it is empty, the guide offers **Add folder**. After you choose
+a directory and confirm the project name, Wework registers it as a Task project
+and adds it to the local space. Cloud projects are still created inside a cloud
+space, and the creation UI identifies the actual storage location:
 
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
+
+### Set cloud board access
+
+Cloud project spaces using the built-in task source can set their access level during creation. An Owner or Maintainer can change it later under **Project settings → Project access**:
+
+- **Private**: only project members can enter.
+- **Related tasks only**: every signed-in user can discover and enter the project. Owners and Maintainers see every issue; other users see only issues related to them.
+- **Public**: every signed-in user can enter and view every issue.
+
+Related issues include issues the user created, issues assigned to the user, issues where the user is a collaborator, issues linked to one of the user's execution tasks, and issues assigned to a robot created by the user. Unrelated issues are omitted from the board, table, execution lists, and project conversations. Opening an unrelated issue directly also returns not found.
+
+The access level controls project and issue visibility only. It does not change project roles, assignees, or collaborators. External task sources such as GitHub, GitLab, and DingTalk AI Table do not offer **Related tasks only**.
+
+### Import more projects into the local space
+
+Wework automatically adds local Task projects to the local space during initial
+setup. To add more projects later, open the local space's **…** menu or the
+project page's **Add project** menu:
+
+- **Import existing project** lists projects that already exist on the Tasks
+  page but are not yet in the local space. Wework deduplicates them by runtime
+  project identity and normalized workspace roots, so projects already shown in
+  the local space are excluded.
+- **Add folder** selects a new local directory, registers its Task project, and
+  adds it to the local space immediately.
+
+Background synchronization does not automatically restore an archived local
+collaboration project, preventing a project the user removed from reappearing.
+Explicitly choosing its Task project from **Import existing project** restores
+the corresponding local collaboration project. The sidebar refreshes after the
+import, and restarting Wework does not create a duplicate.
 
 New conversations started in that local project inherit the selected project space. Before the first message is sent, the composer shows **Add to board · Project space name**. Sending creates a task in the selected local or cloud project space and links the conversation. Repeated synchronization of the same conversation does not create duplicate board tasks.
 

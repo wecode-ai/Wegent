@@ -41,6 +41,7 @@ pub struct WegentStorePluginSummary {
     name: String,
     package_id: String,
     installed_plugin_id: Option<i64>,
+    cloud_plugin_id: Option<i64>,
     marketplace: String,
     version: Option<String>,
     enabled: bool,
@@ -172,6 +173,7 @@ fn wegent_store_plugin_summary(
         name,
         package_id,
         installed_plugin_id: installed.get("installed_plugin_id").and_then(Value::as_i64),
+        cloud_plugin_id: installed.get("cloud_plugin_id").and_then(Value::as_i64),
         marketplace: optional_trimmed_string(installed.get("marketplace"))?,
         version: optional_trimmed_string(manifest.get("version"))
             .or_else(|| optional_trimmed_string(installed.get("version"))),

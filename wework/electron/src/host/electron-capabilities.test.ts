@@ -13,6 +13,7 @@ import {
   coreGrantedCapabilities,
   cpuLoadRatioBetween,
   e2eOpenDialogOverride,
+  e2eSaveDialogOverride,
   createWorkbenchCapabilityRouter,
   WEWORK_APP_PRINCIPAL,
   WEWORK_WORKBENCH_PRINCIPAL,
@@ -111,6 +112,27 @@ describe('e2eOpenDialogOverride', () => {
   test('does not bypass the native dialog without both E2E signals', () => {
     expect(e2eOpenDialogOverride({ WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin' })).toBeNull()
     expect(e2eOpenDialogOverride({ WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234' })).toBeNull()
+  })
+})
+
+describe('e2eSaveDialogOverride', () => {
+  test('returns the selected path only for a controlled desktop E2E process', () => {
+    expect(
+      e2eSaveDialogOverride({
+        WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+        WEWORK_E2E_SAVE_DIALOG_PATH: '/workspace/export.zip',
+      })
+    ).toEqual({
+      canceled: false,
+      filePath: resolve('/workspace/export.zip'),
+    })
+  })
+
+  test('does not bypass the native dialog without both E2E signals', () => {
+    expect(
+      e2eSaveDialogOverride({ WEWORK_E2E_SAVE_DIALOG_PATH: '/workspace/export.zip' })
+    ).toBeNull()
+    expect(e2eSaveDialogOverride({ WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234' })).toBeNull()
   })
 })
 
@@ -857,6 +879,12 @@ describe('createWorkbenchCapabilityRouter', () => {
     expect(granted).not.toContain('dshCapture.ownerRect')
     expect(granted).toContain('browser.open')
     expect(granted).toContain('deviceDiagnostics.microphone')
+  })
+
+  test('grants app.relaunch to the core principal', () => {
+    const granted = coreGrantedCapabilities()
+    expect(granted).toContain('app.relaunch')
+    expect(granted).toContain('app.quit')
   })
 
   test('reports capability available only while the scoped owner is visible', async () => {

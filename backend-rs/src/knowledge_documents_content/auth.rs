@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 use super::ApiFailure;
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
+use crate::headers::Headers as _;
 use crate::state::AppState;
 
 /// API key prefix (`app.core.auth_utils.API_KEY_PREFIX`).
@@ -49,6 +50,151 @@ pub struct CurrentUser {
     pub id: i32,
     #[allow(dead_code)]
     pub user_name: String,
+}
+
+pub struct KnowledgeUser(pub CurrentUser);
+
+impl std::ops::Deref for KnowledgeUser {
+    type Target = CurrentUser;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const KNOWLEDGE_AUTH_REQUIRED: &str = "Wegent-Knowledge-Auth-Required";
+const KNOWLEDGE_AUTH_INVALID_KEY: &str = "Wegent-Knowledge-Auth-Invalid-Key";
+const KNOWLEDGE_AUTH_EXPIRED_KEY: &str = "Wegent-Knowledge-Auth-Expired-Key";
+const KNOWLEDGE_AUTH_USER_NOT_FOUND: &str = "Wegent-Knowledge-Auth-User-Not-Found";
+const KNOWLEDGE_AUTH_USERNAME_REQUIRED: &str = "Wegent-Knowledge-Auth-Username-Required";
+const KNOWLEDGE_AUTH_INVALID_USERNAME: &str = "Wegent-Knowledge-Auth-Invalid-Username";
+const KNOWLEDGE_AUTH_INACTIVE: &str = "Wegent-Knowledge-Auth-Inactive";
+const KNOWLEDGE_AUTH_INVALID: &str = "Wegent-Knowledge-Auth-Invalid";
+
+impl brz_http_server::Authenticator<KnowledgeUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<KnowledgeUser, brz_http_server::AuthFailure> {
+        let value = |name| {
+            request
+                .header(name)
+                .and_then(|v| std::str::from_utf8(v).ok())
+        };
+        let headers = crate::headers::OwnedHeaders::from_pairs([
+            ("authorization", value("authorization")),
+            ("x-api-key", value("x-api-key")),
+            ("wegent-source", value("wegent-source")),
+            ("wegent-username", value("wegent-username")),
+        ]);
+        get_auth_context(self.state(), &headers.view())
+            .await
+            .map(KnowledgeUser)
+            .map_err(|error| {
+                if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                    brz_http_server::AuthFailure::Internal
+                } else {
+                    let challenge = match error.detail() {
+                        "API key is required" => KNOWLEDGE_AUTH_REQUIRED,
+                        "Invalid API key" => KNOWLEDGE_AUTH_INVALID_KEY,
+                        "API key has expired" => KNOWLEDGE_AUTH_EXPIRED_KEY,
+                        "User not found or inactive" => KNOWLEDGE_AUTH_USER_NOT_FOUND,
+                        "Username is required for service key authentication (use wegent-username header)" => {
+                            KNOWLEDGE_AUTH_USERNAME_REQUIRED
+                        }
+                        "Username can only contain letters, numbers, underscores, and hyphens" => {
+                            KNOWLEDGE_AUTH_INVALID_USERNAME
+                        }
+                        detail if detail.starts_with("User '") && detail.ends_with("' is inactive") => {
+                            KNOWLEDGE_AUTH_INACTIVE
+                        }
+                        _ => KNOWLEDGE_AUTH_INVALID,
+                    };
+                    brz_http_server::AuthFailure::invalid_credentials(challenge)
+                }
+            })
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a KnowledgeUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        let error = match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_INVALID_KEY,
+            } => crate::http_compat::FastApiError::unauthorized("Invalid API key"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_EXPIRED_KEY,
+            } => crate::http_compat::FastApiError::unauthorized("API key has expired"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_USER_NOT_FOUND,
+            } => crate::http_compat::FastApiError::unauthorized("User not found or inactive"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_USERNAME_REQUIRED,
+            } => crate::http_compat::FastApiError::detail(
+                brz_http_server::StatusCode::BAD_REQUEST,
+                "Username is required for service key authentication (use wegent-username header)",
+            ),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_INVALID_USERNAME,
+            } => crate::http_compat::FastApiError::detail(
+                brz_http_server::StatusCode::BAD_REQUEST,
+                "Username can only contain letters, numbers, underscores, and hyphens",
+            ),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_INACTIVE,
+            } => {
+                let username = knowledge_username(request).unwrap_or_default();
+                crate::http_compat::FastApiError::unauthorized(format!(
+                    "User '{username}' is inactive"
+                ))
+            }
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::detail(
+                    brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error",
+                )
+            }
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: KNOWLEDGE_AUTH_INVALID,
+            } => {
+                crate::http_compat::FastApiError::unauthorized("Invalid authentication credentials")
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("API key is required"),
+        };
+        error.into_http_error(arena)
+    }
+}
+
+fn knowledge_username(request: brz_http_server::AuthRequest<'_>) -> Option<String> {
+    let value = |name| {
+        request
+            .header(name)
+            .and_then(|value| std::str::from_utf8(value).ok())
+    };
+    let headers = crate::headers::OwnedHeaders::from_pairs([
+        ("authorization", value("authorization")),
+        ("x-api-key", value("x-api-key")),
+        ("wegent-source", value("wegent-source")),
+        ("wegent-username", value("wegent-username")),
+    ]);
+    let headers = headers.view();
+    let username_from_key =
+        api_key_from_headers(&headers).and_then(|key| split_key_with_username(&key).1);
+    username_from_key.or_else(|| {
+        headers
+            .header("wegent-username")
+            .map(str::trim)
+            .filter(|username| !username.is_empty())
+            .map(str::to_owned)
+    })
 }
 
 /// `api_keys` columns as rendered by `db.query(APIKey)`.

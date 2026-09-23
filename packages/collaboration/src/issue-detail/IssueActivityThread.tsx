@@ -31,7 +31,7 @@ export function groupIssueActivityThreads<
     else roots.set(message.rootMessageId, { root: message, replies: [] });
   }
   return [...roots.values()].sort(
-    (a, b) => b.root.sequenceNumber - a.root.sequenceNumber,
+    (a, b) => a.root.sequenceNumber - b.root.sequenceNumber,
   );
 }
 

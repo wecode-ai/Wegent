@@ -34,7 +34,6 @@ use super::error::ApiError;
 use super::executor_binding;
 use super::kinds::KindStore;
 use super::task_detail;
-use crate::headers::OwnedHeaders;
 
 /// `REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS`: the file download client timeout
 /// (130 s), longer than the 5 s default of the other workspace calls.
@@ -54,10 +53,9 @@ const MAX_DOWNLOAD_FILE_SIZE: usize = 50 * 1024 * 1024;
 async fn get_remote_workspace_file(
     #[inject(rwt)] state: &crate::startup::TreeState,
     task_id: u64,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: auth::RemoteWorkspaceFileUser,
     path: Option<String>,
     disposition: Option<String>,
-    token: Option<String>,
 ) -> Result<HttpResponse<Binary>, ApiError> {
     // FastAPI `Query(...)` validation runs before the handler body: `path`
     // is required and `disposition` must match `^(inline|attachment)$`.
@@ -85,8 +83,7 @@ async fn get_remote_workspace_file(
     stream_file(
         &state.clone(),
         task_id,
-        authorization,
-        token.as_deref(),
+        current_user.user_id,
         &path,
         &disposition,
     )
@@ -111,25 +108,10 @@ fn validation_error(field: &str, kind: &str, message: &str, input: &str) -> ApiE
 async fn stream_file(
     deps: &Arc<super::handler::Deps<impl Mysql, impl Redis>>,
     task_id: u64,
-    authorization: Option<&str>,
-    token_query: Option<&str>,
+    user_id: i64,
     path: &str,
     disposition: &str,
 ) -> Result<HttpResponse<Binary>, ApiError> {
-    // 1. `get_current_user_from_query_or_header`: the Authorization header
-    //    first, then the `?token=` query parameter. Unlike the tree endpoint
-    //    this uses the OAuth2 bearer scheme extraction (a non-Bearer header
-    //    value is no credential at all), and the fallback query parameter
-    //    supplies the raw token.
-    let headers = OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let auth = auth::authenticate_with_query_fallback(
-        &deps.mysql,
-        &deps.config.jwt_decode_keys,
-        &deps.config.jwt_algorithm,
-        &headers.view(),
-        token_query,
-    )
-    .await?;
     let kinds = KindStore {
         mysql: &deps.mysql,
         redis: deps.kinds_redis.as_ref(),
@@ -151,10 +133,11 @@ async fn stream_file(
     let _task = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
+        deps.task_policy,
         &erp,
         &kinds,
         task_id,
-        auth.user_id,
+        user_id,
     )
     .await?;
 
@@ -172,10 +155,11 @@ async fn stream_file(
         let detail = task_detail::load_task_detail(
             &deps.mysql,
             deps.redis.as_ref(),
+            deps.task_policy,
             &erp,
             &kinds,
             task_id,
-            auth.user_id,
+            user_id,
         )
         .await?;
         let binding = {

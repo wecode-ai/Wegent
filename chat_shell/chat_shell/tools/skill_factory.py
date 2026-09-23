@@ -23,6 +23,7 @@ import httpx
 from chat_shell.core.config import settings
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.context import get_request_id
+from shared.utils.mcp_names import SkillMcpNames
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +403,8 @@ async def prepare_skill_tools(
     # stay available through load_skill prompt metadata without connecting their
     # MCP servers during request startup.
     skill_mcp_configs: dict[str, dict[str, Any]] = {}
-    skill_mcp_server_owner: dict[str, str] = {}  # prefixed_server_name -> skill_name
+    skill_mcp_server_owner: dict[str, str] = {}  # runtime_server_name -> skill_name
+    mcp_names = SkillMcpNames()
     preload_skill_set = set(preload_skills or [])
     user_selected_skill_set = set(user_selected_skills or [])
     active_skill_set = preload_skill_set | user_selected_skill_set
@@ -417,6 +419,10 @@ async def prepare_skill_tools(
         skill_id = skill_config.get("skill_id")
         skill_user_id = skill_config.get("skill_user_id")
         mcp_servers = skill_config.get("mcpServers")
+        resolved_mcp_servers = {
+            mcp_names.register(skill_name, server_name): server_config
+            for server_name, server_config in (mcp_servers or {}).items()
+        }
 
         # Check if this skill should be preloaded
         should_preload = skill_name in preload_skill_set
@@ -434,11 +440,9 @@ async def prepare_skill_tools(
                 should_preload,
                 is_user_selected,
             )
-            # Prefix MCP server names with skill name to avoid conflicts across skills.
-            for server_name, server_config in mcp_servers.items():
-                prefixed_name = f"{skill_name}_{server_name}"
-                skill_mcp_configs[prefixed_name] = server_config
-                skill_mcp_server_owner[prefixed_name] = skill_name
+            for runtime_name, server_config in resolved_mcp_servers.items():
+                skill_mcp_configs[runtime_name] = server_config
+                skill_mcp_server_owner[runtime_name] = skill_name
         elif mcp_servers:
             logger.info(
                 "[skill_factory] Deferring %d MCP server(s) for inactive skill '%s' "
@@ -452,18 +456,12 @@ async def prepare_skill_tools(
 
                 async def load_deferred_mcp_tools(
                     skill_name=skill_name,
-                    mcp_servers=mcp_servers,
+                    mcp_servers=resolved_mcp_servers,
                     skill_config=skill_config,
                 ):
                     load_start = time.perf_counter()
-                    deferred_mcp_configs: dict[str, dict[str, Any]] = {}
-                    for server_name, server_config in mcp_servers.items():
-                        deferred_mcp_configs[f"{skill_name}_{server_name}"] = (
-                            server_config
-                        )
-
                     tools_with_server, clients = await _load_skill_mcp_tools(
-                        deferred_mcp_configs,
+                        mcp_servers,
                         task_id,
                         task_data,
                     )
@@ -480,7 +478,7 @@ async def prepare_skill_tools(
                         "server_count=%d tool_count=%d",
                         skill_name,
                         (time.perf_counter() - load_start) * 1000,
-                        len(deferred_mcp_configs),
+                        len(mcp_servers),
                         len(loaded_tools),
                     )
                     return loaded_tools
@@ -695,10 +693,8 @@ async def prepare_skill_tools(
             unassigned: list[Any] = []
             tools_by_skill: dict[str, list[Any]] = {}
 
-            # Process tools by server - since server names are prefixed with skill name,
-            # we can directly map them to skills
+            # Use the owner map because compact server names are not reversible.
             for server_name, server_tools in mcp_tools_with_server.items():
-                # server_name format: "{skill_name}_{original_server_name}"
                 owner_skill = skill_mcp_server_owner.get(server_name)
 
                 if owner_skill:

@@ -9,11 +9,19 @@ use brz_redis::Redis;
 use std::sync::Arc;
 
 pub struct AppState<M: Mysql, R: Redis> {
+    #[allow(
+        dead_code,
+        reason = "retained for source-compatible state construction"
+    )]
     pub config: Config,
     pub mysql: M,
     /// Retains the existing streaming/user-cache connection behavior. Missing
     /// clients degrade to cache misses when Redis was unavailable at startup.
     pub redis: Option<R>,
+    #[allow(
+        dead_code,
+        reason = "route authentication now runs through AppAuthenticator"
+    )]
     pub users: super::users::Users,
     /// `userReader.get_by_id` strategy; the application state's registered
     /// reader is installed by `startup::runtime_check::build`.

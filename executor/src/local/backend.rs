@@ -756,14 +756,22 @@ async fn drain_available_runtime_work<T>(
         .await
         .ok();
     client.set_runtime_capacity(capacity);
+    // Publish the freshly read snapshot for App-originated HTTP claims too.
+    // The registration heartbeat runs before this asynchronous capacity read.
+    if let Err(error) = client.emit_liveness_heartbeat().await {
+        write_executor_error_line(&format_executor_log(
+            "runtime capacity heartbeat failed",
+            &[("error", error)],
+        ));
+        return;
+    }
 
     loop {
-        let task = match client
-            .pull_runtime_task(client.config.heartbeat_timeout)
+        let work = match client
+            .pull_runtime_work(client.config.heartbeat_timeout)
             .await
         {
-            Ok(Some(task)) => task,
-            Ok(None) => return,
+            Ok(work) => work,
             Err(error) => {
                 write_executor_error_line(&format_executor_log(
                     "runtime task pull failed",
@@ -771,6 +779,60 @@ async fn drain_available_runtime_work<T>(
                 ));
                 return;
             }
+        };
+        for intent in work.workspace_cleanup_intents {
+            if intent.get("action").and_then(Value::as_str) == Some("release") {
+                match client
+                    .claim_workspace_cleanup(&intent, client.config.heartbeat_timeout)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(error) => {
+                        write_executor_error_line(&format_executor_log(
+                            "workspace cleanup claim failed",
+                            &[("error", error)],
+                        ));
+                        continue;
+                    }
+                }
+            }
+            let response = match handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.worktrees.apply_issue_cleanup",
+                    "payload": intent,
+                }))
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => runtime_error_response(error),
+            };
+            if response.get("success").and_then(Value::as_bool) != Some(true) {
+                write_executor_error_line(&format_executor_log(
+                    "workspace cleanup intent deferred",
+                    &[(
+                        "error",
+                        response
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Runtime rejected workspace cleanup")
+                            .to_owned(),
+                    )],
+                ));
+                continue;
+            }
+            if let Err(error) = client
+                .acknowledge_workspace_cleanup(&intent, client.config.heartbeat_timeout)
+                .await
+            {
+                write_executor_error_line(&format_executor_log(
+                    "workspace cleanup acceptance report failed",
+                    &[("error", error)],
+                ));
+            }
+        }
+        let Some(task) = work.task else {
+            return;
         };
         let Some(payload) = task.get("payload").cloned() else {
             write_executor_error_line("runtime task pull returned no payload");

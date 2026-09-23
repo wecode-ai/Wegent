@@ -14,9 +14,7 @@
 //! carry empty bodies, so the fully composed router is wrapped once at the
 //! listener root and every unmatched request is rendered like the source.
 use crate::http_compat::FastApiError;
-use brz_http_server::{
-    ApiMetrics, Authenticator, Handler, IntoHttpError, Request, Response, StatusCode,
-};
+use brz_http_server::{ApiMetrics, Handler, IntoHttpError, Request, Response, StatusCode};
 
 /// Standard method bit order shared with the platform router's bitset.
 const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
@@ -37,7 +35,7 @@ impl<H> FastApiFallback<H> {
 
 impl<A, H> Handler<A> for FastApiFallback<H>
 where
-    A: Authenticator,
+    A: Send + Sync + 'static,
     H: Handler<A>,
 {
     fn register_metrics(&self) {
@@ -93,12 +91,12 @@ mod tests {
         brz_http_server::registry!(group = fallback_probe, dependencies());
     }
 
-    #[brz_http_server::get("/api/startup", group = probe::fallback_probe)]
+    #[brz_http_server::get("/api/startup", group = probe::fallback_probe, access = public)]
     async fn startup() -> &'static str {
         "ok"
     }
 
-    #[brz_http_server::get("/api/quiet", api_log = false, group = probe::fallback_probe)]
+    #[brz_http_server::get("/api/quiet", api_log = false, group = probe::fallback_probe, access = public)]
     async fn quiet() -> &'static str {
         "ok"
     }

@@ -4,6 +4,8 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { finished } from 'node:stream/promises'
 
+import { wrapWindowsScriptCommand } from '../child-process-command.mjs'
+
 const DEFAULT_TAIL_CHARACTERS = 12_000
 
 export async function runCommandToLog({
@@ -19,7 +21,9 @@ export async function runCommandToLog({
   const logCompletion = finished(logStream)
   let tail = ''
 
-  const child = spawn(command, args, {
+  // Windows requires its command interpreter to run `.cmd`/`.bat` launchers such as `pnpm.cmd`.
+  const resolved = wrapWindowsScriptCommand(command, args)
+  const child = spawn(resolved.command, resolved.args, {
     cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

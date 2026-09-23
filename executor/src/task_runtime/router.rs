@@ -69,6 +69,17 @@ impl TaskRuntime {
         self.local_store.create_project(input).map(mask_project)
     }
 
+    pub fn import_code_project(
+        &self,
+        key: &str,
+        name: &str,
+        roots: &[String],
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.local_store
+            .import_code_project(key, name, roots)
+            .map(mask_project)
+    }
+
     pub fn update_project(
         &self,
         project_id: &str,
@@ -607,12 +618,42 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
+    pub fn local_automation_assignment_candidates(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        run_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .local_automation_assignment_candidates(project_id, task_id, run_id)
+    }
+
+    pub fn submit_local_automation_workflow_plan(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        run_id: &str,
+        plan: &Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
+    }
+
     pub fn create_chat_agent(
         &self,
         project_id: &str,
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
         self.local_store.create_chat_agent(project_id, input)
+    }
+
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        self.local_store
+            .ensure_default_chat_agent(project_id, input)
     }
 
     pub fn update_chat_agent(
@@ -1573,6 +1614,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -1676,6 +1718,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )

@@ -1,5 +1,5 @@
 import type { AnalyticsEvent } from './events'
-import { SMART_APP_EVENT_PROPERTY_KEYS } from './generated/smartAppEvents'
+import { ANALYTICS_EVENT_PROPERTY_KEYS } from './events'
 import type { WeworkTelemetryFact, WeworkTelemetrySink } from './facts'
 
 const MAX_STARTUP_EVENTS = 100
@@ -74,7 +74,7 @@ function acceptInternal(sinks: readonly WeworkTelemetrySink[], fact: WeworkTelem
 
 function publicProjection(fact: WeworkTelemetryFact): AnalyticsEvent {
   const properties: Record<string, unknown> = {}
-  for (const key of SMART_APP_EVENT_PROPERTY_KEYS[fact.name]) {
+  for (const key of ANALYTICS_EVENT_PROPERTY_KEYS[fact.name]) {
     const value = (fact.properties as Record<string, unknown>)[key]
     if (value !== undefined) properties[key] = value
   }

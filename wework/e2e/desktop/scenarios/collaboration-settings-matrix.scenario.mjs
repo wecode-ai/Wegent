@@ -10,7 +10,10 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -18,6 +21,7 @@ const PERSONAL_WORKSPACE_NAME = '协作设置个人空间'
 const GROUP_WORKSPACE_NAME = '协作设置团队空间'
 const GROUP_DISPLAY_NAME = '协作设置验收团队'
 const LOCAL_E2E_USER_ID = 9001
+const CLOUD_DEVICE_NAME = 'Wework E2E Cloud Device'
 const LIFECYCLE_PROMPT = 'COLLABORATION_SETTINGS_MATRIX_RUN_ISSUE'
 const LIFECYCLE_COMPLETION = 'COLLABORATION_SETTINGS_MATRIX_ISSUE_RAN'
 
@@ -146,6 +150,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   }
 
   async function openWorkspace(control, workspaceId) {
+    await control.command(
+      'click',
+      scoped(
+        `[data-testid="collaboration-domain-${
+          workspaceId === LOCAL_WORKSPACE_ID ? 'local' : 'cloud'
+        }"]`
+      )
+    )
     const identity = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${workspaceId}"]`
     )
@@ -159,8 +171,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
   }
 
-  async function verifyWorkspaceSettings(control, label) {
-    await control.command('click', scoped('[data-testid="collaboration-workspace-home-settings"]'))
+  async function verifyWorkspaceSettings(control, workspace) {
+    const label = workspace.name
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-workspace-starter-configure-agents"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-workspace-starter-configure-agents"]')
+        )
+      ),
+      1,
+      `${label} did not expose the standalone Agent onboarding action`
+    )
+    await control.command(
+      'click',
+      scoped('[data-testid="collaboration-workspace-starter-configure-agents"]')
+    )
     await control.command('waitFor', scoped('[data-testid="workspace-settings-shell"]'), {
       timeoutMs: uiTimeoutMs,
     })
@@ -168,7 +199,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       ['collaboration-workspace-nav-settings', 'collaboration-workspace-settings-save'],
       [
         'collaboration-workspace-nav-participants',
-        'collaboration-workspace-participants-tab-agents',
+        'collaboration-workspace-participants-tab-groups',
       ],
       [
         'collaboration-workspace-nav-execution-environments',
@@ -185,7 +216,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       'click',
       scoped('[data-testid="collaboration-workspace-nav-participants"]')
     )
-    for (const tab of ['agents', 'members', 'groups']) {
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
+        )
+      ),
+      1,
+      `${label} did not expose the standalone Agent settings tab`
+    )
+    const participantTabs =
+      workspace.location === 'local' ? ['agents', 'groups'] : ['agents', 'members', 'groups']
+    for (const tab of participantTabs) {
       const selector = scoped(`[data-testid="collaboration-workspace-participants-tab-${tab}"]`)
       await control.command('click', selector)
       assert.equal(
@@ -194,11 +237,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         `${label} did not activate its ${tab} Workspace settings tab`
       )
     }
+    if (workspace.location === 'local') {
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-workspace-participants-tab-members"]')
+          )
+        ),
+        0,
+        `${label} should not expose member invitations in local collaboration`
+      )
+    }
   }
 
   async function createProject(control, workspace, name) {
+    if (workspace.location === 'local') {
+      await createLocalCollaborationProject(control, ACTIVE_WORKBENCH_SELECTOR, name)
+      return null
+    }
     await openWorkspace(control, workspace.id)
     await control.command('click', scoped('[data-testid="collaboration-workspace-project-create"]'))
+    await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
     await control.command('waitFor', scoped('[data-testid="collaboration-project-name-input"]'), {
       timeoutMs: uiTimeoutMs,
     })
@@ -214,7 +274,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       text: name,
       timeoutMs: uiTimeoutMs,
     })
-    if (workspace.location === 'local') return null
     const project = await waitForValue(
       async () => {
         const response = await request(`/api/v1/workspaces/${workspace.id}/projects`)
@@ -235,7 +294,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
     const sections = [
       ['collaboration-project-settings-project', 'cloud-project-manage-visibility-private'],
-      ['collaboration-project-settings-participants', 'collaboration-participants-tab-agents'],
+      ['collaboration-project-settings-participants', 'collaboration-participants-tab-groups'],
       [
         'collaboration-project-settings-environments',
         'collaboration-project-execution-environment-add',
@@ -251,6 +310,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await control.command(
       'click',
       scoped('[data-testid="collaboration-project-settings-participants"]')
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-participants-tab-agents"]')
+        )
+      ),
+      1,
+      `${label} did not expose the standalone Agent project tab`
     )
     for (const tab of ['agents', 'members', 'groups']) {
       const selector = scoped(`[data-testid="collaboration-participants-tab-${tab}"]`)
@@ -295,7 +364,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     )
 
     const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
-    await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
+    if (project) {
+      await control.command('click', scoped('[data-testid="human-issue-start"]'))
+      await control.command('waitFor', scoped('[data-testid="human-issue-ai-assist"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="human-issue-ai-assist"]'))
+    } else {
+      const localAssistant = scoped('[data-testid="cloud-todo-start-default-assistant"]')
+      await control.command('waitFor', localAssistant, { timeoutMs: uiTimeoutMs })
+      await control.command('click', localAssistant)
+    }
     await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
     await selectE2EModel(control, undefined, undefined, taskPanel)
     const composer = `${taskPanel} [data-testid="chat-message-input"]`
@@ -319,10 +398,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       timeoutMs: uiTimeoutMs,
     })
     const status = scoped('[data-testid="cloud-todo-detail-status"]')
-    await control.command('select', status, { value: 'completed' })
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
+    if (project) {
+      await control.command('click', scoped('[data-testid="human-issue-submit"]'))
+      await control.command('fill', scoped('[data-testid="human-issue-work-text"]'), {
+        value: `${label} Issue 已完成 AI 辅助处理。`,
+      })
+      await control.command('click', scoped('[data-testid="human-issue-work-confirm"]'))
+      await control.command('waitFor', scoped('[data-testid="human-issue-accept"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="human-issue-accept"]'))
+    } else {
+      await waitForValue(
+        () => control.command('getValue', status),
+        value => value === 'in_review',
+        `${label} Issue did not reflect its completed AI task`,
+        uiTimeoutMs
+      )
+      await control.command('select', status, { value: 'completed' })
+      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+    }
     await waitForValue(
       () => control.command('getValue', status),
       value => value === 'completed',
@@ -349,45 +446,111 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   }
 
   async function verifyResourceCatalog(control) {
-    for (const kind of ['agents', 'teams']) {
-      await control.command('click', scoped(`[data-testid="collaboration-primary-${kind}"]`))
-      await control.command('waitFor', scoped(`[data-testid="collaboration-${kind}-page"]`), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', scoped(`[data-testid="collaboration-${kind}-create"]`))
-      await control.command(
-        'waitFor',
-        scoped(`[data-testid="collaboration-${kind}-create-local"]`),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'waitFor',
-        scoped(`[data-testid="collaboration-${kind}-create-cloud-personal"]`),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'waitFor',
-        scoped(
-          kind === 'teams'
-            ? `[data-testid="collaboration-teams-create-workspace-${groupWorkspace.id}"]`
-            : `[data-testid="collaboration-agents-create-owner-${ownerGroup.name}"]`
-        ),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await closeDestinationDialog(control)
-    }
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-primary-agents"]')
+        )
+      ),
+      1,
+      'The left navigation did not expose the standalone Agent destination'
+    )
+    await control.command('click', scoped('[data-testid="collaboration-primary-agents"]'))
+    await control.command('waitFor', scoped('[data-testid="collaboration-agents-page"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', scoped('[data-testid="collaboration-primary-teams"]'))
+    await control.command('waitFor', scoped('[data-testid="collaboration-teams-page"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', scoped('[data-testid="collaboration-teams-create"]'))
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-teams-create-cloud-personal"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await closeDestinationDialog(control)
+
+    await control.command('click', scoped('[data-testid="collaboration-domain-local"]'))
+    await control.command('click', scoped('[data-testid="collaboration-primary-teams"]'))
+    await control.command('click', scoped('[data-testid="collaboration-teams-create"]'))
+    await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-group-form"] [role="alert"]')
+        )
+      ),
+      0,
+      'Opening the local collaboration group member picker started with an error'
+    )
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command('waitFor', '[data-testid="collaboration-group-members-search"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-group-form"] [role="alert"]')
+        )
+      ),
+      0,
+      'Opening the local collaboration group member picker produced an error'
+    )
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command('click', scoped('[data-testid="collaboration-group-create-cancel"]'))
+
+    await control.command('click', scoped('[data-testid="collaboration-domain-cloud"]'))
+    await control.command('click', scoped('[data-testid="collaboration-primary-teams"]'))
+    await control.command('click', scoped('[data-testid="collaboration-teams-create"]'))
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="collaboration-teams-create-cloud-groups"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'click',
+      scoped('[data-testid="collaboration-teams-create-cloud-groups"]')
+    )
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-teams-create-workspace-${groupWorkspace.id}"]`),
+      { timeoutMs: uiTimeoutMs }
+    )
+    await closeDestinationDialog(control)
 
     await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
     await control.command('waitFor', scoped('[data-testid="collaboration-devices-page"]'), {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('click', scoped('[data-testid="collaboration-devices-filter-local"]'))
+    await control.command('click', scoped('[data-testid="collaboration-domain-local"]'))
+    await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
     const localSnapshot = await snapshot(control)
     assert.ok(
       localSnapshot.testIds.some(testId => testId.startsWith('collaboration-devices-row-')),
       'The Collaboration device catalog did not expose the connected local device'
     )
-    await control.command('click', scoped('[data-testid="collaboration-devices-filter-cloud"]'))
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="collaboration-devices-create"]')
+        )
+      ),
+      0,
+      'The local device catalog should not expose a device creation action'
+    )
+    await control.command('click', scoped('[data-testid="collaboration-domain-cloud"]'))
+    await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
+    await control.command('waitFor', scoped('[data-testid="collaboration-devices-page"]'), {
+      text: CLOUD_DEVICE_NAME,
+      timeoutMs: uiTimeoutMs,
+    })
     const cloudSnapshot = await snapshot(control)
     assert.ok(
       cloudSnapshot.testIds.some(testId => testId.startsWith('collaboration-devices-row-')),
@@ -400,11 +563,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       { timeoutMs: uiTimeoutMs }
     )
     await control.command(
+      'click',
+      scoped('[data-testid="collaboration-devices-create-cloud-groups"]')
+    )
+    await control.command(
       'waitFor',
       scoped(`[data-testid="collaboration-devices-create-workspace-${groupWorkspace.id}"]`),
       { timeoutMs: uiTimeoutMs }
     )
     await closeDestinationDialog(control)
+  }
+
+  async function verifyProjectGroupOwnership(control) {
+    const targetProject = cloudProjects[0]
+    assert.ok(targetProject, 'No cloud project was available for collaboration group ownership')
+    const projectGroup = await request(
+      `/api/v1/cloud-projects/${targetProject.id}/collaboration-groups`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `归属验收小组-${process.pid}`,
+          leader: { kind: 'human', id: String(owner.id) },
+          members: [{ kind: 'human', id: String(owner.id) }],
+          coordination_mode: 'manager',
+        }),
+      }
+    )
+    assert.equal(projectGroup.owner_type, 'project')
+    assert.equal(String(projectGroup.owner_id), targetProject.id)
+
+    await control.command('click', scoped('[data-testid="collaboration-primary-teams"]'))
+    await control.command('waitFor', scoped('[data-testid="collaboration-teams-page"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    const ownership = scoped(`[data-testid="collaboration-team-owner-${projectGroup.id}"]`)
+    await control.command('waitFor', ownership, { timeoutMs: uiTimeoutMs })
+    assert.equal(
+      await control.command('getText', ownership),
+      `项目 · ${targetProject.name}`,
+      'The collaboration group list did not show the project ownership'
+    )
   }
 
   return {
@@ -468,6 +666,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await control.command('click', scoped('[data-testid="collaboration-domain-cloud"]'))
         const personalName = `${PERSONAL_WORKSPACE_NAME}-${process.pid}`
         const groupName = `${GROUP_WORKSPACE_NAME}-${process.pid}`
         personalWorkspace = await createCloudWorkspace(control, {
@@ -491,7 +690,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         }
         for (const workspace of [localWorkspace, personalWorkspace, groupWorkspace]) {
           await openWorkspace(control, workspace.id)
-          await verifyWorkspaceSettings(control, workspace.name)
+          await verifyWorkspaceSettings(control, workspace)
           const projectName = `${workspace.name}-设置项目-${process.pid}`
           const project = await createProject(control, workspace, projectName)
           await verifyProjectSettings(control, workspace.name)
@@ -499,6 +698,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
             await verifyIssueLifecycle(control, workspace, project)
           }
         }
+        await verifyProjectGroupOwnership(control)
         await capture(control, 'collaboration-settings-matrix-03-all-settings.png')
       } finally {
         modelActive = false

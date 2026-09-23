@@ -44,6 +44,61 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('preserves generated project execution environments when listing and updating', async () => {
+    const executionEnvironment = {
+      repositories: [
+        {
+          name: 'Wegent',
+          url: 'https://github.com/wecode-ai/Wegent.git',
+          ref: 'main',
+          path: 'Wegent',
+          primary: true,
+        },
+      ],
+      setup_steps: [],
+    }
+    const generatedProject = {
+      ...projectRecord,
+      metadata: {
+        ...projectRecord.metadata,
+        code_project_key: 'wegent',
+        execution_environment: executionEnvironment,
+      },
+    }
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [generatedProject]
+      if (method === 'projects.update') {
+        return {
+          ...generatedProject,
+          metadata: {
+            ...generatedProject.metadata,
+            execution_environment: (params?.project as Record<string, unknown>)
+              .execution_environment,
+          },
+          version: 2,
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listCloudProjects()).resolves.toMatchObject({
+      items: [{ execution_environment: executionEnvironment }],
+    })
+    await api.updateCloudProject('project-1', {
+      version: 1,
+      execution_environment: executionEnvironment,
+    })
+
+    expect(request).toHaveBeenCalledWith('projects.update', {
+      project_id: 'project-1',
+      project: {
+        version: 1,
+        execution_environment: executionEnvironment,
+      },
+    })
+  })
+
   test('loads a board snapshot with one batched task-binding request', async () => {
     const secondTask = {
       ...taskRecord,
@@ -139,7 +194,7 @@ describe('local delivery API', () => {
       { assignee_agent_id: 'LA-1' },
     ],
     [
-      'team',
+      'group',
       'squad-1',
       { assignee_group_id: 'squad-1' },
       { metadata: { collaboration_group: { id: 'squad-1', name: 'Squad' } } },
@@ -282,12 +337,48 @@ describe('local delivery API', () => {
     const api = createLocalProjectChatAgentApi(request, 7)
     await api.create('project-1', {
       name: 'Local Bot',
+      displayName: 'Local Display',
+      namespace: 'default',
       runtime: 'codex',
+      model: 'gpt-5',
+      modelType: 'public',
+      modelNamespace: 'default',
       executionDeviceId: 'local-device',
     })
     expect(request).toHaveBeenCalledWith('chat_agents.create', {
       project_id: 'project-1',
-      agent: expect.objectContaining({ created_by_user_id: 7 }),
+      agent: expect.objectContaining({
+        created_by_user_id: 7,
+        display_name: 'Local Display',
+        namespace: 'default',
+        model: 'gpt-5',
+        model_type: 'public',
+        model_namespace: 'default',
+      }),
+    })
+  })
+
+  test('ensures the initial local agent through the dedicated bootstrap command', async () => {
+    const request = vi.fn(async () => null)
+    const api = createLocalProjectChatAgentApi(request, 7)
+
+    await api.ensureDefault('default-work-items', {
+      name: 'current-device-assistant',
+      displayName: '当前设备助手',
+      runtime: 'codex',
+      model: 'gpt-5',
+      capabilityMode: 'follow_device',
+    })
+
+    expect(request).toHaveBeenCalledWith('chat_agents.ensure_default', {
+      project_id: 'default-work-items',
+      agent: expect.objectContaining({
+        name: 'current-device-assistant',
+        display_name: '当前设备助手',
+        model: 'gpt-5',
+        capability_mode: 'follow_device',
+        created_by_user_id: 7,
+      }),
     })
   })
 
@@ -429,6 +520,16 @@ describe('local delivery API', () => {
   test('routes project and task operations through executor IPC', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'projects.list') return [projectRecord]
+      if (method === 'projects.import_code_project') {
+        return {
+          ...projectRecord,
+          metadata: {
+            ...projectRecord.metadata,
+            code_project_key: 'runtime-project',
+            workspace_roots: ['/workspace/project'],
+          },
+        }
+      }
       if (method === 'projects.update') {
         return { ...projectRecord, name: 'Renamed board', version: 2 }
       }
@@ -440,10 +541,34 @@ describe('local delivery API', () => {
     const api = createLocalDeliveryApi(request)
 
     await expect(api.listCloudProjects()).resolves.toMatchObject({
-      items: [{ id: 'project-1', name: 'Local board' }],
+      items: [
+        {
+          id: 'project-1',
+          name: 'Local board',
+          metadata: { task_provider: 'local', tags: [] },
+        },
+      ],
     })
     await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1', title: 'First task', tags: ['local'] }],
+    })
+    await expect(
+      api.importLocalCodeProject({
+        runtimeProjectKey: 'runtime-project',
+        name: 'Local board',
+        roots: ['/workspace/project'],
+      })
+    ).resolves.toMatchObject({
+      id: 'project-1',
+      metadata: {
+        code_project_key: 'runtime-project',
+        workspace_roots: ['/workspace/project'],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('projects.import_code_project', {
+      project_key: 'runtime-project',
+      name: 'Local board',
+      roots: ['/workspace/project'],
     })
     await expect(
       api.updateCloudProject('project-1', { name: 'Renamed board', version: 1 })
@@ -470,6 +595,37 @@ describe('local delivery API', () => {
     expect(request).toHaveBeenCalledWith('projects.archive', {
       project_id: 'project-1',
       version: 2,
+    })
+  })
+
+  test('passes the initial human assignee when creating a local task', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.create') {
+        return { ...taskRecord, assignee_user_id: 7 }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.createLoopItem('project-1', {
+        title: 'Assigned task',
+        assignee_user_id: 7,
+        notify_assignee: false,
+      })
+    ).resolves.toMatchObject({ assignee_user_id: 7 })
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'Assigned task',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+        assignee_user_id: 7,
+      },
     })
   })
 

@@ -9,9 +9,9 @@ window.__ModuleLoader__.load({
     function createSettingsStore(service) {
       const backend = service.backend.scope(BACKEND_ID)
       let snapshot = {
-        enabled: service.configuration.get(CONFIGURATION_ID)?.enabled !== false,
+        enabled: false,
         error: null,
-        pending: false,
+        pending: true,
         status: null,
         statusPending: false,
         statusRefreshing: false,
@@ -29,10 +29,16 @@ window.__ModuleLoader__.load({
         },
         async reconcile() {
           try {
-            await backend.request('setEnabled', { enabled: snapshot.enabled })
+            const settings = await backend.request('getSettings', {})
+            const enabled = settings?.enabled === true
+            service.configuration.update(CONFIGURATION_ID, { enabled })
+            publish({ enabled, error: null, pending: false })
             await this.refreshStatus()
           } catch (error) {
-            publish({ error: error instanceof Error ? error.message : String(error) })
+            publish({
+              error: error instanceof Error ? error.message : String(error),
+              pending: false,
+            })
           }
         },
         async refreshStatus({ showPending = false } = {}) {
@@ -43,7 +49,9 @@ window.__ModuleLoader__.load({
           })
           try {
             const status = await backend.request('getStatus', {})
-            publish({ status, statusPending: false, statusRefreshing: false })
+            const enabled = status?.enabled === true
+            service.configuration.update(CONFIGURATION_ID, { enabled })
+            publish({ enabled, status, statusPending: false, statusRefreshing: false })
           } catch (error) {
             publish({
               error: error instanceof Error ? error.message : String(error),
@@ -308,7 +316,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'wework'],
       apply(ctx) {
         ctx.wework.configuration.register(ctx, {
-          defaults: { enabled: true },
+          defaults: { enabled: false },
           description: 'Controls Wework transcript and portable preference cloud synchronization.',
           id: CONFIGURATION_ID,
           properties: {
@@ -324,6 +332,7 @@ window.__ModuleLoader__.load({
         const store = createSettingsStore(ctx.wework)
         void store.reconcile()
         const descriptor = {
+          experimental: true,
           id: 'wework-transcript-sync',
           label: ctx.wework.localization.translate({ en: 'Cloud sync', 'zh-CN': '云同步' }),
           order: 90,

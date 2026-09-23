@@ -62,6 +62,8 @@ export function ProjectManageView<
   section = "all",
   renderProviderSettings,
   onProjectUpdated,
+  openMembersRequestId,
+  onOpenMembersRequestConsumed,
 }: {
   api: ProjectManageApi<Project, Member, Item, User>;
   host: ProjectManageHost;
@@ -73,6 +75,8 @@ export function ProjectManageView<
     context: ProjectManageExtensionContext<Project>,
   ): React.ReactNode;
   onProjectUpdated?(project: Project): void;
+  openMembersRequestId?: number;
+  onOpenMembersRequestConsumed?(requestId: number): void;
 }) {
   const { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } =
     host.icons;
@@ -91,7 +95,10 @@ export function ProjectManageView<
   );
 
   const [membersOpen, setMembersOpen] = useState(false);
+  const memberComposerRef = useRef<HTMLDivElement>(null);
   const [memberQuery, setMemberQuery] = useState("");
+  const memberSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const memberSearchFocusRequestRef = useRef<number | null>(null);
   const [memberResults, setMemberResults] = useState<User[]>([]);
   const [memberRole, setMemberRole] = useState<ProjectManageRole>("Developer");
   const [savingUserId, setSavingUserId] = useState<number | null>(null);
@@ -109,6 +116,33 @@ export function ProjectManageView<
     project.task_provider === "github" || project.task_provider === "gitlab"
       ? project.task_provider
       : null;
+  const relatedTaskVisibilityAvailable = project.task_provider === "local";
+  const visibilityOptions: ProjectManageVisibility[] =
+    relatedTaskVisibilityAvailable
+      ? ["private", "public_restricted", "public"]
+      : ["private", "public"];
+  const visibilityLabels: Record<ProjectManageVisibility, string> = {
+    private: host.translate("todo.private_project", "私有项目"),
+    public_restricted: host.translate(
+      "todo.related_tasks_project",
+      "仅看相关任务",
+    ),
+    public: host.translate("todo.public_project", "公开项目"),
+  };
+  const visibilityDescriptions: Record<ProjectManageVisibility, string> = {
+    private: host.translate(
+      "todo.private_project_description",
+      "仅项目成员可以进入。",
+    ),
+    public_restricted: host.translate(
+      "todo.related_tasks_project_description",
+      "所有人可进入，普通用户只看到自己创建、负责或参与的任务。",
+    ),
+    public: host.translate(
+      "todo.public_project_description",
+      "所有登录用户都可以进入并查看全部任务。",
+    ),
+  };
   const [providerRepository, setProviderRepository] = useState(() =>
     repositoryAddress(project),
   );
@@ -139,6 +173,20 @@ export function ProjectManageView<
     providerRepository: false,
     providerToken: false,
   });
+
+  useEffect(() => {
+    if (!membersOpen || typeof document === "undefined") return;
+    const closeMemberComposer = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !memberComposerRef.current?.contains(event.target)
+      ) {
+        setMembersOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeMemberComposer);
+    return () => document.removeEventListener("mousedown", closeMemberComposer);
+  }, [membersOpen]);
 
   useEffect(() => {
     const projectChanged = synchronizedProjectIdRef.current !== project.id;
@@ -207,6 +255,21 @@ export function ProjectManageView<
     boardCardDisplay?.showTags,
     project,
   ]);
+
+  useEffect(() => {
+    if (openMembersRequestId === undefined) return;
+    memberSearchFocusRequestRef.current = openMembersRequestId;
+    setMembersOpen(true);
+    onOpenMembersRequestConsumed?.(openMembersRequestId);
+  }, [openMembersRequestId, onOpenMembersRequestConsumed]);
+
+  useEffect(() => {
+    if (!membersOpen || memberSearchFocusRequestRef.current === null) return;
+    const input = memberSearchInputRef.current;
+    if (!input) return;
+    input.focus();
+    memberSearchFocusRequestRef.current = null;
+  }, [membersOpen, openMembersRequestId]);
 
   const reportError = useCallback((cause: unknown, fallback: string) => {
     setError(cause instanceof Error ? cause.message : fallback);
@@ -767,15 +830,25 @@ export function ProjectManageView<
             <p className="mt-1 text-sm text-text-muted">
               {host.translate(
                 "todo.project_access_description",
-                "决定空间成员是否可以发现并进入这个项目。",
+                "决定谁能进入项目，以及普通用户可以看到哪些任务。",
               )}
             </p>
-            <div className="mt-4 grid max-w-md grid-cols-2 gap-1 rounded-lg bg-muted p-1">
-              {(["private", "public"] as const).map((value) => (
+            <div
+              className={classNames(
+                "mt-4 grid gap-1 rounded-lg bg-muted p-1",
+                relatedTaskVisibilityAvailable
+                  ? "max-w-2xl grid-cols-1 md:grid-cols-3"
+                  : "max-w-md grid-cols-2",
+              )}
+            >
+              {visibilityOptions.map((value) => (
                 <button
                   key={value}
                   type="button"
-                  data-testid={`cloud-project-manage-visibility-${value}`}
+                  data-testid={`cloud-project-manage-visibility-${value.replace(
+                    "_",
+                    "-",
+                  )}`}
                   disabled={visibilityBusy}
                   onClick={() => void saveVisibility(value)}
                   className={classNames(
@@ -785,19 +858,22 @@ export function ProjectManageView<
                       : "text-text-muted",
                   )}
                 >
-                  {value === "private"
-                    ? host.translate("todo.private_project", "私有项目")
-                    : host.translate("todo.public_project", "公开项目")}
+                  {visibilityLabels[value]}
                 </button>
               ))}
             </div>
+            <p className="mt-2 text-sm text-text-muted">
+              {visibilityDescriptions[visibility]}
+            </p>
           </section>
         )}
 
         <section
           className={
             section === "all" || section === "members"
-              ? "border-t border-border py-6"
+              ? embedded
+                ? ""
+                : "border-t border-border py-6"
               : "hidden"
           }
         >
@@ -809,67 +885,134 @@ export function ProjectManageView<
               <p className="mt-1 text-sm text-text-muted">
                 {host.translate(
                   "todo.project_members_description",
-                  "成员可以访问项目任务和共享文件。",
+                  "管理成员访问和项目角色。填写职责与能力后会自动保存，AI 托管会据此选择合适的负责人。",
                 )}
               </p>
             </div>
-            <button
-              type="button"
-              data-testid="cloud-project-members-toggle"
-              onClick={() => setMembersOpen((open) => !open)}
-              className="h-8 rounded-lg px-2.5 text-sm font-medium text-text-secondary hover:bg-muted"
-            >
-              {membersOpen
-                ? host.translate("todo.collapse_management", "收起管理")
-                : host.translate("todo.manage_members", "管理成员")}
-            </button>
+            <div className="relative" ref={memberComposerRef}>
+              <button
+                type="button"
+                data-testid="cloud-project-members-toggle"
+                aria-expanded={membersOpen}
+                onClick={() => setMembersOpen((open) => !open)}
+                className="h-8 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+              >
+                {host.translate("todo.add_project_member", "添加成员")}
+              </button>
+              {membersOpen ? (
+                <div
+                  className="absolute right-0 top-10 z-50 w-80 rounded-xl border border-border bg-background p-2 shadow-lg"
+                  data-testid="cloud-project-member-picker"
+                >
+                  <label className="flex h-9 min-w-0 items-center rounded-lg border border-border bg-background px-3">
+                    <Search className="h-4 w-4 text-text-muted" />
+                    <input
+                      ref={memberSearchInputRef}
+                      data-testid="cloud-member-search"
+                      value={memberQuery}
+                      onChange={(event) => {
+                        const nextQuery = event.target.value;
+                        setMemberQuery(nextQuery);
+                        clearMemberResultsForEmptyQuery(
+                          nextQuery,
+                          setMemberResults,
+                        );
+                      }}
+                      className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
+                      placeholder={host.translate(
+                        "todo.member_search_placeholder",
+                        "搜索用户名或邮箱",
+                      )}
+                    />
+                  </label>
+                  <label className="mt-2 flex items-center justify-between gap-3 px-2 text-sm text-text-secondary">
+                    <span>
+                      {host.translate("todo.member_role", "加入角色")}
+                    </span>
+                    <select
+                      data-testid="cloud-member-role"
+                      value={memberRole}
+                      onChange={(event) =>
+                        setMemberRole(event.target.value as ProjectManageRole)
+                      }
+                      className="h-8 rounded-lg border border-border bg-background px-2 text-sm outline-none"
+                    >
+                      <option value="Maintainer">Maintainer</option>
+                      <option value="Developer">Developer</option>
+                      <option value="Reporter">Reporter</option>
+                    </select>
+                  </label>
+                  <div className="mt-2 max-h-52 overflow-y-auto">
+                    {visibleMemberResults.map((user) => (
+                      <button
+                        key={user.id}
+                        type="button"
+                        data-testid={`cloud-member-result-${user.id}`}
+                        onClick={() => void addMember(user)}
+                        className="flex min-h-10 w-full items-center rounded-lg px-2 text-left hover:bg-muted"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-sm">
+                          {user.user_name}
+                        </span>
+                        <span className="text-xs text-text-muted">
+                          {savingUserId === user.id
+                            ? host.translate("todo.adding", "添加中…")
+                            : host.translate("common.add", "添加")}
+                        </span>
+                      </button>
+                    ))}
+                    {memberQuery.trim() && !visibleMemberResults.length ? (
+                      <p className="px-2 py-3 text-sm text-text-muted">
+                        {host.translate(
+                          "todo.no_search_members",
+                          "没有匹配的成员",
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          {!membersOpen ? (
-            <button
-              type="button"
-              onClick={() => setMembersOpen(true)}
-              className="mt-4 flex h-12 w-full items-center rounded-xl bg-muted px-3 text-left text-sm font-normal hover:bg-muted/80"
-            >
+          <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
+            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px] items-center gap-3 px-3 py-1.5 text-xs font-medium text-text-muted md:grid">
+              <span>{host.translate("todo.project_member", "成员")}</span>
+              <span data-testid="cloud-project-member-capability-heading">
+                {host.translate("todo.project_member_capability", "职责与能力")}
+              </span>
               <span>
-                {host.translate("todo.member_count", "{{count}} 位成员", {
-                  count: members.length,
-                })}
+                {host.translate("todo.project_member_role", "项目角色")}
               </span>
-              <span className="ml-auto flex -space-x-1.5">
-                {members.slice(0, 3).map((member) => (
-                  <span
-                    key={member.user_id}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-zinc-200 text-xs"
-                  >
+              <span className="sr-only">
+                {host.translate("todo.project_member_actions", "成员操作")}
+              </span>
+            </div>
+            {members.map((member) => (
+              <div
+                key={member.user_id}
+                data-testid={`cloud-project-member-${member.user_id}`}
+                className="grid grid-cols-1 items-center gap-3 rounded-lg bg-background/60 px-3 py-2 transition-colors hover:bg-background md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
                     {member.user_name.slice(0, 1)}
                   </span>
-                ))}
-                {members.length > 3 && (
-                  <span className="flex h-7 min-w-7 items-center justify-center rounded-full border-2 border-background bg-zinc-200 px-1 text-xs">
-                    +{members.length - 3}
-                  </span>
-                )}
-              </span>
-            </button>
-          ) : (
-            <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
-              {members.map((member) => (
-                <div
-                  key={member.user_id}
-                  data-testid={`cloud-project-member-${member.user_id}`}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-background/70"
-                >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
-                    {member.user_name.slice(0, 1)}
-                  </span>
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">
                       {member.user_name}
                     </span>
                     <span className="block truncate text-xs text-text-muted">
                       {member.email}
                     </span>
+                  </span>
+                </span>
+                <label className="min-w-0">
+                  <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
+                    {host.translate(
+                      "todo.project_member_capability",
+                      "职责与能力",
+                    )}
                   </span>
                   <input
                     data-testid={`cloud-project-member-capability-${member.user_id}`}
@@ -878,126 +1021,81 @@ export function ProjectManageView<
                     onBlur={(event) =>
                       void updateMemberCapability(member, event.target.value)
                     }
-                    className="h-8 min-w-40 rounded-lg border border-border bg-background px-2 text-xs outline-none placeholder:text-text-tertiary"
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-text-tertiary focus:border-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     placeholder={host.translate(
-                      "workbench.project_member_capability_placeholder",
-                      "",
+                      "todo.project_member_capability_placeholder",
+                      "例如：前端开发、产品验收",
                     )}
                     aria-label={host.translate(
-                      "workbench.project_member_capability_label",
-                      "",
+                      "todo.project_member_capability_label",
+                      "{{name}} 的职责与能力",
                       {
                         name: member.user_name,
                       },
                     )}
                   />
-                  {member.role === "Owner" ? (
-                    <span className="text-xs text-text-secondary">Owner</span>
-                  ) : (
-                    <>
-                      <select
-                        data-testid={`cloud-project-member-role-${member.user_id}`}
-                        value={member.role}
-                        onChange={(event) =>
-                          void updateMember(
-                            member,
-                            event.target.value as Exclude<
-                              ProjectManageRole,
-                              "Owner"
-                            >,
-                          )
-                        }
-                        className="h-8 rounded-lg border border-border bg-background px-2 text-xs outline-none"
-                      >
-                        <option value="Maintainer">Maintainer</option>
-                        <option value="Developer">Developer</option>
-                        <option value="Reporter">Reporter</option>
-                      </select>
-                      {host.renderTooltip({
-                        label: host.translate(
-                          "todo.remove_member",
-                          "移除 {{name}}",
-                          {
-                            name: member.user_name,
-                          },
-                        ),
-                        align: "end",
-                        children: (
-                          <button
-                            type="button"
-                            data-testid={`cloud-project-member-remove-${member.user_id}`}
-                            onClick={() => void removeMember(member)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-red-600"
-                            aria-label={host.translate(
-                              "todo.remove_member",
-                              "移除 {{name}}",
-                              {
-                                name: member.user_name,
-                              },
-                            )}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        ),
-                      })}
-                    </>
-                  )}
-                </div>
-              ))}
-              <div className="flex gap-2 rounded-lg bg-background/70 p-2">
-                <label className="flex h-9 min-w-0 flex-1 items-center rounded-lg border border-border bg-background px-3">
-                  <Search className="h-4 w-4 text-text-muted" />
-                  <input
-                    data-testid="cloud-member-search"
-                    value={memberQuery}
-                    onChange={(event) => {
-                      const nextQuery = event.target.value;
-                      setMemberQuery(nextQuery);
-                      clearMemberResultsForEmptyQuery(
-                        nextQuery,
-                        setMemberResults,
-                      );
-                    }}
-                    className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
-                    placeholder={host.translate(
-                      "todo.member_search_placeholder",
-                      "添加成员：搜索用户名或邮箱",
-                    )}
-                  />
                 </label>
-                <select
-                  data-testid="cloud-member-role"
-                  value={memberRole}
-                  onChange={(event) =>
-                    setMemberRole(event.target.value as ProjectManageRole)
-                  }
-                  className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none"
-                >
-                  <option value="Maintainer">Maintainer</option>
-                  <option value="Developer">Developer</option>
-                  <option value="Reporter">Reporter</option>
-                </select>
+                {member.role === "Owner" ? (
+                  <span className="flex h-9 items-center px-2 text-sm text-text-secondary">
+                    Owner
+                  </span>
+                ) : (
+                  <>
+                    <select
+                      data-testid={`cloud-project-member-role-${member.user_id}`}
+                      value={member.role}
+                      onChange={(event) =>
+                        void updateMember(
+                          member,
+                          event.target.value as Exclude<
+                            ProjectManageRole,
+                            "Owner"
+                          >,
+                        )
+                      }
+                      className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
+                      aria-label={host.translate(
+                        "todo.project_member_role_label",
+                        "{{name}} 的项目角色",
+                        { name: member.user_name },
+                      )}
+                    >
+                      <option value="Maintainer">Maintainer</option>
+                      <option value="Developer">Developer</option>
+                      <option value="Reporter">Reporter</option>
+                    </select>
+                    {host.renderTooltip({
+                      label: host.translate(
+                        "todo.remove_member",
+                        "移除 {{name}}",
+                        {
+                          name: member.user_name,
+                        },
+                      ),
+                      align: "end",
+                      children: (
+                        <button
+                          type="button"
+                          data-testid={`cloud-project-member-remove-${member.user_id}`}
+                          onClick={() => void removeMember(member)}
+                          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+                          aria-label={host.translate(
+                            "todo.remove_member",
+                            "移除 {{name}}",
+                            {
+                              name: member.user_name,
+                            },
+                          )}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ),
+                    })}
+                  </>
+                )}
               </div>
-              {visibleMemberResults.map((user) => (
-                <button
-                  key={user.id}
-                  type="button"
-                  data-testid={`cloud-member-result-${user.id}`}
-                  onClick={() => void addMember(user)}
-                  className="flex h-10 w-full items-center rounded-lg px-3 text-left hover:bg-background"
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {user.user_name}
-                  </span>
-                  <span className="text-xs text-text-muted">
-                    {savingUserId === user.id
-                      ? host.translate("todo.adding", "添加中…")
-                      : host.translate("common.add", "添加")}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
         </section>
 
         <section
@@ -1233,6 +1331,7 @@ export function ProjectManageView<
             statusBusy={statusBusy}
             displayBusy={displayBusy}
             canEditStatuses={project.task_provider === "local"}
+            embedded={embedded}
             onStatusesChange={(next) => void saveStatuses(next)}
             onDisplayChange={(key, checked) => void saveDisplay(key, checked)}
             renderActionMenu={host.renderActionMenu}

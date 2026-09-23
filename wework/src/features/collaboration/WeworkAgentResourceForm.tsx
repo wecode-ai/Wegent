@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { LoaderCircle, X } from 'lucide-react'
+import {
+  AgentCapabilitiesSelector,
+  AgentCapabilityModeSelector,
+  AgentFormDialog,
+  AgentPromptEditor,
+  agentPluginBinding,
+  createAgentResourceName,
+  resolveAgentPromptCapabilityReferences,
+  type ProjectAgentOwnerOption,
+  type UnifiedAgentCapabilityMode,
+} from '@wegent/collaboration'
 
 import type {
   AgentResourceDetail,
@@ -7,10 +17,14 @@ import type {
   UnifiedAgentRuntime,
   UnifiedAgentSpec,
 } from '@/api/agentResources'
-import { Button } from '@/components/ui/button'
+import type {
+  ProjectPluginCatalogApi,
+  WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
 import type { UnifiedModel, UnifiedSkill } from '@/types/api'
+import { parseAgentMcpServers } from './agentFormModel'
+import { useCurrentAgentDevice } from './useCurrentAgentDevice'
 
 type AgentResourceApi = ReturnType<typeof createAgentResourceApi>
 
@@ -18,21 +32,13 @@ interface WeworkAgentResourceFormProps {
   api: AgentResourceApi
   /** Team id of the Agent resource to edit. Omit to create a new resource. */
   editingTeamId?: number
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
   namespace: string
   onClose(): void
   onSaved(agent: { name: string; teamId: number }): Promise<void>
+  ownerOptions?: ProjectAgentOwnerOption[]
+  pluginApi?: ProjectPluginCatalogApi
   workspaceName: string
-}
-
-const fieldClassName =
-  'w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-50'
-
-function parseMcpServers(value: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(value || '{}')
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-    throw new Error('MCP configuration must be a JSON object')
-  }
-  return parsed as Record<string, unknown>
 }
 
 function modelIndex(models: UnifiedModel[], model: AgentResourceDetail['model']): string {
@@ -56,34 +62,44 @@ function boundSkillIds(detail: AgentResourceDetail, catalog: UnifiedSkill[]): nu
 
 export function WeworkAgentResourceForm({
   api,
+  deviceApi,
   editingTeamId,
   namespace,
   onClose,
   onSaved,
+  ownerOptions,
+  pluginApi,
   workspaceName,
 }: WeworkAgentResourceFormProps) {
   const { t } = useTranslation()
   const editing = editingTeamId != null
-  const [name, setName] = useState('')
+  const [selectedNamespace, setSelectedNamespace] = useState(namespace)
+  const [name, setName] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
   const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
+  const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [selectedModelIndex, setSelectedModelIndex] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([])
+  const [plugins, setPlugins] = useState<AgentResourceDetail['plugins']>([])
+  const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([])
   const [detail, setDetail] = useState<AgentResourceDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(editing)
   const [loadingModels, setLoadingModels] = useState(true)
   const [loadingSkills, setLoadingSkills] = useState(true)
+  const [loadingPlugins, setLoadingPlugins] = useState(Boolean(pluginApi))
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [modelLoadError, setModelLoadError] = useState<string | null>(null)
   const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
+  const [pluginLoadError, setPluginLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const modelPrefilled = useRef(false)
   const skillsPrefilled = useRef(false)
+  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi)
 
   useEffect(() => {
     let active = true
@@ -125,10 +141,29 @@ export function WeworkAgentResourceForm({
         if (active) setLoadingSkills(false)
       })
 
+    if (pluginApi) {
+      void pluginApi
+        .listPlugins('')
+        .then(loadedPlugins => {
+          if (active) setPlugins(loadedPlugins)
+        })
+        .catch(cause => {
+          if (!active) return
+          setPluginLoadError(
+            cause instanceof Error
+              ? cause.message
+              : t('workbench.agent_creator_plugins_load_failed', '加载插件失败')
+          )
+        })
+        .finally(() => {
+          if (active) setLoadingPlugins(false)
+        })
+    }
+
     return () => {
       active = false
     }
-  }, [api, t])
+  }, [api, pluginApi, t])
 
   useEffect(() => {
     if (editingTeamId == null) return
@@ -143,6 +178,8 @@ export function WeworkAgentResourceForm({
         if (loaded.runtime) setRuntime(loaded.runtime)
         setSystemPrompt(loaded.systemPrompt)
         setMcpConfig(JSON.stringify(loaded.mcpServers ?? {}, null, 2))
+        setCapabilityMode(loaded.capabilityMode)
+        setSelectedPluginIds(loaded.plugins.map(plugin => plugin.id))
       })
       .catch(cause => {
         if (!active) return
@@ -174,23 +211,39 @@ export function WeworkAgentResourceForm({
 
   const availableSkills = useMemo(() => skills.filter(skill => skill.visible !== false), [skills])
   const selectedSkillSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds])
+  const availablePlugins = useMemo(() => {
+    const merged = new Map(plugins.map(plugin => [plugin.id, plugin]))
+    detail?.plugins.forEach(plugin => merged.set(plugin.id, merged.get(plugin.id) ?? plugin))
+    return [...merged.values()]
+  }, [detail, plugins])
+  const selectedPluginSet = useMemo(() => new Set(selectedPluginIds), [selectedPluginIds])
+  const promptCapabilities = useMemo(
+    () => resolveAgentPromptCapabilityReferences(systemPrompt, availablePlugins, availableSkills),
+    [availablePlugins, availableSkills, systemPrompt]
+  )
+  const effectiveSelectedPluginSet = useMemo(
+    () => new Set([...selectedPluginSet, ...promptCapabilities.pluginIds]),
+    [promptCapabilities.pluginIds, selectedPluginSet]
+  )
+  const effectiveSelectedSkillIds = useMemo(
+    () => new Set([...selectedSkillSet, ...promptCapabilities.skillIds]),
+    [promptCapabilities.skillIds, selectedSkillSet]
+  )
   const selectedModel =
     selectedModelIndex === '' ? null : (models[Number(selectedModelIndex)] ?? null)
 
   const saveAgent = async () => {
-    const technicalName = name.trim()
-    if (!technicalName) {
-      setError(t('workbench.agent_creator_name_required', '请输入资源名称'))
-      return
-    }
+    const technicalName = name
     if (!selectedModel) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
     }
 
-    let mcpServers: Record<string, unknown>
+    let mcpServers: Record<string, unknown> = {}
     try {
-      mcpServers = parseMcpServers(mcpConfig)
+      if (capabilityMode === 'manual') {
+        mcpServers = parseAgentMcpServers(mcpConfig)
+      }
     } catch {
       setError(t('workbench.agent_creator_mcp_invalid', 'MCP 配置必须是有效的 JSON 对象'))
       return
@@ -199,7 +252,8 @@ export function WeworkAgentResourceForm({
     const spec: UnifiedAgentSpec = {
       name: technicalName,
       displayName,
-      namespace: detail?.namespace ?? namespace,
+      namespace: detail?.namespace ?? selectedNamespace,
+      capabilityMode,
       runtime,
       model: {
         name: selectedModel.name,
@@ -207,14 +261,23 @@ export function WeworkAgentResourceForm({
         namespace: selectedModel.namespace,
       },
       systemPrompt,
-      skills: availableSkills
-        .filter(skill => selectedSkillSet.has(skill.id))
-        .map(skill => ({
-          skillId: skill.id,
-          name: skill.name,
-          namespace: skill.namespace || 'default',
-          isPublic: skill.is_public,
-        })),
+      skills:
+        capabilityMode === 'manual'
+          ? availableSkills
+              .filter(skill => effectiveSelectedSkillIds.has(skill.id))
+              .map(skill => ({
+                skillId: skill.id,
+                name: skill.name,
+                namespace: skill.namespace || 'default',
+                isPublic: skill.is_public,
+              }))
+          : [],
+      plugins:
+        capabilityMode === 'manual' && runtime === 'Codex'
+          ? availablePlugins
+              .filter(plugin => effectiveSelectedPluginSet.has(plugin.id))
+              .map(agentPluginBinding)
+          : [],
       mcpServers,
     }
 
@@ -245,74 +308,12 @@ export function WeworkAgentResourceForm({
   // A Shell this form cannot represent must not be silently rewritten on save.
   const unsupportedRuntime = Boolean(detail && !detail.runtime)
 
-  return (
-    <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-6"
-      data-testid="wework-agent-resource-creator-backdrop"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget && !saving) onClose()
-      }}
-    >
-      <section
-        aria-labelledby="wework-agent-resource-creator-title"
-        aria-modal="true"
-        className="flex max-h-[90dvh] w-full max-w-3xl flex-col overflow-hidden rounded-[20px] border border-border bg-popover text-text-primary shadow-xl"
-        data-testid="wework-agent-resource-creator"
-        role="dialog"
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 pb-4 pt-5">
-          <div className="min-w-0 space-y-1">
-            <h2
-              className="text-heading-sm font-medium text-text-primary"
-              id="wework-agent-resource-creator-title"
-            >
-              {editing
-                ? t('workbench.agent_editor_title', '编辑智能体')
-                : t('workbench.agent_creator_title', '新建智能体')}
-            </h2>
-            <p className="text-sm leading-5 text-text-muted">
-              {editing
-                ? t(
-                    'workbench.agent_editor_description',
-                    '修改智能体资源的执行器、模型、Skill 和 MCP，保存后立即对项目生效。'
-                  )
-                : t(
-                    'workbench.agent_creator_description',
-                    '创建统一智能体资源，配置执行器、Skill 和 MCP 后加入当前项目。'
-                  )}
-            </p>
-          </div>
-          <button
-            aria-label={t('workbench.close', '关闭')}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary disabled:pointer-events-none disabled:opacity-40"
-            data-testid="wework-agent-resource-creator-close"
-            disabled={saving}
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </header>
+  const formError = error || detailLoadError
 
-        <div className="min-h-0 space-y-5 overflow-y-auto px-5 py-5">
-          {loadingDetail ? (
-            <p
-              className="flex items-center gap-2 text-sm text-text-muted"
-              data-testid="wework-agent-resource-form-loading"
-            >
-              <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
-              {t('workbench.agent_editor_loading', '正在加载智能体配置…')}
-            </p>
-          ) : null}
-          {detailLoadError ? (
-            <p
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
-              data-testid="wework-agent-resource-form-load-error"
-              role="alert"
-            >
-              {detailLoadError}
-            </p>
-          ) : null}
+  return (
+    <AgentFormDialog
+      advanced={
+        <>
           {unsupportedRuntime ? (
             <p
               className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
@@ -326,233 +327,284 @@ export function WeworkAgentResourceForm({
               {` (${detail?.shellName || 'unknown'})`}
             </p>
           ) : null}
-          <section className="space-y-3">
-            <h3 className="text-base font-medium text-text-primary">
-              {t('workbench.agent_creator_identity', '基本信息')}
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="space-y-1.5 text-sm text-text-secondary">
-                <span>{t('workbench.agent_creator_resource_name', '资源名称')}</span>
-                <input
-                  className={cn('h-10', fieldClassName)}
-                  data-testid="wework-agent-resource-name"
-                  disabled={busy || editing}
-                  onChange={event => setName(event.target.value)}
-                  placeholder="code-review-agent"
-                  value={name}
-                />
-                {editing ? (
-                  <span className="block text-xs text-text-muted">
-                    {t('workbench.agent_editor_name_locked', '资源名称创建后不可修改')}
-                  </span>
-                ) : null}
-              </label>
-              <label className="space-y-1.5 text-sm text-text-secondary">
-                <span>{t('workbench.agent_creator_display_name', '显示名称')}</span>
-                <input
-                  className={cn('h-10', fieldClassName)}
-                  data-testid="wework-agent-display-name"
-                  disabled={busy}
-                  onChange={event => setDisplayName(event.target.value)}
-                  placeholder={t('workbench.agent_creator_display_name_placeholder', '代码评审')}
-                  value={displayName}
-                />
-              </label>
-            </div>
-            <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
-              <div className="text-sm font-medium text-text-primary">
-                {t('workbench.agent_creator_owner', '资源归属')}
-              </div>
-              <div className="mt-1 text-sm text-text-secondary">{workspaceName}</div>
-              <div className="mt-1 text-xs text-text-muted">
-                namespace: {detail?.namespace ?? namespace}
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-3 border-t border-border pt-5">
-            <h3 className="text-base font-medium text-text-primary">
-              {t('workbench.agent_creator_capabilities', '能力配置')}
-            </h3>
-            <label className="block space-y-1.5 text-sm text-text-secondary">
-              <span>{t('workbench.agent_creator_runtime', '执行器')}</span>
-              <select
-                className={cn('wework-native-select h-10', fieldClassName)}
-                data-testid="wework-agent-runtime"
-                disabled={busy}
-                onChange={event => setRuntime(event.target.value as UnifiedAgentRuntime)}
-                value={runtime}
-              >
-                <option value="Codex">Codex</option>
-                <option value="ClaudeCode">Claude Code</option>
-              </select>
-            </label>
-
-            <label className="block space-y-1.5 text-sm text-text-secondary">
-              <span>{t('workbench.agent_creator_model', '模型')}</span>
-              <select
-                className={cn('wework-native-select h-10', fieldClassName)}
-                data-testid="wework-agent-model"
-                disabled={busy || loadingModels}
-                onChange={event => setSelectedModelIndex(event.target.value)}
-                value={selectedModelIndex}
-              >
-                <option disabled value="">
-                  {t('workbench.agent_creator_model_placeholder', '请选择模型')}
-                </option>
-                {models.map((model, index) => (
-                  <option
-                    key={`${model.type}:${model.namespace ?? 'default'}:${model.name}`}
-                    value={index}
-                  >
-                    {model.displayName || model.name}
-                  </option>
-                ))}
-              </select>
-              {modelLoadError ? (
-                <span
-                  className="block rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
-                  data-testid="wework-agent-model-load-error"
-                  role="alert"
-                >
-                  {modelLoadError}
-                </span>
-              ) : null}
-            </label>
-
-            <fieldset className="space-y-2">
-              <legend className="text-sm text-text-secondary">Skill</legend>
-              <div
-                className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border bg-background p-2"
-                data-testid="wework-agent-skills"
-              >
-                {loadingSkills ? (
-                  <div className="flex items-center gap-2 px-2 py-3 text-sm text-text-muted">
-                    <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
-                    {t('workbench.agent_creator_skills_loading', '正在加载 Skill…')}
-                  </div>
-                ) : availableSkills.length ? (
-                  availableSkills.map(skill => (
-                    <label
-                      className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 hover:bg-muted"
-                      key={`${skill.namespace}:${skill.id}`}
-                    >
-                      <input
-                        checked={selectedSkillSet.has(skill.id)}
-                        className="mt-0.5"
-                        data-testid={`wework-agent-skill-${skill.id}`}
-                        disabled={busy}
-                        onChange={event => {
-                          setSelectedSkillIds(current =>
-                            event.target.checked
-                              ? [...current, skill.id]
-                              : current.filter(skillId => skillId !== skill.id)
-                          )
-                        }}
-                        type="checkbox"
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-sm text-text-primary">
-                          {skill.displayName || skill.name}
-                        </span>
-                        <span className="block text-xs text-text-muted">
-                          {skill.namespace || 'default'}
-                        </span>
-                      </span>
-                    </label>
-                  ))
-                ) : (
-                  <div className="px-2 py-3 text-sm text-text-muted">
-                    {t('workbench.agent_creator_no_skills', '当前执行器没有可用 Skill')}
-                  </div>
-                )}
-              </div>
-              {skillLoadError ? (
-                <div
-                  className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
-                  data-testid="wework-agent-skill-load-error"
-                  role="alert"
-                >
-                  {skillLoadError}
-                </div>
-              ) : null}
-            </fieldset>
-
-            <label className="block space-y-1.5 text-sm text-text-secondary">
-              <span>{t('workbench.agent_creator_prompt', '系统提示词')}</span>
-              <textarea
-                className={cn('min-h-24 resize-y py-2.5', fieldClassName)}
-                data-testid="wework-agent-system-prompt"
-                disabled={busy}
-                onChange={event => setSystemPrompt(event.target.value)}
-                placeholder={t(
-                  'workbench.agent_creator_prompt_placeholder',
-                  '定义智能体职责、约束和输出要求'
-                )}
-                value={systemPrompt}
-              />
-            </label>
-
-            <label className="block space-y-1.5 text-sm text-text-secondary">
-              <span>MCP</span>
-              <textarea
-                className={cn('min-h-28 resize-y py-2.5 font-mono text-code', fieldClassName)}
-                data-testid="wework-agent-mcp"
-                disabled={busy}
-                onChange={event => setMcpConfig(event.target.value)}
-                placeholder='{"server":{"command":"node","args":["server.mjs"]}}'
-                value={mcpConfig}
-              />
-            </label>
-          </section>
-
-          {error ? (
+          {modelLoadError ? (
             <p
               className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
-              data-testid="wework-agent-resource-creator-error"
+              data-testid="wework-agent-model-load-error"
               role="alert"
             >
-              {error}
+              {modelLoadError}
             </p>
           ) : null}
-        </div>
-
-        <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
-          <p className="text-xs text-text-muted">
-            {t(
-              'workbench.agent_creator_environment_hint',
-              '运行设备由项目执行策略在任务开始时选择。'
-            )}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button disabled={saving} onClick={onClose} type="button" variant="ghost">
-              {t('workbench.cancel', '取消')}
-            </Button>
-            <Button
-              data-testid="wework-agent-resource-create"
-              disabled={
-                busy ||
-                loadingModels ||
-                unsupportedRuntime ||
-                !selectedModel ||
-                (editing && !detail)
-              }
-              onClick={() => void saveAgent()}
-              type="button"
-              variant="primary"
-            >
-              {saving ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}
-              {saving
-                ? editing
-                  ? t('workbench.agent_editor_saving', '保存中…')
-                  : t('workbench.agent_creator_creating', '创建中…')
-                : editing
-                  ? t('workbench.agent_editor_save', '保存')
-                  : t('workbench.agent_creator_create', '创建智能体')}
-            </Button>
-          </div>
-        </footer>
-      </section>
-    </div>
+        </>
+      }
+      advancedSummary={{
+        description:
+          capabilityMode === 'follow_device'
+            ? t(
+                'workbench.agent_creator_follow_device_description',
+                '运行时自动使用执行设备上当前用户已有的插件、Skill、MCP 和本地操作能力。'
+              )
+            : t(
+                'workbench.agent_creator_manual_description',
+                '将所选插件、Skill 和 MCP 保存到智能体，运行前自动同步到执行设备。'
+              ),
+        title:
+          capabilityMode === 'follow_device'
+            ? t('workbench.agent_creator_follow_device_summary', '能力：跟随运行设备')
+            : t('workbench.agent_creator_manual_summary', '能力：固定到智能体'),
+      }}
+      busy={busy}
+      capabilities={
+        capabilityMode === 'manual' ? (
+          <AgentCapabilitiesSelector
+            busy={busy}
+            collapsible={false}
+            loadingPlugins={loadingPlugins}
+            loadingSkills={loadingSkills}
+            onPluginChange={(pluginId, selected) =>
+              setSelectedPluginIds(current =>
+                selected ? [...current, pluginId] : current.filter(id => id !== pluginId)
+              )
+            }
+            onSkillChange={(skill, selected) =>
+              setSelectedSkillIds(current =>
+                selected ? [...current, skill.id] : current.filter(skillId => skillId !== skill.id)
+              )
+            }
+            pluginError={pluginLoadError}
+            pluginsEnabled={runtime === 'Codex'}
+            plugins={availablePlugins}
+            selectedPluginIds={effectiveSelectedPluginSet}
+            selectedSkillKeys={new Set([...effectiveSelectedSkillIds].map(String))}
+            requiredPluginIds={promptCapabilities.pluginIds}
+            requiredSkillKeys={new Set([...promptCapabilities.skillIds].map(String))}
+            skillError={skillLoadError}
+            skillKey={skill => String(skill.id)}
+            skills={availableSkills}
+            testIdPrefix="wework-agent"
+            title={t('workbench.agent_creator_configured_capabilities', '随智能体配置')}
+            labels={{
+              add: t('workbench.agent_creator_add', '添加'),
+              loadingPlugins: t('workbench.agent_creator_plugins_loading', '正在加载插件…'),
+              loadingSkills: t('workbench.agent_creator_skills_loading', '正在加载 Skill…'),
+              noneSelected: t('workbench.agent_creator_none_selected', '暂未添加'),
+              noPlugins: t('workbench.agent_creator_no_plugins', '当前没有可用插件'),
+              noSkills: t('workbench.agent_creator_no_skills', '当前执行器没有可用 Skill'),
+              plugins: t('workbench.agent_creator_plugins', '插件'),
+              pluginsUnavailable: t(
+                'workbench.agent_creator_plugins_codex_only',
+                '插件目前仅支持 Codex 执行器'
+              ),
+              remove: t('workbench.agent_creator_remove', '移除'),
+              fromPrompt: t('workbench.agent_creator_from_prompt', '来自提示词'),
+              sourceCloud: t('workbench.agent_creator_source_cloud', '云端'),
+              sourceLocal: t('workbench.agent_creator_source_local', '本机'),
+              sourceLocalCloud: t('workbench.agent_creator_source_local_cloud', '本机与云端'),
+              searchPlugins: t('workbench.agent_creator_search_plugins', '搜索插件'),
+              searchSkills: t('workbench.agent_creator_search_skills', '搜索 Skill'),
+              skills: 'Skill',
+            }}
+          />
+        ) : null
+      }
+      description={
+        editing
+          ? t(
+              'workbench.agent_editor_description',
+              '修改智能体资源的执行器、模型、Skill、插件和 MCP，保存后立即对项目生效。'
+            )
+          : t(
+              'workbench.agent_creator_description',
+              '设置名称、模型和提示词即可创建，其他能力默认跟随运行设备。'
+            )
+      }
+      displayName={{
+        label: t('workbench.agent_creator_display_name', '智能体名称'),
+        onChange: setDisplayName,
+        placeholder: t('workbench.agent_creator_display_name_placeholder', '代码评审'),
+        testId: 'wework-agent-display-name',
+        value: displayName,
+      }}
+      error={formError}
+      capabilityMode={
+        <AgentCapabilityModeSelector
+          busy={busy}
+          capabilityItems={deviceState.capabilityItems}
+          capabilitySummary={deviceState.capabilitySummary}
+          currentDevice={deviceState.currentDevice}
+          labels={{
+            devicePreviewHint: t(
+              'workbench.agent_creator_device_preview_hint',
+              '实际能力以任务运行设备为准，换设备后可能不同。'
+            ),
+            devicePreviewTitle: t('workbench.agent_creator_device_preview_title', '当前设备预览'),
+            devicePreviewUnavailable: t(
+              'workbench.agent_creator_device_preview_unavailable',
+              '将在任务运行时读取设备能力'
+            ),
+            followDescription: t(
+              'workbench.agent_creator_follow_device_description',
+              '运行时自动使用执行设备上当前用户已有的插件、Skill、MCP 和本地操作能力。'
+            ),
+            followTitle: t('workbench.agent_creator_follow_device_title', '跟随运行设备（推荐）'),
+            loadingCapabilities: t(
+              'workbench.agent_creator_loading_device_capabilities',
+              '正在读取设备能力…'
+            ),
+            manualDescription: t(
+              'workbench.agent_creator_manual_description',
+              '将所选插件、Skill 和 MCP 保存到智能体，运行前自动同步到执行设备。'
+            ),
+            manualReady: t(
+              'workbench.agent_creator_manual_ready',
+              '系统会确保执行设备具备以下能力后再开始任务。'
+            ),
+            manualTitle: t('workbench.agent_creator_manual_title', '固定智能体能力'),
+            title: t('workbench.agent_creator_capability_source', '能力来源'),
+          }}
+          loadingCapabilities={deviceState.loading}
+          onChange={setCapabilityMode}
+          testIdPrefix="wework-agent"
+          value={capabilityMode}
+        />
+      }
+      footerHint={
+        capabilityMode === 'follow_device'
+          ? t(
+              'workbench.agent_creator_follow_device_footer',
+              '默认使用 Codex，并从任务运行设备获取能力。'
+            )
+          : t(
+              'workbench.agent_creator_manual_footer',
+              '默认使用 Codex；所选能力会随智能体同步到执行设备。'
+            )
+      }
+      labels={{
+        advanced: t('workbench.agent_creator_advanced', '高级设置'),
+        advancedDescription: t(
+          'workbench.agent_creator_advanced_description',
+          'MCP 与其他运行参数'
+        ),
+        capabilitiesSection: t('workbench.agent_creator_capabilities', '运行配置'),
+        cancel: t('workbench.cancel', '取消'),
+        close: t('workbench.close', '关闭'),
+        owner: t('workbench.agent_creator_owner', '保存位置'),
+      }}
+      loading={loadingDetail}
+      loadingLabel={t('workbench.agent_editor_loading', '正在加载智能体配置…')}
+      mcp={
+        capabilityMode === 'manual'
+          ? {
+              label: 'MCP',
+              onChange: setMcpConfig,
+              placeholder: '{"server":{"command":"node","args":["server.mjs"]}}',
+              testId: 'wework-agent-mcp',
+              value: mcpConfig,
+            }
+          : undefined
+      }
+      model={{
+        disabled: loadingModels,
+        label: t('workbench.agent_creator_model', '模型'),
+        onChange: setSelectedModelIndex,
+        options: models.map((model, index) => ({
+          label: model.displayName || model.name,
+          value: String(index),
+        })),
+        placeholder: t('workbench.agent_creator_model_placeholder', '请选择模型'),
+        testId: 'wework-agent-model',
+        value: selectedModelIndex,
+      }}
+      namespace={detail?.namespace ?? selectedNamespace}
+      onClose={onClose}
+      onSave={() => void saveAgent()}
+      owner={
+        !editing && ownerOptions?.length
+          ? {
+              label: t('workbench.agent_creator_owner', '保存位置'),
+              onChange: setSelectedNamespace,
+              options: ownerOptions.map(option => ({
+                label: option.label,
+                value: option.namespace,
+              })),
+              testId: 'wework-agent-owner',
+              value: selectedNamespace,
+            }
+          : undefined
+      }
+      ownerLabel={
+        ownerOptions?.find(option => option.namespace === selectedNamespace)?.label ?? workspaceName
+      }
+      prompt={{
+        label: t('workbench.agent_creator_prompt', '提示词'),
+        onChange: value => {
+          setSystemPrompt(value)
+          const references = resolveAgentPromptCapabilityReferences(
+            value,
+            availablePlugins,
+            availableSkills
+          )
+          if (references.pluginIds.size || references.skillIds.size) setCapabilityMode('manual')
+        },
+        placeholder: t(
+          'workbench.agent_creator_prompt_placeholder',
+          '定义智能体职责、约束和输出要求'
+        ),
+        testId: 'wework-agent-system-prompt',
+        value: systemPrompt,
+      }}
+      promptEditor={
+        <AgentPromptEditor
+          busy={busy}
+          field={{
+            label: t('workbench.agent_creator_prompt', '提示词'),
+            onChange: value => {
+              setSystemPrompt(value)
+              const references = resolveAgentPromptCapabilityReferences(
+                value,
+                availablePlugins,
+                availableSkills
+              )
+              if (references.pluginIds.size || references.skillIds.size) setCapabilityMode('manual')
+            },
+            placeholder: t(
+              'workbench.agent_creator_prompt_placeholder',
+              '定义智能体职责、约束和输出要求'
+            ),
+            testId: 'wework-agent-system-prompt',
+            value: systemPrompt,
+          }}
+          plugins={availablePlugins}
+          skills={availableSkills}
+          translate={(key, fallback, options) =>
+            String(t(key, { ...options, defaultValue: fallback ?? key }))
+          }
+        />
+      }
+      saveDisabled={loadingModels || unsupportedRuntime || !selectedModel || (editing && !detail)}
+      saveLabel={
+        editing
+          ? t('workbench.agent_editor_save', '保存')
+          : t('workbench.agent_creator_create', '创建智能体')
+      }
+      savingLabel={
+        editing
+          ? t('workbench.agent_editor_saving', '保存中…')
+          : t('workbench.agent_creator_creating', '创建中…')
+      }
+      testIds={{
+        backdrop: 'wework-agent-resource-creator-backdrop',
+        close: 'wework-agent-resource-creator-close',
+        dialog: 'wework-agent-resource-creator',
+        error: 'wework-agent-resource-creator-error',
+        save: 'wework-agent-resource-create',
+      }}
+      title={
+        editing
+          ? t('workbench.agent_editor_title', '编辑智能体')
+          : t('workbench.agent_creator_title', '新建智能体')
+      }
+    />
   )
 }
