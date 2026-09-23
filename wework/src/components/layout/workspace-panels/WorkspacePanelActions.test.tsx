@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -118,6 +118,7 @@ describe('WorkspacePanelActions', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     setWindowWidth(originalInnerWidth)
     Object.defineProperty(window.navigator, 'userAgent', {
       configurable: true,
@@ -636,7 +637,16 @@ describe('WorkspacePanelActions', () => {
 
     const button = screen.getByTestId('open-code-server-titlebar-button')
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', 'workbench.project_ide_unavailable_tooltip')
+    expect(button).not.toHaveAttribute('title')
+    vi.useFakeTimers()
+    fireEvent.pointerEnter(button.parentElement as HTMLElement)
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+    expect(screen.getByTestId('open-code-server-titlebar-button-tooltip')).toHaveTextContent(
+      'workbench.project_ide_unavailable_tooltip'
+    )
+    vi.useRealTimers()
     await userEvent.click(button)
     expect(startProjectCodeServerMock).not.toHaveBeenCalled()
     expect(startDeviceCodeServerMock).not.toHaveBeenCalled()

@@ -26,6 +26,7 @@ import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { Tooltip } from '@/components/ui/tooltip'
 import { openExternalUrl } from '@/lib/external-links'
 import {
   getActiveKeybinding,
@@ -402,26 +403,32 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         </div>
       )}
       {showPrimaryTarget && canOpenCodeServer && !localWorkspaceEnabled && (
-        <button
-          type="button"
-          data-testid="open-code-server-titlebar-button"
-          data-workspace-path={normalizedWorkspacePath || undefined}
-          onClick={() => void handleOpenCodeServer()}
-          disabled={ideLoading || !codeServerEnabled}
-          className={cn(
-            DESKTOP_TOP_BAR_BUTTON_CLASS,
-            !codeServerEnabled && 'cursor-not-allowed opacity-45',
-            ideLoading && 'cursor-wait opacity-70'
-          )}
-          aria-label={t('workbench.open_project_ide')}
-          title={ideTitle}
+        <Tooltip
+          label={ideTitle}
+          side="bottom"
+          align="end"
+          testId="open-code-server-titlebar-button-tooltip"
         >
-          {ideLoading ? (
-            <Loader2 className="animate-spin" />
-          ) : (
-            <LocalWorkspaceOpenerIcon opener="vscode" className="h-[18px] w-[18px]" />
-          )}
-        </button>
+          <button
+            type="button"
+            data-testid="open-code-server-titlebar-button"
+            data-workspace-path={normalizedWorkspacePath || undefined}
+            onClick={() => void handleOpenCodeServer()}
+            disabled={ideLoading || !codeServerEnabled}
+            className={cn(
+              DESKTOP_TOP_BAR_BUTTON_CLASS,
+              !codeServerEnabled && 'cursor-not-allowed opacity-45',
+              ideLoading && 'cursor-wait opacity-70'
+            )}
+            aria-label={t('workbench.open_project_ide')}
+          >
+            {ideLoading ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <LocalWorkspaceOpenerIcon opener="vscode" className="h-[18px] w-[18px]" />
+            )}
+          </button>
+        </Tooltip>
       )}
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
       {(showBottomPanelToggle || showRightPanelToggle) && (
