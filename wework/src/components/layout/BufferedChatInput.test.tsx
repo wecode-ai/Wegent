@@ -272,7 +272,7 @@ describe('BufferedChatInput', () => {
     expect(onDraftEdit).not.toHaveBeenCalled()
 
     await userEvent.type(screen.getByTestId('chat-message-input'), ' updated')
-    expect(onDraftEdit).toHaveBeenCalled()
+    expect(onDraftEdit).toHaveBeenLastCalledWith(' updatedretry this message')
   })
 
   test('restores the submitted draft when an async send promise rejects', async () => {

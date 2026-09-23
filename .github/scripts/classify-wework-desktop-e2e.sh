@@ -10,6 +10,7 @@ core_segments=(
   collaboration-first-use
   collaboration-group-onboarding
   collaboration-local-agent-capabilities
+  collaboration-local-executor-issue-tools
   collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
@@ -150,7 +151,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-agent-automation-chain
+  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
@@ -548,6 +549,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-local-agent-capabilities.scenario.mjs)
       select_target "core:collaboration-local-agent-capabilities"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-local-executor-issue-tools.scenario.mjs)
+      select_target "core:collaboration-local-executor-issue-tools"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
@@ -969,6 +974,7 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_target "core:collaboration-local-agent-capabilities"
+      select_target "core:collaboration-local-executor-issue-tools"
       select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
@@ -978,6 +984,7 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_target "core:collaboration-local-agent-capabilities"
+      select_target "core:collaboration-local-executor-issue-tools"
       select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
