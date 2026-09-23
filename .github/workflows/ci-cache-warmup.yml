@@ -474,7 +474,7 @@ jobs:
             ~/.cargo/git
             executor/target
             ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 

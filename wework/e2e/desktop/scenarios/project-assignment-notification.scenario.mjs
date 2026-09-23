@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import {
   commandOutputAsync,
   createSingleRootLocalProject,
@@ -147,7 +146,7 @@ function findDeliveryDraft(value) {
 
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspacePath }) {
   let backendUrl = ''
-  let databasePath = ''
+  let queryDatabase = null
   let ownerToken = ''
   let owner = null
   let assigner = null
@@ -188,22 +187,17 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
     executionWorkspacePath = path
     resolveExecutionWorkspacePath(path)
   }
-  const readCleanupIntent = () => {
-    const database = new DatabaseSync(databasePath, { readOnly: true })
-    try {
-      database.exec('PRAGMA busy_timeout = 30000')
-      return database
-        .prepare(
-          `SELECT id, status, version, due_at, completed_at, metadata
-           FROM loop_items
-           WHERE resource_type = 'workspace_cleanup' AND loop_item_id = ?
-           ORDER BY created_at DESC
-           LIMIT 1`
-        )
-        .get(assignedTask.id)
-    } finally {
-      database.close()
-    }
+  const readCleanupIntent = async () => {
+    assert.ok(queryDatabase, 'Cloud database query helper is not configured')
+    const rows = await queryDatabase(
+      `SELECT id, status, version, due_at, completed_at, metadata
+       FROM loop_items
+       WHERE resource_type = 'workspace_cleanup' AND loop_item_id = %s
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [assignedTask.id]
+    )
+    return rows[0]
   }
 
   return {
@@ -391,7 +385,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
-      databasePath = cloud.databasePath
+      queryDatabase = cloud.queryDatabase
       ownerToken = cloud.authToken
       owner = await ownerRequest('/api/users/me')
       assigner = await ownerRequest('/api/admin/users', {
@@ -950,7 +944,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       assert.equal(acceptedWork.issue.status, 'completed')
       await waitForApiValue(
         async () => ({
-          intent: readCleanupIntent(),
+          intent: await readCleanupIntent(),
           worktreeExists: await pathExists(executionWorkspacePath),
         }),
         value =>

@@ -821,6 +821,15 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
+        if let Err(error) = self.release_thread_subscription(thread_id).await {
+            log_executor_event(
+                "codex shared thread unsubscribe failed",
+                &[("thread_id", thread_id.to_owned()), ("error", error)],
+            );
+        }
+    }
+
+    async fn release_thread_subscription(&self, thread_id: &str) -> Result<(), String> {
         let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
@@ -830,13 +839,7 @@ impl CodexAppServerClient {
         }
         drop(_lifecycle_guard);
 
-        let result = self.request_thread_unsubscribe(thread_id).await;
-        if let Err(error) = result {
-            log_executor_event(
-                "codex shared thread unsubscribe failed",
-                &[("thread_id", thread_id.to_owned()), ("error", error)],
-            );
-        }
+        self.request_thread_unsubscribe(thread_id).await
     }
 
     async fn request_thread_unsubscribe(&self, thread_id: &str) -> Result<(), String> {
@@ -1649,6 +1652,28 @@ fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&
     }
 }
 
+fn project_space_resume_thread_id(thread_plan: &CodexThreadPlan) -> Option<&str> {
+    let CodexThreadStart::Request {
+        operation: "thread/resume",
+        params,
+    } = &thread_plan.start
+    else {
+        return None;
+    };
+    let has_project_space_config =
+        params
+            .get("config")
+            .and_then(Value::as_object)
+            .is_some_and(|config| {
+                config
+                    .keys()
+                    .any(|key| key.starts_with("mcp_servers.wework_space."))
+            });
+    has_project_space_config
+        .then(|| params.get("threadId").and_then(Value::as_str))
+        .flatten()
+}
+
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1735,6 +1760,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
+        if let Some(thread_id) = project_space_resume_thread_id(&thread_plan) {
+            client.release_thread_subscription(thread_id).await?;
+        }
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
@@ -3117,7 +3145,17 @@ fn spawn_codex_app_server(
     let resolved_binary = resolve_codex_binary(binary);
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
-    let mut command = Command::new(&resolved_binary);
+    codex_app_server_command(&resolved_binary, &codex_home, launch_config)
+        .spawn()
+        .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+fn codex_app_server_command(
+    resolved_binary: &str,
+    codex_home: &Path,
+    launch_config: &CodexLaunchConfig,
+) -> Command {
+    let mut command = Command::new(resolved_binary);
     for key in EXECUTOR_INTERNAL_ENV_KEYS
         .iter()
         .chain(TASK_SCOPED_ENV_KEYS.iter())
@@ -3131,7 +3169,8 @@ fn spawn_codex_app_server(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
-    command.env(CODEX_HOME_ENV, &codex_home);
+    command.env(CODEX_HOME_ENV, codex_home);
+    command.current_dir(codex_home);
     command.env(
         "PATH",
         process_environment::normalized_process_path(
@@ -3144,9 +3183,8 @@ fn spawn_codex_app_server(
         .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))
+        .stderr(Stdio::inherit());
+    command
 }
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {

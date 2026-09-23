@@ -32,6 +32,18 @@ async function snapshot(control) {
   return JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
 }
 
+async function projectAgentTestId(control, displayName) {
+  const projectSnapshot = await snapshot(control)
+  for (const testId of projectSnapshot.testIds.filter(testId =>
+    testId.startsWith('project-agent-row-')
+  )) {
+    if ((await control.command('getText', `[data-testid="${testId}"]`)).includes(displayName)) {
+      return testId.slice('project-agent-row-'.length)
+    }
+  }
+  throw new Error(`Could not find project Agent "${displayName}"`)
+}
+
 export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloudOffline = false
   let cloudWorkspaceListFailures = 0
@@ -313,7 +325,8 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: '离线本地智能体',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('[data-testid^="project-agent-edit-"]'))
+      const localAgentId = await projectAgentTestId(control, '离线本地智能体')
+      await control.command('click', scoped(`[data-testid="project-agent-edit-${localAgentId}"]`))
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
         timeoutMs: uiTimeoutMs,
       })

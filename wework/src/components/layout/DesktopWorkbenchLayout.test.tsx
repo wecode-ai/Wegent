@@ -4400,10 +4400,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
-    expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
-      'title',
-      '打开项目 IDE'
-    )
+    const codeServerButton = screen.getByTestId('open-code-server-titlebar-button')
+    expect(codeServerButton).not.toHaveAttribute('title')
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).not.toHaveAttribute('title')
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).not.toHaveAttribute('title')
     const bottomPanelTooltip = screen.getByText('切换底部面板显示').closest('[role="tooltip"]')

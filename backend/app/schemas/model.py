@@ -81,6 +81,8 @@ class ModelBulkCreateItem(BaseModel):
     wework_available: Optional[bool] = None
     protocol: Optional[str] = None
     api_format: Optional[str] = None
+    model_type: Optional[str] = None
+    embedding_config: Optional[dict[str, Any]] = None
 
 
 class ModelBulkCreateResponse(BaseModel):

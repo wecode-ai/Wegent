@@ -132,9 +132,8 @@ describe('DocumentItem external wiki actions', () => {
     )
     const sourceStatus = screen.getByTestId('external-source-inaccessible')
     await user.hover(sourceStatus)
-    expect(
-      await screen.findByText('knowledge:document.document.wikiSourceMissing')
-    ).toBeInTheDocument()
+    // The shared badge resolves its copy from the knowledge namespace.
+    expect(await screen.findByText('document.document.wikiSourceMissing')).toBeInTheDocument()
   })
 
   it('shows the missing wiki source in compact mode', () => {
@@ -159,7 +158,7 @@ describe('DocumentItem external wiki actions', () => {
     )
 
     expect(screen.getByTestId('external-source-inaccessible-compact')).toHaveTextContent(
-      'knowledge:document.document.wikiSourceMissing'
+      'document.document.wikiSourceMissing'
     )
   })
 
@@ -186,7 +185,7 @@ describe('DocumentItem external wiki actions', () => {
       'knowledge:document.document.indexStatus.available'
     )
     const sourceStatus = screen.getByTestId('external-source-inaccessible')
-    expect(sourceStatus).toHaveTextContent('knowledge:document.document.sourceSyncFailed')
+    expect(sourceStatus).toHaveTextContent('document.document.sourceSyncFailed')
     await user.hover(sourceStatus)
     expect((await screen.findAllByText('无法连接 Wiki 站点')).length).toBeGreaterThan(0)
   })

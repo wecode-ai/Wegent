@@ -21,6 +21,11 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import type { LocalProjectChatAgentCreateInput } from '@/api/local/localDelivery'
+import {
+  ensureDefaultLocalAgent,
+  isDefaultLocalAgent,
+  isDefaultLocalAgentName,
+} from '@/features/collaboration/defaultLocalAgent'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
 export function createLocalWorkspaceApi(
@@ -119,14 +124,36 @@ export function createLocalWorkspaceApi(
     (await projectAgentApi?.list(projectId))?.map(agent => ({
       ...agent,
       agent_id: agent.name,
+      deletable: !isDefaultLocalAgent(agent),
       name: agent.displayName || agent.name,
     })) ?? []
   const projectChatClient = detailServices?.projectChatClient
   const localAgentResources = async () => {
-    const agents = (await projectAgentApi?.list(DEFAULT_WORK_ITEM_PROJECT_ID)) ?? []
+    const listedAgents = projectAgentApi
+      ? await projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID).catch(error => {
+          console.warn('[Wework] Failed to list local Agents', error)
+          return []
+        })
+      : []
+    const defaultAgent = projectAgentApi
+      ? await ensureDefaultLocalAgent(
+          projectAgentApi,
+          DEFAULT_WORK_ITEM_PROJECT_ID,
+          locale,
+          listedAgents
+        ).catch(error => {
+          console.warn('[Wework] Failed to ensure the default local Agent', error)
+          return null
+        })
+      : null
+    const agents =
+      defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
+        ? [...listedAgents, defaultAgent]
+        : listedAgents
     const ownerName = locale === 'zh-CN' ? '本地空间' : 'Local space'
     return agents.map(agent => ({
       id: agent.id,
+      agent_id: agent.name,
       name: agent.displayName || agent.name,
       location: 'local' as const,
       version: agent.version,
@@ -136,6 +163,7 @@ export function createLocalWorkspaceApi(
       owner_type: 'workspace' as const,
       owner_id: LOCAL_WORKSPACE_ID,
       owner_name: ownerName,
+      deletable: !isDefaultLocalAgent(agent),
       status: agent.status === 'active' ? ('available' as const) : ('unavailable' as const),
       execution_environment_ids: agent.executionDeviceId
         ? [`device:${agent.executionDeviceId}`]
@@ -332,6 +360,17 @@ export function createLocalWorkspaceApi(
             locale === 'zh-CN' ? '无法删除这个本地智能体' : 'This local agent cannot be deleted'
           )
         }
+        if (
+          agent.deletable === false ||
+          isDefaultLocalAgentName(agent.agent_id) ||
+          isDefaultLocalAgentName(agent.name)
+        ) {
+          throw new Error(
+            locale === 'zh-CN'
+              ? '默认本地智能体不能删除'
+              : 'The default local Agent cannot be deleted'
+          )
+        }
         await projectAgentApi.archive(DEFAULT_WORK_ITEM_PROJECT_ID, agent.id, agent.version)
       },
     },
@@ -381,13 +420,27 @@ export function createLocalWorkspaceApi(
           create: async (projectId, input) => ({
             ...(await projectAgentApi.create(projectId, toLocalAgentCreateInput(input))),
           }),
-          update: async (projectId, agentId, input) => ({
-            ...(await projectAgentApi.update(
-              projectId,
-              agentId,
-              input as Parameters<typeof projectAgentApi.update>[2]
-            )),
-          }),
+          update: async (projectId, agentId, input) => {
+            if (input.status === 'archived') {
+              const existing = (await projectAgentApi.list(projectId)).find(
+                agent => agent.id === agentId
+              )
+              if (existing && isDefaultLocalAgent(existing)) {
+                throw new Error(
+                  locale === 'zh-CN'
+                    ? '默认本地智能体不能停用'
+                    : 'The default local Agent cannot be archived'
+                )
+              }
+            }
+            return {
+              ...(await projectAgentApi.update(
+                projectId,
+                agentId,
+                input as Parameters<typeof projectAgentApi.update>[2]
+              )),
+            }
+          },
         }
       : {
           list: async () => [],
@@ -398,7 +451,19 @@ export function createLocalWorkspaceApi(
       ...delivery.projects,
       list: projects,
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
-      create: async input => decorateProject(await delivery.projects.create(input)),
+      create: async input => {
+        const { includeDefaultAgent = true, ...projectInput } = input
+        const project = decorateProject(await delivery.projects.create(projectInput))
+        if (projectAgentApi && includeDefaultAgent) {
+          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
+            console.warn(
+              `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
+              error
+            )
+          })
+        }
+        return project
+      },
       update: async (projectId, input) =>
         decorateProject(await delivery.projects.update(projectId, input)),
       listExecutionEnvironments: executionEnvironments,

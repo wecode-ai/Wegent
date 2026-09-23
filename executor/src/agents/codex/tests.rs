@@ -517,6 +517,17 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
 }
 
 #[test]
+fn codex_app_server_uses_codex_home_as_working_directory() {
+    let codex_home = unique_test_path("wework-codex-app-server-cwd");
+    let command = codex_app_server_command("codex", &codex_home, &CodexLaunchConfig::default());
+
+    assert_eq!(
+        command.as_std().get_current_dir(),
+        Some(codex_home.as_path())
+    );
+}
+
+#[test]
 fn mcp_thread_diagnostics_report_names_without_config_values() {
     let params = json!({
         "config": {

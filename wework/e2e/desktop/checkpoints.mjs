@@ -48,6 +48,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-worktree-archive-restore',
   'context-compaction',
   'runtime-task-queue',
+  'codex-invalid-launch-cwd',
   'executor-stream-recovery',
   'transcript-sync',
   'running-conversation-history',

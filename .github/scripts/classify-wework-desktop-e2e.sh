@@ -40,6 +40,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  codex-invalid-launch-cwd
   running-conversation-history
   running-plan-history
   codex-notification-isolation
@@ -154,7 +155,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
   rendering-extensions
-  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
@@ -798,6 +799,10 @@ classify_wework_path() {
       select_target "core:runtime-task-queue"
       return
       ;;
+    wework/e2e/desktop/scenarios/codex-invalid-launch-cwd.scenario.mjs)
+      select_target "core:codex-invalid-launch-cwd"
+      return
+      ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
       return
@@ -976,6 +981,12 @@ classify_path() {
       select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
+      select_all_desktop_suites
+      ;;
+    backend-rs/* | backend-rs/** | \
+      wework/e2e/desktop/modules/cloud-environment.mjs | \
+      wework/e2e/desktop/modules/task-flow-main.mjs | \
+      wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \

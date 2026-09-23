@@ -1169,6 +1169,8 @@ export function useWorkbenchPaneSession({
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
+          ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
+          ...(message.origin ? { origin: message.origin } : {}),
         },
         {
           onError: options.onError ?? setError,
@@ -1285,6 +1287,8 @@ export function useWorkbenchPaneSession({
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
+          ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
+          ...(message.origin ? { origin: message.origin } : {}),
         },
         { onError: setError }
       )
@@ -2007,6 +2011,8 @@ export function useWorkbenchPaneSession({
               attachments: persistAttachmentReferences(currentAttachments),
               runtimeGoalRequest: true,
               additionalContext: options.additionalContext,
+              cloudProjectId: options.cloudProjectId,
+              origin: options.origin,
               ...getRuntimeModelFields(),
             }
 
@@ -2082,6 +2088,7 @@ export function useWorkbenchPaneSession({
             initialGoal,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             initialSupervisor: options.initialSupervisor,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
@@ -2311,6 +2318,8 @@ export function useWorkbenchPaneSession({
             createdAt: new Date().toISOString(),
             attachments: persistAttachmentReferences(currentAttachments),
             additionalContext: resolvedAdditionalContext,
+            cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             ...getRuntimeModelFields(),
           }
 
@@ -2378,6 +2387,8 @@ export function useWorkbenchPaneSession({
           createdAt: new Date().toISOString(),
           attachments: persistAttachmentReferences(currentAttachments),
           additionalContext: resolvedAdditionalContext,
+          cloudProjectId: options.cloudProjectId,
+          origin: options.origin,
           ...getRuntimeModelFields(),
         }
 

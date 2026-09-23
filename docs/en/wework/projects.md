@@ -68,6 +68,12 @@ space, and the creation UI identifies the actual storage location:
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
+### Configure local project collaborators
+
+Wework automatically maintains a **Current device agent** in the local space, so users do not need to create an agent first. A new local project includes **Me** and the **Current device agent** by default. You can remove the agent before creation or add it again through **Add collaborator**. Creating a project does not automatically create a collaboration group.
+
+When two or more agents are selected, the creation flow recommends organizing them into a collaboration group. After confirming, choose a generation model and optionally add collaboration instructions in the task composer. Wework progressively generates the leader, member responsibilities, assignment principles, and suggested workflow. You can edit the result before saving and update it later in project settings.
+
 ### Set cloud board access
 
 Cloud project spaces using the built-in task source can set their access level during creation. An Owner or Maintainer can change it later under **Project settings → Project access**:

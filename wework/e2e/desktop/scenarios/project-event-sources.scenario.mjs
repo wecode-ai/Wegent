@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { DatabaseSync } from 'node:sqlite'
 
 import {
   assistantMessage,
@@ -413,7 +412,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   let hooks = {}
   let upstreamServer = null
   let upstreamPort = 0
-  let databasePath = ''
+  let executeDatabase = null
+  let queryDatabase = null
   let upstreamRequests = []
   let currentGithubFixture = null
   let currentGitlabFixture = null
@@ -421,16 +421,6 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   const workflowModelRequests = []
 
   const request = (pathname, options) => requestJson(backendUrl, token, pathname, options)
-
-  function withDatabase(action) {
-    const database = new DatabaseSync(databasePath)
-    try {
-      database.exec('PRAGMA busy_timeout = 30000')
-      return action(database)
-    } finally {
-      database.close()
-    }
-  }
 
   async function ensureRuntimeProfile() {
     const profileName = 'External event workflow Runtime'
@@ -510,28 +500,24 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     })
   }
 
-  function workflowHandlerRunNodeIds(itemId) {
-    return withDatabase(database =>
-      database
-        .prepare(
-          `select metadata
-             from loop_items
-            where resource_type = 'automation_run'
-              and task_id = ?
-            order by created_at, id`
-        )
-        .all(itemId)
-        .map(row => JSON.parse(row.metadata ?? '{}').workflow_node_id)
-        .filter(Boolean)
+  async function workflowHandlerRunNodeIds(itemId) {
+    assert.ok(queryDatabase, 'Cloud database query helper is not configured')
+    const rows = await queryDatabase(
+      `select metadata
+         from loop_items
+        where resource_type = 'automation_run'
+          and task_id = %s
+        order by created_at, id`,
+      [itemId]
     )
+    return rows.map(row => JSON.parse(row.metadata ?? '{}').workflow_node_id).filter(Boolean)
   }
 
-  function branchWaitRefs(hookId) {
-    return withDatabase(database => {
-      const row = database.prepare('select metadata from loop_items where id = ?').get(hookId)
-      const metadata = JSON.parse(row?.metadata ?? '{}')
-      return metadata.branch_wait_refs ?? {}
-    })
+  async function branchWaitRefs(hookId) {
+    assert.ok(queryDatabase, 'Cloud database query helper is not configured')
+    const rows = await queryDatabase('select metadata from loop_items where id = %s', [hookId])
+    const metadata = JSON.parse(rows[0]?.metadata ?? '{}')
+    return metadata.branch_wait_refs ?? {}
   }
 
   async function createMultiPlatformWorkflowFixture(githubHook, gitlabHook) {
@@ -697,8 +683,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       'The multi-platform branch did not attach both event collectors',
       uiTimeoutMs * 3
     )
-    assert.deepEqual(branchWaitRefs(githubHook.id)[issue.id], ['event-branch'])
-    assert.deepEqual(branchWaitRefs(gitlabHook.id)[issue.id], ['event-branch'])
+    assert.deepEqual((await branchWaitRefs(githubHook.id))[issue.id], ['event-branch'])
+    assert.deepEqual((await branchWaitRefs(gitlabHook.id))[issue.id], ['event-branch'])
     return { issue: armed, githubSequence, gitlabSequence }
   }
 
@@ -719,7 +705,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       'The GitHub event did not complete exactly one workflow loop iteration',
       uiTimeoutMs * 3
     )
-    assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler'])
+    assert.deepEqual(await workflowHandlerRunNodeIds(issue.id), ['github-handler'])
     assert.deepEqual(workflowModelRequests, ['github-handler'])
     const githubBranch = afterGithub.workflow.nodes.find(node => node.id === 'event-branch')
     assert.equal(githubBranch.collectors.github.collector_id, githubHook.id)
@@ -739,18 +725,17 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       'The GitLab event did not complete the second workflow loop iteration',
       uiTimeoutMs * 3
     )
-    assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler', 'gitlab-handler'])
+    assert.deepEqual(await workflowHandlerRunNodeIds(issue.id), ['github-handler', 'gitlab-handler'])
     assert.deepEqual(workflowModelRequests, ['github-handler', 'gitlab-handler'])
     assert.equal(
       completed.workflow.nodes.every(node => node.status === 'completed'),
       true
     )
     await waitForValue(
-      () =>
-        Promise.resolve({
-          github: branchWaitRefs(githubHook.id),
-          gitlab: branchWaitRefs(gitlabHook.id),
-        }),
+      async () => ({
+        github: await branchWaitRefs(githubHook.id),
+        gitlab: await branchWaitRefs(gitlabHook.id),
+      }),
       refs => refs.github[issue.id] === undefined && refs.gitlab[issue.id] === undefined,
       'The terminal workflow did not release both branch collector references',
       uiTimeoutMs
@@ -796,14 +781,12 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         tokenType: 'bearer',
       },
     }
-    withDatabase(database => {
-      database
-        .prepare(
-          `insert into kinds(user_id, kind, name, namespace, json, is_active)
-           values(?, 'ConnectorConnection', ?, 'system', ?, 1)`
-        )
-        .run(currentUser.id, slug, JSON.stringify(connectionPayload))
-    })
+    assert.ok(executeDatabase, 'Cloud database execute helper is not configured')
+    await executeDatabase(
+      `insert into kinds(user_id, kind, name, namespace, json, is_active)
+       values(%s, 'ConnectorConnection', %s, 'system', %s, 1)`,
+      [currentUser.id, slug, JSON.stringify(connectionPayload)]
+    )
   }
 
   function normalizedChangeRequestTypes(events) {
@@ -830,12 +813,11 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   }
 
   async function armPollingHook(hook, sourceType, expectedTypes) {
-    withDatabase(database => {
-      database
-        .prepare("update loop_items set due_at='1970-01-01 00:00:02' where id = ?")
-        .run(hook.id)
-      database.prepare("update loop_items set status='active' where id = ?").run(hook.id)
-    })
+    assert.ok(executeDatabase, 'Cloud database execute helper is not configured')
+    await executeDatabase(
+      "update loop_items set due_at='1970-01-01 00:00:02', status='active' where id = %s",
+      [hook.id]
+    )
     const processed = await waitForProcessedEvents(hook.id, expectedTypes)
     assertEventTypeCoverage(processed, sourceType, expectedTypes, 'poll')
   }
@@ -951,11 +933,13 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     async prepareCloud({
       authToken,
       backendUrl: cloudBackendUrl,
-      databasePath: cloudDatabasePath,
+      executeDatabase: cloudExecuteDatabase,
+      queryDatabase: cloudQueryDatabase,
     }) {
       backendUrl = cloudBackendUrl
       token = authToken
-      databasePath = cloudDatabasePath ?? ''
+      executeDatabase = cloudExecuteDatabase
+      queryDatabase = cloudQueryDatabase
       const { items: projects } = await request('/api/v1/cloud-projects')
       project =
         projects.find(item => item.name === PROJECT_NAME) ??

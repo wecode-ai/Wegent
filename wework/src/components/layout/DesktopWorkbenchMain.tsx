@@ -147,6 +147,7 @@ import {
   WorkbenchMainHeaderPortal,
   WorkbenchPaneHeaderActionsPortal,
 } from '@/components/topnav/TitlebarActionsPortal'
+import { Tooltip } from '@/components/ui/tooltip'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
@@ -4734,73 +4735,83 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     forkCurrentRuntimeTask
   )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
-    <button
-      type="button"
-      data-testid="fork-runtime-task-button"
-      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-      aria-label={t('workbench.task_fork_button')}
-      title={t('workbench.task_fork_button')}
-      onClick={() => setForkDialogOpen(true)}
-    >
-      <ArrowLeftRight />
-    </button>
+    <Tooltip label={t('workbench.task_fork_button')} side="bottom" align="end">
+      <button
+        type="button"
+        data-testid="fork-runtime-task-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.task_fork_button')}
+        onClick={() => setForkDialogOpen(true)}
+      >
+        <ArrowLeftRight />
+      </button>
+    </Tooltip>
   ) : undefined
   const canContinueInIm = Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
-    <button
-      type="button"
-      data-testid="continue-in-im-button"
-      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-      aria-label={t('workbench.continue_im_title')}
-      title={t('workbench.continue_im_title')}
-      onClick={continueInIm.openDialog}
-    >
-      <MessageCircle />
-    </button>
+    <Tooltip label={t('workbench.continue_im_title')} side="bottom" align="end">
+      <button
+        type="button"
+        data-testid="continue-in-im-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.continue_im_title')}
+        onClick={continueInIm.openDialog}
+      >
+        <MessageCircle />
+      </button>
+    </Tooltip>
   ) : undefined
   const feedbackButton = isDesktop ? (
-    <button
-      type="button"
-      data-testid="task-feedback-button"
-      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-      aria-label={t('workbench.feedback_button')}
-      title={t('workbench.feedback_button')}
-      onClick={() => setFeedbackDialogOpen(true)}
+    <Tooltip
+      label={t('workbench.feedback_button')}
+      side="bottom"
+      align="end"
+      testId="task-feedback-button-tooltip"
     >
-      <MessageSquareWarning />
-    </button>
+      <button
+        type="button"
+        data-testid="task-feedback-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.feedback_button')}
+        onClick={() => setFeedbackDialogOpen(true)}
+      >
+        <MessageSquareWarning />
+      </button>
+    </Tooltip>
   ) : undefined
   const closeHarnessButton =
     activeLocalHarnessSession?.harnessId === 'opencode' ? (
-      <button
-        type="button"
-        data-testid={
-          activeLocalHarnessSession.isPrimary
-            ? 'central-harness-archive-button'
-            : 'central-harness-close-button'
-        }
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.archive_harness', '归档编码会话')}
-        title={t('workbench.archive_harness', '归档编码会话')}
-        onClick={() => {
-          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
-        }}
-      >
-        <Archive />
-      </button>
+      <Tooltip label={t('workbench.archive_harness', '归档编码会话')} side="bottom" align="end">
+        <button
+          type="button"
+          data-testid={
+            activeLocalHarnessSession.isPrimary
+              ? 'central-harness-archive-button'
+              : 'central-harness-close-button'
+          }
+          className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+          aria-label={t('workbench.archive_harness', '归档编码会话')}
+          onClick={() => {
+            void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+          }}
+        >
+          <Archive />
+        </button>
+      </Tooltip>
     ) : activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
-      <button
-        type="button"
-        data-testid="central-harness-close-button"
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.close_harness', '关闭编码工具')}
-        title={t('workbench.close_harness', '关闭编码工具')}
-        onClick={() => {
-          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
-        }}
-      >
-        <X />
-      </button>
+      <Tooltip label={t('workbench.close_harness', '关闭编码工具')} side="bottom" align="end">
+        <button
+          type="button"
+          data-testid="central-harness-close-button"
+          className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+          aria-label={t('workbench.close_harness', '关闭编码工具')}
+          onClick={() => {
+            void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+          }}
+        >
+          <X />
+        </button>
+      </Tooltip>
     ) : undefined
   const feedbackInChromeTitlebar = isDesktop
   const mainHeaderActions = activeLocalHarnessSession ? (
