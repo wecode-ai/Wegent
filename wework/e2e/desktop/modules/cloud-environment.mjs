@@ -282,6 +282,7 @@ class RealCloudEnvironment {
   }
 
   async launchBackend() {
+    const e2eBackendFixtures = join(weworkDir, 'e2e', 'desktop', 'fixtures')
     this.backend = spawn(
       'uv',
       [
@@ -290,7 +291,9 @@ class RealCloudEnvironment {
         '-u',
         '-m',
         'uvicorn',
-        'app.main:app',
+        '--app-dir',
+        e2eBackendFixtures,
+        'cloud_backend_app:app',
         '--host',
         '127.0.0.1',
         '--port',
@@ -298,7 +301,7 @@ class RealCloudEnvironment {
       ],
       {
         cwd: join(repoDir, 'backend'),
-        env: this.backendEnv,
+        env: { ...this.backendEnv, WEWORK_DESKTOP_E2E: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       }
