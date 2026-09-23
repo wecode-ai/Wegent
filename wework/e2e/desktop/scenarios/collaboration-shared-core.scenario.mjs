@@ -347,6 +347,10 @@ export function createDesktopScenario({
           text: COMMENT_BODY,
           timeoutMs: uiTimeoutMs,
         })
+        await control.command(
+          'click',
+          scoped('[data-testid^="cloud-task-activity-reply-toggle-"]')
+        )
         const replyComposerSelector = scoped('[data-testid^="cloud-task-activity-card-composer-"]')
         await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
         await control.command('fill', replyComposerSelector, {

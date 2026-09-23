@@ -806,7 +806,6 @@ export function WeworkSharedProject({
                   onArchive={onDelete ?? (() => undefined)}
                   archiveLabel={t('todo.delete_issue', '删除任务')}
                   onMarkRead={onMarkRead}
-                  previewDisabled={previewDisabled}
                   issueDetailOnly
                   onOpenRuntimeTask={
                     runtimePort
