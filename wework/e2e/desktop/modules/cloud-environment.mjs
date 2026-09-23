@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
 
 import {
   CLOUD_DEVICE_ID,
@@ -90,6 +91,8 @@ async function startMysqlServer(logPath) {
   await runChecked(mysqlBinary, initializeArgs)
 
   const port = await reservePort()
+  const socketPath = join(tmpdir(), `wework-mysql-${process.pid}.sock`)
+  await rm(socketPath, { force: true })
   const serverArgs = [
     '--no-defaults',
     `--datadir=${dataDirectory}`,
@@ -101,7 +104,7 @@ async function startMysqlServer(logPath) {
     '--innodb-buffer-pool-size=64M',
   ]
   if (process.platform !== 'win32') {
-    serverArgs.push('--user=root', `--socket=${join(dataDirectory, 'mysql.sock')}`)
+    serverArgs.push('--user=root', `--socket=${socketPath}`)
   } else {
     serverArgs.push('--console')
   }
@@ -760,8 +763,10 @@ class RealCloudEnvironment {
       `UPDATE kinds
        SET json = JSON_SET(
          json,
-         '$.spec.cloudConfig.sandboxId', %s,
-         '$.spec.cloudConfig.deviceId', %s
+         '$.spec.cloudConfig', JSON_OBJECT(
+           'sandboxId', %s,
+           'deviceId', %s
+         )
        )
        WHERE kind = 'Device' AND name = %s`,
       [MANAGED_CLOUD_SANDBOX_ID, CLOUD_DEVICE_ID, CLOUD_DEVICE_ID]
@@ -967,6 +972,7 @@ class RealCloudEnvironment {
   }
 
   async devices() {
+    // Exercise the public hybrid endpoint so Cloud E2E covers Rust routing and shared MySQL state.
     const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
