@@ -10,11 +10,19 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use super::config::AppConfig;
 use crate::auth::SessionClaims;
 
+#[allow(
+    dead_code,
+    reason = "route authentication now runs through AppAuthenticator"
+)]
 pub struct JwtVerifier {
     decoding_keys: Vec<(Vec<u8>, Algorithm)>,
     validation: Validation,
 }
 
+#[allow(
+    dead_code,
+    reason = "route authentication now runs through AppAuthenticator"
+)]
 impl JwtVerifier {
     pub fn new(config: &AppConfig) -> Self {
         let algorithm = match config.jwt_algorithm.as_str() {

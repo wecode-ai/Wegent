@@ -40,6 +40,53 @@ pub struct UserRow {
     pub users_updated_at: NaiveDateTime,
 }
 
+pub struct AttachmentUser(pub UserRow);
+
+impl std::ops::Deref for AttachmentUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl brz_http_server::Authenticator<AttachmentUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<AttachmentUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        get_current_user_optional(&self.state().auth, &self.state().mysql, authorization)
+            .await
+            .map_err(|_| brz_http_server::AuthFailure::Internal)?
+            .map(AttachmentUser)
+            .ok_or_else(|| brz_http_server::AuthFailure::missing_credentials("Bearer"))
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a AttachmentUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.users_user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        _failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        crate::http_compat::FastApiError::detail(
+            brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+        )
+        .into_http_error(arena)
+    }
+}
+
 /// `get_current_user`'s `db.query(User).filter(User.user_name ==
 /// username).first()` statement, rendered exactly as SQLAlchemy labels it.
 const USER_BY_NAME_QUERY: &str = "SELECT users.id AS users_id, users.user_name AS users_user_name, \

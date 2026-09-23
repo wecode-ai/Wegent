@@ -29,6 +29,82 @@ pub struct UserRow {
     pub role: String,
 }
 
+pub struct SkillDownloadUser {
+    pub user: UserRow,
+    pub runtime_download: bool,
+}
+
+impl std::ops::Deref for SkillDownloadUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.user
+    }
+}
+
+const SKILL_AUTH_MISSING: &str = "Wegent-Skill-Auth-Missing";
+const SKILL_AUTH_INVALID_API_KEY: &str = "Wegent-Skill-Auth-Invalid-Api-Key";
+
+impl brz_http_server::Authenticator<SkillDownloadUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<SkillDownloadUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let x_api_key = request
+            .header("x-api-key")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([
+            ("authorization", authorization),
+            ("x-api-key", x_api_key),
+        ]);
+        let runtime_download = is_runtime_skill_download(&self.state().auth, &headers.view());
+        get_current_user(&self.state().auth, &self.state().mysql, &headers.view())
+            .await
+            .map(|user| SkillDownloadUser {
+                user,
+                runtime_download,
+            })
+            .map_err(|error| match error.detail {
+                "Missing authentication credentials" => {
+                    brz_http_server::AuthFailure::missing_credentials(SKILL_AUTH_MISSING)
+                }
+                "Invalid or expired API key" => {
+                    brz_http_server::AuthFailure::invalid_credentials(SKILL_AUTH_INVALID_API_KEY)
+                }
+                _ => brz_http_server::AuthFailure::invalid_credentials("Bearer"),
+            })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a SkillDownloadUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.user.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        let detail = match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: SKILL_AUTH_MISSING,
+            } => "Missing authentication credentials",
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: SKILL_AUTH_INVALID_API_KEY,
+            } => "Invalid or expired API key",
+            _ => "Could not validate credentials",
+        };
+        crate::http_compat::FastApiError::unauthorized(detail).into_http_error(arena)
+    }
+}
+
 impl UserRow {
     pub fn is_admin(&self) -> bool {
         self.role == "admin"

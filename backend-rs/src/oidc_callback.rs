@@ -526,7 +526,7 @@ mod tests {
             dependencies(cfg: OidcProbeState)
         );
 
-        #[brz_http_server::get("/api/auth/oidc/callback", group = super::probe::oidc_probe)]
+        #[brz_http_server::get("/api/auth/oidc/callback", group = super::probe::oidc_probe, access = public)]
         async fn callback(
             #[inject(cfg)] cfg: &OidcProbeState,
             code: Option<String>,

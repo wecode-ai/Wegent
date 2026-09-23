@@ -12,14 +12,16 @@
 //! endpoint consumes only the access-control outcome (404/409), but the
 //! same call sequence produces the recorded dependency traffic.
 use brz_mysql::{FromMysqlRow, Json};
-use brz_redis::{Redis, RedisBytes};
+use brz_redis::Redis;
 #[cfg(test)]
 use serde_json::Value;
 
-use super::error::ApiError;
+use super::error::{ApiError, database_query_failed as internal_mysql};
 use super::kind_refs::{SummaryCaches, convert_team_dict, get_bot_summary_for_subtask};
 use super::kinds::KindStore;
 use super::py_set_order::PySetOrder;
+use super::task_store::{self, TableRoute};
+use super::user_cache;
 use crate::crd::{CrdDocument, reference_parts};
 use crate::json_compat::{JsonProjection, OpaqueJson};
 use crate::task_routing::{ByTaskId, ByUserId};
@@ -30,11 +32,6 @@ use crate::task_routing::{ByTaskId, ByUserId};
 // in a format string renders to single braces, producing a literal `{tasks}`
 // table name that MySQL rejects (replay evidence: attempt-5 status 500
 // "database query failed" from `FROM {tasks}`).
-const ACTIVE_TASK_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \
-    LIMIT 1";
 const WORKSPACE_BY_REF_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
         client_origin, is_group_chat \
     FROM {{tasks}} \
@@ -51,6 +48,11 @@ const SUBTASKS_BY_TASK_SQL: &str = "SELECT id, user_id, task_id, team_id, title,
     FROM {{subtasks}} \
     WHERE task_id = ? \
     ORDER BY message_id ASC, created_at ASC";
+
+/// `task_fork_history.resolve_for_task`'s `limit` at the
+/// `get_task_detail` call site: the fork-history window the source builds
+/// `all_bot_ids` and the returned subtask list from.
+const FORK_HISTORY_LIMIT: usize = 100;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the detail flow. The
 /// column list mirrors the source SQLAlchemy `TaskResource` labeled query so
@@ -98,13 +100,6 @@ fn decode_task_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<TaskRow>
         client_origin: row.get("client_origin")?,
         is_group_chat: row.get_required("is_group_chat")?,
     })
-}
-
-#[derive(Debug, FromMysqlRow)]
-struct IdRow {
-    #[mysql(rename = "users_id")]
-    #[allow(dead_code)]
-    id: i64,
 }
 
 #[derive(Debug, FromMysqlRow)]
@@ -271,55 +266,28 @@ pub(crate) struct SubtaskRow {
     reply_to_subtask_id: i64,
 }
 
-/// `userReader.get_by_id` as the task-detail chain performs it. The tree
-/// response discards the row, so only the read topology is observable: a
-/// supplied Redis client serves the read from the `user:v2:data:{user_id}`
-/// document (the deployment's cached reader); without one the read stays on
-/// the public direct SQL path.
-async fn user_reader_get_by_id<M, R: Redis>(
-    mysql: &M,
-    redis: Option<&R>,
-    user_id: i64,
-) -> Result<(), ApiError>
-where
-    M: brz_mysql::Mysql,
-{
-    let user_cache_key = format!("user:v2:data:{user_id}");
-    let cached: Option<RedisBytes> = match redis {
-        Some(redis) => redis
-            .get(user_cache_key.as_str())
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, key = %user_cache_key, "[user_cache] redis data read failed");
-                error
-            })
-            .ok()
-            .flatten(),
-        None => None,
-    };
-    if cached.is_some() {
-        return Ok(());
-    }
-    let _user: Option<IdRow> = mysql
-        .fetch_optional(
-            "SELECT users.id AS users_id \
-             FROM users \
-             WHERE users.id = ? \
-             LIMIT 1",
-            (user_id,),
-        )
-        .await
-        .map_err(internal_mysql)?;
-    Ok(())
-}
-
-fn internal_mysql(error: brz_mysql::MysqlError) -> ApiError {
-    tracing::warn!(%error, "[remote_workspace] mysql query failed");
-    ApiError::internal("database query failed")
-}
-
 fn not_found() -> ApiError {
     ApiError::not_found("Task not found")
+}
+
+/// `task_store.get_by_id(db, task_id=..., owner_user_id=...)`: the sharded
+/// store resolves the physical task table first (the legacy owner and
+/// migrated-copy probes), then loads the owned row from it.
+async fn load_task_by_owner<M: brz_mysql::Mysql>(
+    mysql: &M,
+    policy: crate::task_routing::TaskPolicy,
+    task_id: u64,
+    owner_user_id: i64,
+) -> Result<Option<brz_mysql::MysqlRow>, ApiError> {
+    let route = task_store::resolve_table(mysql, policy, task_id, Some(owner_user_id)).await?;
+    task_store::fetch_optional(
+        mysql,
+        route,
+        TASK_BY_OWNER_SQL,
+        (task_id as i64, owner_user_id),
+    )
+    .await
+    .map_err(internal_mysql)
 }
 
 /// Full task-detail load. Returns the loaded task row (owner user id and
@@ -335,6 +303,7 @@ pub(crate) struct TaskDetail {
 pub(crate) async fn load_task_detail<M, R: Redis>(
     mysql: &M,
     redis: Option<&R>,
+    policy: crate::task_routing::TaskPolicy,
     erp: &crate::teams::group_membership::ErpContext<'_, R>,
     kinds: &KindStore<'_, M, R>,
     task_id: u64,
@@ -343,11 +312,15 @@ pub(crate) async fn load_task_detail<M, R: Redis>(
 where
     M: brz_mysql::Mysql,
 {
-    // 1. `get_active_non_deleted_task`: kind Task, is_active IN (1, 2);
-    //    `ShardedTaskStore` applies the JSON DELETE check after the row load.
+    // 1. `get_active_non_deleted_task`: kind Task, is_active IN (1, 2). A
+    //    legacy id pushes the JSON DELETE check into the base-table render;
+    //    a shard read applies it after the row load.
     let task_row: Option<brz_mysql::MysqlRow> = mysql
         .route(ByTaskId(task_id))
-        .fetch_optional(ACTIVE_TASK_SQL, (task_id as i64,))
+        .fetch_optional(
+            &task_store::active_task_sql(task_id, policy),
+            (task_id as i64,),
+        )
         .await
         .map_err(internal_mysql)?;
     let task = task_row
@@ -372,7 +345,7 @@ where
     //    the owner or an approved resource member.
     let accessible_row: Option<brz_mysql::MysqlRow> = mysql
         .route(ByTaskId(task_id))
-        .fetch_optional(ACTIVE_TASK_SQL, (task_id as i64,))
+        .fetch_optional(&task_store::accessible_task_sql(), (task_id as i64,))
         .await
         .map_err(internal_mysql)?;
     let accessible_task = accessible_row
@@ -440,15 +413,12 @@ where
     // 3b. `convert_to_task_dict`'s own `userReader.get_by_id` (the
     //     deployment-configured reader; the source's cached reader serves
     //     the read from `user:v2:data` when the client is available).
-    user_reader_get_by_id(mysql, redis, task.user_id).await?;
+    user_cache::get_by_id(mysql, redis, task.user_id).await?;
 
     // 4. Requested-skills raw task load (`task_store.get_by_id` with the
-    //    owner filter).
-    let skills_row: Option<brz_mysql::MysqlRow> = mysql
-        .route(ByTaskId(task_id))
-        .fetch_optional(TASK_BY_OWNER_SQL, (task_id as i64, task.user_id))
-        .await
-        .map_err(internal_mysql)?;
+    //    owner filter): the sharded store resolves the physical table before
+    //    the row load.
+    let skills_row = load_task_by_owner(mysql, policy, task_id, task.user_id).await?;
     let _skills_task = skills_row
         .as_ref()
         .map(decode_task_row)
@@ -457,7 +427,7 @@ where
 
     // 5. `userReader.get_by_id` again (the deployment-configured reader).
     // The user row is not needed for the tree response.
-    user_reader_get_by_id(mysql, redis, task.user_id).await?;
+    user_cache::get_by_id(mysql, redis, task.user_id).await?;
 
     // 6. Team detail: `kindReader.get_by_id` (only when the task dict
     //    resolved a team_id in step 3), then
@@ -492,7 +462,7 @@ where
         // `should_redact_team_for_user` runs BEFORE `_convert_to_team_dict`;
         // the tree response discards the redacted team, but the membership
         // resolution traffic is request-owned.
-        team_access_policy::should_redact_team_for_user(
+        crate::teams::group_membership::should_redact_team_for_user(
             mysql,
             erp,
             user_id,
@@ -500,7 +470,8 @@ where
             team.user_id,
             &team.namespace,
         )
-        .await?;
+        .await
+        .map_err(internal_mysql)?;
         convert_team_dict(kinds, team, owner_id).await?;
     }
 
@@ -508,37 +479,35 @@ where
     //    `subtask_store.list_by_task_ordered` (owner match, subtasks,
     //    contexts). Forked parents are not followed when the task has no
     //    `fork` spec (the recorded cases had none).
-    let lineage_row: Option<brz_mysql::MysqlRow> = mysql
-        .route(ByTaskId(task_id))
-        .fetch_optional(TASK_BY_OWNER_SQL, (task_id as i64, task.user_id))
-        .await
-        .map_err(internal_mysql)?;
+    let lineage_row = load_task_by_owner(mysql, policy, task_id, task.user_id).await?;
     let _lineage_task = lineage_row
         .as_ref()
         .map(decode_task_row)
         .transpose()
         .map_err(internal_mysql)?;
 
-    let owner_match_row: Option<brz_mysql::MysqlRow> = mysql
-        .route(ByTaskId(task_id))
-        .fetch_optional(
-            "SELECT id \
-             FROM {{tasks}} \
-             WHERE id = ? AND user_id = ? \
-             LIMIT 1",
-            (task_id as i64, task.user_id),
-        )
-        .await
-        .map_err(internal_mysql)?;
-    let owner_match = owner_match_row
-        .as_ref()
-        .map(|row| row.get_required::<i64>("id"))
-        .transpose()
-        .map_err(internal_mysql)?;
+    // `list_by_task_ordered` guards with `_owner_matches_task_id` only for
+    // the ids the sharded store routes by task id; a legacy id resolves the
+    // subtask table through `_subtask_model_for_task_lookup` directly (the
+    // owner and migrated-copy probes), and a deployment without the sharded
+    // store keeps the base table.
     let mut subtasks: Vec<SubtaskRow> = Vec::new();
-    if owner_match.is_some() {
-        subtasks = list_subtasks(mysql, task_id).await?;
+    if (policy.is_scoped_id)(task_id) {
+        if task_store::owner_matches_task_id(mysql, task_id, task.user_id).await? {
+            subtasks = list_subtasks(mysql, task_id, TableRoute::ByTaskId(task_id)).await?;
+        }
+    } else {
+        let route = task_store::resolve_table(mysql, policy, task_id, Some(task.user_id)).await?;
+        subtasks = list_subtasks(mysql, task_id, route).await?;
     }
+    // `get_task_detail` consumes `resolve_for_task(..., limit=100)`, i.e. the
+    // fork-history window — not the full `list_by_task_ordered` result. The
+    // window owns `all_bot_ids`, the returned subtask list and
+    // `_get_connected_executor_binding`'s reverse scan, so it has to be
+    // applied before the bot ids are collected: a task with more than 100
+    // subtasks otherwise probes bot ids the source never read, and the
+    // recorded kind-cache lane cannot serve the extra `data:Bot:{id}` read.
+    window_fork_history(&mut subtasks);
 
     // 8. `get_bots_for_subtasks`: bot ids from the subtask rows
     //    (`subtask.bot_ids` JSON array), resolved through
@@ -610,15 +579,18 @@ where
 }
 
 /// `subtask_store.list_by_task_ordered` + `_attach_contexts`.
-async fn list_subtasks<M>(mysql: &M, task_id: u64) -> Result<Vec<SubtaskRow>, ApiError>
+async fn list_subtasks<M>(
+    mysql: &M,
+    task_id: u64,
+    route: TableRoute,
+) -> Result<Vec<SubtaskRow>, ApiError>
 where
     M: brz_mysql::Mysql,
 {
-    let subtask_rows: Vec<brz_mysql::MysqlRow> = mysql
-        .route(ByTaskId(task_id))
-        .fetch_all(SUBTASKS_BY_TASK_SQL, (task_id as i64,))
-        .await
-        .map_err(internal_mysql)?;
+    let subtask_rows: Vec<brz_mysql::MysqlRow> =
+        task_store::fetch_all(mysql, route, SUBTASKS_BY_TASK_SQL, (task_id as i64,))
+            .await
+            .map_err(internal_mysql)?;
     let subtasks = subtask_rows
         .iter()
         .map(decode_subtask_row)
@@ -657,6 +629,23 @@ where
             .map_err(internal_mysql)?;
     }
     Ok(subtasks)
+}
+
+/// `task_fork_history.resolve_for_task`'s window: the collected items are
+/// sorted by `(message_id, created_at, id)` and only the last
+/// [`FORK_HISTORY_LIMIT`] are returned (`items[-limit:]`). `_attach_contexts`
+/// already ran inside `list_by_task_ordered`, so the caller must apply this
+/// after the subtask and context loads.
+fn window_fork_history(subtasks: &mut Vec<SubtaskRow>) {
+    subtasks.sort_by(|left, right| {
+        left.message_id
+            .cmp(&right.message_id)
+            .then(left.created_at.cmp(&right.created_at))
+            .then(left.id.cmp(&right.id))
+    });
+    if subtasks.len() > FORK_HISTORY_LIMIT {
+        subtasks.drain(..subtasks.len() - FORK_HISTORY_LIMIT);
+    }
 }
 
 /// Decode one row of the subtask projection (unqualified column names).
@@ -747,122 +736,75 @@ pub(crate) fn test_subtask_row(executor_name: &str, executor_deleted_at: i8) -> 
     }
 }
 
-/// `app.services.team_access_policy`: the team redaction check's
-/// request-owned dependency sequence. The tree response discards the
-/// outcome, so only the read topology is reproduced.
-pub(crate) mod team_access_policy {
-    use super::internal_mysql;
-    use crate::teams::group_membership::{self, ErpContext};
-    use crate::teams::teams_repository as repo;
-    use brz_mysql::Mysql;
-    use brz_redis::Redis;
-
-    /// `should_redact_team_for_user`: short-circuits for the team owner or a
-    /// `default`-namespace team; otherwise resolves the user's effective
-    /// group roles (`get_user_group_roles`), then the restricted-analyst
-    /// namespace checks. Only the read sequence is observable here.
-    pub(crate) async fn should_redact_team_for_user<M, R: Redis>(
-        mysql: &M,
-        erp: &ErpContext<'_, R>,
-        user_id: i64,
-        team_id: i64,
-        team_user_id: i64,
-        team_namespace: &str,
-    ) -> Result<bool, super::ApiError>
-    where
-        M: Mysql,
-    {
-        if team_user_id == user_id || team_namespace == "default" {
-            return Ok(false);
-        }
-        // `get_user_group_roles`: active namespace names, then
-        // `get_effective_roles_in_groups` (direct + entity memberships).
-        let resolved = group_membership::user_group_memberships(mysql, erp, user_id)
-            .await
-            .map_err(internal_mysql)?;
-        let roles =
-            group_membership::effective_roles(&resolved.memberships, &resolved.active_names);
-        let restricted: Vec<&str> = roles
-            .iter()
-            .filter(|(_, role)| role.as_str() == "RestrictedAnalyst")
-            .map(|(name, _)| name.as_str())
-            .collect();
-        if restricted.contains(&team_namespace) {
-            return Ok(true);
-        }
-        if restricted.is_empty() {
-            return Ok(false);
-        }
-        // Restricted namespaces' active ids (`Namespace.id.in_(names)`).
-        let mut sorted: Vec<String> = restricted.iter().map(|name| name.to_string()).collect();
-        sorted.sort();
-        let namespace_ids = repo::namespace_ids_by_names(mysql, &sorted)
-            .await
-            .map_err(internal_mysql)?;
-        if namespace_ids.is_empty() {
-            return Ok(false);
-        }
-        // Approved team member rows bound to those namespaces.
-        Ok(
-            team_member_bound_to_namespaces(mysql, team_id, &namespace_ids)
-                .await
-                .map_err(internal_mysql)?
-                .is_some(),
-        )
-    }
-
-    /// The `should_redact_team_for_user` tail query: one approved
-    /// `resource_members` row of the team bound to a restricted namespace.
-    async fn team_member_bound_to_namespaces<M>(
-        mysql: &M,
-        team_id: i64,
-        namespace_ids: &[i64],
-    ) -> Result<Option<i64>, brz_mysql::MysqlError>
-    where
-        M: Mysql,
-    {
-        if namespace_ids.is_empty() {
-            return Ok(None);
-        }
-        let placeholders = vec!["?"; namespace_ids.len()].join(", ");
-        #[derive(brz_mysql::FromMysqlRow)]
-        struct Row {
-            resource_members_id: i64,
-        }
-        let mut args: Vec<repo::BindingArg> = Vec::with_capacity(namespace_ids.len() + 3);
-        args.push(repo::BindingArg::Int(team_id));
-        args.push(repo::BindingArg::Str("Team".to_owned()));
-        args.push(repo::BindingArg::Str("TEAM".to_owned()));
-        args.push(repo::BindingArg::Str("namespace".to_owned()));
-        args.extend(
-            namespace_ids
-                .iter()
-                .map(|id| repo::BindingArg::Str(id.to_string())),
-        );
-        args.push(repo::BindingArg::Str("approved".to_owned()));
-        args.push(repo::BindingArg::Str("APPROVED".to_owned()));
-        let row: Option<Row> = mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT resource_members.id AS resource_members_id \
-                     FROM resource_members \
-                     WHERE resource_members.resource_id = ? \
-                     AND resource_members.resource_type IN (?, ?) \
-                     AND resource_members.entity_type = ? \
-                     AND resource_members.entity_id IN ({placeholders}) \
-                     AND resource_members.status IN (?, ?) \
-                     LIMIT 1"
-                ),
-                args,
-            )
-            .await?;
-        Ok(row.map(|row| row.resource_members_id))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fork_history_subtask(id: i64, message_id: i32, bot_ids: Vec<Option<i64>>) -> SubtaskRow {
+        let mut subtask = test_subtask_row("", 0);
+        subtask.id = id;
+        subtask.message_id = message_id;
+        subtask.created_at =
+            chrono::NaiveDateTime::default() + chrono::Duration::seconds(i64::from(message_id));
+        subtask.bot_ids = Json(JsonProjection {
+            value: Some(bot_ids),
+        });
+        subtask
+    }
+
+    /// `get_task_detail` consumes `resolve_for_task(limit=100)`: the items are
+    /// sorted by `(message_id, created_at, id)` and only the last 100 are
+    /// returned. Recorded case 9fba0c4d (task 11132555386195) has 140
+    /// subtasks; the first 18 reference bot 110593 and the remaining 122
+    /// reference 110592, so the windowed `all_bot_ids` is `{110592}` and the
+    /// source probes only `kind:v2:data:Bot:110592`. Without the window the
+    /// extra 110593 probe leaves the recorded kind-cache lane and the
+    /// endpoint answers 500 `kind query failed` instead of 404.
+    #[test]
+    fn fork_history_window_keeps_the_last_hundred_rows() {
+        let mut subtasks: Vec<SubtaskRow> = (1..=140_i64)
+            .map(|index| {
+                let bot_id = if index <= 18 { 110_593 } else { 110_592 };
+                fork_history_subtask(index, index as i32, vec![Some(bot_id)])
+            })
+            .collect();
+        // Feed the window the reverse of the query's `ORDER BY message_id`
+        // order so the sort is exercised too.
+        subtasks.reverse();
+
+        window_fork_history(&mut subtasks);
+
+        assert_eq!(subtasks.len(), 100);
+        assert_eq!(subtasks.first().map(|row| row.message_id), Some(41));
+        assert_eq!(subtasks.last().map(|row| row.message_id), Some(140));
+        assert!(subtasks.iter().all(|row| {
+            row.bot_ids
+                .0
+                .value
+                .as_ref()
+                .is_none_or(|ids| !ids.contains(&Some(110_593)))
+        }));
+    }
+
+    /// `resolve_for_task` only slices when the collected items exceed the
+    /// limit, and orders the retained rows by `(message_id, created_at, id)`.
+    #[test]
+    fn fork_history_window_keeps_short_lists_in_order() {
+        let mut subtasks = vec![
+            fork_history_subtask(7, 9, vec![Some(110_593)]),
+            fork_history_subtask(5, 4, vec![Some(110_592)]),
+        ];
+
+        window_fork_history(&mut subtasks);
+
+        assert_eq!(
+            subtasks
+                .iter()
+                .map(|row| (row.message_id, row.id))
+                .collect::<Vec<_>>(),
+            vec![(4, 5), (9, 7)]
+        );
+    }
 
     #[test]
     fn delete_status_detected_in_json() {
@@ -882,11 +824,7 @@ mod sql_tests {
 
     #[tokio::test]
     async fn tree_queries_keep_full_projection_and_routing_tokens() {
-        for (sql, args) in [
-            (ACTIVE_TASK_SQL, 1),
-            (TASK_BY_OWNER_SQL, 2),
-            (WORKSPACE_BY_REF_SQL, 3),
-        ] {
+        for (sql, args) in [(TASK_BY_OWNER_SQL, 2), (WORKSPACE_BY_REF_SQL, 3)] {
             crate::sql_test_support::assert_routed_sql(sql, args);
             let projection = sql.split(" FROM ").next().unwrap();
             assert_eq!(
@@ -895,7 +833,9 @@ mod sql_tests {
             );
         }
         let mysql = QueryCapture::default();
-        list_subtasks(&mysql, 42).await.unwrap();
+        list_subtasks(&mysql, 42, TableRoute::ByTaskId(42))
+            .await
+            .unwrap();
         let queries = mysql.queries();
         assert_eq!(queries[0].route, Route::Task(42));
         assert!(queries[0].sql.contains("`role`"));
@@ -904,5 +844,16 @@ mod sql_tests {
                 .sql
                 .ends_with("ORDER BY message_id ASC, created_at ASC")
         );
+    }
+
+    #[tokio::test]
+    async fn subtask_loads_bind_the_resolved_owner_shard() {
+        let mysql = QueryCapture::default();
+        list_subtasks(&mysql, 4_920_558, TableRoute::ByOwner(5_848))
+            .await
+            .unwrap();
+        let queries = mysql.queries();
+        assert_eq!(queries[0].route, Route::User(5_848));
+        assert!(queries[0].sql.contains("FROM {{subtasks}}"));
     }
 }

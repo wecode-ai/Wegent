@@ -712,15 +712,8 @@ fn build_user_message_content(
 pub async fn get_chat_history_value(
     app: &crate::state::AppState,
     session_id: &str,
-    authorization: Option<&str>,
     query: &HttpQuery<HistoryQuery>,
 ) -> Result<HistoryResponse, crate::http_compat::FastApiError> {
-    if let Err(error) = crate::internal_auth::verify_internal_service_token(
-        &app.internal_chat.internal_service_token,
-        authorization,
-    ) {
-        return Err(crate::http_compat::FastApiError::from(error));
-    }
     chat_history(app, session_id, query)
         .await
         .map_err(crate::http_compat::FastApiError::from)

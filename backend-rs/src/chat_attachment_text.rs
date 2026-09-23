@@ -117,10 +117,10 @@ impl AttachmentTextQuery {
 async fn get_attachment_text(
     #[inject(state)] state: &AppState,
     attachment_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] _service: crate::internal_auth::InternalService,
     query: brz_http_server::Query<AttachmentTextQuery>,
 ) -> Result<AttachmentTextResponse, crate::http_compat::FastApiError> {
-    get_attachment_text_value(state, attachment_id, authorization, &query)
+    get_attachment_text_value(state, attachment_id, &query)
         .await
         .map_err(crate::http_compat::FastApiError::from)
 }
@@ -130,13 +130,8 @@ async fn get_attachment_text(
 pub async fn get_attachment_text_value(
     app: &AppState,
     attachment_id: i64,
-    authorization: Option<&str>,
     query: &AttachmentTextQuery,
 ) -> Result<AttachmentTextResponse, HttpError> {
-    crate::internal_auth::verify_internal_service_token(
-        &app.internal_chat.internal_service_token,
-        authorization,
-    )?;
     let (session_id, offset, limit) = query.validated()?;
     get_attachment_text_inner(app, attachment_id, &session_id, offset, limit).await
 }
