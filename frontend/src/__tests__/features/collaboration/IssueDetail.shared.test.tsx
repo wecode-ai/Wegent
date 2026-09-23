@@ -1229,9 +1229,8 @@ describe('shared IssueDetail', () => {
     delete (URL as Partial<typeof URL>).revokeObjectURL
   })
 
-  it('loads a workflow plan and executes every supported cloud workflow action', async () => {
-    const approve = jest.fn().mockResolvedValue(workflowPlan('awaiting_review'))
-    const approveReview = jest.fn().mockResolvedValue(workflowPlan('running'))
+  it('lets a user approve, pause, and resume an AI workflow', async () => {
+    const approve = jest.fn().mockResolvedValue(workflowPlan('running'))
     const pause = jest.fn().mockResolvedValue(workflowPlan('paused'))
     const resume = jest.fn().mockResolvedValue(workflowPlan('running'))
     const replan = jest.fn().mockResolvedValue(workflowPlan('awaiting_approval'))
@@ -1239,7 +1238,6 @@ describe('shared IssueDetail', () => {
       workflowPlans: {
         get: jest.fn().mockResolvedValue(workflowPlan('awaiting_approval')),
         approve,
-        approveReview,
         pause,
         resume,
         replan,
@@ -1264,14 +1262,39 @@ describe('shared IssueDetail', () => {
     fireEvent.click(await screen.findByTestId('cloud-todo-workflow-approve'))
     await waitFor(() => expect(approve).toHaveBeenCalledWith(issue.id))
 
-    fireEvent.click(await screen.findByTestId('cloud-todo-workflow-review'))
-    await waitFor(() => expect(approveReview).toHaveBeenCalledWith(issue.id))
-
     fireEvent.click(await screen.findByTestId('cloud-todo-workflow-pause'))
     await waitFor(() => expect(pause).toHaveBeenCalledWith(issue.id))
 
     fireEvent.click(await screen.findByTestId('cloud-todo-workflow-resume'))
     await waitFor(() => expect(resume).toHaveBeenCalledWith(issue.id))
+  })
+
+  it('reserves AI workflow review decisions for the manager', async () => {
+    const approveReview = jest.fn().mockResolvedValue(workflowPlan('running'))
+    const api = createApi({
+      workflowPlans: {
+        get: jest.fn().mockResolvedValue(workflowPlan('awaiting_review')),
+        approveReview,
+      },
+    })
+
+    renderDetail(api, {
+      issue: {
+        ...issue,
+        workflow: {
+          advancement_policy: 'ai',
+          orchestration_status: 'awaiting_review',
+          nodes: [],
+        },
+      },
+    })
+
+    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    expect(await screen.findByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent(
+      '等待管理者判断'
+    )
+    expect(screen.queryByTestId('cloud-todo-workflow-review')).not.toBeInTheDocument()
+    expect(approveReview).not.toHaveBeenCalled()
   })
 
   it('runs workflow nodes and completes stage deliverables through the shared cloud chain', async () => {

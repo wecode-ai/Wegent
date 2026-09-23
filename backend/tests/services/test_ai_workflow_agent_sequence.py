@@ -242,7 +242,14 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
         )
         run.metadata_json = {
             "activity_message_id": message_id,
-            "event": {"payload": {"workflow_run_id": workflow_run_id}},
+            "event": {
+                "type": (
+                    "workflow.review"
+                    if _kwargs.get("phase") == "review"
+                    else "workflow.plan"
+                ),
+                "payload": {"workflow_run_id": workflow_run_id},
+            },
         }
         db.add(activity)
         db.commit()
@@ -356,11 +363,28 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
         space_id=str(project.id),
         item_id=claude_task_id,
     )
-    assert first_reported["status"] == "planning"
-    assert first_reported["stage_id"] == "codex"
-    assert test_db.get(LoopItem, claude_task_id).status == "completed"
+    assert first_reported["status"] == "awaiting_review"
+    assert first_reported["stage_id"] == "claude"
+    assert test_db.get(LoopItem, claude_task_id).status == "in_review"
     assert test_db.get(LoopItem, issue.id).status == "in_progress"
-    second_run_id = str(first_reported["run_id"])
+    mcp_context.update(
+        {
+            "source": "project_automation",
+            "item_id": issue.id,
+            "project_automation_run_id": str(manager_runs[first_run.run_id].id),
+        }
+    )
+    first_decided = await wework_space.decide_workflow_review(
+        token,
+        "completed",
+        "Claude implementation is ready for Codex verification.",
+        space_id=str(project.id),
+        item_id=issue.id,
+    )
+    assert first_decided["status"] == "planning"
+    assert first_decided["stage_id"] == "codex"
+    assert test_db.get(LoopItem, claude_task_id).status == "completed"
+    second_run_id = str(first_decided["run_id"])
     mcp_context.update(
         {
             "source": "project_automation",
@@ -413,12 +437,29 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
             "board_team_execution_id": str(codex_execution.id),
         }
     )
-    completed = await wework_space.report_workflow_outcome(
+    second_reported = await wework_space.report_workflow_outcome(
         token,
         "passed",
         "Codex verification completed.",
         space_id=str(project.id),
         item_id=codex_task_id,
+    )
+    assert second_reported["status"] == "awaiting_review"
+    assert test_db.get(LoopItem, codex_task_id).status == "in_review"
+    assert test_db.get(LoopItem, issue.id).status == "in_progress"
+    mcp_context.update(
+        {
+            "source": "project_automation",
+            "item_id": issue.id,
+            "project_automation_run_id": str(manager_runs[second_run_id].id),
+        }
+    )
+    completed = await wework_space.decide_workflow_review(
+        token,
+        "completed",
+        "Codex verification passed; the Issue is complete.",
+        space_id=str(project.id),
+        item_id=issue.id,
     )
 
     test_db.refresh(root_run)
@@ -435,22 +476,21 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
     assert issue.status == "completed"
     assert issue.completed_at is not None
     assert [entry["to_status"] for entry in issue.metadata_json["status_history"]] == [
-        "in_review",
-        "in_progress",
-        "in_review",
         "completed",
     ]
 
-    assert dispatch_manager.await_count == 2
+    assert dispatch_manager.await_count == 4
     assert [
         call.kwargs["automation_id"] for call in dispatch_manager.await_args_list
     ] == [
         "allocator-rule",
         "allocator-rule",
+        "allocator-rule",
+        "allocator-rule",
     ]
     assert [
         call.kwargs["workflow_run_id"] for call in dispatch_manager.await_args_list
-    ] == [first_run.run_id, second_run_id]
+    ] == [first_run.run_id, first_run.run_id, second_run_id, second_run_id]
     assert first_run.run_id != second_run_id
     assert len(manager_runs) == 2
     assert {manager_run.parent_id for manager_run in manager_runs.values()} == {

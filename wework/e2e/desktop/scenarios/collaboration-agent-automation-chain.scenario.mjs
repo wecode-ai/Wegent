@@ -1290,11 +1290,13 @@ export async function createDesktopScenario({
       timeoutMs: runtimeTimeoutMs,
       visible: true,
     })
-    await control.command('waitFor', scoped('[data-testid="collaboration-automation-execution"]'), {
-      text: '所有自动化阶段已完成，Issue 已自动完成',
-      timeoutMs: runtimeTimeoutMs,
-      visible: true,
-    })
+    for (const index of [0, 1]) {
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="collaboration-automation-stage-${index}"][data-status="completed"]`),
+        { timeoutMs: runtimeTimeoutMs, visible: true }
+      )
+    }
     await capture(control, `${screenshotPrefix}-completed.png`)
   }
 

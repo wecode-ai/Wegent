@@ -649,7 +649,7 @@ async def report_workflow_outcome(
 
 
 @mcp_tool(server="wework_space")
-def decide_workflow_review(
+async def decide_workflow_review(
     token_info: MCPAuthInfo,
     decision: str,
     summary: str,
@@ -675,6 +675,16 @@ def decide_workflow_review(
             decision=decision,
             summary=summary,
         )
+        if view.status == "planning":
+            parent = db.get(LoopItem, view.issue_id)
+            if parent is None:
+                raise ValueError("Workflow parent Issue is unavailable")
+            await issue_workflow_start_service.start(
+                db,
+                item=parent,
+                project=project,
+                user_id=token_info.user_id,
+            )
         return {**view.model_dump(mode="json"), "project_id": str(project.id)}
 
 

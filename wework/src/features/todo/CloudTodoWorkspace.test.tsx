@@ -1589,6 +1589,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-open-task-WEG-1')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-2'))
     expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(secondItem.title)

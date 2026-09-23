@@ -108,7 +108,7 @@ fn upgrades_v7_execution_table_missing_payload_without_losing_issues_or_runs() {
     let connection = Connection::open(path).unwrap();
     let upgrades: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 9",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 10",
             [],
             |row| row.get(0),
         )

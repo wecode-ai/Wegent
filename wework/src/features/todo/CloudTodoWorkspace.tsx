@@ -5162,7 +5162,7 @@ export function CloudTodoWorkspace({
                             display={boardCardDisplay}
                             agentNames={agentNameById}
                             dragDisabled={isAITableProject}
-                            previewDisabled
+                            issueDetailOnly={!isMyTasksBoard}
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}

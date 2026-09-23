@@ -334,10 +334,13 @@ export async function createDesktopScenario({
         'collaboration-local-agent-04-execution-started.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
-      await control.command('waitFor', scoped('[data-testid^="task-activity-run-event-"]'), {
-        text: '已完成',
-        timeoutMs: modelResponseTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid^="cloud-task-activity-execution-status-"][data-status="succeeded"]'),
+        {
+          timeoutMs: modelResponseTimeoutMs,
+        }
+      )
       const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
       assert.ok(
         executorLog.includes(COMPLETION_MARKER),

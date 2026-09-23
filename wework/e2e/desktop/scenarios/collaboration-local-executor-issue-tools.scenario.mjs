@@ -314,10 +314,13 @@ export async function createDesktopScenario({ executorHome, modelResponseTimeout
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', scoped('[data-testid^="task-activity-run-event-"]'), {
-        text: '已完成',
-        timeoutMs: modelResponseTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid^="cloud-task-activity-execution-status-"][data-status="succeeded"]'),
+        {
+          timeoutMs: modelResponseTimeoutMs,
+        }
+      )
       assert.ok(contextSeen, 'The executor did not read the bound Issue through real MCP')
       assert.ok(attachmentSeen, 'The executor did not list its uploaded Issue attachment')
       assert.ok(completed, 'The executor model sequence did not finish')

@@ -1060,7 +1060,7 @@ async def replan_loop_item_workflow_plan(
     "/loop-items/{item_id}/workflow-plan/manager-review",
     response_model=WorkflowPlanView,
 )
-def decide_loop_item_workflow_review(
+async def decide_loop_item_workflow_review(
     item_id: str,
     values: WorkflowReviewDecisionSubmit,
     automation_run_id: str = Header(
@@ -1076,7 +1076,7 @@ def decide_loop_item_workflow_review(
             status.HTTP_409_CONFLICT, "AI manager review run is required"
         )
     try:
-        return project_automation_execution.decide_manager_workflow_review(
+        plan = project_automation_execution.decide_manager_workflow_review(
             db,
             run_id=automation_run_id,
             issue_id=item_id,
@@ -1084,6 +1084,15 @@ def decide_loop_item_workflow_review(
             decision=values.decision,
             summary=values.summary,
         )
+        if plan.status == "planning":
+            await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_manager_reviewed",
+        )
+        return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 

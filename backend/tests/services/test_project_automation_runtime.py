@@ -610,6 +610,7 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "请通过看板工具自行查看。\n\n"
         "你是看板的 AI 管家，只负责编排，不执行具体任务。"
         "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
+        "为每个子任务编写面向执行者的具体 prompt，包含目标、边界和验收要求，"
         "然后调用 submit_workflow_plan 提交结构化方案。"
         "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
         "不要查询、猜测或伪造阶段标识。"

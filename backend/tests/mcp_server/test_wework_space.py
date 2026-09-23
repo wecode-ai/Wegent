@@ -8,6 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -415,6 +416,12 @@ async def test_workflow_child_reports_one_parent_review_outcome(
     child_id = approved.items[0].task_id
     assert child_id is not None
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    review_outcomes = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        wework_space.issue_workflow_start_service,
+        "review_outcomes",
+        review_outcomes,
+    )
     monkeypatch.setattr(
         wework_space,
         "_board_context",
@@ -435,7 +442,8 @@ async def test_workflow_child_reports_one_parent_review_outcome(
     assert reported["issue_id"] == item.id
     assert reported["status"] == "awaiting_review"
     assert test_db.get(LoopItem, child_id).status == "in_review"
-    assert test_db.get(LoopItem, item.id).status == "in_review"
+    assert test_db.get(LoopItem, item.id).status == "in_progress"
+    review_outcomes.assert_awaited_once()
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(
