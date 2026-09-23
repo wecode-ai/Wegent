@@ -18,6 +18,7 @@ import type {
   CollaborationAgent,
   CollaborationGroup,
   CollaborationMember,
+  CollaborationWorkspaceMember,
   CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
@@ -40,8 +41,14 @@ export function isCurrentDeviceCollaborationAgent(
 
 export interface WorkspaceResourceCommands {
   searchUsers(query: string): Promise<CollaborationUser[]>;
-  addMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
-  updateMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
+  addMember(
+    userId: number,
+    role: MemberRole,
+  ): Promise<CollaborationWorkspaceMember>;
+  updateMember(
+    userId: number,
+    role: MemberRole,
+  ): Promise<CollaborationWorkspaceMember>;
   removeMember(userId: number): Promise<void>;
   createCollaborationGroup(input: {
     name: string;
@@ -261,7 +268,7 @@ function MemberInviteDialog({
   commands,
   onClose,
 }: {
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   messages: ResourceCopy;
   commands: WorkspaceResourceCommands;
   onClose(): void;
@@ -382,7 +389,7 @@ export function WorkspaceMembersConfiguration({
   commands,
 }: {
   workspace: CollaborationWorkspace;
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   locale: "zh-CN" | "en";
   commands: WorkspaceResourceCommands;
 }) {
@@ -509,7 +516,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
   availableGroups?: CollaborationGroup[];
-  members: CollaborationMember[];
+  members: Array<Pick<CollaborationMember, "user_id" | "user_name">>;
   agents: CollaborationAgent[];
   locale: "zh-CN" | "en";
   currentUserId?: number;

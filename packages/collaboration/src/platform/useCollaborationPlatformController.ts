@@ -13,7 +13,7 @@ import type {
   CollaborationGroup,
   CollaborationExecutionEnvironment,
   CollaborationExecution,
-  CollaborationMember,
+  CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
   CollaborationProject,
@@ -39,7 +39,7 @@ export interface CollaborationPlatformState {
     project: CollaborationProject;
     execution: CollaborationExecution;
   }>;
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   collaborationGroups: CollaborationGroup[];
   executionEnvironments: CollaborationExecutionEnvironment[];

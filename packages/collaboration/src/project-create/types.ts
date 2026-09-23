@@ -9,7 +9,7 @@ import type {
   CollaborationGroup,
   CollaborationGroupMember,
   CollaborationExecutionEnvironment,
-  CollaborationMember,
+  CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationProject,
 } from "../types";
@@ -56,7 +56,7 @@ export interface ProjectCreateCollaborationGroupDraftInput {
     id: number;
     name: string;
   };
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   modelSelection: ProjectCreateGenerationModelSelection;
 }
@@ -111,7 +111,7 @@ export interface ProjectCreateResourceSetup {
     id: number;
     name: string;
   };
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   defaultAgentResourceIds?: string[];
   groups: CollaborationGroup[];

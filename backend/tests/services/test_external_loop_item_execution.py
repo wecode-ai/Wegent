@@ -454,6 +454,10 @@ def test_external_parent_remains_stored_in_description(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "default_issue_security": "related",
+    }
     parent_id = f"{project.project_key}-7"
     captured: dict[str, object] = {}
 
@@ -485,8 +489,10 @@ def test_external_parent_remains_stored_in_description(
 
     assert captured["description"] == f"Child details\n\n{PARENT_MARKER} {parent_id}"
     assert "wegent:status:inbox" in captured["labels"]
+    assert "wegent:security:related" in captured["labels"]
     assert "wegent:status:None" not in captured["labels"]
     assert created["status"] == "inbox"
+    assert created["security_level"] == "related"
     assert created["parent_id"] == parent_id
     assert created["description"] == "Child details"
 

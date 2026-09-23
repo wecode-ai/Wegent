@@ -43,6 +43,10 @@ async function verifyMemberReply(cloud, issue, rootId) {
     method: 'POST',
     body: JSON.stringify({ user_id: member.id, role: 'Developer' }),
   })
+  await requestJson(cloud, `/api/v1/loop-items/${issue.id}/collaborators`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: member.id }),
+  })
   const login = await requestJson(cloud, '/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ user_name: userName, password }),

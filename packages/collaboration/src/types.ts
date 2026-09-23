@@ -315,8 +315,12 @@ export interface CollaborationMember {
   user_id: number
   user_name: string
   email: string | null
-  role: CollaborationWorkspaceRole
+  role: CollaborationRole
   capability_description?: string
+}
+
+export interface CollaborationWorkspaceMember extends Omit<CollaborationMember, 'role'> {
+  role: CollaborationWorkspaceRole
 }
 
 export interface CollaborationUser {

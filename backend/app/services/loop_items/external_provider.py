@@ -294,6 +294,7 @@ class ExternalLoopItemProvider:
             values.priority,
             item_status,
             assignee=assignee_label,
+            security_level=default_issue_security(project),
         )
         issue = self._create_issue(
             project,

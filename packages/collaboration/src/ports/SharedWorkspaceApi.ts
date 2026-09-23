@@ -21,6 +21,7 @@ import type {
   CollaborationProjectVisibility,
   CollaborationRole,
   CollaborationWorkspaceRole,
+  CollaborationWorkspaceMember,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -499,13 +500,13 @@ export interface SharedCollaborationWorkspacesApi {
   create(input: WorkspaceCreateInput): Promise<CollaborationWorkspace>
   update(workspaceId: string, input: WorkspaceUpdateInput): Promise<CollaborationWorkspace>
   archive(workspaceId: string, version: number): Promise<void>
-  listMembers(workspaceId: string): Promise<CollaborationMember[]>
-  addMember(workspaceId: string, input: WorkspaceMemberCreateInput): Promise<CollaborationMember>
+  listMembers(workspaceId: string): Promise<CollaborationWorkspaceMember[]>
+  addMember(workspaceId: string, input: WorkspaceMemberCreateInput): Promise<CollaborationWorkspaceMember>
   updateMember(
     workspaceId: string,
     userId: number,
     input: WorkspaceMemberUpdateInput
-  ): Promise<CollaborationMember>
+  ): Promise<CollaborationWorkspaceMember>
   removeMember(workspaceId: string, userId: number): Promise<void>
   listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>
   addAgent(workspaceId: string, input: WorkspaceAgentCreateInput): Promise<CollaborationOwnedAgent>
