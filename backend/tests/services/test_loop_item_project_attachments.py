@@ -246,17 +246,33 @@ def test_project_attachment_list_hides_unrelated_issue_metadata(
         email="attachment-viewer@example.com",
         is_active=True,
     )
-    test_db.add(viewer)
+    maintainer = User(
+        user_name="attachment-maintainer",
+        password_hash="unused",
+        email="attachment-maintainer@example.com",
+        is_active=True,
+    )
+    test_db.add_all([viewer, maintainer])
     test_db.flush()
-    test_db.add(
-        ResourceMember(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=project.id,
-            entity_type="user",
-            entity_id=str(viewer.id),
-            role=BaseRole.Viewer.value,
-            status=MemberStatus.APPROVED.value,
-        )
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=project.id,
+                entity_type="user",
+                entity_id=str(viewer.id),
+                role=BaseRole.Viewer.value,
+                status=MemberStatus.APPROVED.value,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=project.id,
+                entity_type="user",
+                entity_id=str(maintainer.id),
+                role=BaseRole.Maintainer.value,
+                status=MemberStatus.APPROVED.value,
+            ),
+        ]
     )
     test_db.commit()
 
@@ -273,6 +289,12 @@ def test_project_attachment_list_hides_unrelated_issue_metadata(
         )
         == 2
     )
+    assert {
+        attachment.display_name
+        for attachment, _ in loop_item_service.list_project_attachments(
+            test_db, project.id, maintainer.id
+        )
+    } == {"restricted.txt", "open.txt"}
 
 
 def test_import_context_attachments_copies_once(

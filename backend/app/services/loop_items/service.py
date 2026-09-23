@@ -972,6 +972,8 @@ class LoopItemService:
             .order_by(attachment.created_at.desc(), item.sequence_number)
         )
         if access.project.task_provider == "local":
+            if has_permission(access.role, BaseRole.Maintainer):
+                return query.all()
             visible_ids = select(LoopItem.id).where(
                 visible_item_filter(user_id, access.project)
             )
