@@ -11,6 +11,32 @@ const COMMENT_TEXT = '这条评论在验收里 @ 了你，应该收到通知'
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
 const FLASH_ANIMATION = 'task-detail-comment-flash'
 
+/**
+ * How long arriving at the mentioned comment may take.
+ *
+ * The notification names one comment, so landing on it is a single navigation:
+ * a click that walks through the collaboration home and the board list first, or
+ * that waits on the workspace after the board is already known, blows the budget.
+ */
+const COMMENT_BUDGET_MS = 6_000
+const FLASH_BUDGET_MS = 8_000
+
+function commentSelectorFor(activeSurface, commentId) {
+  return `${activeSurface} [data-testid="cloud-task-activity-message-${commentId}"]`
+}
+
+function assertNavigationBudget(label, commentMs, flashMs) {
+  assert.ok(
+    commentMs <= COMMENT_BUDGET_MS,
+    `${label} took ${commentMs}ms to show the mentioned comment (budget ${COMMENT_BUDGET_MS}ms)`
+  )
+  assert.ok(
+    flashMs <= FLASH_BUDGET_MS,
+    `${label} took ${flashMs}ms to highlight the comment (budget ${FLASH_BUDGET_MS}ms)`
+  )
+  console.log(`[e2e] ${label}: comment=${commentMs}ms flash=${flashMs}ms`)
+}
+
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...options,
@@ -104,6 +130,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
     }
     assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
+  }
+
+  /** Wait until the notification's Issue and its comment are both on screen. */
+  async function waitForComment(
+    control,
+    { activeSurface, commentId, issueTitle },
+    startedAt,
+    timeoutMs
+  ) {
+    const issueTitleSelector = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
+    await control.command('waitFor', issueTitleSelector, { timeoutMs })
+    assert.equal(await control.command('getValue', issueTitleSelector), issueTitle)
+    const commentSelector = commentSelectorFor(activeSurface, commentId)
+    await control.command('waitFor', commentSelector, { text: '@', timeoutMs })
+    return Date.now() - startedAt
   }
 
   return {
@@ -207,13 +248,34 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'The notification must carry the comment that mentioned the member'
       )
 
+      // The DingTalk push links straight at the comment, so a recipient who taps
+      // the deep link lands the same way an inbox click does.
+      await control.command('reloadMainWindow', 'body')
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const linkStartedAt = Date.now()
+      await control.command('openWeworkScheme', 'body', { value: saved.url })
+      const linkCommentMs = await waitForComment(
+        control,
+        { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
+        linkStartedAt,
+        uiTimeoutMs
+      )
+      await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
+      const linkFlashMs = Date.now() - linkStartedAt
+      assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
+
+      // A fresh window puts the board back at its home, so the inbox click is
+      // measured from the same cold start as the link above.
+      await control.command('reloadMainWindow', 'body')
+      await control.command('waitFor', '[data-testid="wework-notifications-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       // A mention is board work, so the bell files it under collaboration.
-      await control.command(
-        'click',
-        '[data-testid="wework-notifications-category-collaboration"]'
-      )
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', `[data-testid="wework-notification-${saved.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
@@ -224,13 +286,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.ok(summary.includes(PROJECT_NAME), `The inbox row must name its board: ${summary}`)
       await captureScreenshot(control, 'comment-notification-01-inbox.png')
 
+      const inboxStartedAt = Date.now()
       await control.command('click', `[data-testid="wework-notification-${saved.id}"]`)
-      const issueTitle = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
-      await control.command('waitFor', issueTitle, { timeoutMs: uiTimeoutMs })
-      assert.equal(await control.command('getValue', issueTitle), ISSUE_TITLE)
-      const commentSelector = `${activeSurface} [data-testid="cloud-task-activity-message-${message.messageId}"]`
-      await control.command('waitFor', commentSelector, { text: '@', timeoutMs: uiTimeoutMs })
-      await waitForFlash(control, commentSelector, uiTimeoutMs)
+      const inboxCommentMs = await waitForComment(
+        control,
+        { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
+        inboxStartedAt,
+        uiTimeoutMs
+      )
+      await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
+      const inboxFlashMs = Date.now() - inboxStartedAt
+      assertNavigationBudget('Opening the inbox row', inboxCommentMs, inboxFlashMs)
       await captureScreenshot(control, 'comment-notification-02-comment-flashed.png')
 
       const readInbox = await ownerRequest('/api/v1/wework-notifications')
