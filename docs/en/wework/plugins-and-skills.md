@@ -35,7 +35,7 @@ If you do not have a package yet, choose **Download example plugin** in the impo
 
 ## Managed local Python
 
-On a normal desktop startup, Wework checks its own managed Python runtime and installs the latest Python 3.12 patch release in the background when it is missing. The runtime is stored in Wework's application data directory, does not require a system Python installation, and does not modify the system `PATH`.
+On a normal desktop startup, Wework checks its own managed Python runtime and installs the client-pinned Python 3.12.12 release in the background when it is missing or outdated. The pinned version is updated with the Wework client so every supported device uses the same tested patch release. The runtime is stored in Wework's application data directory, does not require a system Python installation, and does not modify the system `PATH`.
 
 After you confirm a plugin installation on desktop, Wework prepares the plugin metadata and managed Python in parallel, then submits the actual plugin installation only after Python is ready. For plugins that declare device-local authorization, authorization continues after installation succeeds. The plugin authorization script is not run if Python preparation or plugin installation fails. Open **Settings → Execution environments** to inspect the installation state or retry manually.
 

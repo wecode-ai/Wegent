@@ -11,7 +11,7 @@ import * as tar from 'tar'
 
 const execFileAsync = promisify(execFile)
 
-const PYTHON_VERSION = '3.12'
+const PYTHON_VERSION = '3.12.12'
 const UV_VERSION = '0.9.5'
 const UV_DOWNLOAD_TIMEOUT_MS = 120_000
 const UV_DOWNLOAD_BASE_URL = `https://mjs.sinaimg.cn/umd/cs-packages/uv/${UV_VERSION}`
@@ -103,6 +103,7 @@ export interface PythonRuntimeManagerOptions {
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
+  resolveProxy?: (targetUrl: string) => Promise<string | null>
   downloadTimeoutMs?: number
   runFile?: RunFile
   fileSha256?: (path: string) => Promise<string>
@@ -111,11 +112,12 @@ export interface PythonRuntimeManagerOptions {
 
 export class PythonRuntimeManager {
   private readonly root: string
-  private readonly environmentValue: NodeJS.ProcessEnv
+  private readonly runtimeEnvironment: NodeJS.ProcessEnv
   private readonly runtimeBin: string
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
+  private readonly resolveProxy?: (targetUrl: string) => Promise<string | null>
   private readonly downloadTimeoutMs: number
   private readonly runFile: RunFile
   private readonly fileSha256: (path: string) => Promise<string>
@@ -129,6 +131,7 @@ export class PythonRuntimeManager {
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? globalThis.fetch
+    this.resolveProxy = options.resolveProxy
     this.downloadTimeoutMs = options.downloadTimeoutMs ?? UV_DOWNLOAD_TIMEOUT_MS
     this.fileSha256 = options.fileSha256 ?? sha256File
     this.runFile =
@@ -138,14 +141,8 @@ export class PythonRuntimeManager {
         return { stdout: result.stdout, stderr: result.stderr }
       })
     this.log = options.log ?? (() => undefined)
-    this.environmentValue = {
+    this.runtimeEnvironment = {
       ...withPrependedPath(options.environment, this.runtimeBin, this.platform),
-      UV_CACHE_DIR: join(this.root, 'cache'),
-      UV_MANAGED_PYTHON: 'true',
-      UV_PYTHON_BIN_DIR: this.runtimeBin,
-      UV_PYTHON_INSTALL_DIR: join(this.root, 'installations'),
-      UV_PYTHON_INSTALL_REGISTRY: 'false',
-      UV_PYTHON_INSTALL_MIRROR_URL: PYTHON_DOWNLOAD_MIRROR_URL,
       WEGENT_PYTHON_PATH: this.pythonPath(),
       WEWORK_RUNTIME_BIN: this.runtimeBin,
     }
@@ -153,7 +150,7 @@ export class PythonRuntimeManager {
   }
 
   environment(): NodeJS.ProcessEnv {
-    return { ...this.environmentValue }
+    return { ...this.runtimeEnvironment }
   }
 
   async status(): Promise<PythonRuntimeStatus> {
@@ -181,7 +178,7 @@ export class PythonRuntimeManager {
 
   private async performEnsure(): Promise<PythonRuntimeStatus> {
     const installed = await this.inspectInstalledPython()
-    if (installed) {
+    if (installed?.version === PYTHON_VERSION) {
       this.currentStatus = installed
       return { ...installed }
     }
@@ -194,15 +191,17 @@ export class PythonRuntimeManager {
       const installResult = await this.runFile(
         uvPath,
         [
+          '--native-tls',
           '--no-config',
           '--no-progress',
           'python',
           'install',
+          '--force',
           '--managed-python',
           '--default',
           PYTHON_VERSION,
         ],
-        { env: this.environmentValue, timeout: 10 * 60_000 }
+        { env: await this.bootstrapEnvironment(), timeout: 10 * 60_000 }
       )
       const warning = installResult.stderr.trim()
       if (warning) {
@@ -217,6 +216,16 @@ export class PythonRuntimeManager {
       return { ...ready }
     } catch (error) {
       const message = errorMessage(error)
+      if (installed) {
+        this.currentStatus = installed
+        this.log({
+          event: 'python-runtime-upgrade-failed',
+          currentVersion: installed.version,
+          targetVersion: PYTHON_VERSION,
+          error: message,
+        })
+        return { ...installed }
+      }
       this.currentStatus = this.statusValue('error', { error: message })
       this.log({ event: 'python-runtime-install-failed', error: message })
       throw error
@@ -227,7 +236,7 @@ export class PythonRuntimeManager {
     const path = this.pythonPath()
     try {
       const { stdout, stderr } = await this.runFile(path, ['--version'], {
-        env: this.environmentValue,
+        env: this.runtimeEnvironment,
         timeout: 5_000,
       })
       const output = `${stdout}\n${stderr}`.trim()
@@ -289,6 +298,31 @@ export class PythonRuntimeManager {
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
+  }
+
+  private async bootstrapEnvironment(): Promise<NodeJS.ProcessEnv> {
+    const environment: NodeJS.ProcessEnv = {
+      ...this.runtimeEnvironment,
+      UV_CACHE_DIR: join(this.root, 'cache'),
+      UV_MANAGED_PYTHON: 'true',
+      UV_PYTHON_BIN_DIR: this.runtimeBin,
+      UV_PYTHON_INSTALL_DIR: join(this.root, 'installations'),
+      UV_PYTHON_INSTALL_REGISTRY: 'false',
+      UV_PYTHON_INSTALL_MIRROR_URL: PYTHON_DOWNLOAD_MIRROR_URL,
+    }
+    if (!this.resolveProxy) return environment
+
+    try {
+      const proxy = await this.resolveProxy(PYTHON_DOWNLOAD_MIRROR_URL)
+      if (proxy) {
+        environment.HTTP_PROXY = proxy
+        environment.HTTPS_PROXY = proxy
+        environment.ALL_PROXY = proxy
+      }
+    } catch (error) {
+      this.log({ event: 'python-runtime-proxy-resolution-failed', error: errorMessage(error) })
+    }
+    return environment
   }
 
   private async downloadUv(artifact: UvArtifact, destination: string): Promise<void> {

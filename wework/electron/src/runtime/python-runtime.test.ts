@@ -36,11 +36,9 @@ describe('PythonRuntimeManager', () => {
     expect(environment.PATH).toBe(`${runtimeBin}:/system/bin`)
     expect(environment.WEWORK_RUNTIME_BIN).toBe(runtimeBin)
     expect(environment.WEGENT_PYTHON_PATH).toBe(join(runtimeBin, 'python3'))
-    expect(environment.UV_PYTHON_BIN_DIR).toBe(runtimeBin)
-    expect(environment.UV_MANAGED_PYTHON).toBe('true')
-    expect(environment.UV_PYTHON_INSTALL_MIRROR_URL).toBe(
-      'https://python-standalone.org/mirror/astral-sh/python-build-standalone/'
-    )
+    expect(environment.UV_PYTHON_BIN_DIR).toBeUndefined()
+    expect(environment.UV_MANAGED_PYTHON).toBeUndefined()
+    expect(environment.UV_PYTHON_INSTALL_MIRROR_URL).toBeUndefined()
     await expect(manager.status()).resolves.toMatchObject({
       id: 'python',
       managed: true,
@@ -59,24 +57,81 @@ describe('PythonRuntimeManager', () => {
     })
     await writeFile(uvPath, 'fake uv')
     let pythonReady = false
+    const runFile = vi.fn(
+      async (file: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
+        if (file === pythonPath && args[0] === '--version') {
+          if (!pythonReady) throw new Error('missing')
+          return { stdout: 'Python 3.12.12\n', stderr: '' }
+        }
+        if (file === uvPath) {
+          expect(args).toEqual([
+            '--native-tls',
+            '--no-config',
+            '--no-progress',
+            'python',
+            'install',
+            '--force',
+            '--managed-python',
+            '--default',
+            '3.12.12',
+          ])
+          expect(options.env).toMatchObject({
+            UV_MANAGED_PYTHON: 'true',
+            UV_PYTHON_BIN_DIR: runtimeBin,
+            UV_PYTHON_INSTALL_MIRROR_URL:
+              'https://python-standalone.org/mirror/astral-sh/python-build-standalone/',
+            HTTP_PROXY: 'http://proxy.internal:8080',
+            HTTPS_PROXY: 'http://proxy.internal:8080',
+            ALL_PROXY: 'http://proxy.internal:8080',
+          })
+          await mkdir(runtimeBin, { recursive: true })
+          await writeFile(pythonPath, 'fake python')
+          pythonReady = true
+          return { stdout: '', stderr: '' }
+        }
+        throw new Error(`Unexpected command: ${file}`)
+      }
+    )
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      runtimeBin,
+      platform: 'darwin',
+      arch: 'arm64',
+      runFile,
+      resolveProxy: vi.fn().mockResolvedValue('http://proxy.internal:8080'),
+      fileSha256: vi
+        .fn()
+        .mockResolvedValue('d54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81'),
+    })
+
+    const [first, second] = await Promise.all([manager.ensure(), manager.ensure()])
+
+    expect(first).toMatchObject({ state: 'installed', version: '3.12.12', path: pythonPath })
+    expect(second).toEqual(first)
+    expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
+    await expect(manager.ensure()).resolves.toEqual(first)
+    expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
+  })
+
+  test('upgrades an older managed Python patch release', async () => {
+    const directory = await temporaryDirectory()
+    const runtimeBin = join(directory, 'runtime', 'bin')
+    const pythonPath = join(runtimeBin, 'python3')
+    const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
+    await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
+      recursive: true,
+    })
+    await mkdir(runtimeBin, { recursive: true })
+    await writeFile(uvPath, 'fake uv')
+    await writeFile(pythonPath, 'fake python')
+    let version = '3.12.8'
     const runFile = vi.fn(async (file: string, args: string[]) => {
       if (file === pythonPath && args[0] === '--version') {
-        if (!pythonReady) throw new Error('missing')
-        return { stdout: 'Python 3.12.8\n', stderr: '' }
+        return { stdout: `Python ${version}\n`, stderr: '' }
       }
       if (file === uvPath) {
-        expect(args).toEqual([
-          '--no-config',
-          '--no-progress',
-          'python',
-          'install',
-          '--managed-python',
-          '--default',
-          '3.12',
-        ])
-        await mkdir(runtimeBin, { recursive: true })
-        await writeFile(pythonPath, 'fake python')
-        pythonReady = true
+        version = '3.12.12'
         return { stdout: '', stderr: '' }
       }
       throw new Error(`Unexpected command: ${file}`)
@@ -93,11 +148,53 @@ describe('PythonRuntimeManager', () => {
         .mockResolvedValue('d54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81'),
     })
 
-    const [first, second] = await Promise.all([manager.ensure(), manager.ensure()])
-
-    expect(first).toMatchObject({ state: 'installed', version: '3.12.8', path: pythonPath })
-    expect(second).toEqual(first)
+    await expect(manager.ensure()).resolves.toMatchObject({
+      state: 'installed',
+      version: '3.12.12',
+    })
     expect(runFile.mock.calls.filter(([file]) => file === uvPath)).toHaveLength(1)
+  })
+
+  test('keeps an older usable runtime when a patch upgrade fails', async () => {
+    const directory = await temporaryDirectory()
+    const runtimeBin = join(directory, 'runtime', 'bin')
+    const pythonPath = join(runtimeBin, 'python3')
+    const uvPath = join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5', 'uv')
+    await mkdir(join(directory, 'managed-runtimes', 'python', 'bootstrap', 'uv-0.9.5'), {
+      recursive: true,
+    })
+    await mkdir(runtimeBin, { recursive: true })
+    await writeFile(uvPath, 'fake uv')
+    await writeFile(pythonPath, 'fake python')
+    const log = vi.fn()
+    const runFile = vi.fn(async (file: string, args: string[]) => {
+      if (file === pythonPath && args[0] === '--version') {
+        return { stdout: 'Python 3.12.8\n', stderr: '' }
+      }
+      if (file === uvPath) throw new Error('offline')
+      throw new Error(`Unexpected command: ${file}`)
+    })
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      runtimeBin,
+      platform: 'darwin',
+      arch: 'arm64',
+      runFile,
+      fileSha256: vi
+        .fn()
+        .mockResolvedValue('d54989c0037e115f53c34a5658c2cc0ff5c44e35b5635ed9a5463b9caa364f81'),
+      log,
+    })
+
+    await expect(manager.ensure()).resolves.toMatchObject({ state: 'installed', version: '3.12.8' })
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'python-runtime-upgrade-failed',
+        currentVersion: '3.12.8',
+        targetVersion: '3.12.12',
+      })
+    )
   })
 
   test('does not accept a later Python minor version as the managed runtime', async () => {

@@ -81,6 +81,7 @@ import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close
 import { AppUpdateService } from './host/app-update-service.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
+import { cloudFetch } from './host/cloud-http.js'
 import {
   cleanupStaleTemporaryImages,
   createNativeContextMenuActions,
@@ -2030,6 +2031,8 @@ function managedPythonRuntime(): Promise<PythonRuntimeManager> {
       dataDirectory: app.getPath('userData'),
       environment: nodeRuntime.environment,
       runtimeBin: join(app.getPath('userData'), 'runtime', 'bin'),
+      fetch: cloudFetch,
+      resolveProxy: targetUrl => resolveSystemProxy(session.defaultSession, targetUrl),
       log: event => console.info('[python-runtime]', event),
     })
   })

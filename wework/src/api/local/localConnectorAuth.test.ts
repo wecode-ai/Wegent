@@ -64,8 +64,17 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
 
-  test('ensures managed Python before starting local authorization', async () => {
-    const target = { pluginKey: 'sina-email', connectorSlug: 'sina-email' }
+  test('ensures managed Python before starting Python authorization', async () => {
+    const target = {
+      pluginKey: 'python-connector',
+      connectorSlug: 'python-connector',
+      localAuth: {
+        kind: 'local_qr' as const,
+        health: ['python3', 'auth.py', 'health'],
+        start: ['python3', 'auth.py', 'start'],
+        poll: ['python3', 'auth.py', 'poll'],
+      },
+    }
 
     await localConnectorAuthStart(target)
 
@@ -74,6 +83,28 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.ensurePython.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.ensureLocalExecutorStarted.mock.invocationCallOrder[0]
     )
+  })
+
+  test.each([
+    ['shell', ['scripts/local-auth.sh', 'login']],
+    ['PowerShell', ['scripts/local-auth.ps1', 'login']],
+    ['native', ['bin/local-auth', 'login']],
+  ])('does not block %s authorization on managed Python', async (_name, start) => {
+    const target = {
+      pluginKey: 'native-connector',
+      connectorSlug: 'native-connector',
+      localAuth: {
+        kind: 'browser_oauth' as const,
+        health: [start[0], 'health'],
+        start,
+        poll: [],
+      },
+    }
+
+    await localConnectorAuthStart(target)
+
+    expect(mocks.ensurePython).not.toHaveBeenCalled()
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
   })
 })
 
