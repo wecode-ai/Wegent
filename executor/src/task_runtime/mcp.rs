@@ -45,6 +45,8 @@ pub(crate) struct SpaceContextGrant {
     device_id: Option<String>,
     automation_run_id: Option<String>,
     automation_manager: bool,
+    #[serde(default)]
+    automation_executor: bool,
     expires_at_unix: i64,
 }
 
@@ -203,13 +205,7 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
     let automation_manager = automation_origin.is_some_and(|origin| {
         origin.get("automationRole").and_then(Value::as_str) == Some("manager")
     });
-    if automation_origin.is_some() && !automation_manager {
-        log_executor_event(
-            "space capability skipped for project automation",
-            &[("task_id", request.task_id.clone())],
-        );
-        return None;
-    }
+    let automation_executor = automation_origin.is_some() && !automation_manager;
     let space_id = request
         .extra
         .get("cloudProjectId")
@@ -240,6 +236,9 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         .and_then(id_value)
         .filter(|value| !value.is_empty());
     let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
+    if automation_executor && (space_id.is_none() || item_id.is_none()) {
+        return None;
+    }
     log_executor_event(
         "space capability context decision",
         &[
@@ -276,6 +275,7 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
         automation_manager,
+        automation_executor,
         expires_at_unix: Local::now().timestamp() + SPACE_CONTEXT_GRANT_TTL_SECONDS,
     };
     let encoded = serde_json::to_vec(&grant)
@@ -847,6 +847,33 @@ async fn call_tool_with_runtime_context(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
             true,
         );
+    }
+    if is_automation_executor(grant.as_ref()) && !is_automation_executor_tool(name) {
+        return text_result(
+            format!("Project automation executor cannot call wework_space tool: {name}"),
+            true,
+        );
+    }
+    if is_automation_executor(grant.as_ref()) && name == "update_board_item" {
+        let update = arguments.get("item").unwrap_or(&arguments);
+        if let Some(field) = [
+            "assignee_user_id",
+            "assignee_agent_id",
+            "assignee_group_id",
+            "assignee_team_id",
+            "workflow",
+            "execution_payload",
+            "execution_config",
+            "automation_rule_id",
+        ]
+        .into_iter()
+        .find(|field| update.get(*field).is_some())
+        {
+            return text_result(
+                format!("Project automation executor cannot update board item field: {field}"),
+                true,
+            );
+        }
     }
     if let Some(error) = grant
         .as_ref()
@@ -3229,6 +3256,16 @@ fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec
             })
             .collect();
     }
+    if is_automation_executor(context.grant()) {
+        return tools()
+            .into_iter()
+            .filter(|tool| {
+                tool["name"]
+                    .as_str()
+                    .is_some_and(is_automation_executor_tool)
+            })
+            .collect();
+    }
     tools_for_bound_project(
         runtime,
         context.grant().and_then(|grant| grant.space_id.as_deref()),
@@ -3257,6 +3294,37 @@ fn is_project_manager_tool(name: &str) -> bool {
             | "update_board_item"
             | "assign_board_item"
             | "add_board_item_comment"
+    )
+}
+
+fn is_automation_executor(grant: Option<&SpaceContextGrant>) -> bool {
+    grant.is_some_and(|grant| grant.automation_executor)
+}
+
+fn is_automation_executor_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_current_context"
+            | "get_board_item"
+            | "list_board_items"
+            | "search_board_items"
+            | "list_space_files"
+            | "read_space_file"
+            | "update_board_item"
+            | "add_board_item_comment"
+            | "list_item_attachments"
+            | "upload_item_attachment"
+            | "read_item_attachment"
+            | "delete_item_attachment"
+            | "get_delivery_requirements"
+            | "get_workflow_stage_context"
+            | "create_delivery"
+            | "upload_delivery_asset"
+            | "list_deliveries"
+            | "read_delivery"
+            | "download_delivery_asset"
+            | "finalize_delivery"
+            | "discard_delivery_draft"
     )
 }
 
@@ -3422,17 +3490,21 @@ mod tests {
     }
 
     #[test]
-    fn leaves_space_context_unbound_for_non_manager_project_automation() {
+    fn binds_issue_context_for_project_automation_executor() {
         let mut request = ExecutionRequest::default();
         request
             .extra
             .insert("cloudProjectId".to_owned(), json!("cloud-42"));
         request.extra.insert(
             "origin".to_owned(),
-            json!({"type": "project_automation", "run_id": "run-1"}),
+            json!({"type": "project_automation", "run_id": "run-1", "loopItemId": "ISSUE-1"}),
         );
 
-        assert!(encoded_space_context_grant(&request).is_none());
+        let grant = decode_grant(&request);
+        assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
+        assert_eq!(grant.item_id.as_deref(), Some("ISSUE-1"));
+        assert!(grant.automation_executor);
+        assert!(!grant.automation_manager);
     }
 
     #[test]
@@ -3453,6 +3525,7 @@ mod tests {
         assert_eq!(grant.item_id, None);
         assert_eq!(grant.automation_run_id, None);
         assert!(!grant.automation_manager);
+        assert!(!grant.automation_executor);
         assert!(grant.expires_at_unix > Local::now().timestamp());
     }
 
@@ -3519,6 +3592,7 @@ mod tests {
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
         assert!(grant.automation_manager);
+        assert!(!grant.automation_executor);
     }
 
     #[test]
@@ -3596,6 +3670,7 @@ mod tests {
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
+            automation_executor: false,
             expires_at_unix: Local::now().timestamp() + 60,
         };
 
@@ -3623,6 +3698,7 @@ mod tests {
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
+            automation_executor: false,
             expires_at_unix: Local::now().timestamp() - 1,
         };
         let encoded = STANDARD.encode(serde_json::to_vec(&grant).unwrap());
@@ -3956,6 +4032,7 @@ mod tests {
                 device_id: None,
                 automation_run_id: None,
                 automation_manager: false,
+                automation_executor: false,
                 expires_at_unix: Local::now().timestamp() + 60,
             });
             let result = call_tool_with_runtime_context(
@@ -4027,6 +4104,95 @@ mod tests {
         ] {
             assert!(!is_automation_manager_tool(forbidden));
         }
+    }
+
+    #[test]
+    fn automation_executor_can_work_on_its_issue_without_assignment_tools() {
+        let grant = SpaceContextGrant {
+            space_id: Some("space-1".to_owned()),
+            item_id: Some("ISSUE-1".to_owned()),
+            automation_executor: true,
+            ..SpaceContextGrant::default()
+        };
+        for name in [
+            "get_current_context",
+            "get_board_item",
+            "list_item_attachments",
+            "upload_item_attachment",
+            "read_item_attachment",
+            "update_board_item",
+            "add_board_item_comment",
+            "create_delivery",
+            "finalize_delivery",
+        ] {
+            assert!(is_automation_executor_tool(name), "missing {name}");
+        }
+        for name in [
+            "assign_board_item",
+            "get_assignment_candidates",
+            "submit_workflow_plan",
+            "create_board_item",
+            "update_space",
+        ] {
+            assert!(!is_automation_executor_tool(name), "exposed {name}");
+        }
+        assert!(context_scope_error(&grant, &json!({"space_id": "space-2"})).is_some());
+        assert!(context_scope_error(&grant, &json!({"item_id": "ISSUE-2"})).is_some());
+    }
+
+    #[tokio::test]
+    async fn automation_executor_tool_list_and_call_share_the_same_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let grant = SpaceContextGrant {
+            space_id: Some("space-1".to_owned()),
+            item_id: Some("ISSUE-1".to_owned()),
+            automation_executor: true,
+            ..SpaceContextGrant::default()
+        };
+        let context = SpaceMcpRequestContext::new(Some(grant.clone()), None, None);
+        let visible = visible_tools(&runtime, &context);
+        let names = visible
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"get_current_context"));
+        assert!(names.contains(&"upload_item_attachment"));
+        assert!(!names.contains(&"assign_board_item"));
+        assert!(!names.contains(&"submit_workflow_plan"));
+
+        for field in ["assignee_user_id", "workflow", "execution_config"] {
+            let denied = call_tool_with_grant(
+                &runtime,
+                "update_board_item",
+                json!({
+                    "space_id": "space-1",
+                    "item_id": "ISSUE-1",
+                    "item": {"version": 1, (field): null},
+                }),
+                Some(grant.clone()),
+            )
+            .await;
+            assert_eq!(denied["isError"], true);
+            assert!(denied["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("cannot update board item field"));
+        }
+
+        let denied = call_tool_with_grant(
+            &runtime,
+            "assign_board_item",
+            json!({"space_id": "space-1", "item_id": "ISSUE-1"}),
+            Some(grant),
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        assert!(denied["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("cannot call wework_space tool"));
     }
 
     #[test]
@@ -4370,6 +4536,7 @@ mod tests {
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
+            automation_executor: false,
             expires_at_unix: Local::now().timestamp() + 60,
         };
 

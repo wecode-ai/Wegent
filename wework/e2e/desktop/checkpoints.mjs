@@ -10,6 +10,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-group-onboarding',
   'collaboration-local-agent-capabilities',
   'project-space-ai-manager',
+  'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
   'priority-filter',
   'telemetry-consent',
