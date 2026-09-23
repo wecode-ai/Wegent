@@ -7,10 +7,10 @@
 pub(crate) mod auth;
 pub(crate) mod users;
 
-use brz_http::Endpoint;
 use brz_http_server::StatusCode;
 use brz_mysql::Mysql;
 use serde::Serialize;
+use wegent_backend_rs::auth::AppAuthenticator;
 use wegent_backend_rs::config::AuthConfig;
 use wegent_backend_rs::http_compat::FastApiError;
 
@@ -29,61 +29,148 @@ enum QuotaResponse {
     Empty {},
 }
 
+/// Fully authenticated quota caller, including the endpoint-specific user
+/// projection needed to preserve its recorded SQL.
+struct QuotaUser(users::UserRow);
+
+#[derive(Clone, Copy)]
+enum QuotaAuthFailure {
+    NotAuthenticated,
+    InvalidCredentials,
+    UserNotActivated,
+    Internal,
+}
+
+const QUOTA_NOT_AUTHENTICATED: &str = "Wegent-Quota-Not-Authenticated";
+const QUOTA_USER_NOT_ACTIVATED: &str = "Wegent-Quota-User-Not-Activated";
+
+impl brz_http_server::Authenticator<QuotaUser> for AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<QuotaUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        resolve_quota_user(&self.state().auth, &self.state().mysql, authorization)
+            .await
+            .map_err(|failure| match failure {
+                QuotaAuthFailure::NotAuthenticated => {
+                    brz_http_server::AuthFailure::missing_credentials(QUOTA_NOT_AUTHENTICATED)
+                }
+                QuotaAuthFailure::InvalidCredentials => {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+                QuotaAuthFailure::UserNotActivated => {
+                    brz_http_server::AuthFailure::invalid_credentials(QUOTA_USER_NOT_ACTIVATED)
+                }
+                QuotaAuthFailure::Internal => brz_http_server::AuthFailure::Internal,
+            })
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a QuotaUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.users_user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+
+        let error = match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: QUOTA_NOT_AUTHENTICATED,
+            } => FastApiError::unauthorized("Not authenticated"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: QUOTA_USER_NOT_ACTIVATED,
+            } => FastApiError::unauthorized("User not activated"),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+            }
+            _ => FastApiError::unauthorized("Could not validate credentials"),
+        };
+        error.into_http_error(arena)
+    }
+}
+
 #[brz_http_server::get(
     "/api/quota/claude/quota",
     group = crate::wecode::wecode_apis
 )]
 async fn claude_quota(
     #[inject(wecode)] state: &SharedWecodeAppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: QuotaUser,
 ) -> Result<QuotaResponse, FastApiError> {
-    quota_response(
-        &state.public().auth,
-        &state.public().mysql,
-        state.aigc_quota_endpoint(),
-        authorization,
-    )
-    .await
+    quota_for_user(state.aigc_quota(), &user.0).await
 }
 
-/// Resolves the authenticated user, then proxies the AIGC quota service.
-async fn quota_response<M>(
+async fn resolve_quota_user<M>(
     auth: &AuthConfig,
     mysql: &M,
-    endpoint: &Endpoint,
     authorization: Option<&str>,
-) -> Result<QuotaResponse, FastApiError>
+) -> Result<QuotaUser, QuotaAuthFailure>
 where
     M: Mysql,
 {
     let token = auth::extract_bearer_token(authorization).map_err(|error| match error {
-        auth::AuthError::NotAuthenticated => FastApiError::unauthorized("Not authenticated"),
-        auth::AuthError::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
+        auth::AuthError::NotAuthenticated => QuotaAuthFailure::NotAuthenticated,
+        auth::AuthError::InvalidCredentials => QuotaAuthFailure::InvalidCredentials,
     })?;
     let session = auth::verify_session_token(token, auth)
-        .map_err(|_| FastApiError::unauthorized("Could not validate credentials"))?;
+        .map_err(|_| QuotaAuthFailure::InvalidCredentials)?;
     let user = users::find_user_by_name(mysql, &session.username)
         .await
         .map_err(|error| match error {
             users::UserLookupError::Mysql(error) => {
                 tracing::error!(%error, "quota user lookup failed");
-                FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+                QuotaAuthFailure::Internal
             }
         })?
-        .ok_or_else(|| FastApiError::unauthorized("Could not validate credentials"))?;
+        .ok_or(QuotaAuthFailure::InvalidCredentials)?;
     if user.users_is_active == 0 {
-        return Err(FastApiError::unauthorized("User not activated"));
+        return Err(QuotaAuthFailure::UserNotActivated);
     }
+    Ok(QuotaUser(user))
+}
+
+async fn quota_for_user(
+    aigc_quota: &aigc::AigcQuotaService,
+    user: &users::UserRow,
+) -> Result<QuotaResponse, FastApiError> {
     tracing::info!(email = ?user.users_email, path = QUOTA_PATH, "get quota for user");
 
-    Ok(
-        match aigc::fetch_aigc_quota(endpoint, &user.users_user_name).await {
-            Some(details) => QuotaResponse::Aigc(Box::new(details)),
-            None => QuotaResponse::Empty {},
-        },
-    )
+    Ok(match aigc_quota.fetch(&user.users_user_name).await {
+        Some(details) => QuotaResponse::Aigc(Box::new(details)),
+        None => QuotaResponse::Empty {},
+    })
+}
+
+#[cfg(test)]
+async fn quota_response<M>(
+    auth: &AuthConfig,
+    mysql: &M,
+    aigc_quota: &aigc::AigcQuotaService,
+    authorization: Option<&str>,
+) -> Result<QuotaResponse, FastApiError>
+where
+    M: Mysql,
+{
+    let user = resolve_quota_user(auth, mysql, authorization)
+        .await
+        .map_err(|failure| match failure {
+            QuotaAuthFailure::NotAuthenticated => FastApiError::unauthorized("Not authenticated"),
+            QuotaAuthFailure::InvalidCredentials => {
+                FastApiError::unauthorized("Could not validate credentials")
+            }
+            QuotaAuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
+            QuotaAuthFailure::Internal => {
+                FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+            }
+        })?;
+    quota_for_user(aigc_quota, &user.0).await
 }
 
 #[cfg(test)]
@@ -121,9 +208,10 @@ mod tests {
             .expect("a lazy pool needs no server")
     }
 
-    fn endpoint() -> Endpoint {
+    fn aigc_quota() -> aigc::AigcQuotaService {
         // Never reached by these cases: they all fail before the AIGC call.
-        aigc::build_endpoint(aigc::AIGC_QUOTA_URL).expect("valid quota URL")
+        let endpoint = aigc::build_endpoint(aigc::AIGC_QUOTA_URL).expect("valid quota URL");
+        aigc::AigcQuotaService::new(endpoint, None)
     }
 
     fn valid_token() -> String {
@@ -142,7 +230,7 @@ mod tests {
 
     /// The status of the error this request produces.
     async fn status_for(authorization: Option<&str>) -> StatusCode {
-        match quota_response(&auth(), &mysql(), &endpoint(), authorization).await {
+        match quota_response(&auth(), &mysql(), &aigc_quota(), authorization).await {
             Err(error) => error.status(),
             Ok(_) => panic!("the request must not authenticate"),
         }
