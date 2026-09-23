@@ -843,6 +843,27 @@ async fn call_tool_with_runtime_context(
             true,
         );
     }
+    if is_automation_executor(grant.as_ref()) && name == "update_board_item" {
+        let update = arguments.get("item").unwrap_or(&arguments);
+        if let Some(field) = [
+            "assignee_user_id",
+            "assignee_agent_id",
+            "assignee_group_id",
+            "assignee_team_id",
+            "workflow",
+            "execution_payload",
+            "execution_config",
+            "automation_rule_id",
+        ]
+        .into_iter()
+        .find(|field| update.get(*field).is_some())
+        {
+            return text_result(
+                format!("Project automation executor cannot update board item field: {field}"),
+                true,
+            );
+        }
+    }
     if let Some(error) = grant
         .as_ref()
         .and_then(|grant| context_scope_error(grant, &arguments))
@@ -3891,6 +3912,25 @@ mod tests {
         assert!(names.contains(&"upload_item_attachment"));
         assert!(!names.contains(&"assign_board_item"));
         assert!(!names.contains(&"submit_workflow_plan"));
+
+        for field in ["assignee_user_id", "workflow", "execution_config"] {
+            let denied = call_tool_with_grant(
+                &runtime,
+                "update_board_item",
+                json!({
+                    "space_id": "space-1",
+                    "item_id": "ISSUE-1",
+                    "item": {"version": 1, (field): null},
+                }),
+                Some(grant.clone()),
+            )
+            .await;
+            assert_eq!(denied["isError"], true);
+            assert!(denied["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("cannot update board item field"));
+        }
 
         let denied = call_tool_with_grant(
             &runtime,
