@@ -62,14 +62,27 @@ class _CopyContext:
 
 
 def _resolve_copy_context(
-    db: Session, document_id: int, expected_generation: int
+    db: Session,
+    document_id: int,
+    expected_generation: int,
+    *,
+    for_update: bool = False,
 ) -> _CopyContext:
     """Resolve current settings and the original importer permission.
 
     Rejections carry a reason instead of returning ``None`` so a scheduled
     copy that is skipped can be explained in one log line.
     """
-    document = db.get(KnowledgeDocument, document_id, populate_existing=True)
+    if for_update:
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+    else:
+        document = db.get(KnowledgeDocument, document_id, populate_existing=True)
     if document is None:
         return _CopyContext(reason="document_not_found")
     if document.external_provider != "dingtalk":
@@ -223,40 +236,51 @@ def refresh_dingtalk_copy(
         return False
     document, user = context.document, context.user
     provider = get_external_document_provider("dingtalk")
+    probe_error: ExternalDocumentFetchError | None = None
+    update_time: int | None = None
     try:
         update_time = asyncio.run(
             provider.get_update_time(user, document.external_resource_id)
         )
-    except ExternalSourceUnavailableError as exc:
-        _mark_source_inaccessible(db, document, exc)
+    except ExternalDocumentFetchError as exc:
+        probe_error = exc
+
+    # The provider call may outlive a manual refresh. Discard its old ORM state
+    # and lock the current row before writing the probe result's JSON metadata.
+    db.rollback()
+    context = _resolve_copy_context(
+        db, document_id, expected_generation, for_update=True
+    )
+    if not context.eligible:
+        db.rollback()
+        _log_skipped_copy(context, document_id, expected_generation, "recheck")
+        return False
+    document = context.document
+
+    if isinstance(probe_error, ExternalSourceUnavailableError):
+        _mark_source_inaccessible(db, document, probe_error)
         logger.warning(
             "[DingTalk Sync] source unavailable document_id=%s generation=%s "
             "code=%s error=%s",
             document_id,
             expected_generation,
-            exc.error_code,
-            exc,
+            probe_error.error_code,
+            probe_error,
         )
         return False
-    except ExternalDocumentFetchError as exc:
-        _mark_sync_check_failed(db, document, str(exc))
+    if probe_error is not None:
+        _mark_sync_check_failed(db, document, str(probe_error))
         logger.warning(
             "[DingTalk Sync] probe failed document_id=%s generation=%s error=%s",
             document_id,
             expected_generation,
-            exc,
+            probe_error,
         )
         return False
-    _mark_source_accessible(db, document)
-    # End the snapshot held across provider I/O before checking a concurrent update.
-    db.rollback()
-    context = _resolve_copy_context(db, document_id, expected_generation)
-    if not context.eligible:
-        _log_skipped_copy(context, document_id, expected_generation, "recheck")
-        return False
-    document = context.document
     baseline = document.external_source_config.get("source_update_time")
-    if _is_unchanged(document, baseline, update_time):
+    unchanged = _is_unchanged(document, baseline, update_time)
+    _mark_source_accessible(db, document)
+    if unchanged:
         logger.info(
             "[DingTalk Sync] unchanged document_id=%s generation=%s "
             "baseline_update_time=%s live_update_time=%s",

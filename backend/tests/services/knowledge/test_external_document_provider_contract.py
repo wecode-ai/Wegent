@@ -33,6 +33,7 @@ from app.models.user import User
 from app.services.knowledge.external_document_providers import (
     DirectExternalDocumentImportProvider,
     ExternalDocumentContent,
+    ExternalDocumentFetchError,
     ExternalDocumentImportError,
     ExternalSourceUnavailableError,
     get_external_document_provider,
@@ -148,7 +149,7 @@ class ProviderContractSuite:
         assert content.file_extension
         assert content.metadata.get("title") == "Fetch Doc"
 
-    def test_fetch_of_removed_source_signals_unavailable(
+    def test_fetch_of_removed_directory_entry_does_not_claim_source_gone(
         self,
         test_db: Session,
         test_user: User,
@@ -161,8 +162,9 @@ class ProviderContractSuite:
         self.create_resource(test_db, test_user, "contract-gone", "Gone Doc")
         self.remove_resource(test_db, test_user, "contract-gone")
 
-        with pytest.raises(ExternalSourceUnavailableError):
+        with pytest.raises(ExternalDocumentFetchError) as exc_info:
             asyncio.run(provider.fetch_content(test_db, test_user, "contract-gone"))
+        assert not isinstance(exc_info.value, ExternalSourceUnavailableError)
 
 
 class TestDingTalkProviderContract(ProviderContractSuite):
@@ -336,8 +338,9 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         self.configure_user(monkeypatch, test_user)
         self.mock_fetch_body(monkeypatch, provider, "body")
 
-        with pytest.raises(ExternalSourceUnavailableError):
+        with pytest.raises(ExternalDocumentFetchError) as exc_info:
             await provider.fetch_content(test_db, test_user, "not-in-cache")
+        assert not isinstance(exc_info.value, ExternalSourceUnavailableError)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

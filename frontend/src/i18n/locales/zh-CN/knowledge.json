@@ -386,7 +386,7 @@
       "sourceInaccessible": "来源不可访问",
       "sourceInaccessibleHint": "外部来源已被删除或失去访问权限；恢复访问后可重试导入",
       "sourceSyncFailed": "同步失败",
-      "sourceSyncFailedHint": "最近一次同步失败；已有本地内容仍可使用，系统将在后续重试",
+      "sourceSyncFailedHint": "最近一次同步失败，请重试同步",
       "wikiSourceMissing": "Wiki 源文档不存在",
       "wikiSourceMissingHint": "Wiki 页面已被删除，知识库继续使用最近一次成功同步的索引内容",
       "externalSource": {

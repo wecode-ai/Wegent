@@ -386,7 +386,7 @@
       "sourceInaccessible": "Source unavailable",
       "sourceInaccessibleHint": "The external source was deleted or access was revoked; restore access, then retry the import",
       "sourceSyncFailed": "Synchronization failed",
-      "sourceSyncFailedHint": "The latest synchronization failed; existing local content remains available and will be retried",
+      "sourceSyncFailedHint": "The latest synchronization failed; retry the sync",
       "wikiSourceMissing": "Wiki source document not found",
       "wikiSourceMissingHint": "The Wiki page was deleted; the knowledge base continues using the last successfully synchronized index",
       "externalSource": {

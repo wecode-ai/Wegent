@@ -750,6 +750,46 @@ def test_changes_during_probe_prevent_refresh(
     assert import_dispatches == []
 
 
+@pytest.mark.parametrize("probe_result", ["success", "missing", "transient"])
+def test_old_probe_does_not_overwrite_a_newer_generation(
+    test_db: Session,
+    imported_copy: KnowledgeDocument,
+    live_update_time: AsyncMock,
+    import_dispatches: list[dict],
+    probe_result: str,
+) -> None:
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+
+    document_id = imported_copy.id
+    generation = imported_copy.index_generation
+
+    async def probe(*args):
+        imported_copy.index_generation += 1
+        imported_copy.update_external_source_config(
+            status="sync_error",
+            last_error="newer attempt failed",
+            sync={"last_error_code": "newer_attempt"},
+        )
+        test_db.commit()
+        if probe_result == "missing":
+            raise ExternalSourceUnavailableError("old source result")
+        if probe_result == "transient":
+            raise ExternalDocumentFetchError("old probe failed")
+        return 1789562644000
+
+    live_update_time.side_effect = probe
+
+    assert not refresh_dingtalk_copy(test_db, document_id, generation)
+    test_db.refresh(imported_copy)
+    assert imported_copy.index_generation == generation + 1
+    assert imported_copy.external_source_config["status"] == "sync_error"
+    assert imported_copy.external_source_config["last_error"] == "newer attempt failed"
+    assert imported_copy.external_source_config["sync"] == {
+        "last_error_code": "newer_attempt"
+    }
+    assert import_dispatches == []
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 def test_create_preserves_auto_sync_setting(
     test_db: Session, test_user: User, enabled: bool

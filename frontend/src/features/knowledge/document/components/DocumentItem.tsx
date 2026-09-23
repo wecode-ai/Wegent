@@ -38,9 +38,7 @@ import {
   getSyncedWikiConnectorType,
   isDingtalkCopyDocument,
   isDocumentIndexInFlight,
-  isExternalSourceUnavailable,
   isSyncedWikiDocument,
-  isWikiSourceMissing,
 } from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
@@ -276,23 +274,6 @@ export function DocumentItem({
       : isExternal && typeof externalSource?.url === 'string'
         ? externalSource.url
         : null
-  // Source health is independent from index health: a synchronized document
-  // may keep serving its last successful index after the remote page disappears.
-  const hasExternalSourceWarning = isExternalSourceUnavailable(document)
-  const wikiSourceMissing = isWikiSourceMissing(document)
-  const isSourceSyncError = externalSource?.status === 'sync_error'
-  const sourceInaccessibleLabel = wikiSourceMissing
-    ? t('knowledge:document.document.wikiSourceMissing')
-    : isSourceSyncError
-      ? t('knowledge:document.document.sourceSyncFailed')
-      : t('knowledge:document.document.sourceInaccessible')
-  const sourceInaccessibleHint =
-    (isSyncedWiki && externalSource?.last_error) ||
-    (wikiSourceMissing
-      ? t('knowledge:document.document.wikiSourceMissingHint')
-      : isSourceSyncError
-        ? t('knowledge:document.document.sourceSyncFailedHint')
-        : t('knowledge:document.document.sourceInaccessibleHint'))
   // Get display name - for web documents, remove .md extension
   const displayName =
     isWeb && document.name.endsWith('.md') ? document.name.slice(0, -3) : document.name
@@ -428,17 +409,11 @@ export function DocumentItem({
                   {document.file_extension}
                 </span>
               )}
-              {hasExternalSourceWarning && (
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="max-w-[9rem] truncate bg-red-500/10 px-1 py-0 text-[9px] text-red-600 border-red-500/20"
-                  title={sourceInaccessibleHint}
-                  data-testid="external-source-inaccessible-compact"
-                >
-                  {sourceInaccessibleLabel}
-                </Badge>
-              )}
+              <ExternalSourceStatusBadge
+                document={document}
+                testId="external-source-inaccessible-compact"
+                className="max-w-[9rem] truncate px-1 py-0 text-[9px]"
+              />
               {/* Size */}
               {!isWeb && (
                 <span className="text-[9px] text-text-muted">

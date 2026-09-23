@@ -690,33 +690,6 @@ def _normalize_processing_error(
     return persisted_error
 
 
-def _write_source_health(
-    document: KnowledgeDocument,
-    status: str,
-    error: DocumentProcessingError,
-) -> None:
-    """Record source health without touching the document's index availability."""
-    if not document.has_external_identity:
-        return
-    document.update_external_source_config(status=status, last_error=error.message)
-
-
-def _mark_document_index_failed(
-    document: KnowledgeDocument,
-    generation: int,
-    candidate: DocumentProcessingError,
-) -> None:
-    """Record a failure that leaves the document with nothing to serve."""
-    persisted_error = _persist_attempt_failure(document, generation, candidate)
-    document.index_status = DocumentIndexStatus.FAILED
-    # Every "the source is gone" code marks the copy, not only the legacy
-    # spelling: the provider mints more than one, and matching a single
-    # hard-coded code silently drops the source state. Any other failure says
-    # nothing about the source, so it leaves that mark alone.
-    if persisted_error.code.startswith("external_source_"):
-        _write_source_health(document, "inaccessible", persisted_error)
-
-
 def _serves_previously_indexed_body(document: KnowledgeDocument) -> bool:
     """Whether the copy still holds the body its last successful import indexed.
 

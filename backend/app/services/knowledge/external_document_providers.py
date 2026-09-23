@@ -507,10 +507,8 @@ class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
         try:
             metadata = self.resolve_importable(db, user, external_resource_id)
         except ExternalDocumentImportError as exc:
-            if exc.status_code == 404:
-                # The synced node is gone or inactive: the source itself is
-                # no longer accessible, not a transient fetch failure.
-                raise ExternalSourceUnavailableError(str(exc)) from exc
+            # The local directory is an import prerequisite, not proof that
+            # the remote source was deleted. Only live MCP errors prove that.
             raise ExternalDocumentFetchError(str(exc)) from exc
         mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
         if not mcp_url:

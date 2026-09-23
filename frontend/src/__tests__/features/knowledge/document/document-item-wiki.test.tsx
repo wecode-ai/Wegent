@@ -158,7 +158,7 @@ describe('DocumentItem external wiki actions', () => {
     )
 
     expect(screen.getByTestId('external-source-inaccessible-compact')).toHaveTextContent(
-      'knowledge:document.document.wikiSourceMissing'
+      'document.document.wikiSourceMissing'
     )
   })
 
