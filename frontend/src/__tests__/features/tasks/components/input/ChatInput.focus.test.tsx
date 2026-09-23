@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { Profiler, type ReactNode } from 'react'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
 
@@ -52,6 +52,58 @@ jest.mock('@/features/tasks/components/chat/SkillFlyAnimation', () => ({
 describe('ChatInput external focus', () => {
   afterEach(() => {
     jest.useRealTimers()
+  })
+
+  test('keeps badge spacing stable during typing and updates it when the badge changes', () => {
+    let width = 120
+    const onRender = jest.fn()
+    const props = {
+      setMessage: jest.fn(),
+      handleSendMessage: jest.fn(),
+      isLoading: false,
+    }
+    const renderInput = (message: string, hasBadge = true) => (
+      <Profiler id="chat-input" onRender={onRender}>
+        <ChatInput
+          {...props}
+          message={message}
+          badge={
+            hasBadge ? (
+              <span
+                ref={element => {
+                  if (element?.parentElement) {
+                    Object.defineProperty(element.parentElement, 'offsetWidth', {
+                      configurable: true,
+                      get: () => width,
+                    })
+                  }
+                }}
+              >
+                Agent
+              </span>
+            ) : undefined
+          }
+        />
+      </Profiler>
+    )
+    const { rerender } = render(renderInput('message'))
+    const input = screen.getByTestId('message-input')
+    expect(input).toHaveStyle({ textIndent: '128px' })
+
+    for (let index = 0; index < 100; index += 1) {
+      onRender.mockClear()
+      rerender(renderInput(`message ${index}`))
+      expect(input).toHaveTextContent(`message ${index}`)
+      expect(input).toHaveStyle({ textIndent: '128px' })
+      expect(onRender).toHaveBeenCalledTimes(1)
+    }
+
+    width = 180
+    rerender(renderInput('message with a wider badge'))
+    expect(input).toHaveStyle({ textIndent: '188px' })
+
+    rerender(renderInput('message without a badge', false))
+    expect(input).toHaveStyle({ textIndent: '0' })
   })
 
   test('auto focuses when no other control has focus', () => {
