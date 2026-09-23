@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn private_cutover_keeps_nested_quota_and_other_routes_in_python() {
+    fn private_cutover_serves_the_nested_quota_route_and_keeps_the_rest_in_python() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = wegent_backend_rs::HybridConfig::new(
             "127.0.0.1:0".parse().unwrap(),
@@ -79,8 +79,9 @@ mod tests {
         )
         .with_routes_file(&path)
         .unwrap();
+        // The inherited public cutover plus this crate's nested quota route.
         assert!(config.selects_rust(&Method::GET, "/api/quota"));
-        assert!(!config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
+        assert!(config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
         // The four intra cutovers below are not active yet: their `[[routes]]`
         // entries in `config/routes.toml` stay commented out, so Python keeps
         // serving them.
