@@ -6,12 +6,7 @@
 
 from typing import Any
 
-
-def resolve_skill_mcp_name(skill_name: str, server_name: str) -> str:
-    """Return the runtime MCP name for a Skill server."""
-    if skill_name == server_name:
-        return server_name
-    return f"{skill_name}_{server_name}"
+from shared.utils.mcp_names import SkillMcpNames
 
 
 def extract_skill_mcp_servers(
@@ -19,6 +14,7 @@ def extract_skill_mcp_servers(
 ) -> list[dict[str, Any]]:
     """Convert Skill MCP mappings to the runtime list representation."""
     result: list[dict[str, Any]] = []
+    names = SkillMcpNames()
     for skill_config in skill_configs:
         skill_name = skill_config.get("name", "unknown")
         mcp_servers = skill_config.get("mcpServers")
@@ -35,7 +31,7 @@ def extract_skill_mcp_servers(
             result.append(
                 {
                     **server_config,
-                    "name": resolve_skill_mcp_name(skill_name, server_name),
+                    "name": names.register(skill_name, server_name),
                 }
             )
     return result
