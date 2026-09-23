@@ -66,6 +66,9 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
+    backend-rs/Cargo.lock)
+      changed[wework_target]=true
+      ;;
     docker/wework-e2e/desktop.Dockerfile)
       changed[docker]=true
       changed[wework_target]=true

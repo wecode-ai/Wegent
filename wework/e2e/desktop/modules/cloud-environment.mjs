@@ -46,6 +46,127 @@ const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
 const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
+const MYSQL_READY_TIMEOUT_MS = 60_000
+const MYSQL_HELPER = join(repoDir, 'wework', 'e2e', 'desktop', 'support', 'mysql-helper.py')
+
+async function mysqlRequest(request) {
+  const output = await commandOutputAsync('uv', ['run', 'python', MYSQL_HELPER], {
+    cwd: join(repoDir, 'backend'),
+    env: {
+      ...process.env,
+      WEWORK_E2E_MYSQL_REQUEST: JSON.stringify(request),
+    },
+  })
+  return JSON.parse(output)
+}
+
+async function waitForMysqlReady(connectionOptions, mysqlProcess, logPath) {
+  const startedAt = Date.now()
+  let lastError = null
+  while (Date.now() - startedAt < MYSQL_READY_TIMEOUT_MS) {
+    if (mysqlProcess.exitCode !== null || mysqlProcess.signalCode !== null) {
+      const output = await readFile(logPath, 'utf8').catch(() => '')
+      throw new Error(`MySQL exited before becoming ready: ${output.trim() || 'no process output'}`)
+    }
+    try {
+      await mysqlRequest({ ...connectionOptions, operation: 'ping' })
+      return
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  throw new Error(`Timed out waiting for MySQL readiness: ${String(lastError)}`)
+}
+
+async function startMysqlServer(logPath) {
+  const mysqlBinary = process.env.WEWORK_E2E_MYSQLD_BIN?.trim() || 'mysqld'
+  const dataDirectory = join(resultDir, `cloud-mysql-${process.pid}`)
+  await rm(dataDirectory, { recursive: true, force: true })
+  await mkdir(dataDirectory, { recursive: true })
+
+  const initializeArgs = ['--no-defaults', '--initialize-insecure', `--datadir=${dataDirectory}`]
+  if (process.platform !== 'win32') initializeArgs.push('--user=root')
+  await runChecked(mysqlBinary, initializeArgs)
+
+  const port = await reservePort()
+  const serverArgs = [
+    '--no-defaults',
+    `--datadir=${dataDirectory}`,
+    '--bind-address=127.0.0.1',
+    `--port=${port}`,
+    '--mysqlx=0',
+    '--skip-log-bin',
+    '--max-connections=64',
+    '--innodb-buffer-pool-size=64M',
+  ]
+  if (process.platform !== 'win32') {
+    serverArgs.push('--user=root', `--socket=${join(dataDirectory, 'mysql.sock')}`)
+  } else {
+    serverArgs.push('--console')
+  }
+  const server = spawn(mysqlBinary, serverArgs, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+  })
+  await Promise.all([
+    appendProcessOutput(server.stdout, logPath),
+    appendProcessOutput(server.stderr, logPath),
+  ])
+  const connectionOptions = {
+    host: '127.0.0.1',
+    port,
+  }
+  try {
+    await waitForMysqlReady(connectionOptions, server, logPath)
+  } catch (error) {
+    await stopProcessGroup(server)
+    throw error
+  }
+
+  const databaseName = `wework_e2e_${process.pid}_${randomBytes(4).toString('hex')}`
+  try {
+    await mysqlRequest({
+      ...connectionOptions,
+      operation: 'execute',
+      sql: `CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+    })
+  } catch (error) {
+    await stopProcessGroup(server)
+    throw error
+  }
+  return {
+    databaseName,
+    databaseUrl: `mysql+pymysql://root@127.0.0.1:${port}/${databaseName}`,
+    connectionOptions,
+    server,
+  }
+}
+
+async function resolveBackendRsBinary() {
+  const configured = process.env.WEWORK_E2E_BACKEND_RS_BIN?.trim()
+  if (configured) {
+    assert.ok(await pathExists(configured), `Configured backend-rs binary does not exist: ${configured}`)
+    return configured
+  }
+  const binary = join(
+    repoDir,
+    'backend-rs',
+    'target',
+    'debug',
+    process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
+  )
+  if (!(await pathExists(binary))) {
+    await runChecked('cargo', [
+      'build',
+      '--manifest-path',
+      join(repoDir, 'backend-rs', 'Cargo.toml'),
+      '--bin',
+      'wegent-backend-rs',
+    ])
+  }
+  return binary
+}
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
   const captureSpawnError = error => {
@@ -202,9 +323,9 @@ class RealCloudEnvironment {
 
   async startBackend() {
     const backendDirectory = join(repoDir, 'backend')
-    this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
+    this.mysqlLogPath = join(resultDir, 'cloud-mysql.log')
     this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
     this.remoteDockerExecutorLogPath = join(resultDir, 'remote-docker-executor.log')
     this.remoteExecutorRuntimeLogPath = join(resultDir, 'cloud-executor-runtime.log')
@@ -217,14 +338,22 @@ class RealCloudEnvironment {
     const redisServer = await startRedisServer(this.redisLogPath)
     this.redisPort = redisServer.port
     this.redis = redisServer.redis
+    const mysqlServer = await startMysqlServer(this.mysqlLogPath)
+    this.mysql = mysqlServer.server
+    this.mysqlConnectionOptions = mysqlServer.connectionOptions
+    this.databaseName = mysqlServer.databaseName
+    this.databaseUrl = mysqlServer.databaseUrl
 
     this.backendPort = await reservePort()
+    do {
+      this.pythonBackendPort = await reservePort()
+    } while (this.pythonBackendPort === this.backendPort)
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
     this.socketUrl = `http://localhost:${this.backendPort}`
 
     const backendEnv = {
       ...process.env,
-      DATABASE_URL: `sqlite:///${this.databasePath}`,
+      DATABASE_URL: this.databaseUrl,
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       CELERY_BROKER_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       CELERY_RESULT_BACKEND: `redis://127.0.0.1:${this.redisPort}/0`,
@@ -282,7 +411,9 @@ class RealCloudEnvironment {
   }
 
   async launchBackend() {
-    this.backend = spawn(
+    const rustLogDirectory = join(resultDir, 'backend-rs-logs')
+    await mkdir(rustLogDirectory, { recursive: true })
+    this.pythonBackend = spawn(
       'uv',
       [
         'run',
@@ -294,7 +425,7 @@ class RealCloudEnvironment {
         '--host',
         '127.0.0.1',
         '--port',
-        String(this.backendPort),
+        String(this.pythonBackendPort),
       ],
       {
         cwd: join(repoDir, 'backend'),
@@ -304,19 +435,70 @@ class RealCloudEnvironment {
       }
     )
     await Promise.all([
-      appendProcessOutput(this.backend.stdout, this.backendLogPath),
-      appendProcessOutput(this.backend.stderr, this.backendLogPath),
+      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
+      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
     ])
     await waitForUrl(
-      `${this.backendUrl}/api/docs`,
-      `Real cloud backend did not start; see ${this.backendLogPath}`
+      `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
+      `Real cloud Python backend did not start; see ${this.backendLogPath}`
     )
+
+    const backendRsBinary = await resolveBackendRsBinary()
+    this.rustBackend = spawn(backendRsBinary, [], {
+      cwd: join(repoDir, 'backend-rs'),
+      env: {
+        ...this.backendEnv,
+        WEGENT_RS_LISTEN_HOST: '127.0.0.1',
+        WEGENT_RS_LISTEN_PORT: String(this.backendPort),
+        WEGENT_PYTHON_UPSTREAM_URL: `http://127.0.0.1:${this.pythonBackendPort}`,
+        WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
+        WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
+        BREEZE_LOG_DIR: rustLogDirectory,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    await Promise.all([
+      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
+      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
+    ])
+    await waitForUrl(
+      `${this.backendUrl}/api/startup`,
+      `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
+    )
+  }
+
+  async stopBackend() {
+    await stopProcessGroup(this.rustBackend)
+    await stopProcessGroup(this.pythonBackend)
+    this.rustBackend = null
+    this.pythonBackend = null
+  }
+
+  async queryDatabase(sql, params = []) {
+    return mysqlRequest({
+      ...this.mysqlConnectionOptions,
+      database: this.databaseName,
+      operation: 'query',
+      sql,
+      params,
+    })
+  }
+
+  async executeDatabase(sql, params = []) {
+    return mysqlRequest({
+      ...this.mysqlConnectionOptions,
+      database: this.databaseName,
+      operation: 'execute',
+      sql,
+      params,
+    })
   }
 
   async restartBackendWithTerminalProtocolV2(enabled) {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
-    await stopProcessGroup(this.backend)
+    await this.stopBackend()
     const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
     this.backendEnv = {
       ...this.backendEnv,
@@ -336,7 +518,7 @@ class RealCloudEnvironment {
   async restartBackendWithFrontendUrl(frontendUrl) {
     assert.ok(frontendUrl, 'The cloud frontend URL is required')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
-    await stopProcessGroup(this.backend)
+    await this.stopBackend()
     this.backendEnv = {
       ...this.backendEnv,
       FRONTEND_URL: frontendUrl,
@@ -574,14 +756,16 @@ class RealCloudEnvironment {
   }
 
   async configureManagedCloudIdentity() {
-    await runChecked('sqlite3', [
-      this.databasePath,
-      [
-        'UPDATE kinds',
-        `SET json = json_set(json, '$.spec.cloudConfig.sandboxId', '${MANAGED_CLOUD_SANDBOX_ID}', '$.spec.cloudConfig.deviceId', '${CLOUD_DEVICE_ID}')`,
-        `WHERE kind = 'Device' AND name = '${CLOUD_DEVICE_ID}';`,
-      ].join(' '),
-    ])
+    await this.executeDatabase(
+      `UPDATE kinds
+       SET json = JSON_SET(
+         json,
+         '$.spec.cloudConfig.sandboxId', %s,
+         '$.spec.cloudConfig.deviceId', %s
+       )
+       WHERE kind = 'Device' AND name = %s`,
+      [MANAGED_CLOUD_SANDBOX_ID, CLOUD_DEVICE_ID, CLOUD_DEVICE_ID]
+    )
 
     const configured = await this.device(CLOUD_DEVICE_ID)
     assert.equal(
@@ -1301,17 +1485,15 @@ class RealCloudEnvironment {
     assert.match(
       localDevice.device_id,
       /^[A-Za-z0-9._-]+$/,
-      'The connected local app device ID is not safe for the SQLite fixture'
+      'The connected local app device ID is not safe for the database fixture'
     )
 
-    await runChecked('sqlite3', [
-      this.databasePath,
-      [
-        'UPDATE kinds',
-        `SET json = json_set(json, '$.spec.appDeviceId', '${localDevice.device_id}')`,
-        `WHERE kind = 'Device' AND name = '${CLOUD_DEVICE_ID}';`,
-      ].join(' '),
-    ])
+    await this.executeDatabase(
+      `UPDATE kinds
+       SET json = JSON_SET(json, '$.spec.appDeviceId', %s)
+       WHERE kind = 'Device' AND name = %s`,
+      [localDevice.device_id, CLOUD_DEVICE_ID]
+    )
 
     const updated = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
@@ -1368,10 +1550,11 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.remoteExecutor)
     await stopProcessGroup(this.remoteDockerExecutor)
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
-    await stopProcessGroup(this.backend)
+    await this.stopBackend()
     await this.pluginObjectStorage?.stop()
     await this.nevisSandboxService?.stop()
     await stopProcess(this.redis)
+    await stopProcessGroup(this.mysql)
   }
 }
 

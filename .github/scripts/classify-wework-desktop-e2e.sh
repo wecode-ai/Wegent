@@ -983,6 +983,12 @@ classify_path() {
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
       ;;
+    backend-rs/* | backend-rs/** | \
+      wework/e2e/desktop/modules/cloud-environment.mjs | \
+      wework/e2e/desktop/modules/task-flow-main.mjs | \
+      wework/e2e/desktop/support/mysql-helper.py)
+      select_all_desktop_suites
+      ;;
     .github/workflows/wework-e2e.yml | \
       docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
