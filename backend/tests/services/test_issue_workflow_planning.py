@@ -4,6 +4,7 @@
 """Contracts for versioned AI Issue plans and child-task materialization."""
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -28,6 +29,8 @@ from app.schemas.issue_workflow import (
     WorkflowTaskOutcomeSubmit,
 )
 from app.services.issue_workflow_planning import issue_workflow_planning_service
+from app.services.issue_workflow_start import issue_workflow_start_service
+from app.services.project_automations import project_automation_service
 
 
 def _project(db: Session, user: User) -> CloudProject:
@@ -180,6 +183,7 @@ def _plan(robot: ProjectChatAgent) -> WorkflowPlanSubmit:
                     "stage_id": "__issue__",
                     "title": "Implement feature",
                     "description": "Create the implementation and tests.",
+                    "prompt": "Implement the feature, add tests, and report verification evidence.",
                     "assignee_type": "agent",
                     "assignee_id": robot.id,
                     "assignee_name": robot.name,
@@ -286,6 +290,9 @@ def test_required_plan_materializes_once_after_approval(
     assert child.assignee_agent_id == robot.id
     assert child.status == "pending"
     assert child.metadata_json["workflow_plan"]["client_key"] == "implement"
+    assert child.metadata_json["automation"]["prompt"] == (
+        "Implement the feature, add tests, and report verification evidence."
+    )
     assert child.metadata_json.get("workflow") is None
     execution = (
         test_db.query(LoopItemExecution)
@@ -469,6 +476,15 @@ def test_child_outcome_projects_to_one_parent_review(
     assert review.items[0].outcome_verdict == "passed"
     assert review.items[0].outcome_summary == "Implementation and tests passed."
     assert test_db.get(LoopItem, child_id).status == "in_review"
+    assert test_db.get(LoopItem, issue.id).status == "in_progress"
+
+    issue_workflow_planning_service.decide_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision="in_review",
+        summary="Needs a final confirmation.",
+    )
     assert test_db.get(LoopItem, issue.id).status == "in_review"
 
     completed = issue_workflow_planning_service.approve_review(
@@ -480,6 +496,106 @@ def test_child_outcome_projects_to_one_parent_review(
     assert completed.status == "completed"
     assert test_db.get(LoopItem, child_id).status == "completed"
     assert test_db.get(LoopItem, issue.id).status == "completed"
+
+
+def test_manager_can_complete_issue_only_after_executor_outcome(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _project(test_db, test_user)
+    robot = _robot(test_db, project, test_user)
+    issue = _issue(test_db, project, test_user)
+    issue_workflow_planning_service.submit(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        values=_plan(robot),
+    )
+    approved = issue_workflow_planning_service.approve(
+        test_db, issue_id=issue.id, user_id=test_user.id
+    )
+    child_id = approved.items[0].task_id
+    assert child_id is not None
+    with pytest.raises(ValueError, match="not ready"):
+        issue_workflow_planning_service.decide_review(
+            test_db,
+            issue_id=issue.id,
+            user_id=test_user.id,
+            decision="completed",
+            summary="Too early",
+        )
+    issue_workflow_planning_service.report_outcome(
+        test_db,
+        child_id=child_id,
+        user_id=test_user.id,
+        values=WorkflowTaskOutcomeSubmit(
+            verdict="passed", summary="Implementation verified."
+        ),
+    )
+    completed = issue_workflow_planning_service.decide_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision="completed",
+        summary="Evidence satisfies the acceptance criteria.",
+    )
+    assert completed.status == "completed"
+    completed_issue = test_db.get(LoopItem, issue.id)
+    assert completed_issue.status == "completed"
+    assert completed_issue.metadata_json["status_history"][-1]["trigger"] == (
+        "workflow_manager_completed"
+    )
+    assert completed_issue.metadata_json["status_history"][-1]["by_user_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_reported_outcome_dispatches_manager_review_once(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(test_db, test_user)
+    robot = _robot(test_db, project, test_user)
+    issue = _issue(test_db, project, test_user)
+    issue_workflow_planning_service.submit(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        values=_plan(robot),
+    )
+    approved = issue_workflow_planning_service.approve(
+        test_db, issue_id=issue.id, user_id=test_user.id
+    )
+    child_id = approved.items[0].task_id
+    assert child_id is not None
+    issue_workflow_planning_service.report_outcome(
+        test_db,
+        child_id=child_id,
+        user_id=test_user.id,
+        values=WorkflowTaskOutcomeSubmit(
+            verdict="passed", summary="Implementation verified."
+        ),
+    )
+    dispatch = AsyncMock(return_value={"id": "review-run-1"})
+    monkeypatch.setattr(project_automation_service, "run_ai_workflow_manager", dispatch)
+
+    assert (
+        await issue_workflow_start_service.review_outcomes(
+            test_db, item=issue, project=project, user_id=test_user.id
+        )
+        == 1
+    )
+    assert (
+        await issue_workflow_start_service.review_outcomes(
+            test_db, item=issue, project=project, user_id=test_user.id
+        )
+        == 0
+    )
+    assert dispatch.await_count == 1
+    assert dispatch.await_args.kwargs["phase"] == "review"
+    assert (
+        "Implementation verified." in dispatch.await_args.kwargs["coordinator_prompt"]
+    )
 
 
 def test_approve_review_persists_and_pushes_two_stage_completion_activity(

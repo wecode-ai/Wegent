@@ -758,6 +758,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         ? record.metadata.has_additional_context
         : true,
     is_unread: record.metadata.is_unread === true,
+    status_history: Array.isArray(record.metadata.status_history)
+      ? (record.metadata.status_history as CloudLoopItem['status_history'])
+      : [],
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_group_id:
       typeof (record.metadata.collaboration_group as { id?: unknown } | null)?.id === 'string'

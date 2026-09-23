@@ -1,4 +1,7 @@
-import { useActivityExecutionBinding } from './useActivityExecutionStatus'
+import {
+  useActivityExecutionBinding,
+  useActivityExecutionDisplayStatus,
+} from './useActivityExecutionStatus'
 import {
   useWorkflowManagerActivity,
   type ActivityExecutionDetail,
@@ -23,6 +26,11 @@ import {
   IssueActivityThread,
   groupIssueActivityThreads,
   createCollaborationTranslator,
+  formatIssueTimestamp,
+  executionDisplayStatus,
+  isExecutionActive,
+  IssueStatusHistoryList,
+  type SharedIssueStatusHistoryEntry,
 } from '@wegent/collaboration'
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
 import { canApproveIssueExecution } from '@wegent/collaboration/issue-detail/activityApproval'
@@ -59,7 +67,6 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
-  buildRobotRoleDescription,
   selectActivityRerunModel,
   mergeProjectChatMessages,
   startTaskAiRun,
@@ -70,6 +77,9 @@ import { TaskCommentComposer } from './TaskCommentComposer'
 import { useIssueExecutionCancellation } from '@wegent/collaboration/issue-detail/useIssueExecutionCancellation'
 import { ChatMessage, type ExecutionTaskSummary } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
+import { statusHistoryLabels } from './statusHistoryLabels'
+import { memberNameById } from './todoShared'
+import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -92,11 +102,92 @@ interface TaskActivityViewProps {
   onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
   onWorkflowManagerFinished?: () => void
   taskBindings?: LoopItemTaskBinding[]
+  statusHistory?: SharedIssueStatusHistoryEntry[]
+  projectMembers?: CloudProjectMember[]
+  issueTimeline?: boolean
   onOpenTask?: (task: LoopItemTaskBinding) => void
   onRefreshExecutionArtifacts?: () => void | Promise<void>
 }
 
 type TaskCardQueuedReply = RuntimePaneQueuedMessage
+const EMPTY_STATUS_HISTORY: SharedIssueStatusHistoryEntry[] = []
+
+function TimelineReply({
+  rootId,
+  projectId,
+  createdAt,
+  disabled,
+  aiError,
+  replyLabel,
+  cancelLabel,
+  executionMessage,
+  executionTurnId,
+  fallbackExecutionStatus,
+  sessionBusy,
+  onSend,
+}: {
+  rootId: string
+  projectId: string
+  createdAt: string
+  disabled: boolean
+  aiError?: string | null
+  replyLabel: string
+  cancelLabel: string
+  executionMessage?: ProjectChatMessage
+  executionTurnId?: string
+  fallbackExecutionStatus?: string | null
+  sessionBusy: boolean
+  onSend: (text: string, attachments: Attachment[]) => Promise<CardCommentSendResult>
+}) {
+  const [open, setOpen] = useState(false)
+  const editorRef = useRef<HTMLDivElement>(null)
+  const { status: runtimeStatus } = useActivityExecutionDisplayStatus(
+    executionMessage,
+    executionTurnId
+  )
+  const displayStatus = executionDisplayStatus(runtimeStatus ?? fallbackExecutionStatus)
+  const replyBlocked =
+    sessionBusy || (displayStatus !== 'unknown' && isExecutionActive(displayStatus))
+  useEffect(() => {
+    if (open && !replyBlocked) editorRef.current?.querySelector('textarea')?.focus()
+  }, [open, replyBlocked])
+
+  return (
+    <div className="task-detail-thread-reply">
+      <div className="task-detail-thread-actions">
+        <time dateTime={createdAt} className="text-xs text-text-muted">
+          {formatIssueTimestamp(createdAt)}
+        </time>
+        {!replyBlocked ? (
+          <button
+            type="button"
+            data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
+            aria-expanded={open}
+            onClick={() => setOpen(current => !current)}
+          >
+            {open ? cancelLabel : replyLabel}
+          </button>
+        ) : null}
+      </div>
+      {open && !replyBlocked ? (
+        <div ref={editorRef} className="task-detail-thread-reply-editor">
+          <CardCommentComposer
+            rootId={rootId}
+            projectId={projectId}
+            disabled={disabled}
+            placeholder={replyLabel}
+            aiError={aiError}
+            onSend={async (text, attachments) => {
+              const result = await onSend(text, attachments)
+              if (result.ok) setOpen(false)
+              return result
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 export function TaskActivityView({
   client,
@@ -114,6 +205,9 @@ export function TaskActivityView({
   onWorkflowManagerExecutionChange,
   onWorkflowManagerFinished,
   taskBindings = [],
+  statusHistory = EMPTY_STATUS_HISTORY,
+  projectMembers = [],
+  issueTimeline = false,
   onOpenTask,
   onRefreshExecutionArtifacts,
 }: TaskActivityViewProps) {
@@ -132,6 +226,29 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
+  const [loadedStatusHistory, setLoadedStatusHistory] = useState<{
+    taskId: string
+    entries: SharedIssueStatusHistoryEntry[]
+  } | null>(null)
+  useEffect(() => {
+    if (!issueTimeline || statusHistory.length || !projectDeliveryApi?.getLoopItem) return
+    let active = true
+    void projectDeliveryApi.getLoopItem(task.id).then(
+      item => {
+        if (active) {
+          setLoadedStatusHistory({ taskId: task.id, entries: item.status_history ?? [] })
+        }
+      },
+      () => undefined
+    )
+    return () => {
+      active = false
+    }
+  }, [issueTimeline, projectDeliveryApi, statusHistory.length, task.id, task.status, task.version])
+  const activityStatusHistory =
+    statusHistory.length || loadedStatusHistory?.taskId !== task.id
+      ? statusHistory
+      : loadedStatusHistory.entries
   const taskAiServices = useMemo(
     () => ({
       deliveryApi: projectDeliveryApi,
@@ -433,6 +550,34 @@ export function TaskActivityView({
     })
   }, [messages, onRefreshExecutionArtifacts, taskBindings])
   const commentCards = useMemo(() => groupIssueActivityThreads(threadMessages), [threadMessages])
+  const activityEntries = useMemo(() => {
+    const comments = commentCards.map((card, index) => ({
+      kind: 'comment' as const,
+      at: card.root.createdAt,
+      index,
+      card,
+    }))
+    if (!issueTimeline) return comments
+    const creation =
+      task.created_at && !activityStatusHistory.some(entry => entry.trigger === 'create')
+        ? [{ kind: 'created' as const, at: task.created_at, index: -1 }]
+        : []
+    return [
+      ...creation,
+      ...activityStatusHistory.map((entry, index) => ({
+        kind: 'status' as const,
+        at: entry.at,
+        index,
+        entry,
+      })),
+      ...comments,
+    ].sort((left, right) => {
+      const delta = Date.parse(left.at) - Date.parse(right.at)
+      if (delta) return delta
+      const order = { created: 0, status: 1, comment: 2 }
+      return order[left.kind] - order[right.kind] || left.index - right.index
+    })
+  }, [activityStatusHistory, commentCards, issueTimeline, task.created_at])
 
   function cardSessionActive(card: TaskReplyCard) {
     return sharedCardSessionActive(card, address => {
@@ -536,7 +681,8 @@ export function TaskActivityView({
         task,
         agent: assignedAgent,
         executionProject: null,
-        prompt: buildRobotRoleDescription(assignedAgent),
+        prompt:
+          task.automation?.prompt || [task.title, task.description].filter(Boolean).join('\n\n'),
         messages,
         models: availableModels,
         selectedModel: rerunModel,
@@ -702,8 +848,17 @@ export function TaskActivityView({
     return false
   }
 
-  const renderActivityMessage = (message: ProjectChatMessage, eventOnly = false) => {
+  const renderActivityMessage = (
+    message: ProjectChatMessage,
+    eventOnly = false,
+    hideTime = false
+  ) => {
     const address = messageRuntimeAddress(message)
+    const binding = address
+      ? taskBindings.find(
+          item => item.device_id === address.deviceId && item.task_id === address.taskId
+        )
+      : undefined
     return (
       <ChatMessage
         key={message.messageId}
@@ -715,24 +870,31 @@ export function TaskActivityView({
         }
         compact
         plain
+        showInlineExecutionStatus={issueTimeline}
+        allowBackendExecutionFallback={!issueTimeline}
         eventOnly={eventOnly}
         taskAiState={task.ai_state}
         executionDeviceName={deviceNameForMessage(message)}
-        taskSummary={taskSummaryForMessage(message)}
+        taskSummary={issueTimeline ? undefined : taskSummaryForMessage(message)}
+        hideTime={hideTime}
         onOpenExecution={
-          address
-            ? () =>
-                setExecutionDetail({
-                  address,
-                  messageId: message.messageId,
-                  senderName: message.sender.name,
-                  runId:
-                    typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null,
-                  modelName:
-                    typeof message.metadata.model === 'string' ? message.metadata.model : null,
-                  runStatus: resolveMessageRunStatus(task.ai_state, message),
-                })
-            : undefined
+          issueTimeline
+            ? binding && onOpenTask
+              ? () => onOpenTask(binding)
+              : undefined
+            : address
+              ? () =>
+                  setExecutionDetail({
+                    address,
+                    messageId: message.messageId,
+                    senderName: message.sender.name,
+                    runId:
+                      typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null,
+                    modelName:
+                      typeof message.metadata.model === 'string' ? message.metadata.model : null,
+                    runStatus: resolveMessageRunStatus(task.ai_state, message),
+                  })
+              : undefined
         }
         onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
         stopping={cancellingMessageId === message.messageId}
@@ -748,7 +910,7 @@ export function TaskActivityView({
         listTestId="cloud-task-activity-list"
         listRef={listRef}
         translate={activityTranslate}
-        count={threadMessages.length}
+        count={issueTimeline ? activityEntries.length : threadMessages.length}
         loading={loading}
         error={cancellation.error}
         emptyDescription={
@@ -815,14 +977,58 @@ export function TaskActivityView({
       >
         {linear ? (
           <div className="flex flex-col">
-            {commentCards.map(card => {
+            {activityEntries.map(activity => {
+              if (activity.kind === 'created') {
+                return (
+                  <div
+                    key="issue-created"
+                    data-testid="cloud-task-status-created"
+                    className="flex gap-3 border-b border-border/60 px-3 py-2"
+                  >
+                    <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
+                    <div className="min-w-0 flex-1 text-xs text-text-primary">
+                      <span className="font-medium">
+                        {task.created_by_user_name ||
+                          memberNameById(projectMembers, task.created_by_user_id) ||
+                          t('todo.status_history_system')}
+                      </span>{' '}
+                      {t('todo.status_action_create')} Issue
+                      <time dateTime={activity.at} className="ml-2 text-text-muted">
+                        {formatIssueTimestamp(activity.at)}
+                      </time>
+                    </div>
+                  </div>
+                )
+              }
+              if (activity.kind === 'status') {
+                return (
+                  <div
+                    key={`status-${activity.index}`}
+                    data-testid={`cloud-task-status-event-${activity.index}`}
+                    className="flex gap-3 border-b border-border/60 px-3 py-2"
+                  >
+                    <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <IssueStatusHistoryList
+                        entries={[activity.entry]}
+                        startIndex={activity.index}
+                        memberName={userId => memberNameById(projectMembers, userId)}
+                        labels={statusHistoryLabels(t)}
+                      />
+                    </div>
+                  </div>
+                )
+              }
+              const card = activity.card
               const rootId = card.root.messageId
               const executions = [card.root, ...card.replies].filter(
                 message => message.sender.type === 'agent'
               )
+              const latestExecution = executions.at(-1)
               return (
                 <IssueActivityThread
                   key={rootId}
+                  variant={issueTimeline ? 'timeline' : 'card'}
                   cardAttributes={{
                     'data-testid': `cloud-task-activity-card-${rootId}`,
                     ...{
@@ -830,7 +1036,7 @@ export function TaskActivityView({
                       'data-manager-type': String(card.root.metadata.manager_type ?? ''),
                     },
                   }}
-                  message={renderActivityMessage(card.root)}
+                  message={renderActivityMessage(card.root, false, issueTimeline)}
                   replies={
                     card.replies.length
                       ? card.replies.map(reply => renderActivityMessage(reply))
@@ -846,18 +1052,45 @@ export function TaskActivityView({
                           onCancelQueuedMessage={id => replyQueue.cancel(rootId, id)}
                         />
                       </div>
-                      <CardCommentComposer
-                        rootId={rootId}
-                        projectId={project.id}
-                        disabled={!client}
-                        placeholder={t('workbench.task_activity_inline_placeholder')}
-                        aiError={replyQueue.error(rootId)}
-                        onSend={(text, attachments) => sendCardReply(card, text, attachments)}
-                      />
+                      {issueTimeline ? (
+                        <TimelineReply
+                          rootId={rootId}
+                          projectId={project.id}
+                          createdAt={card.root.createdAt}
+                          disabled={!client}
+                          aiError={replyQueue.error(rootId)}
+                          replyLabel={t('workbench.task_activity_inline_placeholder')}
+                          cancelLabel={t('common.cancel')}
+                          executionMessage={latestExecution}
+                          executionTurnId={
+                            latestExecution
+                              ? executionBinding.getTurnId(latestExecution)
+                              : undefined
+                          }
+                          fallbackExecutionStatus={
+                            latestExecution
+                              ? resolveMessageRunStatus(task.ai_state, latestExecution)
+                              : task.ai_state?.project_chat_message_id === rootId
+                                ? task.ai_state.status
+                                : null
+                          }
+                          sessionBusy={cardSessionActive(card)}
+                          onSend={(text, attachments) => sendCardReply(card, text, attachments)}
+                        />
+                      ) : (
+                        <CardCommentComposer
+                          rootId={rootId}
+                          projectId={project.id}
+                          disabled={!client}
+                          placeholder={t('workbench.task_activity_inline_placeholder')}
+                          aiError={replyQueue.error(rootId)}
+                          onSend={(text, attachments) => sendCardReply(card, text, attachments)}
+                        />
+                      )}
                     </>
                   }
                   events={
-                    executions.length
+                    !issueTimeline && executions.length
                       ? executions.map(message => renderActivityMessage(message, true))
                       : null
                   }

@@ -4,6 +4,10 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
+import {
+  verifyIssueActivityTimeline,
+  verifyCommentExecutionStatus,
+} from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -353,6 +357,7 @@ export function createDesktopScenario({
           text: '在动态卡片内回复',
           timeoutMs: uiTimeoutMs,
         })
+        await verifyIssueActivityTimeline(control, scoped, uiTimeoutMs)
 
         await request(`/api/v1/loop-items/${issue.id}/assignments`, {
           method: 'POST',
@@ -407,6 +412,7 @@ export function createDesktopScenario({
           projectId: project.id,
           agentId: agent.id,
         })
+        await verifyCommentExecutionStatus(control, scoped, uiTimeoutMs)
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')
         const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)

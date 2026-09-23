@@ -65,29 +65,6 @@ function stageAgentName(
   );
 }
 
-function stageWaitingReason(
-  node: SharedWorkflowNode,
-  nodes: SharedWorkflowNode[],
-  translate: Translate,
-) {
-  if (node.status !== "blocked" && node.status !== "waiting") return null;
-  const dependencies = node.depends_on
-    .map((dependencyId) =>
-      nodes.find((candidate) => candidate.id === dependencyId),
-    )
-    .filter((dependency): dependency is SharedWorkflowNode =>
-      Boolean(dependency),
-    )
-    .map((dependency) => dependency.name);
-  if (dependencies.length === 0)
-    return translate("todo.workflow_stage_waiting", "等待前序阶段");
-  return translate(
-    "todo.workflow_stage_waiting_for",
-    `等待 ${dependencies.join("、")} 完成`,
-    { stages: dependencies.join("、") },
-  );
-}
-
 function StageIcon({ status }: { status: WorkflowNodeStatus }) {
   if (completedStatuses.has(status))
     return <Check aria-hidden="true" className="h-3.5 w-3.5" />;
@@ -170,27 +147,13 @@ export function IssueAutomationExecutionSummary({
     location === "local"
       ? translate("todo.workflow_local_space", "本地空间")
       : translate("todo.workflow_cloud_space", "云端空间");
-  const activeStage = stages.find((stage) =>
-    ["ready", "queued", "reacting", "running"].includes(stage.status),
-  );
-  const nextBlockedStage = stages.find(
-    (stage) => stage.status === "blocked" || stage.status === "waiting",
-  );
-
   return (
     <section
       className="issue-automation-execution"
       data-testid="collaboration-automation-execution"
     >
       <header className="issue-automation-execution-head">
-        <div>
-          <strong>
-            {translate("todo.automation_execution", "自动化执行")}
-          </strong>
-          <span data-testid="collaboration-automation-rule-chain">
-            {stages.map((stage) => stage.name).join(" → ")}
-          </span>
-        </div>
+        <strong>{translate("todo.automation_execution", "自动化执行")}</strong>
         <span data-testid="collaboration-automation-progress">
           {completedCount} / {stages.length}
         </span>
@@ -214,10 +177,15 @@ export function IssueAutomationExecutionSummary({
           ) : null}
         </p>
       ) : null}
-      <div className="issue-automation-stage-list">
+      <div
+        className="issue-automation-stage-list"
+        data-testid="collaboration-automation-rule-chain"
+      >
         {stages.map((stage, index) => {
-          const waitingReason = stageWaitingReason(stage, stages, translate);
           const agentName = stageAgentName(stage, agents);
+          const isActive = ["ready", "queued", "reacting", "running"].includes(
+            stage.status,
+          );
           const taskIds =
             plan?.stage_id === stage.id
               ? new Set(
@@ -241,22 +209,22 @@ export function IssueAutomationExecutionSummary({
               <span className="issue-automation-stage-icon">
                 <StageIcon status={stage.status} />
               </span>
-              <div>
-                <strong>{stage.name}</strong>
-                <p>
-                  {(childLabel ? null : waitingReason) ??
-                    [
+              <div className="issue-automation-stage-content">
+                <div className="issue-automation-stage-main">
+                  <strong>{stage.name}</strong>
+                  <span>
+                    {[
                       childLabel ??
                         (needsConfiguration &&
                         ["ready", "queued"].includes(stage.status)
                           ? translate("runtimeSettings.waiting", "等待配置")
                           : stageStatusLabel(stage.status, translate)),
-                      agentName,
-                      executionLocation,
+                      ...(isActive ? [agentName, executionLocation] : []),
                     ]
                       .filter(Boolean)
                       .join(" · ")}
-                </p>
+                  </span>
+                </div>
                 {children.map((child) => (
                   <ExecutionConfigurationNotice
                     key={child.id}
@@ -283,27 +251,6 @@ export function IssueAutomationExecutionSummary({
           );
         })}
       </div>
-
-      <p className="issue-automation-execution-foot">
-        {issueCompleted || completedCount === stages.length
-          ? translate(
-              "todo.workflow_all_stages_completed",
-              "所有自动化阶段已完成，Issue 已自动完成",
-            )
-          : nextBlockedStage && activeStage
-            ? translate(
-                "todo.workflow_next_stage_unlocks",
-                `${activeStage.name} 完成后将自动进入 ${nextBlockedStage.name}`,
-                {
-                  current: activeStage.name,
-                  next: nextBlockedStage.name,
-                },
-              )
-            : translate(
-                "todo.workflow_driven_by_rule",
-                "此 Issue 由自动化规则按顺序推进",
-              )}
-      </p>
     </section>
   );
 }

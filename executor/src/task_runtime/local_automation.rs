@@ -164,18 +164,8 @@ pub(super) fn run_collaboration_group(
     if !group["leader"].is_object() {
         return Ok(None);
     }
-    let instructions = text(group, "instructions");
-    let prompt = if instructions.is_empty() {
-        format!(
-            "Coordinate the collaboration group {}.",
-            text(group, "name")
-        )
-    } else {
-        instructions.to_owned()
-    };
     let rule = json!({
         "id": format!("collaboration-group:{group_id}"),
-        "prompt": prompt,
         "targetKind": "collaboration_group",
         "targetId": group_id,
         "timezone": "UTC",
@@ -284,7 +274,21 @@ fn dispatch(
                     ));
                 }
                 let id = format!("{}:{}", run_id, text(&stage, "id"));
-                nodes.push(json!({"id":id,"name":stage["name"],"prompt":format!("{}\n{}\n{}\n\n{}\n{}",text(rule,"prompt"),text(group,"instructions"),text(&stage,"description"),task.title.as_deref().unwrap_or_default(),task.description),"kind":"ai","execution_mode":if kind=="agent" {"robot"} else {"human"},"required_assignee_type":if kind=="agent" {"agent"} else {"user"},"required_assignee_id":assignee["id"],"depends_on":previous.iter().collect::<Vec<_>>(),"required":true,"automation_role":if manager_planning && nodes.is_empty() {"manager"} else {""}}));
+                let prompt = if manager_planning {
+                    format!(
+                        "{}\n\n{}",
+                        task.title.as_deref().unwrap_or_default(),
+                        task.description
+                    )
+                } else {
+                    format!(
+                        "{}\n\n{}\n\n{}",
+                        text(&stage, "description"),
+                        task.title.as_deref().unwrap_or_default(),
+                        task.description
+                    )
+                };
+                nodes.push(json!({"id":id,"name":stage["name"],"prompt":prompt.trim(),"kind":"ai","execution_mode":if kind=="agent" {"robot"} else {"human"},"required_assignee_type":if kind=="agent" {"agent"} else {"user"},"required_assignee_id":assignee["id"],"depends_on":previous.iter().collect::<Vec<_>>(),"required":true,"automation_role":if manager_planning && nodes.is_empty() {"manager"} else {""}}));
                 previous = Some(id);
             }
             let mut workflow = instantiate_local_workflow(&json!({"version":1,"nodes":nodes}))?;
@@ -479,11 +483,11 @@ impl LocalTaskStore {
             }
             let node_id = format!("{run_id}:plan:{index}:{client_key}");
             let description = text(item, "description");
-            let rationale = text(item, "rationale");
+            let prompt = text(item, "prompt");
             nodes.push(json!({
                 "id": node_id,
                 "name": title,
-                "prompt": format!("{title}\n\n{description}\n\n{rationale}"),
+                "prompt": if prompt.trim().is_empty() { description } else { prompt },
                 "kind": "ai",
                 "execution_mode": if assignee_type == "agent" {"robot"} else {"human"},
                 "required_assignee_type": assignee_type,
@@ -495,6 +499,25 @@ impl LocalTaskStore {
             previous = node_id;
             planned.push(item.clone());
         }
+        let reviewer_id = text(&group["leader"], "id");
+        if text(&group["leader"], "kind") != "agent" || reviewer_id.is_empty() {
+            return Err(TaskRuntimeError::Invalid(
+                "AI workflow review requires an agent leader".into(),
+            ));
+        }
+        nodes.push(json!({
+            "id": format!("{run_id}:review"),
+            "name": "负责人验收",
+            "prompt": "Review the executor results. Call decide_workflow_review with in_review or completed and explain your decision. Do not execute the child tasks.",
+            "kind": "ai",
+            "execution_mode": "robot",
+            "required_assignee_type": "agent",
+            "required_assignee_id": reviewer_id,
+            "depends_on": [previous],
+            "required": true,
+            "status": "blocked",
+            "automation_role": "manager_review",
+        }));
         workflow.insert("plan_submitted".to_owned(), json!(true));
         workflow.insert(
             "plan_summary".to_owned(),
@@ -511,6 +534,40 @@ impl LocalTaskStore {
             "summary": plan.get("summary").cloned().unwrap_or_else(|| json!("")),
             "items": planned,
         }))
+    }
+
+    pub fn decide_local_automation_workflow_review(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        run_id: &str,
+        decision: &str,
+        summary: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        if !matches!(decision, "in_review" | "completed") || summary.trim().is_empty() {
+            return Err(TaskRuntimeError::Invalid(
+                "workflow review requires a decision and summary".into(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut task =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if task.cloud_project_id.as_deref() != Some(project_id) {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        ensure_local_manager_scope_for_role(&transaction, &task, run_id, "manager_review")?;
+        task.metadata["workflow"]["manager_decision"] = json!({
+            "status": decision,
+            "summary": summary.trim(),
+        });
+        let stamp = now();
+        transaction.execute(
+            "UPDATE loop_items SET status=?1, metadata=?2, version=version+1, updated_at=?3 WHERE id=?4",
+            params![decision, task.metadata.to_string(), stamp, task_id],
+        )?;
+        transaction.commit()?;
+        Ok(json!({"status": decision, "summary": summary.trim()}))
     }
 
     pub fn cancel_project_automation_run(
@@ -798,6 +855,15 @@ fn ensure_local_manager_scope(
     task: &LoopItem,
     run_id: &str,
 ) -> Result<(), TaskRuntimeError> {
+    ensure_local_manager_scope_for_role(connection, task, run_id, "manager")
+}
+
+fn ensure_local_manager_scope_for_role(
+    connection: &Connection,
+    task: &LoopItem,
+    run_id: &str,
+    role: &str,
+) -> Result<(), TaskRuntimeError> {
     if run_id.is_empty()
         || text(&task.metadata["workflow"], "automation_run_id") != run_id
         || task.metadata["workflow"]["cancelled"] == true
@@ -807,7 +873,7 @@ fn ensure_local_manager_scope(
             .into_iter()
             .flatten()
             .any(|node| {
-                text(node, "automation_role") == "manager"
+                text(node, "automation_role") == role
                     && !matches!(
                         text(node, "status"),
                         "completed" | "forced_completed" | "failed" | "cancelled"

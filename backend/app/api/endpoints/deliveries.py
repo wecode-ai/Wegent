@@ -81,6 +81,7 @@ from app.schemas.issue_workflow import (
     WorkflowNodeDecisionRequest,
     WorkflowPlanSubmit,
     WorkflowPlanView,
+    WorkflowReviewDecisionSubmit,
     WorkflowTaskOutcomeSubmit,
 )
 from app.schemas.project_chat import LoopItemAssign
@@ -1056,6 +1057,38 @@ async def replan_loop_item_workflow_plan(
 
 
 @router.post(
+    "/loop-items/{item_id}/workflow-plan/manager-review",
+    response_model=WorkflowPlanView,
+)
+def decide_loop_item_workflow_review(
+    item_id: str,
+    values: WorkflowReviewDecisionSubmit,
+    automation_run_id: str = Header(
+        default="",
+        alias="X-Wegent-Automation-Run-ID",
+        include_in_schema=False,
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkflowPlanView:
+    if not automation_run_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "AI manager review run is required"
+        )
+    try:
+        return project_automation_execution.decide_manager_workflow_review(
+            db,
+            run_id=automation_run_id,
+            issue_id=item_id,
+            user_id=current_user.id,
+            decision=values.decision,
+            summary=values.summary,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
     "/loop-items/{item_id}/workflow-plan/review",
     response_model=WorkflowPlanView,
 )
@@ -1065,6 +1098,10 @@ async def approve_loop_item_workflow_review(
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
+        issue = loop_item_service.get(db, item_id, current_user.id)
+        workflow = issue_workflow_start_service._workflow(issue)
+        if workflow is not None and workflow.advancement_policy == "ai":
+            raise ValueError("AI-managed workflow review requires a manager decision")
         plan = issue_workflow_planning_service.approve_review(
             db,
             issue_id=item_id,
@@ -1105,6 +1142,19 @@ async def report_loop_item_workflow_outcome(
                 db,
                 item_id=plan.issue_id,
                 user=current_user,
+            )
+        elif plan.status == "awaiting_review":
+            parent = db.get(LoopItem, plan.issue_id)
+            if parent is None:
+                raise ValueError("Workflow parent Issue is unavailable")
+            project = cloud_project_service.get(
+                db, int(str(parent.cloud_project_id)), current_user.id
+            )
+            await issue_workflow_start_service.review_outcomes(
+                db,
+                item=parent,
+                project=project,
+                user_id=current_user.id,
             )
         _publish_workflow_plan_changed(
             db,

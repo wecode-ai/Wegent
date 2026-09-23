@@ -632,10 +632,50 @@ async def report_workflow_outcome(
                 project=project,
                 user_id=token_info.user_id,
             )
+        elif view.status == "awaiting_review":
+            parent = db.get(LoopItem, view.issue_id)
+            if parent is None:
+                raise ValueError("Workflow parent Issue is unavailable")
+            await issue_workflow_start_service.review_outcomes(
+                db,
+                item=parent,
+                project=project,
+                user_id=token_info.user_id,
+            )
         return {
             **view.model_dump(mode="json"),
             "project_id": str(project.id),
         }
+
+
+@mcp_tool(server="wework_space")
+def decide_workflow_review(
+    token_info: MCPAuthInfo,
+    decision: str,
+    summary: str,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Let the active AI manager decide whether an Issue needs review or is done."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        context = _board_context(db, token_info)
+        manager_run_id = context.get("project_automation_run_id")
+        if context.get("source") != "project_automation" or not manager_run_id:
+            raise ValueError("Review decision requires an active AI manager")
+        if resolved_item_id != context.get("item_id"):
+            raise ValueError("Review decision does not match the current Issue")
+        view = project_automation_execution.decide_manager_workflow_review(
+            db,
+            run_id=manager_run_id,
+            issue_id=resolved_item_id,
+            user_id=token_info.user_id,
+            decision=decision,
+            summary=summary,
+        )
+        return {**view.model_dump(mode="json"), "project_id": str(project.id)}
 
 
 @mcp_tool(server="wework_space")

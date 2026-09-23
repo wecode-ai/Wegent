@@ -198,6 +198,11 @@ export function TodoEditor(props: TodoEditorProps) {
           onWorkflowManagerExecutionChange={context.onOpenManagerExecutionChange}
           onWorkflowManagerFinished={context.onWorkflowManagerFinished}
           taskBindings={context.tasks as LoopItemTaskBinding[]}
+          statusHistory={
+            props.presentation === 'workspace-panel' ? context.item.status_history : undefined
+          }
+          projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
+          issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
           linear

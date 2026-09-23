@@ -122,14 +122,15 @@ describe('IssueAutomationExecutionSummary', () => {
     ).toBe('0 / 1')
   })
 
-  it('shows the rule chain, the active agent, and the blocked dependency', () => {
+  it('shows each stage once with its own status and active agent', () => {
     render(nodes)
 
-    expect(
-      container.querySelector(
-        '[data-testid="collaboration-automation-rule-chain"]',
-      )?.textContent,
-    ).toBe('Claude 实现 → Codex 验证')
+    const stageList = container.querySelector(
+      '[data-testid="collaboration-automation-rule-chain"]',
+    )!
+    expect(stageList.querySelectorAll('article')).toHaveLength(2)
+    expect(container.textContent?.match(/Claude 实现/g)).toHaveLength(1)
+    expect(container.textContent?.match(/Codex 验证/g)).toHaveLength(1)
     expect(
       container.querySelector(
         '[data-testid="collaboration-automation-stage-0"]',
@@ -139,10 +140,8 @@ describe('IssueAutomationExecutionSummary', () => {
       container.querySelector(
         '[data-testid="collaboration-automation-stage-1"]',
       )?.textContent,
-    ).toContain('等待 Claude 实现 完成')
-    expect(container.textContent).toContain(
-      'Claude 实现 完成后将自动进入 Codex 验证',
-    )
+    ).toContain('等待前序阶段')
+    expect(container.textContent).not.toContain('云端空间 · 云端空间')
   })
 
   it('shows the agent selected by a direct stage execution config', () => {
@@ -191,9 +190,7 @@ describe('IssueAutomationExecutionSummary', () => {
         '[data-testid="collaboration-automation-progress"]',
       )?.textContent,
     ).toContain('2 / 2')
-    expect(container.textContent).toContain(
-      '所有自动化阶段已完成，Issue 已自动完成',
-    )
+    expect(container.textContent?.match(/已完成/g)).toHaveLength(2)
   })
 
   it('shows the missing configuration and settings path instead of preparing', () => {

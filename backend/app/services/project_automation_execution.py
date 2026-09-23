@@ -1128,6 +1128,25 @@ class ProjectAutomationExecution:
     ) -> str:
         del db, owner, context
         task_id = run.task_id or ""
+        review = (
+            isinstance(metadata(run).get("event"), dict)
+            and metadata(run)["event"].get("type") == "workflow.review"
+        )
+        manager_instruction = (
+            "你是看板的 AI 管家。请读取当前 Issue 和执行者的任务结果，"
+            "综合判断是否需要人工确认或可以完成，"
+            "然后调用 decide_workflow_review 提交决定。不要执行子任务。"
+            if review
+            else (
+                "你是看板的 AI 管家，只负责编排，不执行具体任务。"
+                "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
+                "为每个子任务编写面向执行者的具体 prompt，包含目标、边界和验收要求，"
+                "然后调用 submit_workflow_plan 提交结构化方案。"
+                "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
+                "不要查询、猜测或伪造阶段标识。"
+                "不要直接修改原 Issue 的负责人。"
+            )
+        )
         sections = [
             (
                 f"project_id: {project.id}\n"
@@ -1138,14 +1157,7 @@ class ProjectAutomationExecution:
                 f"看板任务数据位于 cloud://projects/{project.id}/todos/{task_id}，"
                 "请通过看板工具自行查看。"
             ),
-            (
-                "你是看板的 AI 管家，只负责编排，不执行具体任务。"
-                "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
-                "然后调用 submit_workflow_plan 提交结构化方案。"
-                "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
-                "不要查询、猜测或伪造阶段标识。"
-                "不要直接修改原 Issue 的负责人。"
-            ),
+            manager_instruction,
         ]
         instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
         if instruction:
@@ -1461,6 +1473,57 @@ class ProjectAutomationExecution:
             db.rollback()
             raise
 
+    def decide_manager_workflow_review(
+        self,
+        db: Session,
+        *,
+        run_id: str,
+        issue_id: str,
+        user_id: int,
+        decision: str,
+        summary: str,
+    ) -> WorkflowPlanView:
+        """Bind an AI manager decision to its active review run."""
+
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        manager_run = db.get(ProjectAutomationRun, run_id)
+        if manager_run is None or manager_run.created_by_user_id != user_id:
+            raise ValueError("AI manager review run is unavailable")
+        event = metadata(manager_run).get("event")
+        payload = event.get("payload") if isinstance(event, dict) else None
+        plan = issue_workflow_planning_service.get(
+            db, issue_id=issue_id, user_id=user_id
+        )
+        if (
+            not isinstance(event, dict)
+            or event.get("type") != "workflow.review"
+            or not isinstance(payload, dict)
+            or plan is None
+            or payload.get("workflow_run_id") != plan.run_id
+            or str(manager_run.task_id or "") != issue_id
+        ):
+            raise ValueError("AI manager review does not match the active plan")
+        activity = self._activity(db, manager_run)
+        if activity is None:
+            raise ValueError("AI manager review activity is unavailable")
+        view = issue_workflow_planning_service.decide_review(
+            db,
+            issue_id=issue_id,
+            user_id=user_id,
+            decision=decision,
+            summary=summary,
+        )
+        activity.metadata_json = {
+            **(activity.metadata_json or {}),
+            "workflow_review_decision": decision,
+            "workflow_review_summary": summary,
+        }
+        db.commit()
+        return view
+
     def finalize_manager_result(
         self,
         db: Session,
@@ -1522,8 +1585,14 @@ class ProjectAutomationExecution:
             if selected_type == "user" and str(assignee_user_id or "") == selected_id
             else ""
         )
-        manager_action_recorded = bool(
-            workflow_plan_run_id or selected_agent_id or selected_user_id
+        run_event = metadata(run).get("event")
+        review_run = (
+            isinstance(run_event, dict) and run_event.get("type") == "workflow.review"
+        )
+        manager_action_recorded = (
+            bool(activity_metadata.get("workflow_review_decision"))
+            if review_run
+            else bool(workflow_plan_run_id or selected_agent_id or selected_user_id)
         )
         if (selected_type or selected_id) and not (
             selected_agent_id or selected_user_id

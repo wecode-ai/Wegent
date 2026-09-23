@@ -801,6 +801,7 @@ class WorkflowPlanItemCreate(BaseModel):
     stage_id: str = Field(default="", max_length=64)
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=100_000)
+    prompt: str = Field(default="", max_length=100_000)
     assignee_type: WorkflowPlanItemAssigneeType
     assignee_id: str = Field(min_length=1, max_length=128)
     assignee_name: str = Field(default="", max_length=255)
@@ -817,6 +818,11 @@ class WorkflowPlanSubmit(BaseModel):
         if len(keys) != len(set(keys)):
             raise ValueError("workflow plan item keys must be unique")
         return self
+
+
+class WorkflowReviewDecisionSubmit(BaseModel):
+    decision: Literal["in_review", "completed"]
+    summary: str = Field(min_length=1, max_length=10_000)
 
 
 class WorkflowPlanItemView(WorkflowPlanItemCreate):

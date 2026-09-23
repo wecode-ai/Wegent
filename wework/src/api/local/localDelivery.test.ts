@@ -44,6 +44,29 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('maps persisted local Issue status transitions into the detail model', async () => {
+    const statusHistory = [
+      {
+        from_status: 'pending',
+        from_status_name: '待开始',
+        to_status: 'in_progress',
+        to_status_name: '进行中',
+        trigger: 'local_status_change',
+        by_user_id: null,
+        at: '2026-09-24T00:00:00Z',
+      },
+    ]
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') {
+        return [{ ...taskRecord, metadata: { tags: [], status_history: statusHistory } }]
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const result = await createLocalDeliveryApi(request).listLoopItems('project-1')
+    expect(result.items[0].status_history).toEqual(statusHistory)
+  })
+
   test('preserves generated project execution environments when listing and updating', async () => {
     const executionEnvironment = {
       repositories: [

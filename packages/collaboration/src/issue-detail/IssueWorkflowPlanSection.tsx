@@ -248,12 +248,14 @@ export function IssueWorkflowPlanSection({
                 labels.replan,
                 testIds.replan ?? "cloud-todo-workflow-replan",
               )}
-              {actionButton(
-                "approveReview",
-                labels.approveReview,
-                testIds.approveReview ?? "cloud-todo-workflow-review",
-                true,
-              )}
+              {enabled("approveReview")
+                ? actionButton(
+                    "approveReview",
+                    labels.approveReview,
+                    testIds.approveReview ?? "cloud-todo-workflow-review",
+                    true,
+                  )
+                : null}
             </>
           ) : status === "paused" ? (
             actionButton(

@@ -203,7 +203,10 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
     let automation_origin = origin
         .filter(|origin| origin.get("type").and_then(Value::as_str) == Some("project_automation"));
     let automation_manager = automation_origin.is_some_and(|origin| {
-        origin.get("automationRole").and_then(Value::as_str) == Some("manager")
+        matches!(
+            origin.get("automationRole").and_then(Value::as_str),
+            Some("manager" | "manager_review")
+        )
     });
     let automation_executor = automation_origin.is_some() && !automation_manager;
     let space_id = request
@@ -1090,6 +1093,31 @@ async fn call_tool_with_runtime_context(
                 | (_, _, _, Err(error)) => Err(error),
             }
         }
+        "decide_workflow_review" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            let decision = string_argument(&arguments, "decision");
+            let summary = string_argument(&arguments, "summary");
+            let run_id = grant
+                .as_ref()
+                .and_then(|value| value.automation_run_id.as_deref())
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "workflow review requires an active AI manager".to_owned(),
+                    )
+                });
+            match (project_id, task_id, run_id, decision, summary) {
+                (Ok(project_id), Ok(task_id), Ok(run_id), Ok(decision), Ok(summary)) => runtime
+                    .decide_local_automation_workflow_review(
+                        project_id, task_id, run_id, decision, summary,
+                    ),
+                (Err(error), _, _, _, _)
+                | (_, Err(error), _, _, _)
+                | (_, _, Err(error), _, _)
+                | (_, _, _, Err(error), _)
+                | (_, _, _, _, Err(error)) => Err(error),
+            }
+        }
         "report_workflow_outcome" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
             "This orchestration operation requires a backend project space".to_owned(),
         )),
@@ -1756,6 +1784,18 @@ async fn call_backend_tool(
                 "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
                 "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
             })),
+        "decide_workflow_review" => {
+            let request = client
+                .post(format!(
+                    "{base}/loop-items/{}/workflow-plan/manager-review",
+                    encode_segment(task_id()?)
+                ))
+                .json(&json!({
+                    "decision": arguments.get("decision").and_then(Value::as_str).unwrap_or_default(),
+                    "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
+                }));
+            with_automation_run_header(request, grant)
+        }
         "assign_board_item" => {
             let notify = arguments.get("notify_assignee").and_then(Value::as_bool).unwrap_or(true);
             if let Some(run_id) = grant.and_then(|grant| grant.automation_run_id.as_deref()) {
@@ -2608,6 +2648,7 @@ fn tools() -> Vec<Value> {
                                         "client_key": {"type": "string"},
                                         "title": {"type": "string"},
                                         "description": {"type": "string"},
+                                        "prompt": {"type": "string", "description": "AI manager's task-specific execution instruction for this assignee"},
                                         "assignee_type": {"enum": ["user", "agent", "team"]},
                                         "assignee_id": {"type": "string"},
                                         "assignee_name": {"type": "string"},
@@ -2641,6 +2682,20 @@ fn tools() -> Vec<Value> {
                     "findings": {"type": "array", "items": {"type": "string"}}
                 },
                 "required": ["space_id", "item_id", "verdict", "summary"]
+            }),
+        ),
+        tool(
+            "decide_workflow_review",
+            "Record the active AI manager's decision after reviewing child task outcomes",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "decision": {"enum": ["in_review", "completed"]},
+                    "summary": {"type": "string"}
+                },
+                "required": ["space_id", "item_id", "decision", "summary"]
             }),
         ),
         tool(
@@ -3086,6 +3141,7 @@ fn is_automation_manager_tool(name: &str) -> bool {
             | "get_board_item"
             | "get_assignment_candidates"
             | "submit_workflow_plan"
+            | "decide_workflow_review"
             | "send_notification"
     )
 }
@@ -3845,6 +3901,7 @@ mod tests {
                 "send_notification",
                 "get_assignment_candidates",
                 "submit_workflow_plan",
+                "decide_workflow_review",
             ]
         );
         for forbidden in [

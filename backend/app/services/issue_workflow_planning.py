@@ -203,7 +203,9 @@ class IssueWorkflowPlanningService:
                     "plan_item_id": item.id,
                     **({"run_id": automation_run_id} if automation_run_id else {}),
                 },
-                instruction=item.description or "",
+                instruction=self._item_metadata(item).get("prompt")
+                or item.description
+                or "",
                 assign_creator_if_unassigned=False,
             )
             child.metadata_json = {
@@ -240,6 +242,7 @@ class IssueWorkflowPlanningService:
         *,
         issue_id: str,
         user_id: int,
+        manager_initiated: bool = False,
     ) -> WorkflowPlanView:
         """Accept all reviewed child tasks and advance the parent once."""
 
@@ -259,7 +262,7 @@ class IssueWorkflowPlanningService:
                 task,
                 "completed",
                 trigger="workflow_review_approved",
-                by_user_id=user_id,
+                by_user_id=None if manager_initiated else user_id,
             )
         run.status = "completed"
         run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -280,7 +283,7 @@ class IssueWorkflowPlanningService:
                 issue,
                 "in_progress",
                 trigger="workflow_stage_advanced",
-                by_user_id=user_id,
+                by_user_id=None if manager_initiated else user_id,
             )
             next_run = self.ensure_run(db, issue=issue, user_id=user_id)
             activity_payload = self._persist_stage_completion_activity(
@@ -301,8 +304,12 @@ class IssueWorkflowPlanningService:
             db,
             issue,
             "completed",
-            trigger="workflow_review_approved",
-            by_user_id=user_id,
+            trigger=(
+                "workflow_manager_completed"
+                if manager_initiated
+                else "workflow_review_approved"
+            ),
+            by_user_id=None if manager_initiated else user_id,
         )
         from app.services.project_workflow_projection import (
             sync_workflow_automation_status,
@@ -404,16 +411,58 @@ class IssueWorkflowPlanningService:
         current = self.get(db, issue_id=issue.id, user_id=user_id)
         if current is None:
             raise ValueError("The Issue has no active workflow plan")
+        return current
+
+    def decide_review(
+        self,
+        db: Session,
+        *,
+        issue_id: str,
+        user_id: int,
+        decision: str,
+        summary: str,
+    ) -> WorkflowPlanView:
+        """Apply the AI manager's review decision to the parent Issue."""
+
+        if decision not in {"in_review", "completed"}:
+            raise ValueError("Review decision must be in_review or completed")
+        issue = self._issue(db, issue_id, user_id, for_update=True)
+        workflow = self._workflow(issue)
+        run = self._active_run(db, issue, workflow)
+        if run is None or run.status != "awaiting_review":
+            raise ValueError("Workflow outcomes are not ready for manager review")
+        items = self._items(db, run.id)
+        tasks = self._plan_tasks(db, run.id)
         if (
-            str(workflow.get("approval_policy") or "required") == "automatic"
-            and current.status == "awaiting_review"
+            not items
+            or len(tasks) != len(items)
+            or any(
+                (task.metadata_json or {}).get("workflow_outcome", {}).get("verdict")
+                != "passed"
+                for task in tasks
+            )
         ):
+            raise ValueError("All executor outcomes must be reported before review")
+        if decision == "completed":
             return self.approve_review(
                 db,
-                issue_id=issue.id,
+                issue_id=issue_id,
                 user_id=user_id,
+                manager_initiated=True,
             )
-        return current
+        run.metadata_json = {
+            **(run.metadata_json or {}),
+            "manager_review": {"decision": decision, "summary": summary},
+        }
+        self._set_item_status(
+            db,
+            issue,
+            "in_review",
+            trigger="workflow_manager_review",
+            by_user_id=None,
+        )
+        db.commit()
+        return self._view(db, issue, run)
 
     def sync_from_child(
         self,
@@ -447,7 +496,7 @@ class IssueWorkflowPlanningService:
             return issue
         if all(task.status in {"in_review", "completed"} for task in tasks):
             next_status = "awaiting_review"
-            parent_status = "in_review"
+            parent_status = "in_progress"
         else:
             next_status = "running"
             parent_status = "in_progress"
@@ -578,7 +627,7 @@ class IssueWorkflowPlanningService:
                     task.status in {"in_review", "completed"} for task in tasks
                 ):
                     run.status = "awaiting_review"
-                    parent_status = "in_review"
+                    parent_status = "in_progress"
                 else:
                     run.status = "running"
                     parent_status = "in_progress"

@@ -11,6 +11,7 @@ from app.models.delivery import (
     CloudProject,
     LoopItem,
     ProjectAutomationRun,
+    ProjectWorkflowRun,
     loop_datetime_is_unset,
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
@@ -98,6 +99,73 @@ class IssueWorkflowStartService:
             user_id,
             stage_ids=stage_ids,
         )
+
+    async def review_outcomes(
+        self,
+        db: Session,
+        *,
+        item: LoopItem,
+        project: CloudProject,
+        user_id: int,
+    ) -> int:
+        """Ask the AI manager to judge reported child outcomes once."""
+
+        workflow = self._workflow(item)
+        if workflow is None or workflow.advancement_policy != "ai":
+            return 0
+        plan = issue_workflow_planning_service.get(
+            db, issue_id=item.id, user_id=user_id
+        )
+        if plan is None or plan.status != "awaiting_review":
+            return 0
+        if not plan.items or any(
+            entry.outcome_verdict != "passed" for entry in plan.items
+        ):
+            return 0
+        run = (
+            db.query(ProjectWorkflowRun)
+            .filter(ProjectWorkflowRun.id == plan.run_id)
+            .with_for_update()
+            .one()
+        )
+        run_metadata = dict(run.metadata_json or {})
+        if run_metadata.get("review_manager_run_id"):
+            return 0
+        rule_id = workflow.ai_automation_rule_id
+        if not rule_id:
+            raise ValueError("AI review requires a manager automation rule")
+        outcomes = "\n".join(
+            f"- {entry.title}: {entry.outcome_verdict or 'unreported'}; "
+            f"{entry.outcome_summary}"
+            for entry in plan.items
+        )
+        instruction = (
+            f"{workflow.coordinator_prompt}\n\n"
+            f"执行者回报：\n{outcomes}\n\n"
+            "请结合 Issue 与子任务详情核查结果，调用 decide_workflow_review。"
+        )
+        started = await project_automation_service.run_ai_workflow_manager(
+            db,
+            project_id=str(project.id),
+            automation_id=rule_id,
+            item=item,
+            workflow_run_id=plan.run_id,
+            workflow_plan_version=plan.plan_version,
+            user_id=user_id,
+            coordinator_prompt=instruction,
+            execution_config=(
+                workflow.execution_config.model_dump(mode="json", by_alias=True)
+                if workflow.execution_config
+                else None
+            ),
+            phase="review",
+        )
+        run.metadata_json = {
+            **run_metadata,
+            "review_manager_run_id": started["id"],
+        }
+        db.commit()
+        return 1
 
     def ready_robot_stage_ids(self, item: LoopItem) -> set[str]:
         workflow = self._workflow(item)

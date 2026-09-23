@@ -35,7 +35,7 @@ use local_execution_activity::{
     create_execution_comment, create_local_execution, ensure_execution_binding, insert_task_binding,
 };
 
-const LOCAL_SCHEMA_VERSION: i64 = 9;
+const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -515,6 +515,10 @@ impl LocalTaskStore {
             ],
         )?;
         if metadata.get("workflow").is_some_and(Value::is_object) {
+            metadata["status_history"] = get_item_from(&transaction, &id, "task")?
+                .ok_or(TaskRuntimeError::TaskNotFound)?
+                .metadata["status_history"]
+                .clone();
             enqueue_ready_local_workflow_stages(
                 &transaction,
                 &id,
@@ -3201,6 +3205,59 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          ON loop_items(assignee_agent_id)",
         [],
     )?;
+    connection.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS tr_local_task_status_created
+         AFTER INSERT ON loop_items
+         WHEN NEW.resource_type = 'task' AND NEW.status IS NOT NULL
+         BEGIN
+           UPDATE loop_items
+           SET metadata = json_set(
+             COALESCE(NEW.metadata, '{}'), '$.status_history',
+             json_array(json_object(
+               'from_status', '', 'from_status_name', '',
+               'to_status', NEW.status,
+               'to_status_name', COALESCE((
+                 SELECT json_extract(value, '$.name')
+                 FROM json_each((SELECT metadata FROM loop_items WHERE id = NEW.cloud_project_id), '$.board_config.statuses')
+                 WHERE json_extract(value, '$.id') = NEW.status LIMIT 1
+               ), NEW.status),
+               'trigger', 'create', 'by_user_id', NULLIF(NEW.created_by_user_id, 0),
+               'at', NEW.created_at
+             ))
+           )
+           WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS tr_local_task_status_changed
+         AFTER UPDATE OF status ON loop_items
+         WHEN NEW.resource_type = 'task' AND OLD.status IS NOT NEW.status
+         BEGIN
+           UPDATE loop_items
+           SET metadata = json_set(
+             COALESCE(NEW.metadata, '{}'), '$.status_history',
+             json_insert(
+               COALESCE(json_extract(NEW.metadata, '$.status_history'), json('[]')),
+               '$[#]', json_object(
+                 'from_status', COALESCE(OLD.status, ''),
+                 'from_status_name', COALESCE((
+                   SELECT json_extract(value, '$.name')
+                   FROM json_each((SELECT metadata FROM loop_items WHERE id = NEW.cloud_project_id), '$.board_config.statuses')
+                   WHERE json_extract(value, '$.id') = OLD.status LIMIT 1
+                 ), COALESCE(OLD.status, '')),
+                 'to_status', COALESCE(NEW.status, ''),
+                 'to_status_name', COALESCE((
+                   SELECT json_extract(value, '$.name')
+                   FROM json_each((SELECT metadata FROM loop_items WHERE id = NEW.cloud_project_id), '$.board_config.statuses')
+                   WHERE json_extract(value, '$.id') = NEW.status LIMIT 1
+                 ), COALESCE(NEW.status, '')),
+                 'trigger', 'local_status_change',
+                 'by_user_id', NULLIF(NEW.updated_by_user_id, 0),
+                 'at', NEW.updated_at
+               )
+             )
+           )
+           WHERE id = NEW.id;
+         END;",
+    )?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
@@ -4617,6 +4674,32 @@ fn enqueue_ready_local_workflow_stages(
         } else {
             prompt
         };
+        let message = if automation_role == "manager_review" {
+            let mut reports = Vec::new();
+            for child in nodes.iter().filter(|child| {
+                child["automation_role"].as_str() != Some("manager")
+                    && child["automation_role"].as_str() != Some("manager_review")
+            }) {
+                let Some(execution_id) = child["execution_id"].as_i64() else {
+                    continue;
+                };
+                let note: Option<String> = connection
+                    .query_row(
+                        "SELECT execution_note FROM loop_item_executions WHERE id=?1",
+                        [execution_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                reports.push(format!(
+                    "{}: {}",
+                    child["name"].as_str().unwrap_or_default(),
+                    note.unwrap_or_default()
+                ));
+            }
+            format!("{message}\n\nExecutor results:\n{}", reports.join("\n\n"))
+        } else {
+            message
+        };
         let execution_id = create_local_execution(
             connection,
             item_id,
@@ -4751,6 +4834,7 @@ fn advance_local_workflow_after_execution(
     if workflow["cancelled"] == true {
         return Ok(true);
     }
+    let review_decision_recorded = workflow["manager_decision"]["status"].as_str().is_some();
     let nodes = workflow
         .get_mut("nodes")
         .and_then(Value::as_array_mut)
@@ -4769,8 +4853,17 @@ fn advance_local_workflow_after_execution(
             "workflow execution assignee does not match the stage constraint".to_owned(),
         ));
     }
-    node["status"] = json!("completed");
+    let review_without_decision =
+        node["automation_role"] == "manager_review" && !review_decision_recorded;
+    node["status"] = json!(if review_without_decision {
+        "failed"
+    } else {
+        "completed"
+    });
     node["execution_id"] = json!(execution_id);
+    if review_without_decision {
+        workflow["error"] = json!("AI manager finished without deciding workflow review");
+    }
     release_local_workflow_nodes(workflow)?;
     let before_enqueue = workflow.clone();
     connection.execute_batch("SAVEPOINT advance_local_workflow")?;
@@ -4813,6 +4906,12 @@ fn advance_local_workflow_after_execution(
                 Some("completed" | "forced_completed")
             )
         });
+    let requires_manager_decision = nodes
+        .iter()
+        .any(|node| node["automation_role"].as_str() == Some("manager_review"));
+    let manager_decision = workflow["manager_decision"]["status"]
+        .as_str()
+        .map(str::to_owned);
     let active_agent_id: Option<String> = connection
         .query_row(
             "SELECT agent_id FROM loop_item_executions
@@ -4826,7 +4925,13 @@ fn advance_local_workflow_after_execution(
     if execution.cloud_project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
         item.metadata["is_unread"] = json!(true);
     }
-    let status = if all_required_completed {
+    let status = if requires_manager_decision {
+        if all_required_completed {
+            manager_decision.as_deref().unwrap_or("in_progress")
+        } else {
+            "in_progress"
+        }
+    } else if all_required_completed {
         "completed"
     } else if active_agent_id.is_some() {
         "in_progress"
@@ -5234,6 +5339,10 @@ mod tests {
         assert_eq!(claimed.agent_name, "当前设备智能体");
         let payload = claimed.execution_payload.as_ref().unwrap();
         assert_eq!(
+            payload["message"],
+            "Ship the feature\n\nImplement and verify it."
+        );
+        assert_eq!(
             payload["origin"]["automationRole"],
             Value::String("manager".to_owned())
         );
@@ -5254,6 +5363,7 @@ mod tests {
                         "client_key": "implement",
                         "title": "Implement",
                         "description": "Make the requested change.",
+                        "prompt": "Implement the requested change and report verification evidence.",
                         "assignee_type": "agent",
                         "assignee_id": leader.id,
                         "assignee_name": "当前设备智能体",
@@ -5282,7 +5392,56 @@ mod tests {
         assert_eq!(planned.agent_id, leader.id);
         assert_eq!(
             planned.execution_payload.as_ref().unwrap()["message"],
-            "Implement\n\nMake the requested change.\n\nUses the current device."
+            "Implement the requested change and report verification evidence."
+        );
+        accept_and_start(&store, &planned);
+        store
+            .complete_execution(planned.id, Some("Implementation verified."))
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+        let review = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the AI manager must review executor results");
+        assert_eq!(review.agent_id, leader.id);
+        assert!(review.execution_payload.as_ref().unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .contains("Implementation verified."));
+        accept_and_start(&store, &review);
+        store
+            .decide_local_automation_workflow_review(
+                &project.id,
+                &task.id,
+                run_id,
+                "completed",
+                "Verified the implementation and evidence.",
+            )
+            .unwrap();
+        store
+            .complete_execution(review.id, Some("Accepted"))
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("completed")
         );
     }
 
@@ -7363,6 +7522,101 @@ mod tests {
                 provider_config: json!({}),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn local_task_status_history_records_creation_and_all_status_updates() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let created = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Track status".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(created.metadata["status_history"][0]["trigger"], "create");
+        assert_eq!(
+            created.metadata["status_history"][0]["to_status_name"],
+            "待开始"
+        );
+
+        let updated = store
+            .update_task(
+                &project.id,
+                &created.id,
+                TaskUpdate {
+                    version: created.version,
+                    status: Some("in_progress".to_owned()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            updated.metadata["status_history"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(
+            updated.metadata["status_history"][1]["from_status_name"],
+            "待开始"
+        );
+        assert_eq!(
+            updated.metadata["status_history"][1]["to_status_name"],
+            "进行中"
+        );
+
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "UPDATE loop_items SET status = 'in_review', updated_at = ?1 WHERE id = ?2",
+                    params![now(), created.id],
+                )
+                .unwrap();
+        }
+        let reviewed = store.get_task(&project.id, &created.id).unwrap();
+        assert_eq!(
+            reviewed.metadata["status_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            reviewed.metadata["status_history"][2]["to_status_name"],
+            "待确认"
+        );
+
+        let workflow_task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Workflow status".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    workflow: Some(json!({ "nodes": [] })),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            workflow_task.metadata["status_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

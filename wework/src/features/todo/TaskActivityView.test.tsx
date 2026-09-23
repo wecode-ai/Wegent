@@ -1201,6 +1201,220 @@ describe('TaskActivityView', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
+  it('interleaves Issue status changes with complete comment threads and keeps execution status inside the comment', async () => {
+    const user = userEvent.setup()
+    const openTaskConversation = vi.fn()
+    const root = {
+      ...userMessage,
+      content: '请完成接入',
+      createdAt: '2026-08-03T10:00:00Z',
+    }
+    const execution = {
+      ...agentMessage,
+      content: '正在处理接入',
+      rootMessageId: root.messageId,
+      status: 'completed' as const,
+      metadata: { run_status: 'succeeded' },
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      createdAt: '2026-08-03T10:01:00Z',
+    }
+    const followUp = {
+      ...userMessage,
+      sequenceNumber: 3,
+      messageId: 'message-3',
+      content: '请补充验证',
+      rootMessageId: root.messageId,
+      createdAt: '2026-08-03T10:02:00Z',
+    }
+    const response = {
+      ...agentMessage,
+      sequenceNumber: 4,
+      messageId: 'message-4',
+      content: '验证已补充',
+      rootMessageId: root.messageId,
+      status: 'completed' as const,
+      metadata: { run_status: 'succeeded' },
+      createdAt: '2026-08-03T10:03:00Z',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [response, followUp, execution, root],
+          latestSequence: 4,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => root),
+      startAgentResponse: vi.fn(async () => execution),
+      failAgentResponse: vi.fn(async () => execution),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '接入', status: 'in_progress', version: 1 } as never}
+        issueTimeline
+        linear
+        onOpenTask={openTaskConversation}
+        taskBindings={[
+          { device_id: 'device-1', task_id: 'runtime-task-1', task_title: '完成接入' } as never,
+        ]}
+        projectMembers={[{ user_id: 1, user_name: 'Ada' } as never]}
+        statusHistory={[
+          {
+            from_status: 'pending',
+            from_status_name: '待处理',
+            to_status: 'in_progress',
+            to_status_name: '进行中',
+            trigger: 'user_update',
+            by_user_id: 1,
+            at: '2026-08-03T09:00:00Z',
+          },
+          {
+            from_status: 'in_progress',
+            from_status_name: '进行中',
+            to_status: 'in_review',
+            to_status_name: '待确认',
+            trigger: 'ai_completed',
+            by_user_id: null,
+            at: '2026-08-03T11:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const list = await screen.findByTestId('cloud-task-activity-list')
+    await within(list).findByText('验证已补充')
+    const entries = Array.from(list.children[0].children)
+    expect(entries.map(entry => entry.getAttribute('data-testid') ?? entry.className)).toEqual([
+      'cloud-task-status-event-0',
+      'task-detail-thread is-timeline',
+      'cloud-task-status-event-1',
+    ])
+    const card = screen.getByTestId('cloud-task-activity-card-message-1')
+    expect(card).toHaveTextContent('请完成接入')
+    expect(card).toHaveTextContent('请补充验证')
+    expect(card).toHaveTextContent('验证已补充')
+    expect(
+      within(card).queryByTestId('task-activity-events-toggle-message-1')
+    ).not.toBeInTheDocument()
+    const executionButton = within(card).getByTestId(
+      'cloud-task-activity-execution-badge-message-2'
+    )
+    expect(executionButton).toHaveAttribute('data-status', 'succeeded')
+    await user.click(executionButton)
+    expect(openTaskConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ device_id: 'device-1', task_id: 'runtime-task-1' })
+    )
+    expect(screen.queryByTestId('runtime-execution-detail-overlay')).toBeNull()
+    const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
+    expect(within(card).queryByTestId('cloud-task-activity-open-task-message-2')).toBeNull()
+    const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
+    expect(actions.querySelector('time')).toHaveAttribute('datetime', '2026-08-03T10:00:00Z')
+    expect(
+      within(card).getByTestId('cloud-task-activity-message-message-1').querySelector('header time')
+    ).toBeNull()
+    expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(card).queryByTestId('cloud-task-activity-card-composer-message-1')).toBeNull()
+    await user.click(replyToggle)
+    expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(within(card).getByTestId('cloud-task-activity-card-composer-message-1')).toBeVisible()
+    expect(replyToggle).toHaveTextContent('取消')
+    expect(within(card).getByTestId('cloud-task-activity-card-composer-message-1')).toHaveFocus()
+    await user.click(replyToggle)
+    expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(card).queryByTestId('cloud-task-activity-card-composer-message-1')).toBeNull()
+  })
+
+  it('hides replies while the comment execution is running', async () => {
+    const runningComment = {
+      ...agentMessage,
+      rootMessageId: null,
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-1' },
+      metadata: { run_status: 'running' },
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [runningComment], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => runningComment),
+      failAgentResponse: vi.fn(async () => runningComment),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '接入', status: 'in_progress' } as never}
+        issueTimeline
+        linear
+      />
+    )
+
+    const card = await screen.findByTestId('cloud-task-activity-card-message-2')
+    expect(
+      within(card).getByTestId('cloud-task-activity-execution-badge-message-2')
+    ).toHaveAttribute('data-status', 'running')
+    expect(within(card).queryByTestId('cloud-task-activity-reply-toggle-message-2')).toBeNull()
+  })
+
+  it('shows creation and allows replies when a completed run is persisted', async () => {
+    const completedComment = {
+      ...agentMessage,
+      rootMessageId: null,
+      status: 'completed' as const,
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-1' },
+    }
+    lifecycleSnapshotMock.value.tasks.set('device-1:runtime-1', {
+      execution: { known: true },
+      derived: { isBusy: false },
+    })
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [completedComment], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => completedComment),
+      failAgentResponse: vi.fn(async () => completedComment),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: '接入',
+            status: 'completed',
+            created_at: '2026-08-02T00:00:00Z',
+            created_by_user_name: 'Ada',
+          } as never
+        }
+        issueTimeline
+        linear
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-task-status-created')).toHaveTextContent(
+      'Ada 创建 Issue'
+    )
+    const card = screen.getByTestId('cloud-task-activity-card-message-2')
+    expect(
+      within(card).getByTestId('cloud-task-activity-execution-badge-message-2')
+    ).toHaveAttribute('data-status', 'succeeded')
+    expect(within(card).getByTestId('cloud-task-activity-reply-toggle-message-2')).toBeVisible()
+  })
+
   it('scrolls the comment list to the bottom when a new parent comment is sent', async () => {
     const user = userEvent.setup()
     const client = {
@@ -1566,7 +1780,8 @@ describe('TaskActivityView', () => {
     expect(card.querySelector('pre code')).toHaveTextContent('pwd')
     expect(card).toHaveTextContent('完整结果。'.repeat(60))
 
-    await user.click(screen.getByTestId('cloud-task-activity-open-task-message-2'))
+    const taskLink = screen.getByTestId('cloud-task-activity-open-task-message-2')
+    await user.click(taskLink)
     expect(onOpenTask).toHaveBeenCalledWith(binding)
   })
 
@@ -1930,6 +2145,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 7,
             assignee_agent_id: '12',
+            automation: { prompt: 'Manager: inspect the diff and report evidence.' },
           } as never
         }
         onTaskUpdated={onTaskUpdated}
@@ -1946,7 +2162,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({
           triggerMessageId: undefined,
           runtimeTaskId: 'runtime-task-rerun',
-          prompt: expect.stringContaining('你是 Code Reviewer，这个项目任务的 AI 执行者'),
+          prompt: 'Manager: inspect the diff and report evidence.',
         })
       )
     )
@@ -2043,7 +2259,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({
           triggerMessageId: undefined,
           runtimeTaskId: 'runtime-task-rerun-failed',
-          prompt: expect.stringContaining('你是 Code Reviewer，这个项目任务的 AI 执行者'),
+          prompt: 'Inspect changes\n\nReview the current diff',
           model: 'gpt-5.5-codex',
         })
       )

@@ -65,9 +65,11 @@ export function IssueStatusHistoryList({
   entries,
   memberName,
   labels,
+  startIndex = 0,
 }: {
   entries: IssueStatusHistoryEntry[];
   memberName(userId: number | null): string | null;
+  startIndex?: number;
   labels: {
     system: string;
     unset: string;
@@ -88,7 +90,7 @@ export function IssueStatusHistoryList({
       <div
         key={`${entry.at}-${index}`}
         className="rounded-md px-1.5 py-1.5"
-        data-testid={`cloud-todo-status-history-entry-${index}`}
+        data-testid={`cloud-todo-status-history-entry-${startIndex + index}`}
       >
         <div className="flex items-center gap-1.5 text-xs text-text-primary">
           <span className="shrink-0 font-medium">{actor}</span>

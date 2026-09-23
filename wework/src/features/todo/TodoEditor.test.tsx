@@ -1191,6 +1191,39 @@ describe('TodoEditor assignment chain', () => {
 })
 
 describe('TodoEditor status history', () => {
+  it('shows status changes in the collaboration drawer timeline without a duplicate popover', async () => {
+    const item = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: 'pending',
+          from_status_name: '待处理',
+          to_status: 'in_progress',
+          to_status_name: '进行中',
+          trigger: 'user_update',
+          by_user_id: null,
+          at: '2026-08-01T10:00:00Z',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="edit"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        presentation="workspace-panel"
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-task-status-event-0')).toHaveTextContent('待处理')
+    expect(screen.getByTestId('cloud-task-status-event-0')).toHaveTextContent('进行中')
+    expect(screen.queryByTestId('cloud-todo-status-history-trigger')).not.toBeInTheDocument()
+  })
+
   it('shows status history in a popover triggered next to the status', async () => {
     const user = userEvent.setup()
     const historyItem = {

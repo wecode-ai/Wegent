@@ -1544,58 +1544,14 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-    const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
-      'Implement cloud MCP'
-    )
-    expect(progressPopup).not.toHaveTextContent('当前任务进展')
-    expect(progressPopup).toHaveTextContent('验证完整工作流')
-    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
-      'data-task-id',
-      'runtime-2'
-    )
-    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
-      'data-collapse-composer',
-      'true'
-    )
-    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
-      'data-model-name',
-      'gpt-5.6-codex'
-    )
-    expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-1-2')).toHaveTextContent(
-      '验证看板悬浮预览始终展示当前会话目标和最新进展'
-    )
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
     expect(getRuntimeGoal).toHaveBeenCalledWith({
       address: expect.objectContaining(address),
     })
-    expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
-      'max-h-[min(68vh,42rem)]',
-      'overflow-y-auto'
-    )
-
-    fireEvent.click(screen.getByTestId('mock-dnd-drag-start'))
-    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('mock-dnd-drag-cancel'))
-
-    fireEvent.mouseLeave(screen.getByTestId('cloud-todo-card-WEG-1'))
-    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
-
-    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
-      'data-pinned',
-      'true'
-    )
-    fireEvent.mouseLeave(screen.getByTestId('cloud-todo-card-WEG-1'))
-    fireEvent.pointerMove(document.body)
-    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
-
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
   })
 
-  it('keeps a board preview stable and switches it only from another progress action', async () => {
+  it('opens each Issue drawer directly from its board card', async () => {
     const secondItem = {
       ...item,
       id: 'WEG-2',
@@ -1631,26 +1587,12 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
-
-    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
-      'data-pinned',
-      'true'
-    )
-
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-2'))
-    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-2')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-2'))
+    expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
-    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveAttribute(
-      'data-pinned',
-      'true'
-    )
-    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveTextContent(
-      'Second task progress'
-    )
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-2'))
+    expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(secondItem.title)
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-2')).not.toBeInTheDocument()
   })
 
   it('restores the execution-stage focus view for the selected project', async () => {
@@ -1747,13 +1689,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-    const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
-    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
-      'Implement cloud MCP'
-    )
-    expect(progressPopup).not.toHaveTextContent('当前任务进展')
-    expect(progressResponse).toHaveAttribute('data-task-id', 'runtime-review')
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
   })
 
   it('loads persisted task output for an in-progress Issue on the board', async () => {
@@ -1876,9 +1813,8 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-    const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
-    expect(conversation).toHaveAttribute('data-device-id', 'local-device')
-    expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-popup-conversation-WEG-1')).not.toBeInTheDocument()
   })
 
   it('preserves older cached turns when the board preload transcript is bounded', async () => {
@@ -3501,7 +3437,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-workflow-replan')).toBeEnabled()
   })
 
-  it('reviews all AI child tasks once and keeps them visible after completion', async () => {
+  it('waits for the AI manager to review child outcomes and keeps them visible', async () => {
     const managedItem = {
       ...item,
       status: 'in_review' as const,
@@ -3556,21 +3492,14 @@ describe('CloudTodoWorkspace', () => {
         },
       ],
     }
-    const completedPlan = {
-      ...plan,
-      status: 'completed' as const,
-    }
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [managedItem, child],
     }))
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => managedItem)
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
-    workbenchServices.deliveryApi!.getWorkflowPlan = vi
-      .fn()
-      .mockResolvedValueOnce(plan)
-      .mockResolvedValue(completedPlan)
-    workbenchServices.deliveryApi!.approveWorkflowReview = vi.fn(async () => completedPlan)
+    workbenchServices.deliveryApi!.getWorkflowPlan = vi.fn(async () => plan)
+    workbenchServices.deliveryApi!.approveWorkflowReview = vi.fn()
 
     render(
       <CloudTodoWorkspace
@@ -3584,7 +3513,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await expandIssueExecutionDetails()
     expect(await screen.findByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent(
-      '等待统一验收'
+      '等待管理者判断'
     )
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-plan-item-plan-item-1')).toHaveTextContent(
@@ -3595,21 +3524,8 @@ describe('CloudTodoWorkspace', () => {
       'flex-wrap'
     )
     expect(screen.getByTestId('cloud-todo-workflow-plan-status')).toHaveClass('whitespace-nowrap')
-    expect(screen.getByTestId('cloud-todo-workflow-review').parentElement).toHaveClass(
-      'shrink-0',
-      'whitespace-nowrap'
-    )
-
-    await userEvent.click(screen.getByTestId('cloud-todo-workflow-review'))
-
-    await waitFor(() =>
-      expect(workbenchServices.deliveryApi?.approveWorkflowReview).toHaveBeenCalledWith('WEG-1')
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent('已完成')
-    )
     expect(screen.queryByTestId('cloud-todo-workflow-review')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-rerun')).toBeInTheDocument()
+    expect(workbenchServices.deliveryApi?.approveWorkflowReview).not.toHaveBeenCalled()
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-plan-item-plan-item-1')).toBeInTheDocument()
   })

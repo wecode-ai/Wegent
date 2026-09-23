@@ -772,7 +772,6 @@ export function WeworkSharedProject({
             onOpen,
             onDelete,
             onMarkRead,
-            previewDisabled,
             taskBindings,
           }) => {
             const boardTaskBindings = taskBindings.map(
@@ -809,6 +808,18 @@ export function WeworkSharedProject({
                   onMarkRead={onMarkRead}
                   previewDisabled={previewDisabled}
                   issueDetailOnly
+                  onOpenRuntimeTask={
+                    runtimePort
+                      ? address => {
+                          setTaskComposer({
+                            issue,
+                            address,
+                            conversationKey: `${issue.id}:${address.deviceId}:${address.taskId}`,
+                          })
+                          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+                        }
+                      : onOpenRuntimeTask
+                  }
                   display={display}
                   processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
                   archiveDisabled={!onDelete}

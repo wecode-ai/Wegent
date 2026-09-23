@@ -639,6 +639,18 @@ impl TaskRuntime {
             .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
     }
 
+    pub fn decide_local_automation_workflow_review(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        run_id: &str,
+        decision: &str,
+        summary: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .decide_local_automation_workflow_review(project_id, task_id, run_id, decision, summary)
+    }
+
     pub fn create_chat_agent(
         &self,
         project_id: &str,

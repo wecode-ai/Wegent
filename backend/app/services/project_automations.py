@@ -848,6 +848,7 @@ class ProjectAutomationService:
         user_id: int,
         coordinator_prompt: str,
         execution_config: dict | None,
+        phase: str = "planning",
     ) -> dict:
         """Run one workflow manager without re-entering its parent flow."""
 
@@ -862,7 +863,7 @@ class ProjectAutomationService:
             "workflow_parent_run_id": self._workflow_parent_run_id(item),
             "instruction_override": coordinator_prompt,
             "event": {
-                "type": "task.created",
+                "type": "workflow.review" if phase == "review" else "task.created",
                 "source": "workflow",
                 "subject_id": str(item.id),
                 "actor_user_id": user_id,
@@ -874,6 +875,7 @@ class ProjectAutomationService:
                     "priority": item.priority,
                     "workflow_run_id": workflow_run_id,
                     "workflow_plan_version": workflow_plan_version,
+                    "workflow_phase": phase,
                     "execution_config": execution_config,
                 },
             },

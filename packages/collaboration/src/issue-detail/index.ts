@@ -33,6 +33,7 @@ export * from './IssueActivityMarkdown'
 
 export * from './IssueThreadReplyComposer'
 export * from './IssueChatMessage'
+export { formatIssueTimestamp } from './issueTimestamp'
 export * from './CompositedSpinner'
 export * from './Tooltip'
 export * from './executionStatus'

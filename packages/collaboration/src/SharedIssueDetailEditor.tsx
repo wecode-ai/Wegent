@@ -44,6 +44,7 @@ import {
   IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   IssueAutomationExecutionSummary,
+  IssueStatusHistoryList,
   IssueWorkflowPlanSection,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
@@ -137,6 +138,7 @@ export interface SharedIssueDetailExtensionContext {
   editable: boolean;
   tasks: SharedIssueDetailTaskBinding[];
   deliveries: SharedIssueDetailDelivery[];
+  members: CollaborationMember[];
   selectedTaskId?: string | null;
   workflowManagerRunId?: string;
   onExecutionArtifactsChange(): Promise<void>;
@@ -1997,6 +1999,7 @@ export function TodoEditor(props: TodoEditorProps) {
           editable,
           tasks: effectiveTasks,
           deliveries,
+          members: projectMembers,
           selectedTaskId: props.selectedTaskId,
           workflowManagerRunId:
             typeof workflowPlan?.manager_run === "object" &&
@@ -2267,20 +2270,21 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusSelect}
     </span>
   );
-  const statusHistoryTrigger = item?.status_history?.length ? (
-    <button
-      ref={statusHistoryTriggerRef}
-      type="button"
-      data-testid="cloud-todo-status-history-trigger"
-      aria-label={t("todo.status_history_trigger", "查看状态历史")}
-      aria-expanded={statusHistoryOpen}
-      title={t("todo.status_history_trigger", "查看状态历史")}
-      onClick={() => setStatusHistoryOpen((current) => !current)}
-      className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
-    >
-      <History className="h-3.5 w-3.5" />
-    </button>
-  ) : null;
+  const statusHistoryTrigger =
+    !workspacePanel && item?.status_history?.length ? (
+      <button
+        ref={statusHistoryTriggerRef}
+        type="button"
+        data-testid="cloud-todo-status-history-trigger"
+        aria-label={t("todo.status_history_trigger", "查看状态历史")}
+        aria-expanded={statusHistoryOpen}
+        title={t("todo.status_history_trigger", "查看状态历史")}
+        onClick={() => setStatusHistoryOpen((current) => !current)}
+        className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
+      >
+        <History className="h-3.5 w-3.5" />
+      </button>
+    ) : null;
   const priorityChip = (
     <span className={propChipClass}>
       <Flag className="h-3.5 w-3.5 text-text-muted" />
@@ -3263,14 +3267,7 @@ export function TodoEditor(props: TodoEditorProps) {
                               "approveWorkflowPlan",
                             ),
                           ),
-                        approveReview:
-                          editable &&
-                          Boolean(
-                            workflowPlanMethod(
-                              editorPort,
-                              "approveWorkflowReview",
-                            ),
-                          ),
+                        approveReview: false,
                         pause:
                           editable &&
                           Boolean(
@@ -3315,7 +3312,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           ),
                           awaiting_review: t(
                             "todo.workflow_plan_awaiting_review",
-                            "等待统一验收",
+                            "等待管理者判断",
                           ),
                           paused: t("todo.workflow_plan_paused", "已暂停"),
                           completed: t(
@@ -3732,6 +3729,42 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </header>
                       <div className="task-detail-comments-list text-sm text-text-muted">
+                        {workspacePanel &&
+                          item.status_history?.map((entry, index) => (
+                            <div
+                              key={`${entry.at}-${index}`}
+                              data-testid={`cloud-task-status-event-${index}`}
+                              className="border-b border-border/60 px-3 py-3"
+                            >
+                              <IssueStatusHistoryList
+                                entries={[entry]}
+                                startIndex={index}
+                                memberName={(userId) =>
+                                  memberNameById(projectMembers, userId)
+                                }
+                                labels={{
+                                  system: t(
+                                    "todo.status_history_system",
+                                    "系统/机器人",
+                                  ),
+                                  unset: t(
+                                    "todo.status_history_unset",
+                                    "未设置",
+                                  ),
+                                  initial: t(
+                                    "todo.status_history_initial",
+                                    "初始状态",
+                                  ),
+                                  accept: t(
+                                    "todo.status_action_accept",
+                                    "验收",
+                                  ),
+                                  action: (trigger) =>
+                                    t(`todo.status_action_${trigger}`, trigger),
+                                }}
+                              />
+                            </div>
+                          ))}
                         {t("todo.activity_unavailable", "动态服务当前不可用")}
                       </div>
                     </section>

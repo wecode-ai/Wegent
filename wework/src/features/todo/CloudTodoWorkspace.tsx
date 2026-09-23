@@ -1015,17 +1015,6 @@ export function CloudTodoWorkspace({
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
-  const [pinnedBoardPreview, setPinnedBoardPreview] = useState<{
-    contextKey: string
-    itemId: string
-  } | null>(null)
-  const openBoardRuntimeTask = useCallback(
-    (address: RuntimeTaskAddress) => {
-      setPinnedBoardPreview(null)
-      return onOpenRuntimeTask?.(address)
-    },
-    [onOpenRuntimeTask]
-  )
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
@@ -1925,12 +1914,12 @@ export function CloudTodoWorkspace({
     (project: LocatedCloudProject, item: LocatedLoopItem, openRuntimeItemInWorkbench = false) => {
       if (isDefaultWorkItemProject(project)) markTaskBoardItemRead(item)
       if (openRuntimeItemInWorkbench && isRuntimeMyWorkItem(item)) {
-        void openBoardRuntimeTask(item.runtime_address)
+        void onOpenRuntimeTask?.(item.runtime_address)
         return
       }
       setSelectedItem(item)
     },
-    [markTaskBoardItemRead, openBoardRuntimeTask]
+    [markTaskBoardItemRead, onOpenRuntimeTask]
   )
   useEffect(() => {
     if (
@@ -2030,8 +2019,6 @@ export function CloudTodoWorkspace({
     state: boardState,
   } = standardBoardController
   const {
-    externalGroupFilter: aitableGroupFilter,
-    externalQuery: aitableBoardQuery,
     groupBy: nativeGroupBy,
     groupFilter: nativeGroupFilter,
     query: nativeBoardQuery,
@@ -2040,18 +2027,6 @@ export function CloudTodoWorkspace({
     setQuery: setNativeBoardQuery,
     setQuickCreateStatus,
   } = boardState
-  const boardPreviewContextKey = [
-    selectedProjectKey,
-    boardParentId,
-    projectView,
-    localProjectFilter,
-    nativeGroupFilter,
-    nativeBoardQuery,
-    aitableBoardQuery,
-    aitableGroupFilter,
-  ].join(':')
-  const pinnedBoardPreviewItemId =
-    pinnedBoardPreview?.contextKey === boardPreviewContextKey ? pinnedBoardPreview.itemId : null
   const boardLayerCount = boardItems.filter(item => item.parent_id === boardParentId).length
   const rootBoardItems = boardItems.filter(item => item.parent_id === null)
   const firstRootBoardItem = rootBoardItems[0] ?? null
@@ -4017,7 +3992,6 @@ export function CloudTodoWorkspace({
   const openBoardItem = useCallback(
     (item: LocatedLoopItem) => {
       if (item.can_view_detail === false || !selectedProject) return
-      setPinnedBoardPreview(null)
       setBackgroundTaskItemId(null)
       closeTaskPanel()
       openItemForProject(selectedProject, item, true)
@@ -4865,7 +4839,6 @@ export function CloudTodoWorkspace({
                         sensors: boardSensors,
                         collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
-                          setPinnedBoardPreview(null)
                           setActiveDragItemId(String(event.active.id))
                         },
                         onDragCancel: () => setActiveDragItemId(null),
@@ -5183,25 +5156,13 @@ export function CloudTodoWorkspace({
                               setArchiveError(null)
                               setArchiveItem(item)
                             }}
-                            previewPinned={pinnedBoardPreviewItemId === item.id}
-                            onPreviewPinnedChange={pinned =>
-                              setPinnedBoardPreview(current => {
-                                if (pinned) {
-                                  return { contextKey: boardPreviewContextKey, itemId: item.id }
-                                }
-                                return current?.contextKey === boardPreviewContextKey &&
-                                  current.itemId === item.id
-                                  ? null
-                                  : current
-                              })
-                            }
                             onMarkRead={isMyTasksBoard ? markTaskBoardItemRead : undefined}
                             onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
-                            onOpenRuntimeTask={openBoardRuntimeTask}
+                            onOpenRuntimeTask={onOpenRuntimeTask}
                             display={boardCardDisplay}
                             agentNames={agentNameById}
                             dragDisabled={isAITableProject}
-                            previewDisabled={selectedItem !== null || activeDragItemId !== null}
+                            previewDisabled
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}

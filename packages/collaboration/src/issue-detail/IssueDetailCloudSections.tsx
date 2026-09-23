@@ -201,7 +201,7 @@ export function IssueDetailCloudSections({
               }}
               availableActions={{
                 approve: Boolean(workflowPlan && onWorkflowAction),
-                approveReview: Boolean(workflowPlan && onWorkflowAction),
+                approveReview: false,
                 pause: Boolean(workflowPlan && onWorkflowAction),
                 resume: Boolean(workflowPlan && onWorkflowAction),
                 replan: Boolean(workflowPlan && onWorkflowAction),

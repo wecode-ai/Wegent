@@ -165,6 +165,8 @@ export interface CloudLoopItem {
       | 'workflow_task_progress'
       | 'workflow_outcome_passed'
       | 'workflow_outcome_needs_rework'
+      | 'workflow_manager_review'
+      | 'workflow_manager_completed'
       | 'workflow_review_approved'
       | 'workflow_stage_advanced'
       | 'workflow_replanned'
@@ -173,6 +175,7 @@ export interface CloudLoopItem {
       | 'human_started'
       | 'human_submitted'
       | 'human_accepted'
+      | 'local_status_change'
       | 'human_changes_requested'
       | 'reassignment'
       | 'unassigned'
@@ -194,6 +197,7 @@ export interface CloudLoopItem {
   automation?: {
     rule_id?: string
     run_id?: string
+    prompt?: string
     trigger?: 'scheduled' | 'manual' | string
     scheduled_for?: string | null
     bug_key?: string

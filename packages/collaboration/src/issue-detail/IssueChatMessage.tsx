@@ -220,12 +220,15 @@ export function IssueChatMessage({
   mine,
   compact = false,
   plain = false,
+  showInlineExecutionStatus = false,
   eventOnly = false,
   taskAiState,
   executionStatus,
   executionDeviceName,
   taskSummary,
+  hideTime = false,
   onOpenExecution,
+  allowBackendExecutionFallback = true,
   onStopExecution,
   stopping = false,
 }: {
@@ -239,6 +242,7 @@ export function IssueChatMessage({
   compact?: boolean;
   /** Render inside a parent comment card without the outer card border. */
   plain?: boolean;
+  showInlineExecutionStatus?: boolean;
   eventOnly?: boolean;
   taskAiState?: IssueActivityAiState | null;
   /** Presentation only; never changes comment lifecycle or content. */
@@ -246,7 +250,9 @@ export function IssueChatMessage({
   /** Human-readable device name for this execution. */
   executionDeviceName?: string | null;
   taskSummary?: ExecutionTaskSummary;
+  hideTime?: boolean;
   onOpenExecution?: () => void;
+  allowBackendExecutionFallback?: boolean;
   onStopExecution?: () => void;
   stopping?: boolean;
 }) {
@@ -277,7 +283,7 @@ export function IssueChatMessage({
         onOpenUrl(backendExecution.executionUrl);
       }
     : undefined;
-  const openExecution = onOpenExecution ?? openBackendExecution;
+  const openExecution = onOpenExecution ?? (allowBackendExecutionFallback ? openBackendExecution : undefined);
   if (eventOnly) {
     return (
       <div
@@ -525,8 +531,19 @@ export function IssueChatMessage({
         author={message.sender.name}
         createdAt={message.createdAt}
         avatar={avatar}
+        hideTime={hideTime}
         metadata={
-          isSubagent ? (
+          isAgent && showInlineExecutionStatus ? (
+            <ExecutionStatusBadge
+              translate={t}
+              testId={executionTestId}
+              messageId={message.messageId}
+              status={runStatus}
+              onOpenExecution={openExecution}
+              onStopExecution={onStopExecution}
+              stopping={stopping}
+            />
+          ) : isSubagent ? (
             <span className="text-xs text-text-muted">
               {t("activity.task_activity_subagent_execution")}
             </span>
