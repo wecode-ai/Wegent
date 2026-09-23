@@ -34,6 +34,11 @@ def test_manager_type_rejects_unknown_sources(value):
 
 def test_human_assigned_issue_does_not_match_event_automation():
     db = MagicMock()
+    legacy_rule = SimpleNamespace(
+        id="legacy-rule",
+        metadata_json={"trigger_type": "event", "event_type": "task.tag_added"},
+    )
+    db.query.return_value.filter.return_value.all.return_value = [legacy_rule]
     processor = ProjectAutomationProcessor()
 
     matches = processor.matching_rules(
@@ -56,7 +61,34 @@ def test_human_assigned_issue_does_not_match_event_automation():
     )
 
     assert matches == []
-    db.query.assert_not_called()
+
+
+def test_human_assigned_issue_can_trigger_project_manager():
+    db = MagicMock()
+    manager_rule = SimpleNamespace(
+        id="manager-rule",
+        metadata_json={
+            "project_manager": True,
+            "trigger_type": "event",
+            "event_type": "task.tag_added",
+        },
+    )
+    db.query.return_value.filter.return_value.all.return_value = [manager_rule]
+    processor = ProjectAutomationProcessor()
+
+    matches = processor.matching_rules(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.tag_added",
+            project_id="project-1",
+            subject_id="task-1",
+            source="board",
+            actor_user_id=7,
+            payload={"human_work": {"assignee_user_id": 7}},
+        ),
+    )
+
+    assert matches == [manager_rule]
 
 
 def _dispatch_objects(configuration: dict[str, object]):

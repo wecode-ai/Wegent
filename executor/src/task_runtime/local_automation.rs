@@ -77,8 +77,8 @@ pub(super) fn validate_manager(
                 other["enabled"] != false
                     && text(other, "kind") == "event"
                     && text(other, "eventType") == text(trigger, "eventType")
-                    && (other["tags"].as_array().is_none_or(Vec::is_empty)
-                        || trigger["tags"].as_array().is_none_or(Vec::is_empty)
+                    && (other["tags"].as_array().map_or(true, Vec::is_empty)
+                        || trigger["tags"].as_array().map_or(true, Vec::is_empty)
                         || other["tags"].as_array().is_some_and(|tags| {
                             tags.iter().any(|tag| {
                                 trigger["tags"]
@@ -771,18 +771,19 @@ impl LocalTaskStore {
             if project.metadata["project_store"] == "backend" {
                 continue;
             }
-            if !rules(&project)
+            let has_scheduled_rule = rules(&project)
                 .iter()
-                .any(|rule| rule["enabled"] != false && text(rule, "triggerType") == "schedule")
-                && !(manager(&project)["enabled"] == true
-                    && manager(&project)["triggers"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .any(|trigger| {
-                            trigger["enabled"] != false && text(trigger, "kind") == "schedule"
-                        }))
-            {
+                .any(|rule| rule["enabled"] != false && text(rule, "triggerType") == "schedule");
+            let manager_config = manager(&project);
+            let has_scheduled_manager_trigger = manager_config["enabled"] == true
+                && manager_config["triggers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|trigger| {
+                        trigger["enabled"] != false && text(trigger, "kind") == "schedule"
+                    });
+            if !has_scheduled_rule && !has_scheduled_manager_trigger {
                 continue;
             }
             let mut connection = self.connection()?;

@@ -33,9 +33,9 @@ from app.schemas.project_automation import (
     ProjectAutomationWorkflowMigrationView,
 )
 from app.schemas.project_manager import (
+    ProjectManagerActionView,
     ProjectManagerConfig,
     ProjectManagerConfigView,
-    ProjectManagerActionView,
     ProjectManagerDecision,
     ProjectManagerInstruction,
     ProjectManagerRunDetail,

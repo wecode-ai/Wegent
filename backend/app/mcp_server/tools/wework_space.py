@@ -60,11 +60,11 @@ from app.services.loop_items.provider_router import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
+from app.services.project_chat.service import project_chat_service
 from app.services.project_manager import (
     is_project_manager_rule,
     project_manager_service,
 )
-from app.services.project_chat.service import project_chat_service
 from app.services.workflow_deliverables import (
     fulfilled_requirement_ids,
     missing_requirement_ids,

@@ -18,17 +18,16 @@ from app.models.delivery import (
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
-from app.schemas.base_role import BaseRole
-from app.schemas.base_role import has_permission
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import LoopItemUpdate
-from app.schemas.project_chat import LoopItemAssign
 from app.schemas.project_automation import ProjectAutomationCreate
+from app.schemas.project_chat import LoopItemAssign
 from app.schemas.project_manager import ProjectManagerConfig, ProjectManagerTrigger
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_domain import metadata, utcnow
 from app.services.project_automations import project_automation_service
-from app.services.loop_items.service import loop_item_service
-from app.services.loop_items.external_provider import external_loop_item_provider
 
 CONFIG_KEY = "project_manager"
 
