@@ -198,12 +198,14 @@ class RealCloudEnvironment {
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
     this.pluginAutoUpdateFixtures = []
+    this.rustGateway = null
   }
 
   async startBackend() {
     const backendDirectory = join(repoDir, 'backend')
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
+    this.rustGatewayLogPath = join(resultDir, 'cloud-gateway.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
     this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
     this.remoteDockerExecutorLogPath = join(resultDir, 'remote-docker-executor.log')
@@ -219,7 +221,9 @@ class RealCloudEnvironment {
     this.redis = redisServer.redis
 
     this.backendPort = await reservePort()
+    this.pythonBackendPort = await reservePort()
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.pythonBackendUrl = `http://127.0.0.1:${this.pythonBackendPort}`
     this.socketUrl = `http://localhost:${this.backendPort}`
 
     const backendEnv = {
@@ -281,7 +285,27 @@ class RealCloudEnvironment {
     await this.seedCloudVisionSidecarModels()
   }
 
+  /**
+   * Starts the production topology. The Rust migration gateway owns the public
+   * port and falls back to the Python backend, so routes it already serves —
+   * such as `GET /api/devices` — stay reachable for the desktop app.
+   */
   async launchBackend() {
+    const backendDirectory = join(repoDir, 'backend')
+    const rustDirectory = join(repoDir, 'backend-rs')
+    const rustGatewayBinary =
+      process.env.WEGENT_RS_BINARY_PATH ??
+      join(
+        rustDirectory,
+        'target',
+        'release',
+        process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
+      )
+    assert.ok(
+      await pathExists(rustGatewayBinary),
+      `The Rust migration gateway binary is missing at ${rustGatewayBinary}; build it with "cargo build --release --bin wegent-backend-rs" or point WEGENT_RS_BINARY_PATH at a built binary`
+    )
+
     this.backend = spawn(
       'uv',
       [
@@ -294,10 +318,10 @@ class RealCloudEnvironment {
         '--host',
         '127.0.0.1',
         '--port',
-        String(this.backendPort),
+        String(this.pythonBackendPort),
       ],
       {
-        cwd: join(repoDir, 'backend'),
+        cwd: backendDirectory,
         env: this.backendEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
@@ -308,15 +332,45 @@ class RealCloudEnvironment {
       appendProcessOutput(this.backend.stderr, this.backendLogPath),
     ])
     await waitForUrl(
-      `${this.backendUrl}/api/docs`,
+      `${this.pythonBackendUrl}/api/docs`,
       `Real cloud backend did not start; see ${this.backendLogPath}`
     )
+
+    this.rustGateway = spawn(rustGatewayBinary, [], {
+      cwd: rustDirectory,
+      env: {
+        ...this.backendEnv,
+        WEGENT_RS_LISTEN_HOST: '127.0.0.1',
+        WEGENT_RS_LISTEN_PORT: String(this.backendPort),
+        WEGENT_PYTHON_UPSTREAM_URL: this.pythonBackendUrl,
+        WEGENT_RS_ROUTES_FILE: join(rustDirectory, 'config', 'routes.toml'),
+        WEGENT_BACKEND_RS_ENV_FILE: join(backendDirectory, '.env.example'),
+        BREEZE_LOG_DIR: join(resultDir, 'rust-gateway'),
+        BREEZE_PROFILE_LOG_PATH: join(resultDir, 'rust-gateway', 'profile.log'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    await Promise.all([
+      appendProcessOutput(this.rustGateway.stdout, this.rustGatewayLogPath),
+      appendProcessOutput(this.rustGateway.stderr, this.rustGatewayLogPath),
+    ])
+    await waitForUrl(
+      `${this.backendUrl}/api/docs`,
+      `Real cloud backend did not start behind the Rust gateway; see ${this.backendLogPath} and ${this.rustGatewayLogPath}`
+    )
+  }
+
+  async stopBackend() {
+    await stopProcessGroup(this.rustGateway)
+    this.rustGateway = null
+    await stopProcessGroup(this.backend)
   }
 
   async restartBackendWithTerminalProtocolV2(enabled) {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
-    await stopProcessGroup(this.backend)
+    await this.stopBackend()
     const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
     this.backendEnv = {
       ...this.backendEnv,
@@ -336,7 +390,7 @@ class RealCloudEnvironment {
   async restartBackendWithFrontendUrl(frontendUrl) {
     assert.ok(frontendUrl, 'The cloud frontend URL is required')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
-    await stopProcessGroup(this.backend)
+    await this.stopBackend()
     this.backendEnv = {
       ...this.backendEnv,
       FRONTEND_URL: frontendUrl,
@@ -1368,7 +1422,7 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.remoteExecutor)
     await stopProcessGroup(this.remoteDockerExecutor)
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
-    await stopProcessGroup(this.backend)
+    await this.stopBackend()
     await this.pluginObjectStorage?.stop()
     await this.nevisSandboxService?.stop()
     await stopProcess(this.redis)
