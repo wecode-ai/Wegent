@@ -45,6 +45,7 @@ pub mod download_policy;
 pub mod executor_download;
 pub mod handler;
 pub mod minio_client;
+pub mod public_link;
 pub mod s3_signing;
 pub mod shared_download;
 pub mod storage;

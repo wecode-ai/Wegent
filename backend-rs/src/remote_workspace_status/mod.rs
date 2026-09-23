@@ -9,6 +9,7 @@ pub mod auth;
 pub mod config;
 pub mod http_deps;
 pub mod redis_cache;
+pub mod subtask_history;
 pub mod task_detail;
 pub mod users;
 

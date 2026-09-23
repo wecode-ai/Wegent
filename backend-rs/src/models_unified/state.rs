@@ -14,6 +14,7 @@ pub struct AppState<M: Mysql, R: Redis> {
     pub mysql: M,
     pub redis: Option<R>,
     pub erp: Arc<dyn ErpProvider<R> + Send + Sync>,
+    #[allow(dead_code, reason = "authentication now runs through AppAuthenticator")]
     pub jwt: JwtConfig,
 }
 
@@ -24,6 +25,10 @@ impl<M: Mysql, R: Redis> AppState<M, R> {
 }
 
 #[derive(Clone)]
+#[allow(
+    dead_code,
+    reason = "retained for source-compatible state construction"
+)]
 pub struct JwtConfig {
     pub algorithm: jsonwebtoken::Algorithm,
     pub decode_keys: Vec<String>,

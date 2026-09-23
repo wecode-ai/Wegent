@@ -12,7 +12,6 @@
 use brz_http_server::{Binary, HttpResponse};
 use serde::Serialize;
 
-use crate::auth::{AuthFailure, get_current_user};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::teams::group_membership::ErpContext;
@@ -40,7 +39,7 @@ const LIMIT_DEFAULT: i64 = 20;
 #[brz_http_server::get("/api/resource-library/listings")]
 async fn list_resource_library_listings(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: crate::auth::SessionUser,
     query: brz_http_server::Query<DiscoveryQuery>,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
     let params = parse_params(&query)?;
@@ -48,15 +47,6 @@ async fn list_resource_library_listings(
     let erp = ErpContext {
         erp: state.erp.as_ref(),
         redis: state.redis.as_ref(),
-    };
-    let user = match get_current_user(&state.auth, mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
     };
     let body = list_public(mysql, &erp, i64::from(user.id), &params).await?;
     let bytes = match serde_json::to_vec(&body) {

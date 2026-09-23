@@ -9,7 +9,10 @@ export type ProjectManageRole =
   | "Maintainer"
   | "Developer"
   | "Reporter";
-export type ProjectManageVisibility = "private" | "public";
+export type ProjectManageVisibility =
+  | "private"
+  | "public_restricted"
+  | "public";
 export type ProjectManageStatusColor =
   | "gray"
   | "blue"

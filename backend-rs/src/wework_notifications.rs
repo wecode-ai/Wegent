@@ -18,7 +18,6 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::auth::{AuthFailure, get_current_user};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -209,28 +208,19 @@ fn inbox_view(
 #[brz_http_server::get("/api/v1/wework-notifications")]
 async fn list_notifications(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: crate::auth::SessionUser,
     query: brz_http_server::Query<InboxQuery>,
 ) -> Result<InboxView, FastApiError> {
-    inbox(state, authorization, &query).await
+    inbox(state, &user, &query).await
 }
 
 /// Handler body for `GET /api/v1/wework-notifications`.
 async fn inbox(
     state: &AppState,
-    authorization: Option<&str>,
+    user: &crate::auth::SessionUser,
     query: &InboxQuery,
 ) -> Result<InboxView, FastApiError> {
     let (offset, limit) = query.validated()?;
-    let user = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
     let user_id = i64::from(user.id);
     let limit_plus_one = limit + 1;
 

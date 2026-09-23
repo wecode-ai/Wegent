@@ -64,9 +64,9 @@ path = "/api/startup"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/subscriptions/executions"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/devices"
+[[routes]]
+methods = ["GET"]
+path = "/api/devices"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/welcome-config"

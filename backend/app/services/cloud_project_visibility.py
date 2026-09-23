@@ -88,7 +88,9 @@ def project_access_query(
         literal(ROLE_HIERARCHY[BaseRole.RestrictedAnalyst.value]).label("priority"),
     ).where(
         CloudProject.status == "active",
-        CloudProject.metadata_json["visibility"].as_string() == "public",
+        CloudProject.metadata_json["visibility"]
+        .as_string()
+        .in_(("public_restricted", "public")),
     )
     owned = select(
         CloudProject.id.label("project_id"),

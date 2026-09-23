@@ -201,6 +201,9 @@
     "aria_label": "Collaboration navigation",
     "close_navigation": "Close collaboration navigation",
     "home": "Collaboration home",
+    "agents": "Agents",
+    "teams": "Teams",
+    "devices": "Devices",
     "my_work": "My work",
     "inbox": "Inbox",
     "run_center": "Run center"

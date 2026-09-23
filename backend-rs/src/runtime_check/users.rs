@@ -17,6 +17,10 @@ pub(crate) struct Users;
 
 /// `get_current_user`'s user-by-name statement, rendered exactly as
 /// SQLAlchemy labels it.
+#[allow(
+    dead_code,
+    reason = "route authentication now runs through AppAuthenticator"
+)]
 pub(crate) const USER_BY_NAME_QUERY: &str = "SELECT users.id AS users_id, \
      users.user_name AS users_user_name, \
      users.password_hash AS users_password_hash, users.email AS users_email, \
@@ -32,6 +36,10 @@ impl Users {
     /// Load a user by name, including inactive users, exactly like the
     /// source's direct SQLAlchemy query (authentication only needs the user
     /// record, then checks `is_active`).
+    #[allow(
+        dead_code,
+        reason = "route authentication now runs through AppAuthenticator"
+    )]
     pub(crate) async fn get_user_by_name<M>(
         &self,
         mysql: &M,

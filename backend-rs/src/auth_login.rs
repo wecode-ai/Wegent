@@ -41,7 +41,7 @@ pub struct Token {
 
 /// POST /api/auth/login: the auth-login free function, injecting the
 /// process-lifetime application state.
-#[brz_http_server::post("/api/auth/login")]
+#[brz_http_server::post("/api/auth/login", access = public)]
 async fn login(
     #[inject(state)] state: &AppState,
     login_data: LoginRequest,
@@ -179,7 +179,7 @@ mod tests {
         brz_http_server::registry!(group = login_probe, dependencies());
     }
 
-    #[brz_http_server::post("/api/auth/login", group = probe::login_probe)]
+    #[brz_http_server::post("/api/auth/login", group = probe::login_probe, access = public)]
     async fn login(_login: LoginRequest) -> Result<Token, FastApiError> {
         unreachable!("the probe only registers the route shape");
     }

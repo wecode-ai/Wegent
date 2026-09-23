@@ -16,7 +16,8 @@ use super::models::{
     is_model_compatible_with_shell, is_public_model_visible, is_wework_available,
 };
 use super::mysql::{
-    EntityIdRow, IdRow, KindRow, MemberRow, NameRow, NamespaceRow, ResourceIdRow, UserRow,
+    EntityIdRow, IdRow, KindJsonRow, KindRow, MemberRow, NameRow, NamespaceRow, ResourceIdRow,
+    UserRow,
 };
 use crate::erp_provider::ErpProvider;
 
@@ -549,6 +550,17 @@ where
     Ok(mysql.fetch_all(sql, arguments.to_vec()).await?)
 }
 
+/// `find_shell_json` public-shell lookup: `db.query(Kind.json)` projects the
+/// CRD payload alone and `.first()` renders `LIMIT 1`.
+const SHELL_JSON_PUBLIC_SQL: &str = "SELECT json FROM kinds \
+     WHERE user_id = 0 AND kind = 'Shell' AND name = ? AND is_active = true LIMIT 1";
+
+/// `find_shell_json` personal-shell lookup, with the same single-column
+/// projection, `namespace = 'default'` filter and `.first()` pagination.
+const SHELL_JSON_PERSONAL_SQL: &str = "SELECT json FROM kinds \
+     WHERE user_id = ? AND kind = 'Shell' AND name = ? AND namespace = 'default' \
+     AND is_active = true LIMIT 1";
+
 async fn get_shell_support_model<M>(
     mysql: &M,
     shell_name: &str,
@@ -560,21 +572,12 @@ where
     // Public shell first (user_id = 0), then the user's personal shell,
     // mirroring `find_shell_json`.
     let mut shell_json: Option<Json> = mysql
-        .fetch_optional::<_, _, KindRow>(
-            "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at \
-             FROM kinds WHERE user_id = 0 AND kind = 'Shell' AND name = ? AND is_active = true",
-            (shell_name,),
-        )
+        .fetch_optional::<_, _, KindJsonRow>(SHELL_JSON_PUBLIC_SQL, (shell_name,))
         .await?
         .map(|row| row.json.0);
     if shell_json.is_none() {
         shell_json = mysql
-            .fetch_optional::<_, _, KindRow>(
-                "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at \
-                 FROM kinds WHERE user_id = ? AND kind = 'Shell' AND name = ? \
-                 AND namespace = 'default' AND is_active = true",
-                (user_id, shell_name),
-            )
+            .fetch_optional::<_, _, KindJsonRow>(SHELL_JSON_PERSONAL_SQL, (user_id, shell_name))
             .await?
             .map(|row| row.json.0);
     }
@@ -712,4 +715,56 @@ where
         .into_iter()
         .filter(|row| is_public_model_visible(&row.json.0))
         .collect())
+}
+
+#[cfg(test)]
+mod shell_lookup_contracts {
+    use super::*;
+
+    /// `find_shell_json` reads the CRD payload alone (`db.query(Kind.json)`)
+    /// and stops at the first row (`.first()` -> `LIMIT 1`).
+    fn assert_shell_statement(sql: &str, bound_parameters: usize) {
+        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.starts_with("SELECT json FROM kinds WHERE "),
+            "single-column projection: {normalized}"
+        );
+        assert!(
+            normalized.ends_with("LIMIT 1"),
+            "first-row pagination: {normalized}"
+        );
+        assert_eq!(
+            normalized.matches('?').count(),
+            bound_parameters,
+            "bound parameters: {normalized}"
+        );
+    }
+
+    #[test]
+    fn public_shell_lookup_matches_find_shell_json() {
+        assert_shell_statement(SHELL_JSON_PUBLIC_SQL, 1);
+        let normalized = SHELL_JSON_PUBLIC_SQL
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            normalized,
+            "SELECT json FROM kinds WHERE user_id = 0 AND kind = 'Shell' AND name = ? \
+             AND is_active = true LIMIT 1",
+        );
+    }
+
+    #[test]
+    fn personal_shell_lookup_matches_find_shell_json() {
+        assert_shell_statement(SHELL_JSON_PERSONAL_SQL, 2);
+        let normalized = SHELL_JSON_PERSONAL_SQL
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            normalized,
+            "SELECT json FROM kinds WHERE user_id = ? AND kind = 'Shell' AND name = ? \
+             AND namespace = 'default' AND is_active = true LIMIT 1",
+        );
+    }
 }

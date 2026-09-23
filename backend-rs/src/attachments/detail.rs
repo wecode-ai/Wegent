@@ -16,7 +16,7 @@ use std::sync::Arc;
 use brz_http_server::StatusCode;
 use brz_http_server::{Binary, HttpResponse};
 
-use super::auth::get_current_user_optional;
+use super::auth::{AttachmentUser, UserRow};
 use super::context_store::{self};
 use super::detail_response::AttachmentDetailResponse;
 use crate::state::AppState;
@@ -41,7 +41,7 @@ async fn attachment_detail(
     state: &Arc<AppState>,
     attachment_id: i64,
     share_token: Option<&str>,
-    authorization: Option<&str>,
+    user: Option<&UserRow>,
 ) -> Result<HttpResponse<Binary>, crate::http_compat::FastApiError> {
     if share_token.is_some() {
         // Share-token authentication: decode_share_token plus the task/
@@ -52,13 +52,6 @@ async fn attachment_detail(
         ));
     }
 
-    let user = match get_current_user_optional(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(error) => {
-            tracing::error!(%error, "attachment detail user lookup failed");
-            return Err(internal_error());
-        }
-    };
     let Some(user) = user else {
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
@@ -83,7 +76,7 @@ async fn attachment_detail(
         &state.mysql,
         state.task_policy,
         &context,
-        &user,
+        user,
     )
     .await
     {
@@ -104,14 +97,20 @@ async fn attachment_detail(
 
 /// GET /api/attachments/{attachment_id}: the attachment detail free function,
 /// injecting the process-lifetime application state.
-#[brz_http_server::get("/api/attachments/:attachment_id")]
+#[brz_http_server::get("/api/attachments/:attachment_id", access = optional)]
 async fn get_attachment(
     #[inject(state)] state: &Arc<AppState>,
     attachment_id: i64,
     share_token: Option<String>,
-    #[header] authorization: Option<&str>,
+    #[auth] user: Option<AttachmentUser>,
 ) -> Result<HttpResponse<Binary>, crate::http_compat::FastApiError> {
-    attachment_detail(state, attachment_id, share_token.as_deref(), authorization).await
+    attachment_detail(
+        state,
+        attachment_id,
+        share_token.as_deref(),
+        user.as_deref(),
+    )
+    .await
 }
 
 /// GET /api/attachments/{attachment_id}/executor-download.
@@ -119,27 +118,25 @@ async fn get_attachment(
 async fn executor_download_attachment(
     #[inject(state)] state: &Arc<AppState>,
     attachment_id: i64,
-    #[header] authorization: Option<&str>,
-    #[header("x-api-key")] x_api_key: Option<&str>,
+    #[auth] user: crate::attachments_task_all::auth::AuthenticatedUser,
 ) -> Result<HttpResponse<brz_http_server::Binary>, crate::http_compat::FastApiError> {
-    super::executor_download::executor_download(state, attachment_id, authorization, x_api_key)
-        .await
+    super::executor_download::executor_download(state, attachment_id, &user).await
 }
 
 /// GET /api/attachments/{attachment_id}/download.
-#[brz_http_server::get("/api/attachments/:attachment_id/download")]
+#[brz_http_server::get("/api/attachments/:attachment_id/download", access = optional)]
 async fn download(
     #[inject(state)] state: &Arc<AppState>,
     attachment_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] user: Option<AttachmentUser>,
 ) -> Result<HttpResponse<brz_http_server::Binary>, crate::http_compat::FastApiError> {
-    super::handler::download_attachment(state, attachment_id, authorization).await
+    super::handler::download_attachment(state, attachment_id, user.as_deref()).await
 }
 
 /// GET /api/attachments/download/shared: the public share-link download
 /// (`public_download_attachment`). The static route outranks the
 /// `:attachment_id` captures (three literal segments vs. one).
-#[brz_http_server::get("/api/attachments/download/shared")]
+#[brz_http_server::get("/api/attachments/download/shared", access = public)]
 async fn download_shared(
     #[inject(state)] state: &Arc<AppState>,
     token: String,

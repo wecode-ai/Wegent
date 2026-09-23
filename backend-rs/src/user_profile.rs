@@ -2,11 +2,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Optional application-specific fields in public user responses.
+//! Optional application-specific fields and resolution hooks for the public
+//! user views.
 use crate::auth::UserRow;
+use async_trait::async_trait;
 use serde::{Serialize, Serializer};
 
-pub use crate::users_me::UserView;
+pub use crate::users_me::{GitInfoEntry, UserView, stored_git_info};
+
+/// Current-user `git_info` resolution for `GET /api/users/me`. The public
+/// default renders the stored `users.git_info` column; an application whose
+/// deployment keeps placeholder Git credentials there resolves them through
+/// its own token service before the response is rendered.
+///
+/// The list is resolved after the response body is built and replaces the
+/// rendered `git_info` value as a whole, so an implementation returns the
+/// complete list to render.
+#[async_trait]
+pub trait UserGitInfoProvider: Send + Sync {
+    /// The `git_info` entries to render for `user`; `None` renders `null`.
+    async fn resolved_git_info(&self, user: &UserRow) -> Option<Vec<GitInfoEntry>> {
+        crate::users_me::stored_git_info(user)
+    }
+}
+
+/// No application Git token service is registered.
+pub struct StoredGitInfo;
+
+#[async_trait]
+impl UserGitInfoProvider for StoredGitInfo {}
 
 /// Application-specific typed fields for the user view and its preferences.
 pub struct UserViewExt {

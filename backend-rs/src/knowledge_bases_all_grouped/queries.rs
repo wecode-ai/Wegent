@@ -356,6 +356,14 @@ where
         .await
 }
 
+/// The SQLAlchemy rendering of a `kinds` KnowledgeBase batch. Only the source
+/// call sites that chain `order_by(Kind.updated_at.desc())` render the
+/// ordering clause; `collect_entity_authorized_kbs` issues a bare
+/// `db.query(Kind).filter(...)` and renders none.
+fn kinds_batch_sql(where_clause: &str, order_clause: &str) -> String {
+    format!("SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE {where_clause}{order_clause}")
+}
+
 /// `kinds` KnowledgeBase batch by filter (`ORDER BY kinds.updated_at DESC`).
 pub(super) async fn kinds_by_filter<M>(mysql: &M, where_clause: &str) -> MysqlResult<Vec<KindRow>>
 where
@@ -363,16 +371,67 @@ where
 {
     mysql
         .fetch_all(
-            &format!(
-                "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE {where_clause} \
-                 ORDER BY kinds.updated_at DESC"
-            ),
+            &kinds_batch_sql(where_clause, " ORDER BY kinds.updated_at DESC"),
             (),
         )
         .await
 }
 
-/// `apply_direct_access_filter`: the rendered `kinds.id` predicate.
+/// `collect_entity_authorized_kbs`: the entity ids' active KnowledgeBase kinds.
+/// The source does not order this query, so neither does the rendered SQL.
+pub(super) async fn kinds_by_filter_unordered<M>(
+    mysql: &M,
+    where_clause: &str,
+) -> MysqlResult<Vec<KindRow>>
+where
+    M: Mysql,
+{
+    mysql
+        .fetch_all(&kinds_batch_sql(where_clause, ""), ())
+        .await
+}
+
+/// `apply_direct_access_filter`'s `external_editable_ids` condition
+/// (`Kind.id.in_(external_editable_ids)`): present only when the user holds an
+/// editable role through an extension entity binding. The caller supplies the
+/// ids in the CPython `set[int]` iteration order the source renders.
+fn external_editable_branch(external_editable_ids: &[i64]) -> Option<String> {
+    if external_editable_ids.is_empty() {
+        return None;
+    }
+    let ids = external_editable_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("kinds.id IN ({ids})"))
+}
+
+/// `apply_acl_deny_filter`'s second predicate:
+/// `query.filter(Kind.namespace.notin_(restricted_group_names))`, where
+/// `restricted_group_names = [name for name, role in context.group_roles.items()
+/// if role == GroupRole.RestrictedAnalyst]`. SQLAlchemy appends it after the
+/// explicit-deny `NOT EXISTS`, and the list keeps `context.group_roles`
+/// insertion order — the sorted non-organization groups.
+fn acl_deny_group_clause(
+    group_role_order: &[String],
+    group_roles: &HashMap<String, String>,
+) -> String {
+    let restricted: Vec<String> = group_role_order
+        .iter()
+        .filter(|name| group_roles.get(*name).map(String::as_str) == Some("RestrictedAnalyst"))
+        .map(|name| quote_literal(name))
+        .collect();
+    if restricted.is_empty() {
+        // `if restricted_group_names:` adds no predicate for an empty list.
+        String::new()
+    } else {
+        format!(" AND (kinds.namespace NOT IN ({}))", restricted.join(", "))
+    }
+}
+
+/// `apply_direct_access_filter` plus its trailing `apply_acl_deny_filter`:
+/// the rendered `kinds.id` predicate.
 ///
 /// `editable_group_names` renders the source's `context.group_roles`
 /// insertion order: `get_effective_roles_in_groups` builds its dict by
@@ -381,29 +440,21 @@ where
 /// `accessible_ns_ids` renders the source's `frozenset(str(...))` of the
 /// namespace-id query rows: the CPython `set[str]` iteration order, which
 /// `PyStrSetOrder` reproduces (see its documentation).
+/// `external_editable_ids` renders `Kind.id.in_(external_editable_ids)` over
+/// the source's `set[int]` comprehension, whose order `PySetOrder` reproduces.
+/// `group_roles` renders both the editable-group branch and
+/// [`acl_deny_group_clause`].
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn filter_accessible_kb_ids<M>(
-    mysql: &M,
-    candidate_ids: &[i64],
+fn direct_access_filter_sql(
+    ids: &str,
     user_id: i64,
     accessible_ns_ids: &[i64],
+    external_editable_ids: &[i64],
     group_role_order: &[String],
     group_roles: &HashMap<String, String>,
     organization_names: &[String],
     user_role: &str,
-) -> MysqlResult<Vec<i64>>
-where
-    M: Mysql,
-{
-    if candidate_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let ids = candidate_ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-
+) -> String {
     // `edit_conditions`: creator, direct editable member, namespace-entity
     // editable member, external editable ids, editable group namespaces,
     // and the admin/organization rule.
@@ -440,6 +491,9 @@ where
              AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer')))"
         ));
     }
+    if let Some(branch) = external_editable_branch(external_editable_ids) {
+        edit_conditions.push(branch);
+    }
     let editable_group_quoted: Vec<String> = group_role_order
         .iter()
         .filter(|name| {
@@ -463,10 +517,11 @@ where
         edit_conditions.push(format!("kinds.namespace IN ({})", quoted.join(", ")));
     }
     let edit_or = edit_conditions.join(" OR ");
+    let acl_deny_clause = acl_deny_group_clause(group_role_order, group_roles);
 
     let requirement = "coalesce(json_unquote(json_extract(kinds.json, \
          '$.spec.directAccessRequirement')), '')";
-    let sql = format!(
+    format!(
         "SELECT kinds.id AS kinds_id \nFROM kinds \n\
          WHERE kinds.id IN ({ids}) AND ({requirement} = '' OR {requirement} = 'read' \
          OR {requirement} = 'edit' AND ({edit_or})) \
@@ -476,7 +531,44 @@ where
          AND resource_members.status IN {APPROVED_STATUSES} \
          AND resource_members.entity_type = 'user' \
          AND resource_members.entity_id = '{user_id}' \
-         AND resource_members.`role` = 'RestrictedAnalyst'))"
+         AND resource_members.`role` = 'RestrictedAnalyst')){acl_deny_clause}"
+    )
+}
+
+/// `filter_directly_accessible_knowledge_bases`: run the rendered
+/// direct-access predicate over the candidate ids.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn filter_accessible_kb_ids<M>(
+    mysql: &M,
+    candidate_ids: &[i64],
+    user_id: i64,
+    accessible_ns_ids: &[i64],
+    external_editable_ids: &[i64],
+    group_role_order: &[String],
+    group_roles: &HashMap<String, String>,
+    organization_names: &[String],
+    user_role: &str,
+) -> MysqlResult<Vec<i64>>
+where
+    M: Mysql,
+{
+    if candidate_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = candidate_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = direct_access_filter_sql(
+        &ids,
+        user_id,
+        accessible_ns_ids,
+        external_editable_ids,
+        group_role_order,
+        group_roles,
+        organization_names,
+        user_role,
     );
 
     #[derive(Debug, FromMysqlRow)]
@@ -649,6 +741,136 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Collapse the template line continuations into the single line
+    /// SQLAlchemy renders, so the expected text below is the recorded source
+    /// SQL verbatim.
+    fn rendered(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn entity_kbs_batch_renders_no_ordering_clause() {
+        // `collect_entity_authorized_kbs` issues a bare
+        // `db.query(Kind).filter(...)`: the recorded exchange carries no
+        // `ORDER BY`, and adding one changed the query text so Replay could
+        // not match it.
+        assert_eq!(
+            rendered(&kinds_batch_sql(
+                "kinds.kind = 'KnowledgeBase' AND kinds.is_active IS true \
+                 AND kinds.id IN (317487)",
+                ""
+            )),
+            rendered(
+                "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+                 kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+                 kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+                 kinds.is_active AS kinds_is_active, \
+                 kinds.created_at AS kinds_created_at, \
+                 kinds.updated_at AS kinds_updated_at \nFROM kinds \nWHERE \
+                 kinds.kind = 'KnowledgeBase' AND kinds.is_active IS true \
+                 AND kinds.id IN (317487)"
+            )
+        );
+        assert!(!kinds_batch_sql("kinds.id IN (317487)", "").contains("ORDER BY"));
+        // The source's `order_by(Kind.updated_at.desc())` call sites keep it.
+        assert!(
+            kinds_batch_sql("kinds.id IN (317487)", " ORDER BY kinds.updated_at DESC")
+                .ends_with("ORDER BY kinds.updated_at DESC")
+        );
+    }
+
+    #[test]
+    fn external_editable_branch_renders_the_recorded_condition() {
+        // `apply_direct_access_filter` appends
+        // `Kind.id.in_(external_editable_ids)` after the namespace-entity
+        // branch; the recorded filter query for the case that carries it
+        // renders `... OR (kinds.id IN (263078)) ...`.
+        assert_eq!(
+            external_editable_branch(&[263078]).as_deref(),
+            Some("kinds.id IN (263078)")
+        );
+        // An empty set adds no branch (`if external_editable_ids:`).
+        assert_eq!(external_editable_branch(&[]), None);
+    }
+
+    /// `apply_acl_deny_filter` appends
+    /// `query.filter(Kind.namespace.notin_(restricted_group_names))` for the
+    /// groups whose effective role is `RestrictedAnalyst`, in
+    /// `context.group_roles` order; an empty list adds no predicate.
+    #[test]
+    fn acl_deny_group_clause_renders_the_restricted_groups_in_context_order() {
+        let order = ["AI_agent-pro/Group-1".to_string(), "hr-group".to_string()];
+        let restricted = HashMap::from([
+            (
+                "AI_agent-pro/Group-1".to_string(),
+                "RestrictedAnalyst".to_string(),
+            ),
+            ("hr-group".to_string(), "Owner".to_string()),
+        ]);
+        assert_eq!(
+            acl_deny_group_clause(&order, &restricted),
+            " AND (kinds.namespace NOT IN ('AI_agent-pro/Group-1'))"
+        );
+        let none_restricted = HashMap::from([("hr-group".to_string(), "Owner".to_string())]);
+        assert_eq!(acl_deny_group_clause(&order, &none_restricted), "");
+        // A group name that carries SQL metacharacters is escaped like every
+        // other rendered literal.
+        let quoted = HashMap::from([("a'b".to_string(), "RestrictedAnalyst".to_string())]);
+        assert_eq!(
+            acl_deny_group_clause(&["a'b".to_string()], &quoted),
+            " AND (kinds.namespace NOT IN ('a\\'b'))"
+        );
+    }
+
+    /// The recorded `055a252e` exchange: the source's
+    /// `filter_directly_accessible_knowledge_bases` renders the editable-group
+    /// branch inside the `directAccessRequirement` disjunction, then the
+    /// explicit-deny `NOT EXISTS`, then the restricted-group `NOT IN` clause
+    /// from `apply_acl_deny_filter`.
+    #[test]
+    fn direct_access_filter_appends_the_acl_deny_group_clause() {
+        let order = ["AI_agent-pro/Group-1".to_string(), "hr-group".to_string()];
+        let roles = HashMap::from([
+            (
+                "AI_agent-pro/Group-1".to_string(),
+                "RestrictedAnalyst".to_string(),
+            ),
+            ("hr-group".to_string(), "Owner".to_string()),
+        ]);
+        let sql =
+            direct_access_filter_sql("178044", 2807, &[178044], &[], &order, &roles, &[], "user");
+        let sql = rendered(&sql);
+        assert!(
+            sql.contains("OR kinds.namespace IN ('hr-group'))) AND NOT (EXISTS"),
+            "{sql}"
+        );
+        assert!(
+            sql.ends_with(
+                "AND resource_members.`role` = 'RestrictedAnalyst')) \
+                 AND (kinds.namespace NOT IN ('AI_agent-pro/Group-1'))"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("AND resource_members.entity_id IN ('178044')"),
+            "{sql}"
+        );
+        // `NOT IN (NULL) AND (1 != 1)` is not the empty-list rendering here:
+        // the clause is simply omitted.
+        let unrestricted = HashMap::from([("hr-group".to_string(), "Owner".to_string())]);
+        let sql = rendered(&direct_access_filter_sql(
+            "178044",
+            2807,
+            &[178044],
+            &[],
+            &order,
+            &unrestricted,
+            &[],
+            "user",
+        ));
+        assert!(!sql.contains("NOT IN"), "{sql}");
+    }
 
     #[test]
     fn user_git_info_decodes_recorded_shapes() {

@@ -33,7 +33,6 @@ use brz_mysql::{Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 use serde::Serialize;
 
-use crate::auth::{AuthFailure, get_current_user};
 use crate::config::env_or_dotenv;
 use crate::http_compat::FastApiError;
 use crate::json_compat::OpaqueJson;
@@ -49,12 +48,12 @@ use crate::knowledge_documents_content::access::{
 async fn get_knowledge_base(
     #[inject(state)] state: &AppState,
     knowledge_base_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
 ) -> Result<KnowledgeBaseResponse, KbError> {
     let knowledge_base_id = knowledge_base_id
         .parse::<i64>()
         .map_err(|_| validation_error(knowledge_base_id))?;
-    get_knowledge_base_inner(state, knowledge_base_id, authorization)
+    get_knowledge_base_inner(state, knowledge_base_id, &current_user)
         .await
         .map_err(KbError::from)
 }
@@ -89,24 +88,12 @@ fn validation_error(value: &str) -> FastApiError {
     })])
 }
 
-fn auth_error(error: AuthFailure) -> FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
-    }
-}
-
 /// Handler body for `GET /api/knowledge-bases/{knowledge_base_id}`.
 async fn get_knowledge_base_inner(
     state: &AppState,
     knowledge_base_id: i64,
-    authorization: Option<&str>,
+    user: &crate::auth::SessionUser,
 ) -> Result<KnowledgeBaseResponse, FastApiError> {
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
     let user_id = i64::from(user.id);
 
     let mysql = &state.mysql;
@@ -483,7 +470,7 @@ pub struct KnowledgeConfigResponse {
 
 /// GET /api/knowledge-bases/config: the knowledge-bases free function,
 /// injecting the process-lifetime application state.
-#[brz_http_server::get("/api/knowledge-bases/config")]
+#[brz_http_server::get("/api/knowledge-bases/config", access = public)]
 async fn get_knowledge_config(
     #[inject(state)] _state: &AppState,
 ) -> Result<KnowledgeConfigResponse, FastApiError> {
@@ -518,12 +505,12 @@ struct DocumentProtectionResponse {
 async fn get_document_protection(
     #[inject(state)] state: &AppState,
     knowledge_base_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
 ) -> Result<HttpResponse<DocumentProtectionResponse>, KbError> {
     let knowledge_base_id = knowledge_base_id
         .parse::<i64>()
         .map_err(|_| validation_error(knowledge_base_id))?;
-    let body = document_protection_inner(state, knowledge_base_id, authorization)
+    let body = document_protection_inner(state, knowledge_base_id, &current_user)
         .await
         .map_err(KbError::from)?;
     // `response.headers["Cache-Control"] = "private, no-store"`.
@@ -536,11 +523,8 @@ async fn get_document_protection(
 async fn document_protection_inner(
     state: &AppState,
     knowledge_base_id: i64,
-    authorization: Option<&str>,
+    user: &crate::auth::SessionUser,
 ) -> Result<DocumentProtectionResponse, FastApiError> {
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
     let user_id = i64::from(user.id);
 
     let mysql = &state.mysql;

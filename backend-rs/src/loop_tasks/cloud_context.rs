@@ -22,9 +22,7 @@ use serde::Serialize;
 
 use super::http_error::HttpError;
 use super::loop_repository::{LoopItemRepository, datetime_is_unset};
-use crate::auth::{AuthFailure, get_current_user};
 use crate::cloud_projects;
-use crate::headers::Headers;
 use crate::state::AppState;
 
 /// GET /api/v1/runtime-tasks/cloud-context: the cloud-context free function,
@@ -34,9 +32,9 @@ async fn find_runtime_task_cloud_context(
     #[inject(state)] state: &AppState,
     device_id: &str,
     task_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
 ) -> Result<CloudTaskContextBody, HttpError> {
-    cloud_context(state, device_id, task_id, authorization).await
+    cloud_context(state, device_id, task_id, &current_user).await
 }
 
 /// Handler body for `GET /api/v1/runtime-tasks/cloud-context`.
@@ -44,17 +42,8 @@ async fn cloud_context(
     state: &AppState,
     device_id: &str,
     task_id: &str,
-    authorization: Option<&str>,
+    current_user: &crate::auth::SessionUser,
 ) -> Result<CloudTaskContextBody, HttpError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(
-        &state.auth,
-        &state.mysql,
-        headers.view().header("authorization"),
-    )
-    .await
-    .map_err(auth_error)?;
-
     let repository = LoopItemRepository::new(&state.mysql);
     let binding = repository
         .find_cloud_context_binding(current_user.id, device_id, task_id)
@@ -208,20 +197,6 @@ fn datetime_value(value: Option<NaiveDateTime>) -> Option<String> {
             format!("{base}.{:06}", value.and_utc().timestamp_subsec_micros())
         }
     })
-}
-
-/// `get_current_user` failures mapped to the source 401 responses.
-fn auth_error(error: AuthFailure) -> HttpError {
-    match error {
-        AuthFailure::InvalidCredentials => HttpError::new(
-            brz_http_server::StatusCode::UNAUTHORIZED,
-            "Could not validate credentials",
-        ),
-        AuthFailure::UserNotActivated => HttpError::new(
-            brz_http_server::StatusCode::UNAUTHORIZED,
-            "User not activated",
-        ),
-    }
 }
 
 #[cfg(test)]

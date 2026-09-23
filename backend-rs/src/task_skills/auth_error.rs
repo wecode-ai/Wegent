@@ -15,6 +15,10 @@ pub struct AuthError {
 }
 
 impl AuthError {
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
     /// `401 "Could not validate credentials"` with `WWW-Authenticate: Bearer`.
     pub fn invalid_credentials() -> Self {
         Self {
